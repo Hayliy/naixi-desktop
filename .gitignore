@@ -22,3 +22,10 @@ Thumbs.db
 # Env
 .env
 .env.local
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 内置 SearXNG（154MB，打包时附加下载）
+searxng/

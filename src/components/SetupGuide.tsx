@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { apiGet, apiPost } from "@/lib/api";
+import { useAppConfig } from "@/contexts/AppContext";
 
 /* ─── 预设的 API 提供商 ─── */
 const API_PROVIDERS = [
@@ -9,7 +10,7 @@ const API_PROVIDERS = [
     desc: "通义千问系列，注册送 100 万 Token",
     url: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
     keyUrl: "https://bailian.console.aliyun.com/#/api-key",
-    models: ["qwen-plus", "qwen-turbo", "qwen3-32b", "qwen-vl-plus"],
+    modelHint: "qwen3.7-max",
   },
   {
     id: "zhipu",
@@ -17,7 +18,7 @@ const API_PROVIDERS = [
     desc: "GLM 系列，免费版有并发限制",
     url: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
     keyUrl: "https://open.bigmodel.cn/usercenter/apikeys",
-    models: ["glm-4.7-flash", "glm-4-flash", "glm-4v-flash", "glm-4-plus"],
+    modelHint: "glm-4-flash",
   },
   {
     id: "deepseek",
@@ -25,7 +26,7 @@ const API_PROVIDERS = [
     desc: "DeepSeek 系列，性价比高",
     url: "https://api.deepseek.com/v1/chat/completions",
     keyUrl: "https://platform.deepseek.com/api_keys",
-    models: ["deepseek-chat", "deepseek-reasoner"],
+    modelHint: "deepseek-chat",
   },
   {
     id: "agnes",
@@ -33,7 +34,7 @@ const API_PROVIDERS = [
     desc: "无限期免费，1M 上下文，30 RPM",
     url: "https://apihub.agnes-ai.com/v1/chat/completions",
     keyUrl: "https://platform.agnes-ai.com/",
-    models: ["agnes-2.0-flash"],
+    modelHint: "agnes-2.0-flash",
   },
   {
     id: "openai",
@@ -41,7 +42,7 @@ const API_PROVIDERS = [
     desc: "GPT 系列，需海外支付方式",
     url: "https://api.openai.com/v1/chat/completions",
     keyUrl: "https://platform.openai.com/api-keys",
-    models: ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "o3-mini"],
+    modelHint: "gpt-5.5",
   },
   {
     id: "anthropic",
@@ -49,7 +50,7 @@ const API_PROVIDERS = [
     desc: "Claude 系列，需海外支付方式",
     url: "https://api.anthropic.com/v1/messages",
     keyUrl: "https://console.anthropic.com/settings/keys",
-    models: ["claude-sonnet-4-20250514", "claude-3.5-haiku"],
+    modelHint: "claude-sonnet-4-20250514",
   },
   {
     id: "gemini",
@@ -57,7 +58,7 @@ const API_PROVIDERS = [
     desc: "Gemini 系列，有免费额度",
     url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
     keyUrl: "https://aistudio.google.com/apikey",
-    models: ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-pro"],
+    modelHint: "gemini-2.0-flash",
   },
   {
     id: "moonshot",
@@ -65,7 +66,7 @@ const API_PROVIDERS = [
     desc: "Kimi 系列，国内直连",
     url: "https://api.moonshot.cn/v1/chat/completions",
     keyUrl: "https://platform.moonshot.cn/console/api-keys",
-    models: ["kimi-k2", "moonshot-v1-8k"],
+    modelHint: "kimi-k2.7-code",
   },
   {
     id: "custom",
@@ -78,6 +79,7 @@ const API_PROVIDERS = [
 ];
 
 export default function SetupGuide({ onClose, standalone }: { onClose: () => void; standalone?: boolean }) {
+  const { refreshConfig } = useAppConfig();
   const [step, setStep] = useState(0);
   const [selectedProvider, setSelectedProvider] = useState("");
   const [modelName, setModelName] = useState("");
@@ -88,6 +90,8 @@ export default function SetupGuide({ onClose, standalone }: { onClose: () => voi
   const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
   const [webhookUrl, setWebhookUrl] = useState("http://localhost:9845/api/webhook/my-workflow");
   const [platforms, setPlatforms] = useState<any[]>([]);
+  const [fetchedModels, setFetchedModels] = useState<{ id: string; owned_by: string }[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
   const [settingsTab, setSettingsTab] = useState("api");
   const [prompts, setPrompts] = useState<Record<string, { label: string; prompt: string }>>({});
   const [promptDirty, setPromptDirty] = useState(false);
@@ -106,7 +110,7 @@ export default function SetupGuide({ onClose, standalone }: { onClose: () => voi
   const provider = API_PROVIDERS.find(p => p.id === selectedProvider);
 
   const handleTest = async () => {
-    if (!apiKey.trim()) return;
+    if (!(apiKey || "").trim()) return;
     setTesting(true);
     setTestResult(null);
     try {
@@ -128,7 +132,7 @@ export default function SetupGuide({ onClose, standalone }: { onClose: () => voi
         [selectedProvider]: {
           api_key: apiKey,
           api_url: apiUrl || provider?.url || "",
-          model: modelName && modelName !== "__custom__" ? modelName : (provider?.models?.[0] || ""),
+          model: modelName || provider?.modelHint || "default",
         },
       },
       platform_configs: {},
@@ -147,9 +151,30 @@ export default function SetupGuide({ onClose, standalone }: { onClose: () => voi
 
     try {
       await apiPost("/api/desktop/config", config);
+      refreshConfig();
       setSaved(true);
-      setTimeout(() => setStep(1), 600);
+      if (!standalone) setTimeout(() => setStep(1), 600);
     } catch {}
+  };
+
+  // 从 API 拉取可用模型列表
+  const handleFetchModels = async () => {
+    const key = (apiKey || "").trim();
+    const url = (apiUrl || provider?.url || "").trim();
+    if (!key || !url) return;
+    setLoadingModels(true);
+    setFetchedModels([]);
+    try {
+      const r = await apiPost<any>("/api/desktop/models", { api_url: url, api_key: key });
+      if (r?.models?.length) {
+        setFetchedModels(r.models);
+      } else {
+        setFetchedModels([{ id: r?.error || "API 未返回模型列表", owned_by: "error" }]);
+      }
+    } catch {
+      setFetchedModels([{ id: "请求失败，请检查 API 地址", owned_by: "error" }]);
+    }
+    setLoadingModels(false);
   };
 
   const handleFinish = () => {
@@ -179,12 +204,17 @@ export default function SetupGuide({ onClose, standalone }: { onClose: () => voi
         {settingsTab === "api" && (
           <SetupSteps
             step={step} setStep={setStep}
-            selectedProvider={selectedProvider} setSelectedProvider={setSelectedProvider}
+            selectedProvider={selectedProvider}             setSelectedProvider={setSelectedProvider}
             modelName={modelName} setModelName={setModelName}
+            apiKey={apiKey} setApiKey={setApiKey}
             apiUrl={apiUrl} setApiUrl={setApiUrl}
             saved={saved}
-            testing={testing} testResult={testResult}
+            testing={testing} testResult={testResult} setTestResult={setTestResult}
             handleTest={handleTest} handleSave={handleSave}
+            handleFetchModels={handleFetchModels}
+            fetchedModels={fetchedModels} setFetchedModels={setFetchedModels}
+            loadingModels={loadingModels}
+            standalone={standalone}
             webhookUrl={webhookUrl}
             platforms={platforms}
             provider={provider}
@@ -320,12 +350,17 @@ export default function SetupGuide({ onClose, standalone }: { onClose: () => voi
         <div className="px-6 py-5">
           <SetupSteps
             step={step} setStep={setStep}
-            selectedProvider={selectedProvider} setSelectedProvider={setSelectedProvider}
+            selectedProvider={selectedProvider}             setSelectedProvider={setSelectedProvider}
             modelName={modelName} setModelName={setModelName}
+            apiKey={apiKey} setApiKey={setApiKey}
             apiUrl={apiUrl} setApiUrl={setApiUrl}
             saved={saved}
-            testing={testing} testResult={testResult}
+            testing={testing} testResult={testResult} setTestResult={setTestResult}
             handleTest={handleTest} handleSave={handleSave}
+            handleFetchModels={handleFetchModels}
+            fetchedModels={fetchedModels} setFetchedModels={setFetchedModels}
+            loadingModels={loadingModels}
+            standalone={standalone}
             webhookUrl={webhookUrl}
             platforms={platforms}
             provider={provider}
@@ -345,8 +380,12 @@ function SetupSteps({
   apiKey, setApiKey,
   apiUrl, setApiUrl,
   saved,
-  testing, testResult,
+  testing, testResult, setTestResult,
   handleTest, handleSave,
+  handleFetchModels,
+  fetchedModels, setFetchedModels,
+  loadingModels,
+  standalone,
   webhookUrl,
   platforms, provider, onFinish,
 }: any) {
@@ -364,7 +403,7 @@ function SetupSteps({
         {/* 提供商选择 */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
           {API_PROVIDERS.map(p => (
-            <button key={p.id} onClick={() => { setSelectedProvider(p.id); setApiUrl(p.url); setModelName(p.models[0] || ""); setTestResult(null); }}
+            <button key={p.id} onClick={() => { setSelectedProvider(p.id); setApiUrl(p.url); setModelName(p.modelHint || ""); setTestResult(null); }}
               className={`border rounded-xl px-3 py-3 text-left transition-all ${
                 selectedProvider === p.id
                   ? "border-sakura-400 bg-sakura-50 ring-1 ring-sakura-300"
@@ -401,24 +440,32 @@ function SetupSteps({
             )}
             <div>
               <label className="block text-xs text-gray-500 mb-1">模型名称</label>
-              {modelName !== "__custom__" ? (
-                <select value={modelName} onChange={e => setModelName(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs outline-none focus:border-sakura-300">
-                  {(provider?.models || []).map((m: string) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                  <option value="__custom__">其他模型（手动输入）...</option>
-                </select>
-              ) : (
-                <input value={""} onChange={e => setModelName(e.target.value)}
-                  placeholder="输入自定义模型名称"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs outline-none focus:border-sakura-300 font-mono"
-                  autoFocus
-                />
+              <div className="flex gap-2">
+                <input value={modelName} onChange={e => setModelName(e.target.value)}
+                  placeholder={provider?.modelHint ? '例如: ' + provider.modelHint : "输入模型名称"}
+                  className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-xs outline-none focus:border-sakura-300 font-mono" />
+                <button onClick={handleFetchModels} disabled={!(apiKey || "").trim() || loadingModels || selectedProvider === "custom"}
+                  title="从 API 获取最新模型列表"
+                  className="shrink-0 px-2.5 py-2 rounded-lg text-xs bg-lavender-100 text-lavender-600 hover:bg-lavender-200 disabled:opacity-40 transition-colors">
+                  {loadingModels ? "..." : "刷新"}
+                </button>
+              </div>
+              {fetchedModels.length > 0 && (
+                <div className="mt-2 p-2 border border-lavender-100 rounded-lg bg-lavender-50/50 max-h-[180px] overflow-y-auto">
+                  <div className="text-[10px] text-lavender-400 mb-1">API 返回的可用模型（点击选用）</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {fetchedModels.map((m, i) => (
+                      <button key={i} onClick={() => setModelName(m.id)}
+                        className={`text-[10px] px-2 py-1 rounded-full border transition-colors ${modelName === m.id ? "bg-lavender-100 border-lavender-300 text-lavender-600" : "bg-white border-gray-200 text-gray-600 hover:border-lavender-200"}`}>
+                        {m.owned_by === "error" ? "⚠ " : ""}{m.id}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={handleTest} disabled={!apiKey.trim() || testing}
+              <button onClick={handleTest} disabled={!(apiKey || "").trim() || testing}
                 className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-xs hover:bg-gray-200 disabled:opacity-50 transition-colors">
                 {testing ? "测试中..." : "测试连接"}
               </button>
@@ -429,9 +476,9 @@ function SetupSteps({
               )}
             </div>
             <div className="flex justify-end gap-2 pt-2 border-t border-sakura-100">
-              <button onClick={handleSave} disabled={!apiKey.trim()}
+              <button onClick={handleSave} disabled={!(apiKey || "").trim()}
                 className="px-5 py-2 bg-sakura-500 text-white rounded-lg text-xs hover:bg-sakura-600 disabled:opacity-50 transition-colors">
-                {saved ? "已保存 ✓" : "保存并下一步"}
+                {saved ? "已保存 ✓" : (standalone ? "保存" : "保存并下一步")}
               </button>
             </div>
           </div>

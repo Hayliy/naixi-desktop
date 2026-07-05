@@ -6,6 +6,7 @@ import DetailPanel from "@/components/DetailPanel";
 import ProviderSettings from "@/components/ProviderSettings";
 import PromptPanel from "@/components/PromptPanel";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import { useAppConfig } from "@/contexts/AppContext";
 import {
   Search, Send, MessageCircle, User, Bot, Trash2, Plus, Copy, Check, X,
   ChevronLeft, RotateCcw, Layers, Sparkles, ImageIcon, Video, Music, Code, Globe, Settings, FileText, Edit3, Zap, Cpu,
@@ -16,7 +17,7 @@ interface ConvItem { key: string; last_role: string; last_msg: string; last_time
 interface MsgItem { id: number; role: string; content: string; content_blocks?: ContentBlock[] | null; time: number; }
 interface ProviderModel { key: string; label: string; provider_id: number; }
 
-const MODELS = [{ key: "auto", label: "自动路由（默认）" }];
+const MODELS: ProviderModel[] = [{ key: "auto", label: "自动路由（默认）", provider_id: 0 }];
 
 /* ─── 工具函数 ─── */
 function fmtTime(ts: number) {
@@ -55,6 +56,83 @@ const QUICK_ACTIONS = [
   { icon: Code, label: "代码", color: "text-green-500", bg: "bg-green-50", template: "写一段代码：" },
   { icon: Globe, label: "搜索", color: "text-amber-500", bg: "bg-amber-50", template: "搜索一下：" },
 ];
+
+/* ─── 能力输入弹窗（大输入框） ─── */
+function CapabilityInput({ action, config, onSend, onClose }: {
+  action: typeof QUICK_ACTIONS[number];
+  config: any;
+  onSend: (text: string) => void;
+  onClose: () => void;
+}) {
+  const [text, setText] = useState(action.template);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // 每种能力需要的供应商类型
+  const NEEDS_PROVIDER: Record<string, { type: string; label: string; example: string }> = {
+    "画一张": { type: "image", label: "画图模型", example: "阿里百炼 Wanx / OpenAI DALL-E" },
+    "生成一段视频：": { type: "video", label: "视频模型", example: "智谱 CogVideoX" },
+    "用语音说：": { type: "audio", label: "语音模型", example: "OpenAI TTS / 百炼 CosyVoice" },
+  };
+
+  const need = NEEDS_PROVIDER[action.template];
+  const hasProvider = need ? Object.values(config?.api_providers || {}).some((v: any) => v.type === need.type) : true;
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.setSelectionRange(action.template.length, action.template.length);
+  }, []);
+
+  const handleSend = () => {
+    const t = text.trim();
+    if (!t) return;
+    onSend(t);
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-[600px] max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-sakura-100">
+          <div className="flex items-center gap-2">
+            <action.icon size={16} className="text-sakura-500" />
+            <span className="text-sm font-semibold text-sakura-600">{action.label}</span>
+          </div>
+          <button onClick={onClose} className="p-1 hover:bg-sakura-50 rounded text-sakura-300">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+
+        {/* 供应商缺失提示 */}
+        {need && !hasProvider && (
+          <div className="mx-5 mt-4 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200">
+            <p className="text-[12px] font-medium text-amber-800">未配置 {need.label}</p>
+            <p className="text-[11px] text-amber-600 mt-1">
+              发送后将由聊天 LLM 处理，效果取决于模型能力。
+              如需专用 {need.label}，请添加类型为「{need.type}」的供应商（例如：{need.example}）。
+            </p>
+          </div>
+        )}
+
+        <div className="flex-1 p-5">
+          <textarea ref={inputRef}
+            className="w-full h-[250px] px-4 py-3 rounded-xl border border-sakura-100 text-sm text-sakura-600 resize-none outline-none focus:ring-1 focus:ring-sakura-300 leading-relaxed"
+            value={text} onChange={e => setText(e.target.value)}
+            onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); handleSend(); } }} />
+        </div>
+        <div className="px-5 py-3 border-t border-sakura-100 flex items-center justify-between">
+          <span className="text-[11px] text-sakura-400">Ctrl+Enter 发送</span>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="px-4 py-2 rounded-lg text-xs text-sakura-400 hover:bg-sakura-50 transition-colors">取消</button>
+            <button onClick={handleSend} disabled={!text.trim()}
+              className="px-5 py-2 rounded-lg text-xs bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-40 hover:shadow-md transition-shadow">
+              发送
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /* ═══════════════════════════════════════════
    对话列表（左侧面板）
@@ -223,10 +301,65 @@ function AgentStatus({ active }: { active: boolean }) {
 /* ═══════════════════════════════════════════
    输入栏（含快捷操作）
    ═══════════════════════════════════════════ */
-function ChatInput({ onSend }: { onSend: (text: string) => void }) {
+function ChatInput({ onSend, streaming, onStop, onCapabilityClick }: { onSend: (text: string) => void; streaming: boolean; onStop: () => void; onCapabilityClick?: (a: typeof QUICK_ACTIONS[number]) => void }) {
   const [text, setText] = useState("");
   const [dragOver, setDragOver] = useState(false);
+  const [listening, setListening] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const recognitionRef = useRef<any>(null);
+
+  // 语音输入
+  const [listeningText, setListeningText] = useState("");
+  const startListening = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("当前浏览器不支持语音输入，请使用 Chrome 或 Edge");
+      return;
+    }
+    try {
+      const rec = new SpeechRecognition();
+      rec.lang = "zh-CN";
+      rec.continuous = false;
+      rec.interimResults = true;
+      rec.onresult = (e: any) => {
+        let finalText = "";
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          if (e.results[i].isFinal) {
+            finalText += e.results[i][0].transcript;
+          }
+        }
+        if (finalText) {
+          setText(prev => (prev ? prev + finalText : finalText));
+          setListeningText("");
+        } else {
+          // 显示中间结果提示
+          setListeningText(e.results[e.results.length - 1][0].transcript);
+        }
+      };
+      rec.onerror = (ev: any) => {
+        console.error("语音识别错误:", ev.error);
+        setListening(false);
+        setListeningText("");
+        if (ev.error === "not-allowed") alert("请允许麦克风权限");
+      };
+      rec.onend = () => { setListening(false); setListeningText(""); };
+      rec.start();
+      recognitionRef.current = rec;
+      setListening(true);
+      setListeningText("请说话...");
+    } catch (err) {
+      console.error("语音识别启动失败:", err);
+      setListening(false);
+    }
+  };
+
+  const stopListening = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.abort();
+      recognitionRef.current = null;
+    }
+    setListening(false);
+  };
 
   const insertTemplate = (tpl: string) => {
     setText(prev => (prev ? prev + "\n" : "") + tpl);
@@ -244,9 +377,22 @@ function ChatInput({ onSend }: { onSend: (text: string) => void }) {
     setText("");
     if (inputRef.current) inputRef.current.style.height = "auto";
   };
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
-  };
+
+  const sendRef = useRef(handleSend);
+  sendRef.current = handleSend;
+  // 原生事件监听：用 ref 避免闭包过期问题
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        sendRef.current();
+      }
+    };
+    el.addEventListener("keydown", handler);
+    return () => el.removeEventListener("keydown", handler);
+  }, []); // 空依赖：只绑定一次，通过 ref 拿最新 handleSend
   return (
     <div className={`border-t border-sakura-100 bg-white ${dragOver ? "ring-2 ring-sakura-300" : ""}`}
       onDragOver={e => { e.preventDefault(); setDragOver(true); }}
@@ -262,13 +408,16 @@ function ChatInput({ onSend }: { onSend: (text: string) => void }) {
       {/* 快捷操作 */}
       <div className="flex items-center gap-1.5 px-4 pt-2 pb-1">
         {QUICK_ACTIONS.map((a, i) => (
-          <button key={i} onClick={() => insertTemplate(a.template)}
+          <button key={i} onClick={() => onCapabilityClick?.(a)}
             className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] ${a.color} ${a.bg} hover:opacity-80 transition-opacity`}>
             <a.icon size={11} />
             <span>{a.label}</span>
           </button>
         ))}
-        <span className="text-[9px] text-sakura-300 ml-auto">Shift+Enter 换行</span>
+        {listening && listeningText && (
+          <span className="text-[10px] text-red-400 animate-pulse ml-2">{listeningText}</span>
+        )}
+        <span className="text-[9px] text-sakura-300 ml-auto">Enter 换行 · Ctrl+Enter 发送</span>
       </div>
       {/* 输入框 */}
       <div className="flex items-end gap-2 px-4 pb-3">
@@ -278,6 +427,12 @@ function ChatInput({ onSend }: { onSend: (text: string) => void }) {
           placeholder="给奶昔发消息..."
           rows={1}
           value={text}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+              e.preventDefault();
+              handleSend();
+            }
+          }}
           onChange={(e) => {
             setText(e.target.value);
             if (inputRef.current) {
@@ -285,13 +440,82 @@ function ChatInput({ onSend }: { onSend: (text: string) => void }) {
               inputRef.current.style.height = Math.min(inputRef.current.scrollHeight, 120) + "px";
             }
           }}
-          onKeyDown={handleKeyDown}
         />
-        <button onClick={handleSend} disabled={!text.trim()}
-          className="w-9 h-9 rounded-xl bg-gradient-to-br from-sakura-400 to-sakura-200 flex items-center justify-center shrink-0 disabled:opacity-40 hover:shadow-md transition-shadow">
-          <Send size={14} className="text-white" />
+        {/* 语音输入按钮 */}
+        <button onClick={listening ? stopListening : startListening}
+          className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-all ${
+            listening
+              ? "bg-red-500 text-white shadow-lg shadow-red-200 animate-pulse"
+              : "bg-sakura-50 text-sakura-400 hover:text-sakura-500 hover:bg-sakura-100"
+          }`}
+          title={listening ? "停止录音" : "语音输入"}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="22"/>
+          </svg>
         </button>
+        {streaming ? (
+          <button onClick={onStop}
+            className="w-9 h-9 rounded-xl bg-red-500 flex items-center justify-center shrink-0 hover:bg-red-600 transition-colors shadow-sm"
+            title="停止生成">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="white"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+          </button>
+        ) : (
+          <button onClick={handleSend} disabled={!text.trim()}
+            className="w-9 h-9 rounded-xl bg-gradient-to-br from-sakura-400 to-sakura-200 flex items-center justify-center shrink-0 disabled:opacity-40 hover:shadow-md transition-shadow">
+            <Send size={14} className="text-white" />
+          </button>
+        )}
       </div>
+    </div>
+  );
+}
+
+/* ─── 模型下拉选择器 ─── */
+function ModelSelector({ availableModels, modelKey, onModelChange }: {
+  availableModels: ProviderModel[];
+  modelKey: string;
+  onModelChange: (key: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const current = availableModels.find(m => m.key === modelKey);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button onClick={() => setOpen(!open)}
+        className="flex items-center gap-1 px-2 py-1 rounded text-[10px] bg-sakura-50 text-sakura-500 hover:bg-sakura-100 transition-colors">
+        <Layers size={10} />
+        <span className="max-w-[8rem] truncate">{current?.label || modelKey}</span>
+        <svg className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 mt-1 w-56 bg-white border border-sakura-100 rounded-lg shadow-lg z-50 max-h-64 overflow-y-auto">
+          {availableModels.map(m => (
+            <button key={m.key}
+              onClick={() => { onModelChange(m.key); setOpen(false); }}
+              className={`w-full text-left px-3 py-2 text-[11px] flex items-center gap-2 transition-colors hover:bg-sakura-50 ${
+                m.key === modelKey ? "text-sakura-600 bg-sakura-50 font-medium" : "text-sakura-500"
+              }`}>
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${m.key === modelKey ? "bg-sakura-500" : "bg-sakura-200"}`} />
+              <span className="truncate">{m.label}</span>
+              {m.key === modelKey && (
+                <svg className="w-3 h-3 ml-auto shrink-0 text-sakura-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 6 9 17l-5-5"/></svg>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -306,7 +530,9 @@ export default function ChatPage() {
   const [search, setSearch] = useState("");
   const [convLoading, setConvLoading] = useState(true);
   const [msgLoading, setMsgLoading] = useState(false);
-  const [modelKey, setModelKey] = useState(MODELS[0].key);
+  const [modelKey, setModelKey] = useState(() => {
+    try { return localStorage.getItem("naixi_model_key") || MODELS[0].key; } catch { return MODELS[0].key; }
+  });
   const [agentActive, setAgentActive] = useState(false);
   const [showDetail, setShowDetail] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -322,7 +548,19 @@ export default function ChatPage() {
   const [renameText, setRenameText] = useState("");
   const [availableModels, setAvailableModels] = useState<ProviderModel[]>(MODELS);
   const [agentMode, setAgentMode] = useState(false);
+  const [capabilityAction, setCapabilityAction] = useState<typeof QUICK_ACTIONS[number] | null>(null);
   const msgEndRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const [streaming, setStreaming] = useState(false);
+
+  const stopStreaming = () => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    setAgentActive(false);
+    setStreaming(false);
+  };
 
   // 加载对话列表
   useEffect(() => {
@@ -332,16 +570,30 @@ export default function ChatPage() {
       .catch(() => setConvLoading(false));
   }, []);
 
-  // 加载可用模型列表
+  // 从全局配置加载可用模型
+  const { config, loaded } = useAppConfig();
   useEffect(() => {
-    apiGet<{ models: ProviderModel[] }>("/api/providers")
-      .then(d => {
-        if (d.models?.length) {
-          setAvailableModels([{ key: "auto", label: "自动路由（默认）" }, ...d.models]);
-        }
-      })
-      .catch(() => {});
-  }, []);
+    if (!loaded) return;
+    const models: ProviderModel[] = [];
+    let idx = 0;
+    for (const [pid, pcfg] of Object.entries(config.api_providers)) {
+      idx++;
+      if (pcfg.model) {
+        models.push({ key: pcfg.model, label: `${pcfg.model}`, provider_id: idx });
+      }
+    }
+    if (models.length > 0) {
+      setAvailableModels([{ key: "auto", label: "自动路由（默认）", provider_id: 0 }, ...models]);
+      // 如果当前模型不在列表中，用第一个实际模型
+      const savedKey = localStorage.getItem("naixi_model_key");
+      if (savedKey && models.find(m => m.key === savedKey)) {
+        // 已经正确保存了
+      } else if (models[0]) {
+        setModelKey(models[0].key);
+        try { localStorage.setItem("naixi_model_key", models[0].key); } catch {}
+      }
+    }
+  }, [config, loaded]);
 
   // 加载自定义场景（prompts 中非预设场景）
   useEffect(() => {
@@ -434,6 +686,13 @@ export default function ChatPage() {
       }
     } catch (e) {
       const err = String(e);
+      // 桌面端无专用 API 时回退到普通聊天
+      if (err.includes("404")) {
+        setAgentActive(false);
+        setMsgs(prev => prev.filter(m => m.id !== aiId));
+        await handleNormalChat(text);
+        return;
+      }
       setMsgs(prev => prev.map(m => {
         if (m.id !== aiId) return m;
         return { ...m, content: `生成失败: ${err}`, content_blocks: [{ type: "status", state: "error", text: err }] };
@@ -463,7 +722,9 @@ export default function ChatPage() {
         setMsgs(prev => prev.map(m => m.id !== aiId ? m : { ...m, content: `生成失败: ${res.error || "未知错误"}`, content_blocks: [{ type: "status", state: "error", text: res.error || "生成失败" }] }));
       }
     } catch (e) {
-      setMsgs(prev => prev.map(m => m.id !== aiId ? m : { ...m, content: `生成失败: ${String(e)}`, content_blocks: [{ type: "status", state: "error", text: String(e) }] }));
+      const err = String(e);
+      if (err.includes("404")) { setAgentActive(false); setMsgs(prev => prev.filter(m => m.id !== aiId)); await handleNormalChat(text); return; }
+      setMsgs(prev => prev.map(m => m.id !== aiId ? m : { ...m, content: `生成失败: ${err}`, content_blocks: [{ type: "status", state: "error", text: err }] }));
     }
     setAgentActive(false);
   };
@@ -491,7 +752,9 @@ export default function ChatPage() {
         setMsgs(prev => prev.map(m => m.id !== aiId ? m : { ...m, content: `合成失败: ${res.error || "未知错误"}`, content_blocks: [{ type: "status", state: "error", text: res.error || "合成失败" }] }));
       }
     } catch (e) {
-      setMsgs(prev => prev.map(m => m.id !== aiId ? m : { ...m, content: `合成失败: ${String(e)}`, content_blocks: [{ type: "status", state: "error", text: String(e) }] }));
+      const err = String(e);
+      if (err.includes("404")) { setAgentActive(false); setMsgs(prev => prev.filter(m => m.id !== aiId)); await handleNormalChat(text); return; }
+      setMsgs(prev => prev.map(m => m.id !== aiId ? m : { ...m, content: `合成失败: ${err}`, content_blocks: [{ type: "status", state: "error", text: err }] }));
     }
     setAgentActive(false);
   };
@@ -516,7 +779,9 @@ export default function ChatPage() {
         setMsgs(prev => prev.map(m => m.id !== aiId ? m : { ...m, content: `生成失败: ${res.error || "未知错误"}`, content_blocks: [{ type: "status", state: "error", text: res.error || "生成失败" }] }));
       }
     } catch (e) {
-      setMsgs(prev => prev.map(m => m.id !== aiId ? m : { ...m, content: `生成失败: ${String(e)}`, content_blocks: [{ type: "status", state: "error", text: String(e) }] }));
+      const err = String(e);
+      if (err.includes("404")) { setAgentActive(false); setMsgs(prev => prev.filter(m => m.id !== aiId)); await handleNormalChat(text); return; }
+      setMsgs(prev => prev.map(m => m.id !== aiId ? m : { ...m, content: `生成失败: ${err}`, content_blocks: [{ type: "status", state: "error", text: err }] }));
     }
     setAgentActive(false);
   };
@@ -544,7 +809,9 @@ export default function ChatPage() {
         setMsgs(prev => prev.map(m => m.id !== aiId ? m : { ...m, content: `搜索失败: ${res.error || "未知错误"}`, content_blocks: [{ type: "status", state: "error", text: res.error || "搜索失败" }] }));
       }
     } catch (e) {
-      setMsgs(prev => prev.map(m => m.id !== aiId ? m : { ...m, content: `搜索失败: ${String(e)}`, content_blocks: [{ type: "status", state: "error", text: String(e) }] }));
+      const err = String(e);
+      if (err.includes("404")) { setAgentActive(false); setMsgs(prev => prev.filter(m => m.id !== aiId)); await handleNormalChat(text); return; }
+      setMsgs(prev => prev.map(m => m.id !== aiId ? m : { ...m, content: `搜索失败: ${err}`, content_blocks: [{ type: "status", state: "error", text: err }] }));
     }
     setAgentActive(false);
   };
@@ -558,6 +825,7 @@ export default function ChatPage() {
     };
     setMsgs(prev => [...prev, userMsg]);
     setAgentActive(true);
+    setStreaming(true);
     setIsNewChat(false);
 
     const aiId = Date.now() + 1;
@@ -571,6 +839,9 @@ export default function ChatPage() {
     setMsgs(prev => [...prev, aiMsg]);
 
     const selectedModel = availableModels.find(m => m.key === modelKey);
+
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     await sendChatStream(agentMode ? "/api/agent/stream" : "/api/chat/stream", {
       text,
@@ -588,16 +859,28 @@ export default function ChatPage() {
       },
       onDone: (usage) => {
         setAgentActive(false);
+        setStreaming(false);
+        abortRef.current = null;
         if (usage) setRealTokens({ input: usage.input || 0, output: usage.output || 0 });
         apiGet<{ conversations: ConvItem[] }>("/api/conversations")
           .then(d => setConvs(d.conversations)).catch(() => {});
       },
       onError: (err) => {
+        // 如果是主动取消，不显示错误
+        if (err.includes("abort") || err.includes("AbortError")) {
+          setAgentActive(false);
+          setStreaming(false);
+          abortRef.current = null;
+          setMsgs(prev => prev.filter(m => m.id !== aiId));
+          return;
+        }
         setMsgs(prev => prev.map(m => {
           if (m.id !== aiId) return m;
           return { ...m, content: `出错了: ${err}`, content_blocks: [{ type: "status", state: "error", text: err }] };
         }));
         setAgentActive(false);
+        setStreaming(false);
+        abortRef.current = null;
       },
     });
   };
@@ -609,7 +892,8 @@ export default function ChatPage() {
     } else if (t.startsWith("用语音说：")) {
       await handleGenerateVoice(t);
     } else if (t.startsWith("写一段代码：")) {
-      await handleGenerateCode(t);
+      // 代码直接走聊天 LLM，不需要专用 API
+      await handleNormalChat(t);
     } else if (t.startsWith("搜索一下：")) {
       await handleSearch(t);
     } else if (isImageRequest(t)) {
@@ -695,21 +979,11 @@ export default function ChatPage() {
 
               {/* 第二行：模型切换 + 场景切换 */}
               <div className="flex items-center gap-2 flex-wrap">
-                {/* 模型切换 */}
-                <div className="relative group">
-                  <button className="flex items-center gap-1 px-2 py-1 rounded text-[10px] bg-sakura-50 text-sakura-500 hover:bg-sakura-100 transition-colors">
-                    <Layers size={10} />
-                    <span className="max-w-[8rem] truncate">{availableModels.find(m => m.key === modelKey)?.label || modelKey}</span>
-                  </button>
-                  <div className="absolute left-0 top-full mt-1 w-52 bg-white border border-sakura-100 rounded-lg shadow-lg hidden group-hover:block z-10 max-h-60 overflow-y-auto">
-                    {availableModels.map(m => (
-                      <button key={m.key} onClick={() => setModelKey(m.key)}
-                        className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-sakura-50 ${modelKey === m.key ? "text-sakura-600 font-medium bg-sakura-50" : "text-sakura-400"}`}>
-                        {m.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                {/* 模型切换（直接下拉选择） */}
+                <ModelSelector availableModels={availableModels} modelKey={modelKey} onModelChange={(key) => {
+                  setModelKey(key);
+                  try { localStorage.setItem("naixi_model_key", key); } catch {}
+                }} />
                 {/* 场景切换 */}
                 <div className="flex items-center gap-0.5 flex-wrap">
                   {[
@@ -779,7 +1053,8 @@ export default function ChatPage() {
             </div>
 
             {/* 输入栏 */}
-            <ChatInput onSend={handleSend} />
+            <ChatInput onSend={handleSend} streaming={streaming} onStop={stopStreaming}
+              onCapabilityClick={(a) => setCapabilityAction(a)} />
           </>
         )}
       </div>
@@ -810,6 +1085,13 @@ export default function ChatPage() {
             </ErrorBoundary>
           </div>
         </div>
+      )}
+
+      {/* 能力输入弹窗 */}
+      {capabilityAction && (
+        <CapabilityInput action={capabilityAction} config={config}
+          onSend={(text) => { setCapabilityAction(null); handleSend(text); }}
+          onClose={() => setCapabilityAction(null)} />
       )}
 
       {/* 供应商设置面板 */}

@@ -176,8 +176,17 @@ export default function PromptPanel({
                 return (
                   <button
                     key={scene}
-                    onClick={() => onSceneChange(scene)}
-                    className={`flex flex-col items-center gap-1 px-2 py-2 rounded-lg text-[10px] transition-colors border ${
+                    onClick={() => {
+                      if (active) {
+                        // 点击已激活的场景 → 编辑
+                        handleEdit(p || { file: scene + ".txt", scene, desc: label, content: "", lines: 0, char_count: 0 });
+                      } else {
+                        // 切换场景时关闭编辑器，避免编辑内容不匹配
+                        if (editingFile) cancelEdit();
+                        onSceneChange(scene);
+                      }
+                    }}
+                    className={`flex flex-col items-center gap-1 px-2 py-2 rounded-lg text-[10px] transition-colors border relative ${
                       active
                         ? "bg-gradient-to-br from-sakura-100 to-sakura-100 border-sakura-200 text-sakura-600 font-medium"
                         : "bg-white border-sakura-100 text-sakura-400 hover:border-sakura-200"
@@ -186,6 +195,11 @@ export default function PromptPanel({
                     <Icon size={12} className={active ? "text-sakura-500" : "text-sakura-300"} />
                     <span className="truncate w-full text-center">{label}</span>
                     {p && <span className="text-[9px] text-sakura-300">{p.lines}行</span>}
+                    {active && (
+                      <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-sakura-200 flex items-center justify-center" title="点击编辑">
+                        <svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-sakura-500"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+                      </span>
+                    )}
                   </button>
                 );
               })}

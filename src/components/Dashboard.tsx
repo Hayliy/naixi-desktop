@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { apiGet, apiPost } from "@/lib/api";
 import { AppShell, Sidebar, Header, Main } from "@/components/shell";
+import { AppProvider } from "@/contexts/AppContext";
 import { Card } from "@/components/ui";
 import ChatPage from "@/components/Chat";
 import WorkflowEditor from "@/components/WorkflowEditor";
@@ -158,6 +159,7 @@ export default function Dashboard() {
   }, 0);
 
   return (
+    <AppProvider>
     <AppShell sidebar={<Sidebar items={NAV_ITEMS} activeNav={activeNav} onNavChange={setActiveNav} version={`v${st.version}`} />}>
       <Header>
         <div className="flex items-center gap-2">
@@ -410,6 +412,7 @@ export default function Dashboard() {
         </>
       </Main>
     </AppShell>
+    </AppProvider>
   );
 }
 

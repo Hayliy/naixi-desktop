@@ -151,13 +151,15 @@ export interface StreamCallbacks {
 export async function sendChatStream(
   url: string,
   body: Record<string, unknown>,
-  callbacks: StreamCallbacks
+  callbacks: StreamCallbacks,
+  signal?: AbortSignal
 ): Promise<void> {
   try {
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal,
     });
 
     if (!res.ok) {

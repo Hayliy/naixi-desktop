@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
+import { Plus, Trash2, Check, X, Loader2, Settings, ChevronDown, ChevronUp, Pencil, Save } from "lucide-react";
+import { useAppConfig } from "@/contexts/AppContext";
 import { apiGet, apiPost } from "@/lib/api";
-import { Plus, Trash2, Check, X, Loader2, Settings, ChevronDown, ChevronUp } from "lucide-react";
 
 const PROVIDER_TYPES = [
   // ─── 国际 ───
@@ -35,36 +36,123 @@ const PROVIDER_TYPES = [
   { value: "custom", label: "自定义 (兼容 OpenAI 格式)", host: "" },
 ];
 
+const CAPABILITY_TYPES = [
+  { value: "chat", label: "对话", desc: "大语言模型，文本对话、代码生成" },
+  { value: "vision", label: "视觉", desc: "图片理解、OCR、视频理解" },
+  { value: "image", label: "画图", desc: "图片生成" },
+  { value: "video", label: "视频", desc: "视频生成" },
+  { value: "audio", label: "语音", desc: "语音合成、语音识别" },
+  { value: "embedding", label: "向量", desc: "文本向量化、RAG 知识库" },
+];
+
 interface Provider { id: number; name: string; type: string; api_url: string; has_key: boolean; models: string[]; }
+interface EditableProvider {
+  id: number;
+  key: string;
+  type: string;
+  api_url: string;
+  api_key: string;
+  model: string;
+}
 
 export default function ProviderSettings() {
+  const { config, loaded, refreshConfig } = useAppConfig();
   const [providers, setProviders] = useState<Provider[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [fatalError, setFatalError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
 
-  // Form fields
+  // ── 从 config 构建 provider 列表 ──
+  useEffect(() => {
+    if (!loaded) return;
+    const list: Provider[] = [];
+    let idx = 0;
+    for (const [pid, pcfg] of Object.entries(config.api_providers)) {
+      idx++;
+      list.push({
+        id: idx,
+        name: pid,
+        type: pid,
+        api_url: pcfg.api_url,
+        has_key: !!pcfg.api_key,
+        models: pcfg.model ? [pcfg.model] : [],
+      });
+    }
+    setProviders(list);
+    setLoading(false);
+  }, [config, loaded]);
+
+  // ── 读取完整 config 中某个 provider 的可编辑字段 ──
+  const getEditingProvider = (id: number): EditableProvider | null => {
+    const p = providers.find(x => x.id === id);
+    if (!p) return null;
+    const raw = config.api_providers[p.name] || {};
+    return {
+      id: p.id,
+      key: p.name,
+      type: raw.type || "chat",
+      api_url: raw.api_url || "",
+      api_key: raw.api_key || "",
+      model: raw.model || "",
+    };
+  };
+
+  // ── 保存单个 provider 的修改 ──
+  const saveProviderEdit = async (ep: EditableProvider) => {
+    const updated = { ...config };
+    if (!updated.api_providers) updated.api_providers = {};
+    if (ep.model) {
+      updated.api_providers[ep.key] = { type: ep.type, api_url: ep.api_url, api_key: ep.api_key, model: ep.model };
+    } else {
+      delete updated.api_providers[ep.key];
+    }
+    await apiPost("/api/desktop/config", updated);
+    await refreshConfig();
+    setEditingId(null);
+  };
+
+  // ── 删除 provider ──
+  const handleDelete = async (name: string) => {
+    const updated = { ...config };
+    if (updated.api_providers) {
+      delete updated.api_providers[name];
+    }
+    await apiPost("/api/desktop/config", updated);
+    await refreshConfig();
+  };
+
+  // ── 新增 provider ──
+  const handleAddSave = async () => {
+    if (!formName || !formHost) return;
+    const updated = { ...config };
+    if (!updated.api_providers) updated.api_providers = {};
+    const modelName = formModels.trim() || formName;
+    updated.api_providers[formName] = { type: formCapability, api_url: formHost, api_key: formKey, model: modelName };
+    await apiPost("/api/desktop/config", updated);
+    await refreshConfig();
+    setShowForm(false);
+    resetForm();
+  };
+
+  // ── 表单状态 ──
   const [formType, setFormType] = useState("openai");
   const [formName, setFormName] = useState("");
   const [formHost, setFormHost] = useState("https://api.openai.com/v1");
   const [formKey, setFormKey] = useState("");
   const [formModels, setFormModels] = useState("");
+  const [formCapability, setFormCapability] = useState("chat");
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
-  const load = () => {
-    apiGet<{ providers: Provider[] }>("/api/providers")
-      .then(d => { setProviders(Array.isArray(d?.providers) ? d.providers : []); setLoading(false); })
-      .catch((err) => {
-        console.error("[ProviderSettings] 加载供应商失败:", err);
-        setProviders([]); setLoading(false);
-      });
+  const resetForm = () => {
+    setFormType("openai"); setFormName(""); setFormHost("https://api.openai.com/v1");
+    setFormKey(""); setFormModels(""); setFormCapability("chat"); setTestResult(null);
   };
-  useEffect(() => { try { load(); } catch (e) { console.error("[ProviderSettings] 初始化异常:", e); setFatalError(String(e)); setLoading(false); } }, []);
 
   const openForm = () => {
-    setFormType("openai"); setFormName(""); setFormHost("https://api.openai.com/v1");
-    setFormKey(""); setFormModels(""); setTestResult(null); setShowForm(true);
+    resetForm();
+    setShowForm(true);
   };
 
   const selectType = (val: string) => {
@@ -78,7 +166,7 @@ export default function ProviderSettings() {
     if (!formHost) return;
     setTesting(true); setTestResult(null);
     try {
-      const res = await apiPost<{ ok: boolean; models?: string[]; error?: string }>("/api/providers/test", {
+      const res = await apiPost<{ ok: boolean; models?: string[]; error?: string }>("/api/desktop/test-connection", {
         api_url: formHost, api_key: formKey,
       });
       setTestResult({ ok: res.ok, msg: res.ok ? `连接成功` : `失败: ${res.error}` });
@@ -86,25 +174,11 @@ export default function ProviderSettings() {
     setTesting(false);
   };
 
-  const handleSave = async () => {
-    const modelsArr = formModels.split("\n").map(s => s.trim()).filter(Boolean);
-    if (!formName || !formHost) return;
-    await apiPost("/api/providers", {
-      type: formType, name: formName, api_url: formHost,
-      api_key: formKey, models: modelsArr.length > 0 ? modelsArr : [formName + " Default"],
-    });
-    setShowForm(false); load();
-  };
-
-  const handleDelete = async (id: number) => {
-    await apiPost("/api/providers/delete", { id }); load();
-  };
-
   if (fatalError) return (
     <div className="py-6 text-center">
       <p className="text-xs text-red-500 font-medium mb-1">组件初始化异常</p>
       <p className="text-[10px] text-gray-400 mb-3 font-mono break-all">{fatalError}</p>
-      <button onClick={() => { setFatalError(null); setLoading(true); load(); }}
+      <button onClick={() => { setFatalError(null); setLoading(true); }}
         className="px-3 py-1.5 rounded text-xs bg-sakura-100 text-sakura-600 hover:bg-sakura-200">重试</button>
     </div>
   );
@@ -124,37 +198,98 @@ export default function ProviderSettings() {
         </button>
       </div>
 
-      {/* Provider List */}
+      {/* Provider 列表 */}
       <div className="space-y-1">
         {providers.length === 0 ? (
           <div className="text-center py-10 text-sakura-300 text-xs">还没有供应商，点击上方添加</div>
         ) : providers.map(p => (
-          <div key={p.id} className="flex items-center justify-between px-3 py-2.5 bg-white border border-sakura-100 rounded-lg text-xs">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <span className="w-6 h-6 rounded flex items-center justify-center text-[9px] font-bold bg-sakura-100 text-sakura-500 shrink-0">
-                {(p.name || "??").slice(0, 2).toUpperCase()}
-              </span>
-              <div className="min-w-0">
-                <p className="text-sakura-600 font-medium truncate">{p.name}</p>
-                <p className="text-[10px] text-sakura-400">{p.models.length} 模型 · {p.has_key ? "有 Key" : "无 Key"}</p>
+          editingId === p.id ? (
+            /* ═══ 编辑模式 ═══ */
+            <EditProviderCard
+              key={p.id}
+              provider={getEditingProvider(p.id)!}
+              onSave={saveProviderEdit}
+              onCancel={() => setEditingId(null)}
+            />
+          ) : (
+            /* ═══ 展示模式 ═══ */
+            <div key={p.id} className="bg-white border border-sakura-100 rounded-lg text-xs">
+              <div className="flex items-center justify-between px-3 py-2.5">
+                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                  <span className="w-6 h-6 rounded flex items-center justify-center text-[9px] font-bold bg-sakura-100 text-sakura-500 shrink-0">
+                    {(p.name || "??").slice(0, 2).toUpperCase()}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sakura-600 font-medium truncate">{p.name}</p>
+                    {/* 能力类型标签 */}
+                    <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                      <span className="inline-block px-1.5 py-0.5 rounded text-[9px] bg-sakura-200 text-sakura-600 font-medium">
+                        {p.type || "chat"}
+                      </span>
+                      {p.models.length > 0 ? p.models.map((m, i) => (
+                        <span key={i} className="inline-block px-1.5 py-0.5 rounded text-[10px] bg-sakura-50 text-sakura-500 font-mono">
+                          {m}
+                        </span>
+                      )) : (
+                        <span className="text-[10px] text-sakura-300">无模型</span>
+                      )}
+                      <span className={`text-[10px] ${p.has_key ? "text-green-500" : "text-sakura-300"}`}>
+                        · {p.has_key ? "有 Key" : "无 Key"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0 ml-2">
+                  <button onClick={() => setEditingId(p.id)}
+                    className="p-1 rounded hover:bg-sakura-100 text-sakura-300 hover:text-sakura-500 transition-colors"
+                    title="编辑">
+                    <Pencil size={11} />
+                  </button>
+                  <button onClick={() => handleDelete(p.name)}
+                    className="p-1 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500 transition-colors"
+                    title="删除">
+                    <Trash2 size={11} />
+                  </button>
+                </div>
               </div>
             </div>
-            <button onClick={() => handleDelete(p.id)} className="p-1 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500 shrink-0">
-              <Trash2 size={11} />
-            </button>
-          </div>
+          )
         ))}
       </div>
 
-      {/* Add Form */}
+      {/* 新增表单 */}
       {showForm && (
         <div className="mt-3 bg-white border border-sakura-100 rounded-xl p-4 space-y-3 text-xs">
           <p className="text-xs font-semibold text-sakura-500">添加供应商</p>
 
+          {/* 能力类型 */}
           <select value={formType} onChange={e => selectType(e.target.value)}
             className="w-full px-3 py-2 rounded-lg border border-sakura-100 bg-sakura-50 text-sakura-600 text-xs">
             {PROVIDER_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
           </select>
+
+          {/* 服务类型 */}
+          <div>
+            <p className="text-[10px] text-sakura-400 mb-1">服务类型</p>
+            <div className="flex flex-wrap gap-1.5">
+              {CAPABILITY_TYPES.map(ct => (
+                <button key={ct.value} type="button"
+                  onClick={() => {
+                    setFormCapability(ct.value);
+                    setTestResult(null);
+                  }}
+                  className={`px-2 py-1 rounded text-[10px] border transition-colors ${
+                    formCapability === ct.value
+                      ? "bg-sakura-100 border-sakura-300 text-sakura-600 font-medium"
+                      : "bg-white border-sakura-100 text-sakura-400 hover:border-sakura-200"
+                  }`}
+                  title={ct.desc}
+                >
+                  {ct.label}
+                </button>
+              ))}
+            </div>
+          </div>
 
           <input className="w-full px-3 py-2 rounded-lg border border-sakura-100 bg-white text-sakura-600 placeholder:text-sakura-300"
             placeholder="显示名称" value={formName} onChange={e => setFormName(e.target.value)} />
@@ -166,9 +301,9 @@ export default function ProviderSettings() {
             placeholder="API Key（Ollama 不需要）" value={formKey} onChange={e => setFormKey(e.target.value)} />
 
           <div>
-            <p className="text-[10px] text-sakura-400 mb-1">模型名（每行一个）</p>
-            <textarea className="w-full px-3 py-2 rounded-lg border border-sakura-100 bg-white text-sakura-600 placeholder:text-sakura-300 font-mono text-[10px] min-h-[60px] resize-none"
-              placeholder="gpt-4&#10;gpt-3.5-turbo&#10;gpt-4-vision-preview" value={formModels} onChange={e => setFormModels(e.target.value)} rows={3} />
+            <p className="text-[10px] text-sakura-400 mb-1">模型名（留空自动使用名称）</p>
+            <input className="w-full px-3 py-2 rounded-lg border border-sakura-100 bg-white text-sakura-600 placeholder:text-sakura-300 font-mono text-[10px]"
+              placeholder="gpt-4 / qwen-plus / glm-4-flash" value={formModels} onChange={e => setFormModels(e.target.value)} />
           </div>
 
           <div className="flex items-center gap-2">
@@ -185,14 +320,98 @@ export default function ProviderSettings() {
           </div>
 
           <div className="flex justify-end gap-2 pt-1 border-t border-sakura-100">
-            <button onClick={() => setShowForm(false)} className="px-3 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:bg-sakura-50 transition-colors">取消</button>
-            <button onClick={handleSave} disabled={!formName || !formHost}
+            <button onClick={() => { setShowForm(false); resetForm(); }}
+              className="px-3 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:bg-sakura-50 transition-colors">取消</button>
+            <button onClick={handleAddSave} disabled={!formName || !formHost}
               className="px-4 py-1.5 rounded-lg text-[11px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-40 transition-shadow">
               保存
             </button>
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ═══ 内联编辑卡片 ═══ */
+function EditProviderCard({ provider, onSave, onCancel }: {
+  provider: EditableProvider;
+  onSave: (ep: EditableProvider) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [key, setKey] = useState(provider.key);
+  const [type, setType] = useState(provider.type || "chat");
+  const [apiUrl, setApiUrl] = useState(provider.api_url);
+  const [apiKey, setApiKey] = useState(provider.api_key);
+  const [model, setModel] = useState(provider.model);
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave({ id: provider.id, key, type, api_url: apiUrl, api_key: apiKey, model });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="bg-white border border-sakura-200 rounded-lg p-3 space-y-2.5 text-xs">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-semibold text-sakura-500">编辑供应商</p>
+        <span className="text-[10px] text-sakura-300">ID: {provider.id}</span>
+      </div>
+
+      <div className="space-y-2">
+        <div>
+          <p className="text-[10px] text-sakura-400 mb-0.5">名称</p>
+          <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px]"
+            value={key} onChange={e => setKey(e.target.value)} />
+        </div>
+        <div>
+          <p className="text-[10px] text-sakura-400 mb-0.5">服务类型</p>
+          <div className="flex flex-wrap gap-1">
+            {CAPABILITY_TYPES.map(ct => (
+              <button key={ct.value} type="button"
+                onClick={() => setType(ct.value)}
+                className={`px-2 py-1 rounded text-[10px] border transition-colors ${
+                  type === ct.value
+                    ? "bg-sakura-100 border-sakura-300 text-sakura-600 font-medium"
+                    : "bg-white border-sakura-100 text-sakura-400 hover:border-sakura-200"
+                }`}
+              >
+                {ct.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <p className="text-[10px] text-sakura-400 mb-0.5">API 地址</p>
+          <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-white text-sakura-600 text-[11px] font-mono"
+            value={apiUrl} onChange={e => setApiUrl(e.target.value)} />
+        </div>
+        <div>
+          <p className="text-[10px] text-sakura-400 mb-0.5">API Key</p>
+          <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-white text-sakura-600 text-[11px] font-mono"
+            value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="留空不改变" />
+        </div>
+        <div>
+          <p className="text-[10px] text-sakura-400 mb-0.5">模型名</p>
+          <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-white text-sakura-600 text-[11px] font-mono"
+            value={model} onChange={e => setModel(e.target.value)}
+            placeholder="gpt-4 / qwen-plus / glm-4-flash" />
+        </div>
+      </div>
+
+      <div className="flex justify-end gap-2 pt-1 border-t border-sakura-100">
+        <button onClick={onCancel}
+          className="px-3 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:bg-sakura-50 transition-colors">取消</button>
+        <button onClick={handleSave} disabled={saving || !key || !apiUrl}
+          className="flex items-center gap-1 px-4 py-1.5 rounded-lg text-[11px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-40 transition-shadow">
+          {saving ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
+          保存
+        </button>
+      </div>
     </div>
   );
 }
