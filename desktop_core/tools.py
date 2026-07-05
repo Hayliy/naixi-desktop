@@ -284,15 +284,21 @@ async def _code_interpreter(args, ctx):
 
 async def _read_file(args, ctx):
     path = args.get("path", "")
-    full = os.path.normpath(os.path.join(WORKSPACE_DIR, path))
-    if not full.startswith(WORKSPACE_DIR):
-        return "不允许访问工作区外的文件"
+    if not path:
+        return "缺少文件路径"
+    # 绝对路径直接读，相对路径用工作区
+    if os.path.isabs(path):
+        full = os.path.normpath(path)
+    else:
+        full = os.path.normpath(os.path.join(WORKSPACE_DIR, path))
     if not os.path.exists(full):
         return f"文件不存在: {path}"
+    if not os.path.isfile(full):
+        return f"不是文件: {path}"
     try:
         with open(full, "r", encoding="utf-8") as f:
             content = f.read()
-        return content[:3000]
+        return content[:5000]
     except Exception as e:
         return f"读取失败: {str(e)[:100]}"
 
@@ -312,16 +318,15 @@ async def _write_file(args, ctx):
 
 async def _list_files(args, ctx):
     path = args.get("path", "")
-    full = os.path.normpath(os.path.join(WORKSPACE_DIR, path))
-    if not full.startswith(WORKSPACE_DIR):
-        return "不允许访问工作区外的文件"
-    if not os.path.isdir(full):
+    # 绝对路径直接列，相对路径用工作区
+    target = os.path.normpath(path) if os.path.isabs(path) else os.path.normpath(os.path.join(WORKSPACE_DIR, path))
+    if not os.path.isdir(target):
         return f"目录不存在: {path or '/'}"
     try:
-        items = os.listdir(full)
+        items = os.listdir(target)
         lines = []
         for item in sorted(items):
-            item_path = os.path.join(full, item)
+            item_path = os.path.join(target, item)
             if os.path.isdir(item_path):
                 lines.append(f"📁 {item}/")
             else:
@@ -402,11 +407,13 @@ async def _grep_search(args, ctx):
     path = args.get("path", "")
     if not pattern:
         return "缺少搜索模式"
-    search_dir = WORKSPACE_DIR
-    if path:
+    # 绝对路径直接搜，相对路径用工作区
+    if path and os.path.isabs(path):
+        search_dir = os.path.normpath(path)
+    elif path:
         search_dir = os.path.normpath(os.path.join(WORKSPACE_DIR, path))
-        if not search_dir.startswith(WORKSPACE_DIR):
-            return "不允许搜索工作区外的文件"
+    else:
+        search_dir = WORKSPACE_DIR
     if not os.path.isdir(search_dir):
         return f"目录不存在: {path or '/'}"
     try:
@@ -420,7 +427,7 @@ async def _grep_search(args, ctx):
                     with open(fpath, "r", encoding="utf-8", errors="replace") as f:
                         for i, line in enumerate(f, 1):
                             if pattern.lower() in line.lower():
-                                rel = os.path.relpath(fpath, WORKSPACE_DIR)
+                                rel = os.path.relpath(fpath, search_dir)
                                 matches.append(f"{rel}:{i}: {line.strip()[:120]}")
                                 if len(matches) >= 30:
                                     break
@@ -627,7 +634,7 @@ register("code_interpreter", "运行 Python 代码并返回执行结果。适合
     {"type": "object", "properties": {"code": {"type": "string", "description": "要执行的 Python 代码"}}, "required": ["code"]},
     _code_interpreter)
 
-register("read_file", "读取工作区中的文件内容，支持 txt/json/csv/python 等文本格式",
+register("read_file", "读取文件内容，支持 txt/json/csv/python 等文本格式。支持绝对路径（如 C:\\xxx）或工作区相对路径",
     {"type": "object", "properties": {"path": {"type": "string", "description": "文件路径（相对于工作区目录）"}}, "required": ["path"]},
     _read_file)
 
@@ -635,7 +642,7 @@ register("write_file", "将内容写入工作区中的文件。注意：会覆�
     {"type": "object", "properties": {"path": {"type": "string", "description": "文件路径（相对于工作区目录）"}, "content": {"type": "string", "description": "文件内容"}}, "required": ["path", "content"]},
     _write_file)
 
-register("list_files", "列出工作区中指定目录内的文件和文件夹",
+register("list_files", "列出目录中的文件和文件夹。支持绝对路径或工作区相对路径",
     {"type": "object", "properties": {"path": {"type": "string", "description": "目录路径，默认根目录"}}, "required": []},
     _list_files)
 
@@ -920,7 +927,7 @@ register("bash", "在电脑上执行命令。适合启动程序、运行脚本�
     {"type": "object", "properties": {"command": {"type": "string", "description": "要执行的命令"}, "cwd": {"type": "string", "description": "工作目录（可选）"}}, "required": ["command"]},
     _run_command)
 
-register("grep_search", "在项目文件内容中搜索关键词或模式，支持正则。适合查找代码中的函数定义、变量引用、错误信息等",
+register("grep_search", "在文件中搜索关键词或模式，支持正则。支持绝对路径或工作区相对路径。适合查找代码中的函数定义、变量引用、错误信息等",
     {"type": "object", "properties": {"pattern": {"type": "string", "description": "搜索关键词或模式"}, "path": {"type": "string", "description": "搜索的子目录（可选，默认全局搜索）"}}, "required": ["pattern"]},
     _grep_search)
 
