@@ -295,6 +295,107 @@ async def _get_weather(args, ctx):
     except Exception as e:
         return f"查询天气失败: {str(e)[:100]}"
 
+# ── 开发工具：运行命令 ──
+
+async def _run_command(args, ctx):
+    command = args.get("command", "")
+    cwd = args.get("cwd", WORKSPACE_DIR)
+    if not command:
+        return "缺少要执行的命令"
+    # 安全检查：禁止高危命令
+    dangerous = ["rm -rf", "format", "del /f", "rd /s", "shutdown", "reboot", "init 0"]
+    for d in dangerous:
+        if d in command.lower():
+            return f"禁止执行危险命令: {d}"
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            cwd=cwd,
+            shell=True,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+        except asyncio.TimeoutError:
+            proc.kill()
+            return f"命令执行超时（60秒）"
+        out = (stdout or b"").decode("utf-8", errors="replace")[:5000]
+        err = (stderr or b"").decode("utf-8", errors="replace")[:2000]
+        result = out
+        if err:
+            result += f"\n--- stderr ---\n{err}"
+        return result or "（命令执行完毕，无输出）"
+    except Exception as e:
+        return f"命令执行失败: {str(e)[:200]}"
+
+# ── 开发工具：内容搜索 ──
+
+async def _grep_search(args, ctx):
+    pattern = args.get("pattern", "")
+    path = args.get("path", "")
+    if not pattern:
+        return "缺少搜索模式"
+    search_dir = WORKSPACE_DIR
+    if path:
+        search_dir = os.path.normpath(os.path.join(WORKSPACE_DIR, path))
+        if not search_dir.startswith(WORKSPACE_DIR):
+            return "不允许搜索工作区外的文件"
+    if not os.path.isdir(search_dir):
+        return f"目录不存在: {path or '/'}"
+    try:
+        matches = []
+        for root, dirs, files in os.walk(search_dir):
+            # 跳过 node_modules/.git/__pycache__/target/.workbuddy 等
+            dirs[:] = [d for d in dirs if d not in ("node_modules", ".git", "__pycache__", "target", ".workbuddy", "dist", ".venv")]
+            for fname in files:
+                fpath = os.path.join(root, fname)
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                        for i, line in enumerate(f, 1):
+                            if pattern.lower() in line.lower():
+                                rel = os.path.relpath(fpath, WORKSPACE_DIR)
+                                matches.append(f"{rel}:{i}: {line.strip()[:120]}")
+                                if len(matches) >= 30:
+                                    break
+                    if len(matches) >= 30:
+                        break
+                except: pass
+            if len(matches) >= 30:
+                break
+        if matches:
+            return f"找到 {len(matches)} 处匹配:\n" + "\n".join(matches)
+        return "未找到匹配"
+    except Exception as e:
+        return f"搜索失败: {str(e)[:100]}"
+
+# ── 开发工具：精确编辑文件（search-and-replace） ──
+
+async def _edit_file(args, ctx):
+    path = args.get("path", "")
+    old_string = args.get("old_string", "")
+    new_string = args.get("new_string", "")
+    if not path or not old_string:
+        return "缺少文件路径或要替换的内容"
+    full = os.path.normpath(os.path.join(WORKSPACE_DIR, path))
+    if not full.startswith(WORKSPACE_DIR):
+        return "不允许编辑工作区外的文件"
+    if not os.path.exists(full):
+        return f"文件不存在: {path}"
+    try:
+        with open(full, "r", encoding="utf-8") as f:
+            content = f.read()
+        count = content.count(old_string)
+        if count == 0:
+            return f"未找到要替换的内容: {old_string[:60]}"
+        if count > 1:
+            return f"找到 {count} 处匹配，请提供更精确的上下文（当前只有 1 处匹配才执行替换）"
+        new_content = content.replace(old_string, new_string, 1)
+        with open(full, "w", encoding="utf-8") as f:
+            f.write(new_content)
+        return f"已修改 {path}: 替换 1 处"
+    except Exception as e:
+        return f"编辑失败: {str(e)[:100]}"
+
 async def _search_knowledge(args, ctx):
     query = args.get("query", "")
     if not query:
@@ -479,6 +580,18 @@ register("search_knowledge", "在本地知识库中搜索信息",
 register("analyze_image", "分析图片内容，识别图片中的物体、场景、文字等信息。需要先获取图片 URL",
     {"type": "object", "properties": {"url": {"type": "string", "description": "图片 URL"}, "question": {"type": "string", "description": "对图片的问题，如「图中有什么？」"}}, "required": ["url"]},
     _analyze_image)
+
+register("run_command", "在终端执行命令，适合运行构建、测试、安装依赖等。注意：禁止 rm -rf、shutdown 等危险命令",
+    {"type": "object", "properties": {"command": {"type": "string", "description": "要执行的命令"}, "cwd": {"type": "string", "description": "工作目录（可选，默认工作区根目录）"}}, "required": ["command"]},
+    _run_command)
+
+register("grep_search", "在项目文件内容中搜索关键词或模式，支持正则。适合查找代码中的函数定义、变量引用、错误信息等",
+    {"type": "object", "properties": {"pattern": {"type": "string", "description": "搜索关键词或模式"}, "path": {"type": "string", "description": "搜索的子目录（可选，默认全局搜索）"}}, "required": ["pattern"]},
+    _grep_search)
+
+register("edit_file", "精确编辑文件内容。用 old_string 定位要修改的位置，替换为 new_string。适合修改代码、配置文件等。注意：old_string 必须在文件中唯一",
+    {"type": "object", "properties": {"path": {"type": "string", "description": "文件路径（相对于工作区目录）"}, "old_string": {"type": "string", "description": "要替换的原文（必须在文件中唯一）"}, "new_string": {"type": "string", "description": "替换后的新内容"}}, "required": ["path", "old_string", "new_string"]},
+    _edit_file)
 
 register("translate_text", "将文本翻译成指定语言",
     {"type": "object", "properties": {"text": {"type": "string", "description": "要翻译的原文"}, "target": {"type": "string", "description": "目标语言，如「中文」「英文」「日语」"}}, "required": ["text"]},

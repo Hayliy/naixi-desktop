@@ -968,8 +968,19 @@ async def api_chat_stream(request):
         usage_info = None
 
         try:
-            # ── Agent 循环（最多 10 轮） ──
-            for round_num in range(10):
+            # ── Agent 循环（最多 25 轮，满足复杂开发任务） ──
+            for round_num in range(25):
+                # 为开发任务添加工具使用指引
+                if round_num == 0 and any(kw in text.lower() for kw in ["写代码", "开发", "创建项目", "改代码", "修复", "重构", "添加功能"]):
+                    dev_prompt = (
+                        "\n\n【开发任务指引】\n"
+                        "1. 先用 list_files 或 grep_search 了解项目结构\n"
+                        "2. 用 read_file 读取相关文件了解现有代码\n"
+                        "3. 用 edit_file 或 write_file 修改/创建文件\n"
+                        "4. 用 run_command 执行构建、测试验证\n"
+                        "5. 如果出错，分析错误信息后修复再试"
+                    )
+                    messages.insert(-1, {"role": "system", "content": dev_prompt})
                 # 上下文压缩（超限时自动触发）
                 if ctx_mgr.should_compress(messages):
                     compressed = ctx_mgr.compress(messages)
