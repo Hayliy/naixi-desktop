@@ -194,7 +194,8 @@ export default function ChatPage() {
   return (
     <div className="flex h-full bg-sakura-50 rounded-xl overflow-hidden border border-sakura-100">
       <ConvList convs={convs} activeKey={activeKey} onSelect={handleConvSelect} onNew={handleNew}
-        search={search} onSearchChange={setSearch} loading={convLoading} customNames={customNames} />
+        search={search} onSearchChange={setSearch} loading={convLoading} customNames={customNames}
+        onDeleteConv={handleDelete} />
 
       <div className="flex-1 flex flex-col bg-white min-w-0">
         {!activeKey && msgs.length === 0 && !isNewChat ? (
