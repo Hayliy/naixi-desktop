@@ -150,8 +150,6 @@ export default function ChatPage() {
       onDone: (usage) => {
         setAgentActive(false); setStreaming(false); abortRef.current = null;
         if (usage) setRealTokens({ input: usage.input || 0, output: usage.output || 0 });
-        // 清理无内容的消息
-        setMsgs(prev => prev.filter(m => m.content || (m.content_blocks || []).length > 0));
         apiGet<{ conversations: ConvItem[] }>("/api/conversations").then(d => setConvs(d.conversations)).catch(() => {});
       },
       onError: (err) => {

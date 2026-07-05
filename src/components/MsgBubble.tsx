@@ -17,8 +17,9 @@ export default function MsgBubble({ msg, onEdit, onRegenerate }: {
 
   const isUser = msg.role === "user";
   const hasContentBlocks = (msg.content_blocks || []).length > 0;
-  // 无内容且无内容块时，返回 null 不渲染
-  if (!msg.content && !hasContentBlocks && !isUser) return null;
+  const displayContent = msg.content || "";
+  // 没内容也没卡片 → 等待加载中，渲染最小骨架
+  const isEmpty = !displayContent && !hasContentBlocks;
 
   return (
     <div className={`flex items-start gap-2 px-3 py-3 group ${isUser ? "flex-row-reverse" : ""}`}>
@@ -29,10 +30,12 @@ export default function MsgBubble({ msg, onEdit, onRegenerate }: {
         <div className={`rounded-2xl px-4 py-2.5 text-xs leading-relaxed break-words ${
           isUser ? "bg-pink-500 text-white rounded-tr-md" : "bg-sakura-50 text-sakura-700 rounded-tl-md border border-sakura-100"
         }`}>
-          {msg.content_blocks && msg.content_blocks.length > 0 ? (
+          {isEmpty && !isUser ? (
+            <span className="text-sakura-300 italic">等待响应...</span>
+          ) : msg.content_blocks && msg.content_blocks.length > 0 ? (
             <ContentRenderer blocks={msg.content_blocks} />
           ) : (
-            <span className="whitespace-pre-wrap">{msg.content}</span>
+            <span className="whitespace-pre-wrap">{displayContent}</span>
           )}
         </div>
         <div className="flex items-center gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
