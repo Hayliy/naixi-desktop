@@ -6,23 +6,31 @@ const API_PROVIDERS = [
   {
     id: "bailian",
     name: "阿里百炼",
-    desc: "通义千问系列模型，注册即送 100 万 Token",
+    desc: "通义千问系列，注册送 100 万 Token",
     url: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
     keyUrl: "https://bailian.console.aliyun.com/#/api-key",
-    models: ["qwen-plus", "qwen-turbo", "qwen3-32b"],
+    models: ["qwen-plus", "qwen-turbo", "qwen3-32b", "qwen-vl-plus"],
   },
   {
     id: "zhipu",
     name: "智谱 AI",
-    desc: "GLM 系列模型，免费版有并发限制",
+    desc: "GLM 系列，免费版有并发限制",
     url: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
     keyUrl: "https://open.bigmodel.cn/usercenter/apikeys",
-    models: ["glm-4.7-flash", "glm-4-flash"],
+    models: ["glm-4.7-flash", "glm-4-flash", "glm-4v-flash", "glm-4-plus"],
+  },
+  {
+    id: "deepseek",
+    name: "DeepSeek",
+    desc: "DeepSeek 系列，性价比高",
+    url: "https://api.deepseek.com/v1/chat/completions",
+    keyUrl: "https://platform.deepseek.com/api_keys",
+    models: ["deepseek-chat", "deepseek-reasoner"],
   },
   {
     id: "agnes",
     name: "Agnes AI",
-    desc: "无限期免费，1M 上下文，30 RPM 限速",
+    desc: "无限期免费，1M 上下文，30 RPM",
     url: "https://apihub.agnes-ai.com/v1/chat/completions",
     keyUrl: "https://platform.agnes-ai.com/",
     models: ["agnes-2.0-flash"],
@@ -30,10 +38,34 @@ const API_PROVIDERS = [
   {
     id: "openai",
     name: "OpenAI",
-    desc: "GPT 系列模型，需海外支付方式",
+    desc: "GPT 系列，需海外支付方式",
     url: "https://api.openai.com/v1/chat/completions",
     keyUrl: "https://platform.openai.com/api-keys",
-    models: ["gpt-4o", "gpt-4o-mini", "gpt-4.1"],
+    models: ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "o3-mini"],
+  },
+  {
+    id: "anthropic",
+    name: "Anthropic",
+    desc: "Claude 系列，需海外支付方式",
+    url: "https://api.anthropic.com/v1/messages",
+    keyUrl: "https://console.anthropic.com/settings/keys",
+    models: ["claude-sonnet-4-20250514", "claude-3.5-haiku"],
+  },
+  {
+    id: "gemini",
+    name: "Google Gemini",
+    desc: "Gemini 系列，有免费额度",
+    url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+    keyUrl: "https://aistudio.google.com/apikey",
+    models: ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-pro"],
+  },
+  {
+    id: "moonshot",
+    name: "月之暗面",
+    desc: "Kimi 系列，国内直连",
+    url: "https://api.moonshot.cn/v1/chat/completions",
+    keyUrl: "https://platform.moonshot.cn/console/api-keys",
+    models: ["kimi-k2", "moonshot-v1-8k"],
   },
   {
     id: "custom",
@@ -48,6 +80,7 @@ const API_PROVIDERS = [
 export default function SetupGuide({ onClose, standalone }: { onClose: () => void; standalone?: boolean }) {
   const [step, setStep] = useState(0);
   const [selectedProvider, setSelectedProvider] = useState("");
+  const [modelName, setModelName] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [apiUrl, setApiUrl] = useState("");
   const [saved, setSaved] = useState(false);
@@ -63,11 +96,11 @@ export default function SetupGuide({ onClose, standalone }: { onClose: () => voi
   useEffect(() => {
     apiGet("/api/desktop/platforms").then((d: any) => {
       if (d?.platforms) setPlatforms(d.platforms);
-    }).catch(() => {});
+    }).catch((err) => console.error("[SetupGuide] 平台列表加载失败:", err));
     // 加载提示词
     apiGet("/api/desktop/prompts").then((d: any) => {
       if (d?.prompts) setPrompts(d.prompts);
-    }).catch(() => {});
+    }).catch((err) => console.error("[SetupGuide] 提示词加载失败:", err));
   }, []);
 
   const provider = API_PROVIDERS.find(p => p.id === selectedProvider);
@@ -92,7 +125,11 @@ export default function SetupGuide({ onClose, standalone }: { onClose: () => voi
   const handleSave = async () => {
     const config: any = {
       api_providers: {
-        [selectedProvider]: { api_key: apiKey, api_url: apiUrl || provider?.url || "" },
+        [selectedProvider]: {
+          api_key: apiKey,
+          api_url: apiUrl || provider?.url || "",
+          model: modelName && modelName !== "__custom__" ? modelName : (provider?.models?.[0] || ""),
+        },
       },
       platform_configs: {},
     };
@@ -143,7 +180,7 @@ export default function SetupGuide({ onClose, standalone }: { onClose: () => voi
           <SetupSteps
             step={step} setStep={setStep}
             selectedProvider={selectedProvider} setSelectedProvider={setSelectedProvider}
-            apiKey={apiKey} setApiKey={setApiKey}
+            modelName={modelName} setModelName={setModelName}
             apiUrl={apiUrl} setApiUrl={setApiUrl}
             saved={saved}
             testing={testing} testResult={testResult}
@@ -284,7 +321,7 @@ export default function SetupGuide({ onClose, standalone }: { onClose: () => voi
           <SetupSteps
             step={step} setStep={setStep}
             selectedProvider={selectedProvider} setSelectedProvider={setSelectedProvider}
-            apiKey={apiKey} setApiKey={setApiKey}
+            modelName={modelName} setModelName={setModelName}
             apiUrl={apiUrl} setApiUrl={setApiUrl}
             saved={saved}
             testing={testing} testResult={testResult}
@@ -304,6 +341,7 @@ export default function SetupGuide({ onClose, standalone }: { onClose: () => voi
 function SetupSteps({
   step, setStep,
   selectedProvider, setSelectedProvider,
+  modelName, setModelName,
   apiKey, setApiKey,
   apiUrl, setApiUrl,
   saved,
@@ -326,7 +364,7 @@ function SetupSteps({
         {/* 提供商选择 */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
           {API_PROVIDERS.map(p => (
-            <button key={p.id} onClick={() => { setSelectedProvider(p.id); setApiUrl(p.url); setTestResult(null); }}
+            <button key={p.id} onClick={() => { setSelectedProvider(p.id); setApiUrl(p.url); setModelName(p.models[0] || ""); setTestResult(null); }}
               className={`border rounded-xl px-3 py-3 text-left transition-all ${
                 selectedProvider === p.id
                   ? "border-sakura-400 bg-sakura-50 ring-1 ring-sakura-300"
@@ -361,6 +399,24 @@ function SetupSteps({
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs outline-none focus:border-sakura-300" />
               </div>
             )}
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">模型名称</label>
+              {modelName !== "__custom__" ? (
+                <select value={modelName} onChange={e => setModelName(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs outline-none focus:border-sakura-300">
+                  {(provider?.models || []).map((m: string) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                  <option value="__custom__">其他模型（手动输入）...</option>
+                </select>
+              ) : (
+                <input value={""} onChange={e => setModelName(e.target.value)}
+                  placeholder="输入自定义模型名称"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs outline-none focus:border-sakura-300 font-mono"
+                  autoFocus
+                />
+              )}
+            </div>
             <div className="flex items-center gap-2">
               <button onClick={handleTest} disabled={!apiKey.trim() || testing}
                 className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-xs hover:bg-gray-200 disabled:opacity-50 transition-colors">

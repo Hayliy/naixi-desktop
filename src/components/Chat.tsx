@@ -5,6 +5,7 @@ import ContentRenderer, { type ContentBlock } from "@/components/ContentRenderer
 import DetailPanel from "@/components/DetailPanel";
 import ProviderSettings from "@/components/ProviderSettings";
 import PromptPanel from "@/components/PromptPanel";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import {
   Search, Send, MessageCircle, User, Bot, Trash2, Plus, Copy, Check, X,
   ChevronLeft, RotateCcw, Layers, Sparkles, ImageIcon, Video, Music, Code, Globe, Settings, FileText, Edit3, Zap, Cpu,
@@ -673,10 +674,10 @@ export default function ChatPage() {
                     <Sparkles size={10} />
                     <span>{realTokens ? `${(realTokens.input! + realTokens.output!) > 1000 ? `${((realTokens.input! + realTokens.output!) / 1000).toFixed(1)}k` : realTokens.input! + realTokens.output!} tokens` : "-"}</span>
                   </div>
-                  <button onClick={() => setShowSettings(!showSettings)} className={`p-1.5 rounded transition-colors ${showSettings ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}>
+                  <button onClick={() => setShowSettings(!showSettings)} title="模型设置" className={`p-1.5 rounded transition-colors ${showSettings ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}>
                     <Settings size={12} />
                   </button>
-                  <button onClick={() => setShowPrompt(!showPrompt)} className={`p-1.5 rounded transition-colors ${showPrompt ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}>
+                  <button onClick={() => setShowPrompt(!showPrompt)} title="提示词" className={`p-1.5 rounded transition-colors ${showPrompt ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}>
                     <FileText size={12} />
                   </button>
                   {activeKey && (
@@ -804,7 +805,9 @@ export default function ChatPage() {
             </button>
           </div>
           <div className="flex-1 overflow-y-auto">
-            <PromptPanel activeScene={scene} onSceneChange={setScene} />
+            <ErrorBoundary name="提示词面板">
+              <PromptPanel activeScene={scene} onSceneChange={setScene} />
+            </ErrorBoundary>
           </div>
         </div>
       )}
@@ -819,7 +822,9 @@ export default function ChatPage() {
             </button>
           </div>
           <div className="p-3">
-            <ProviderSettings />
+            <ErrorBoundary name="供应商设置">
+              <ProviderSettings />
+            </ErrorBoundary>
           </div>
         </div>
       )}

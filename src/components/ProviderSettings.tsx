@@ -41,6 +41,7 @@ export default function ProviderSettings() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [fatalError, setFatalError] = useState<string | null>(null);
 
   // Form fields
   const [formType, setFormType] = useState("openai");
@@ -53,10 +54,13 @@ export default function ProviderSettings() {
 
   const load = () => {
     apiGet<{ providers: Provider[] }>("/api/providers")
-      .then(d => { setProviders(d.providers); setLoading(false); })
-      .catch(() => setLoading(false));
+      .then(d => { setProviders(Array.isArray(d?.providers) ? d.providers : []); setLoading(false); })
+      .catch((err) => {
+        console.error("[ProviderSettings] 加载供应商失败:", err);
+        setProviders([]); setLoading(false);
+      });
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { try { load(); } catch (e) { console.error("[ProviderSettings] 初始化异常:", e); setFatalError(String(e)); setLoading(false); } }, []);
 
   const openForm = () => {
     setFormType("openai"); setFormName(""); setFormHost("https://api.openai.com/v1");
@@ -96,6 +100,15 @@ export default function ProviderSettings() {
     await apiPost("/api/providers/delete", { id }); load();
   };
 
+  if (fatalError) return (
+    <div className="py-6 text-center">
+      <p className="text-xs text-red-500 font-medium mb-1">组件初始化异常</p>
+      <p className="text-[10px] text-gray-400 mb-3 font-mono break-all">{fatalError}</p>
+      <button onClick={() => { setFatalError(null); setLoading(true); load(); }}
+        className="px-3 py-1.5 rounded text-xs bg-sakura-100 text-sakura-600 hover:bg-sakura-200">重试</button>
+    </div>
+  );
+
   if (loading) return <div className="flex items-center justify-center py-12"><Loader2 size={16} className="text-sakura-300 animate-spin" /></div>;
 
   return (
@@ -119,7 +132,7 @@ export default function ProviderSettings() {
           <div key={p.id} className="flex items-center justify-between px-3 py-2.5 bg-white border border-sakura-100 rounded-lg text-xs">
             <div className="flex items-center gap-2.5 min-w-0">
               <span className="w-6 h-6 rounded flex items-center justify-center text-[9px] font-bold bg-sakura-100 text-sakura-500 shrink-0">
-                {p.name.slice(0, 2).toUpperCase()}
+                {(p.name || "??").slice(0, 2).toUpperCase()}
               </span>
               <div className="min-w-0">
                 <p className="text-sakura-600 font-medium truncate">{p.name}</p>

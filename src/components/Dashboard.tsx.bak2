@@ -64,25 +64,6 @@ interface AgentData { agents: AgentItem[]; }
 interface DesktopConfig { configured?: boolean; }
 
 export default function Dashboard() {
-  const [globalErrors, setGlobalErrors] = useState<{ msg: string; stack: string; time: number }[]>([]);
-
-  useEffect(() => {
-    const handler = (e: ErrorEvent) => {
-      console.error("[全局异常]", e.error?.message || e.message, e.error?.stack || "");
-      setGlobalErrors(prev => [{ msg: e.error?.message || e.message, stack: e.error?.stack || "", time: Date.now() }, ...prev].slice(0, 5));
-    };
-    const rejectionHandler = (e: PromiseRejectionEvent) => {
-      console.error("[未捕获的 Promise]", e.reason?.message || String(e.reason));
-      setGlobalErrors(prev => [{ msg: e.reason?.message || String(e.reason), stack: e.reason?.stack || "", time: Date.now() }, ...prev].slice(0, 5));
-    };
-    window.addEventListener("error", handler);
-    window.addEventListener("unhandledrejection", rejectionHandler);
-    return () => {
-      window.removeEventListener("error", handler);
-      window.removeEventListener("unhandledrejection", rejectionHandler);
-    };
-  }, []);
-
   const [st, setSt] = useState<StatusData | null>(null);
   const [napcat, setNapcat] = useState<NapcatData | null>(null);
   const [sys, setSys] = useState<SysData | null>(null);
@@ -172,31 +153,9 @@ export default function Dashboard() {
             <SetupGuide onClose={handleCloseSetup} />
           )}
 
-          {/* 全局错误浮窗 */}
-          {globalErrors.length > 0 && (
-            <div className="fixed bottom-4 right-4 z-[100] space-y-2 max-w-md">
-              {globalErrors.map((err, i) => (
-                <div key={i} className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 shadow-lg">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-xs font-medium text-red-600">未捕获的异常</p>
-                    <button onClick={() => setGlobalErrors(prev => prev.filter((_, j) => j !== i))}
-                      className="text-red-400 hover:text-red-600 shrink-0">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                    </button>
-                  </div>
-                  <p className="text-[11px] text-red-500 mt-1 font-mono break-all">{err.msg}</p>
-                  <details className="mt-1">
-                    <summary className="text-[10px] text-red-400 cursor-pointer">堆栈</summary>
-                    <pre className="mt-1 text-[10px] text-gray-500 max-h-[120px] overflow-auto whitespace-pre-wrap">{err.stack}</pre>
-                  </details>
-                </div>
-              ))}
-            </div>
-          )}
-
           <div style={{ display: activeNav === "chat" || activeNav === "settings" ? "block" : "none", height: "100%" }}>
             {activeNav === "settings" ? (
-              <ErrorBoundary name="设置"><SetupGuide standalone onClose={() => setActiveNav("dashboard")} /></ErrorBoundary>
+              <SetupGuide standalone onClose={() => setActiveNav("dashboard")} />
             ) : (
               <ErrorBoundary name="对话"><ChatPage /></ErrorBoundary>
             )}
