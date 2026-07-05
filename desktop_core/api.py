@@ -5,6 +5,9 @@ from datetime import datetime
 
 # 权限确认：等待用户批准的高危工具
 _PENDING_PERMISSIONS: dict[str, dict] = {}
+# 活跃的 Agent 任务（用于取消）
+_active_agent_tasks: dict[str, asyncio.Task] = {}
+_agent_cancel_events: dict[str, asyncio.Event] = {}
 
 # 高危工具列表（执行前需要用户确认）
 HIGH_RISK_TOOLS = {"bash", "kill_process", "run_local_command"}
@@ -1021,11 +1024,25 @@ async def api_chat_stream(request):
         usage_info = None
         task_mgr = get_task_manager()
         MAX_ROUNDS = 25
-        errors_in_round = 0  # 连续错误计数，用于降级
+        errors_in_round = 0
+
+        # 注册取消事件（供前端终止 Agent 循环）
+        cancel_event = asyncio.Event()
+        if conv_key:
+            _agent_cancel_events[conv_key] = cancel_event
+
+        async def cleanup():
+            _agent_cancel_events.pop(conv_key, None)  # 连续错误计数，用于降级
 
         try:
             # ── Agent 循环 ──
             for round_num in range(MAX_ROUNDS):
+                # 取消检查
+                if cancel_event.is_set():
+                    await sse.write(f"event: status\ndata: {json.dumps({'state': 'done', 'text': '已取消'})}\n\n".encode())
+                    await sse.write(f"event: finish\ndata: {json.dumps({'usage': usage_info})}\n\n".encode())
+                    await sse.write_eof()
+                    return sse
                 # ── 任务指引（首轮注入） ──
                 if round_num == 0:
                     if any(kw in text.lower() for kw in ["写代码", "开发", "创建项目", "改代码", "修复", "重构", "添加功能", "添功能"]):
@@ -1234,9 +1251,12 @@ async def api_chat_stream(request):
             await sse.write(f"event: finish\ndata: {json.dumps({'usage': usage_info})}\n\n".encode())
             await sse.write_eof()
             return sse
+        finally:
+            await cleanup()
 
         await sse.write(f"event: finish\ndata: {json.dumps({'usage': usage_info})}\n\n".encode())
         await sse.write_eof()
+        await cleanup()
         return sse
 
     except Exception as e:
@@ -1386,6 +1406,9 @@ def setup_routes(app):
     app.router.add_get("/api/tasks", api_tasks_list)
     app.router.add_post("/api/tasks/clear", api_tasks_clear)
 
+    # 取消 Agent
+    app.router.add_post("/api/chat/cancel", api_cancel_chat)
+
 
 # ── 任务管理 API ──
 
@@ -1405,6 +1428,23 @@ async def api_tasks_clear(request):
     for tid in to_del:
         del mgr._tasks[tid]
     return web.json_response({"ok": True, "cleared": len(to_del)})
+
+
+# ── 取消 Agent 执行 ──
+
+async def api_cancel_chat(request):
+    """取消正在进行的 Agent 对话"""
+    try:
+        body = await request.json()
+        conv_key = body.get("key", "")
+        if conv_key and conv_key in _agent_cancel_events:
+            _agent_cancel_events[conv_key].set()
+            return web.json_response({"ok": True, "cancelled": conv_key})
+        for ev in _agent_cancel_events.values():
+            ev.set()
+        return web.json_response({"ok": True, "cancelled": "all"})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
 
 
 async def _on_startup_mcp(app):

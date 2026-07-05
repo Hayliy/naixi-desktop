@@ -68,7 +68,14 @@ export default function ChatPage() {
   const abortRef = useRef<AbortController | null>(null);
   const [streaming, setStreaming] = useState(false);
 
-  const stopStreaming = () => {
+  const stopStreaming = async () => {
+    // 先取消后端 Agent 循环
+    try {
+      const k = activeKey || "";
+      if (k) await apiPost("/api/chat/cancel", { key: k });
+      else await apiPost("/api/chat/cancel", { key: "all" });
+    } catch {}
+    // 再中断前端 SSE 流
     if (abortRef.current) { abortRef.current.abort(); abortRef.current = null; }
     setAgentActive(false); setStreaming(false);
   };
@@ -143,6 +150,8 @@ export default function ChatPage() {
       onDone: (usage) => {
         setAgentActive(false); setStreaming(false); abortRef.current = null;
         if (usage) setRealTokens({ input: usage.input || 0, output: usage.output || 0 });
+        // 清理无内容的消息
+        setMsgs(prev => prev.filter(m => m.content || (m.content_blocks || []).length > 0));
         apiGet<{ conversations: ConvItem[] }>("/api/conversations").then(d => setConvs(d.conversations)).catch(() => {});
       },
       onError: (err) => {
@@ -181,11 +190,12 @@ export default function ChatPage() {
     try { await apiPost("/api/conversation/delete", { key }); setConvs(prev => prev.filter(c => c.key !== key)); if (activeKey === key) { setActiveKey(null); setMsgs([]); } } catch {}
   };
 
-  const handleNew = () => { setActiveKey(null); setMsgs([]); setIsNewChat(true); };
+  const handleNew = () => { stopStreaming(); setActiveKey(null); setMsgs([]); setIsNewChat(true); };
+  const handleConvSelect = (key: string | null) => { stopStreaming(); setActiveKey(key); };
 
   return (
     <div className="flex h-full bg-sakura-50 rounded-xl overflow-hidden border border-sakura-100">
-      <ConvList convs={convs} activeKey={activeKey} onSelect={setActiveKey} onNew={handleNew}
+      <ConvList convs={convs} activeKey={activeKey} onSelect={handleConvSelect} onNew={handleNew}
         search={search} onSearchChange={setSearch} loading={convLoading} customNames={customNames} />
 
       <div className="flex-1 flex flex-col bg-white min-w-0">

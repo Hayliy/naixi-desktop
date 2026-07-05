@@ -17,7 +17,8 @@ export default function MsgBubble({ msg, onEdit, onRegenerate }: {
 
   const isUser = msg.role === "user";
   const hasContentBlocks = (msg.content_blocks || []).length > 0;
-  const displayContent = msg.content || (hasContentBlocks ? "" : "（无内容）");
+  // 无内容且无内容块时，返回 null 不渲染
+  if (!msg.content && !hasContentBlocks && !isUser) return null;
 
   return (
     <div className={`flex items-start gap-2 px-3 py-3 group ${isUser ? "flex-row-reverse" : ""}`}>
@@ -31,7 +32,7 @@ export default function MsgBubble({ msg, onEdit, onRegenerate }: {
           {msg.content_blocks && msg.content_blocks.length > 0 ? (
             <ContentRenderer blocks={msg.content_blocks} />
           ) : (
-            <span className="whitespace-pre-wrap">{displayContent}</span>
+            <span className="whitespace-pre-wrap">{msg.content}</span>
           )}
         </div>
         <div className="flex items-center gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
