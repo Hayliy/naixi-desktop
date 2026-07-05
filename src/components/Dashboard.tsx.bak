@@ -23,18 +23,18 @@ const PAGE_TITLES: Record<string, string> = {
   logs: "日志", settings: "设置", workflow: "工作流",
 };
 const PAGE_ICONS: Record<string, React.ReactNode> = {
-  dashboard: <LayoutDashboard size={15} className="text-sakura-400" />,
-  chat: <MessageCircle size={15} className="text-sakura-400" />,
-  knowledge: <BookOpen size={15} className="text-sakura-400" />,
-  tools: <Wrench size={15} className="text-sakura-400" />,
-  memory: <Brain size={15} className="text-sakura-400" />,
-  napcat: <Bot size={15} className="text-sakura-400" />,
-  ops: <Server size={15} className="text-sakura-400" />,
-  live: <Film size={15} className="text-sakura-400" />,
-  scheduler: <Calendar size={15} className="text-sakura-400" />,
-  logs: <FileText size={15} className="text-sakura-400" />,
-  settings: <Settings size={15} className="text-sakura-400" />,
-  workflow: <GitBranch size={15} className="text-sakura-400" />,
+  dashboard: <LayoutDashboard size={15} className="text-lavender-400" />,
+  chat: <MessageCircle size={15} className="text-lavender-400" />,
+  knowledge: <BookOpen size={15} className="text-lavender-400" />,
+  tools: <Wrench size={15} className="text-lavender-400" />,
+  memory: <Brain size={15} className="text-lavender-400" />,
+  napcat: <Bot size={15} className="text-lavender-400" />,
+  ops: <Server size={15} className="text-lavender-400" />,
+  live: <Film size={15} className="text-lavender-400" />,
+  scheduler: <Calendar size={15} className="text-lavender-400" />,
+  logs: <FileText size={15} className="text-lavender-400" />,
+  settings: <Settings size={15} className="text-lavender-400" />,
+  workflow: <GitBranch size={15} className="text-lavender-400" />,
 };
 const ACTIVE_PAGE_ITEMS = ["dashboard", "chat"];
 
@@ -142,8 +142,8 @@ export default function Dashboard() {
     <AppShell sidebar={<Sidebar items={NAV_ITEMS} activeNav={activeNav} onNavChange={setActiveNav} version={`v${st.version}`} />}>
       <Header>
         <div className="flex items-center gap-2">
-          {PAGE_ICONS[activeNav] || <LayoutDashboard size={15} className="text-sakura-400" />}
-          <span className="text-sm font-medium text-sakura-600">{PAGE_TITLES[activeNav] || "仪表盘"}</span>
+          {PAGE_ICONS[activeNav] || <LayoutDashboard size={15} className="text-lavender-400" />}
+          <span className="text-sm font-medium text-lavender-600">{PAGE_TITLES[activeNav] || "仪表盘"}</span>
         </div>
       </Header>
       <Main fluid={activeNav !== "dashboard"}>
@@ -180,7 +180,7 @@ export default function Dashboard() {
               <p className={`text-sm font-bold ${napcatOk ? "text-green-700" : "text-red-700"}`}>
                 {napcatOk ? "NapCat 已连接" : "NapCat 离线"}
               </p>
-              <p className="text-xs text-sakura-400 mt-0.5">
+              <p className="text-xs text-lavender-400 mt-0.5">
                 {napcatOk ? `QQ 在线 · ${napcat?.groups ?? 0} 个群` : "QQ 消息无法收发"}
               </p>
             </div>
@@ -188,30 +188,30 @@ export default function Dashboard() {
 
           <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
             <Card className="p-4">
-              <p className="text-xs text-sakura-400 mb-0.5">今日消息</p>
-              <p className="text-2xl font-bold text-sakura-500">{st.trust_total}</p>
+              <p className="text-xs text-lavender-400 mb-0.5">今日消息</p>
+              <p className="text-2xl font-bold text-lavender-500">{st.trust_total}</p>
               <p className="text-[11px] text-green-600 mt-0.5">成功率 {st.trust_rate}%</p>
             </Card>
             <Card className="p-4">
-              <p className="text-xs text-sakura-400 mb-0.5">工具总数</p>
-              <p className="text-2xl font-bold text-sakura-500">{st.tools}</p>
-              <p className="text-[11px] text-sakura-400 mt-0.5">{st.skills} 技能</p>
+              <p className="text-xs text-lavender-400 mb-0.5">工具总数</p>
+              <p className="text-2xl font-bold text-lavender-500">{st.tools}</p>
+              <p className="text-[11px] text-lavender-400 mt-0.5">{st.skills} 技能</p>
             </Card>
             <Card className="p-4">
-              <p className="text-xs text-sakura-400 mb-0.5">知识条目</p>
-              <p className="text-2xl font-bold text-sakura-500">{kb?.total ?? st.knowledge_items}</p>
+              <p className="text-xs text-lavender-400 mb-0.5">知识条目</p>
+              <p className="text-2xl font-bold text-lavender-500">{kb?.total ?? st.knowledge_items}</p>
               <p className="text-[11px] text-green-600 mt-0.5">{kbCategories.length} 个分类</p>
             </Card>
             <Card className="p-4">
-              <p className="text-xs text-sakura-400 mb-0.5">核心模块</p>
-              <p className="text-2xl font-bold text-sakura-500">{st.agents}</p>
-              <p className="text-[11px] text-sakura-400 mt-0.5">{st.cases} 经验案例</p>
+              <p className="text-xs text-lavender-400 mb-0.5">核心模块</p>
+              <p className="text-2xl font-bold text-lavender-500">{st.agents}</p>
+              <p className="text-[11px] text-lavender-400 mt-0.5">{st.cases} 经验案例</p>
             </Card>
           </div>
 
           <div className="grid gap-4 grid-cols-1 lg:grid-cols-2 xl:grid-cols-3">
 
-            <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-sakura-500 mb-3">模型用量</p>
+            <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-lavender-500 mb-3">模型用量</p>
               <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5">
                 {MODEL_CONFIG.map((m, i) => {
                   const q = m.qn ? findQuota(m.qn) : null;
@@ -222,24 +222,24 @@ export default function Dashboard() {
                   return (
                     <div key={i} className="border-b border-sakura-50 last:border-0 py-1.5">
                       <div className="flex items-center gap-2 text-xs">
-                        <Brain size={12} className="text-sakura-400 shrink-0" />
-                        <span className="text-sakura-600 w-28 truncate font-medium">{m.n}</span>
-                        <span className="text-sakura-400 flex-1 truncate">{m.r}</span>
+                        <Brain size={12} className="text-lavender-400 shrink-0" />
+                        <span className="text-lavender-600 w-28 truncate font-medium">{m.n}</span>
+                        <span className="text-lavender-400 flex-1 truncate">{m.r}</span>
                         {showQuota ? (
-                          <span className={`shrink-0 ${limit && used > limit ? "text-red-500" : "text-sakura-500"}`}>
+                          <span className={`shrink-0 ${limit && used > limit ? "text-red-500" : "text-lavender-500"}`}>
                             {(used / 10000).toFixed(1)}万
                             {limit > 0 ? ` / ${(limit / 10000).toFixed(0)}万` : ""}
                           </span>
                         ) : m.p ? (
-                          <span className="text-sakura-300 shrink-0">{m.p}</span>
+                          <span className="text-lavender-300 shrink-0">{m.p}</span>
                         ) : (
-                          <span className="text-sakura-300 shrink-0">—</span>
+                          <span className="text-lavender-300 shrink-0">—</span>
                         )}
                         {q?.depleted && limit > 0 && <span className="text-[10px] px-1 py-0.5 rounded bg-red-50 text-red-600">耗尽</span>}
                       </div>
                       {showQuota && limit > 0 && (
                         <div className="mt-1 ml-8 h-1 rounded-full bg-sakura-100 overflow-hidden">
-                          <div className={`h-full rounded-full ${pct && pct > 90 ? "bg-red-400" : "bg-gradient-to-r from-sakura-400 to-sakura-500"}`}
+                          <div className={`h-full rounded-full ${pct && pct > 90 ? "bg-red-400" : "bg-gradient-to-r from-sakura-400 to-lavender-500"}`}
                                style={{width: `${Math.min(pct ?? 0, 100)}%`}} />
                         </div>
                       )}
@@ -247,13 +247,13 @@ export default function Dashboard() {
                   );
                 })}
               </div>
-              <div className="mt-2 pt-2 border-t border-sakura-100 text-[10px] text-sakura-300 flex justify-between">
+              <div className="mt-2 pt-2 border-t border-sakura-100 text-[10px] text-lavender-300 flex justify-between">
                 <span>总计 {(modelTotal / 10000).toFixed(1)}万</span>
                 <span>降级链：Ollama → Dify → 卖萌</span>
               </div>
             </Card>
 
-            <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-sakura-500 mb-3">系统资源</p>
+            <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-lavender-500 mb-3">系统资源</p>
               <div className="flex-1 min-h-0 overflow-y-auto space-y-3">
                 <Bar label="CPU" val={`${sys?.cpu ?? 0}%`} w={sys?.cpu ?? 0} />
                 <Bar label="内存" val={`${sys?.memory ?? 0}%`} w={sys?.memory ?? 0} />
@@ -270,59 +270,59 @@ export default function Dashboard() {
               </div>
             </Card>
 
-            <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-sakura-500 mb-3">知识库</p>
+            <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-lavender-500 mb-3">知识库</p>
               <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5">
                 {kbCategories.map((c, i) => (
                   <div key={i} className="flex items-center gap-2 py-1.5 border-b border-sakura-50 last:border-0 text-xs">
-                    <BookOpen size={12} className="text-sakura-400 shrink-0" />
-                    <span className="text-sakura-600 flex-1 truncate">{c.name}</span>
-                    <span className="text-sakura-500 font-medium">{c.count}</span>
+                    <BookOpen size={12} className="text-lavender-400 shrink-0" />
+                    <span className="text-lavender-600 flex-1 truncate">{c.name}</span>
+                    <span className="text-lavender-500 font-medium">{c.count}</span>
                   </div>
                 ))}
               </div>
-              <div className="mt-2 pt-2 border-t border-sakura-100 text-[10px] text-sakura-300">
+              <div className="mt-2 pt-2 border-t border-sakura-100 text-[10px] text-lavender-300">
                 总计 {kb?.total ?? 0} 条目 · 来自库街区 wiki
               </div>
             </Card>
 
-            <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-sakura-500 mb-3">记忆系统</p>
+            <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-lavender-500 mb-3">记忆系统</p>
               <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5">
                 {memLayers.map((l, i) => (
                   <div key={i} className="flex items-center gap-2 py-1.5 border-b border-sakura-50 last:border-0 text-xs">
-                    <Brain size={12} className="text-sakura-400 shrink-0" />
-                    <span className="text-sakura-600 w-20 shrink-0">{l.name}</span>
-                    <span className="text-sakura-400 flex-1 truncate">{l.desc}</span>
-                    <span className="text-sakura-500 font-medium">{l.count}</span>
+                    <Brain size={12} className="text-lavender-400 shrink-0" />
+                    <span className="text-lavender-600 w-20 shrink-0">{l.name}</span>
+                    <span className="text-lavender-400 flex-1 truncate">{l.desc}</span>
+                    <span className="text-lavender-500 font-medium">{l.count}</span>
                   </div>
                 ))}
               </div>
             </Card>
 
-            <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-sakura-500 mb-3">工具概览（{toolsData?.count ?? st.tools ?? 0} 个）</p>
+            <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-lavender-500 mb-3">工具概览（{toolsData?.count ?? st.tools ?? 0} 个）</p>
               <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5">
                 {(toolsData?.tools ?? []).slice(0, 50).map((t, i) => (
                   <div key={i} className="flex items-center gap-2 py-1 border-b border-sakura-50 last:border-0 text-xs">
-                    <Wrench size={11} className="text-sakura-400 shrink-0 mt-0.5" />
-                    <span className="text-sakura-600 w-40 shrink-0 truncate font-medium">{t.name}</span>
-                    <span className="text-sakura-400 flex-1 truncate">{t.desc || ""}</span>
+                    <Wrench size={11} className="text-lavender-400 shrink-0 mt-0.5" />
+                    <span className="text-lavender-600 w-40 shrink-0 truncate font-medium">{t.name}</span>
+                    <span className="text-lavender-400 flex-1 truncate">{t.desc || ""}</span>
                   </div>
                 ))}
               </div>
             </Card>
 
-            <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-sakura-500 mb-3">智能体（{agentsData?.agents?.length ?? 0} 个）</p>
+            <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-lavender-500 mb-3">智能体（{agentsData?.agents?.length ?? 0} 个）</p>
               <div className="flex-1 min-h-0 overflow-y-auto space-y-1">
                 {(agentsData?.agents ?? []).map((a, i) => (
                   <div key={i} className="flex items-start gap-2 py-1 border-b border-sakura-50 last:border-0 text-xs">
-                    <Bot size={11} className="text-sakura-400 shrink-0 mt-0.5" />
-                    <span className="text-sakura-600 w-16 shrink-0">{a.name}</span>
-                    <span className="text-sakura-400 flex-1 truncate">{a.desc.slice(0, 24)}</span>
+                    <Bot size={11} className="text-lavender-400 shrink-0 mt-0.5" />
+                    <span className="text-lavender-600 w-16 shrink-0">{a.name}</span>
+                    <span className="text-lavender-400 flex-1 truncate">{a.desc.slice(0, 24)}</span>
                   </div>
                 ))}
               </div>
             </Card>
 
-            <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-sakura-500 mb-3">服务状态</p>
+            <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-lavender-500 mb-3">服务状态</p>
               <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5">
                 {[
                   { i: Bot, n: "NapCat", s: health?.napcat ?? false, d: `WS 3001 · ${napcat?.groups ?? 0}群` },
@@ -331,18 +331,18 @@ export default function Dashboard() {
                   { i: CpuIcon, n: "Ollama", s: health?.ollama ?? false, d: "localhost:11434" },
                 ].map((svc, idx) => (
                   <div key={idx} className="flex items-center gap-2 py-1.5 border-b border-sakura-50 last:border-0 text-xs">
-                    <svc.i size={12} className="text-sakura-400 shrink-0" />
-                    <span className="text-sakura-600 w-16">{svc.n}</span>
+                    <svc.i size={12} className="text-lavender-400 shrink-0" />
+                    <span className="text-lavender-600 w-16">{svc.n}</span>
                     <span className={svc.s ? "text-green-600" : "text-red-500"}>
                       ● {svc.s ? "在线" : "离线"}
                     </span>
-                    <span className="text-sakura-300 ml-auto">{svc.d}</span>
+                    <span className="text-lavender-300 ml-auto">{svc.d}</span>
                   </div>
                 ))}
               </div>
             </Card>
 
-            <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-sakura-500 mb-3">系统数据</p>
+            <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-lavender-500 mb-3">系统数据</p>
               <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5">
                 {[
                   { n: "审计日志", v: dbStats?.tables?.find(t => t.name === "audit_log")?.count ?? "—", i: "条" },
@@ -353,10 +353,10 @@ export default function Dashboard() {
                   { n: "用户画像", v: dbStats?.tables?.find(t => t.name === "user_profiles")?.count ?? "—", i: "个" },
                 ].map((d, i) => (
                   <div key={i} className="flex items-center gap-2 py-1 border-b border-sakura-50 last:border-0 text-xs">
-                    <Database size={11} className="text-sakura-400 shrink-0" />
-                    <span className="text-sakura-600 w-16 shrink-0">{d.n}</span>
-                    <span className="text-sakura-500 font-medium">{d.v}</span>
-                    <span className="text-sakura-300 text-[10px]">{d.i}</span>
+                    <Database size={11} className="text-lavender-400 shrink-0" />
+                    <span className="text-lavender-600 w-16 shrink-0">{d.n}</span>
+                    <span className="text-lavender-500 font-medium">{d.v}</span>
+                    <span className="text-lavender-300 text-[10px]">{d.i}</span>
                   </div>
                 ))}
               </div>
@@ -376,17 +376,17 @@ function Bar({ label, val, w }: { label: string; val: string; w: number }) {
   return (
     <div>
       <div className="flex justify-between text-xs mb-1">
-        <span className="text-sakura-400">{label}</span>
-        <span className="text-sakura-600 font-medium">{val}</span>
+        <span className="text-lavender-400">{label}</span>
+        <span className="text-lavender-600 font-medium">{val}</span>
       </div>
       <div className="h-1.5 rounded-full bg-sakura-100 overflow-hidden">
-        <div className="h-full rounded-full bg-gradient-to-r from-sakura-400 to-sakura-500" style={{width:`${Math.min(w,100)}%`}} />
+        <div className="h-full rounded-full bg-gradient-to-r from-sakura-400 to-lavender-500" style={{width:`${Math.min(w,100)}%`}} />
       </div>
     </div>
   );
 }
 function Row({ l, v }: { l: string; v: string }) {
-  return <div className="flex justify-between"><span className="text-sakura-400">{l}</span><span className="text-sakura-600 font-medium">{v}</span></div>;
+  return <div className="flex justify-between"><span className="text-lavender-400">{l}</span><span className="text-lavender-600 font-medium">{v}</span></div>;
 }
 
 /* ─── 子页面 ─── */
@@ -394,12 +394,12 @@ function KbPage({ kb }: { kb: KbData | null }) {
   const cats = kb?.categories ?? [];
   return (
     <div className="space-y-4">
-      <p className="text-sm font-semibold text-sakura-500">知识库 <span className="text-sakura-300 font-normal">({kb?.total ?? 0} 条目)</span></p>
+      <p className="text-sm font-semibold text-lavender-500">知识库 <span className="text-lavender-300 font-normal">({kb?.total ?? 0} 条目)</span></p>
       <div className="grid gap-2 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
         {cats.map((c, i) => (
           <div key={i} className="bg-white border border-sakura-100 rounded-xl px-4 py-3 flex items-center justify-between">
-            <span className="text-xs text-sakura-600">{c.name}</span>
-            <span className="text-xs font-semibold text-sakura-500">{c.count}</span>
+            <span className="text-xs text-lavender-600">{c.name}</span>
+            <span className="text-xs font-semibold text-lavender-500">{c.count}</span>
           </div>
         ))}
       </div>
@@ -411,13 +411,13 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
   const tools = toolsData?.tools ?? [];
   return (
     <div className="space-y-4">
-      <p className="text-sm font-semibold text-sakura-500">工具列表 <span className="text-sakura-300 font-normal">({tools.length} 个)</span></p>
+      <p className="text-sm font-semibold text-lavender-500">工具列表 <span className="text-lavender-300 font-normal">({tools.length} 个)</span></p>
       <div className="space-y-1">
         {tools.map((t, i) => (
           <div key={i} className="bg-white border border-sakura-100 rounded-xl px-4 py-2.5 flex items-center gap-2 text-xs">
-            <Wrench size={12} className="text-sakura-400 shrink-0" />
-            <span className="text-sakura-600 font-medium w-48 shrink-0">{t.name}</span>
-            <span className="text-sakura-400">{t.desc}</span>
+            <Wrench size={12} className="text-lavender-400 shrink-0" />
+            <span className="text-lavender-600 font-medium w-48 shrink-0">{t.name}</span>
+            <span className="text-lavender-400">{t.desc}</span>
           </div>
         ))}
       </div>
@@ -428,15 +428,15 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
 function MemPage({ memLayers }: { memLayers: { name: string; desc: string; count: number; status: string }[] }) {
   return (
     <div className="space-y-4">
-      <p className="text-sm font-semibold text-sakura-500">记忆系统</p>
+      <p className="text-sm font-semibold text-lavender-500">记忆系统</p>
       <div className="space-y-2">
         {memLayers.map((l, i) => (
           <div key={i} className="bg-white border border-sakura-100 rounded-xl px-4 py-3">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-medium text-sakura-600">{l.name}</p>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded ${l.status === "active" ? "bg-green-50 text-green-600" : "bg-sakura-50 text-sakura-400"}`}>{l.status}</span>
+              <p className="text-xs font-medium text-lavender-600">{l.name}</p>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded ${l.status === "active" ? "bg-green-50 text-green-600" : "bg-sakura-50 text-lavender-400"}`}>{l.status}</span>
             </div>
-            <p className="text-[11px] text-sakura-400 mt-0.5">{l.desc} · {l.count} 条</p>
+            <p className="text-[11px] text-lavender-400 mt-0.5">{l.desc} · {l.count} 条</p>
           </div>
         ))}
       </div>
@@ -448,7 +448,7 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
   const ok = napcat?.connected ?? false;
   return (
     <div className="space-y-4">
-      <p className="text-sm font-semibold text-sakura-500">NapCat 连接</p>
+      <p className="text-sm font-semibold text-lavender-500">NapCat 连接</p>
       <div className="bg-white border border-sakura-100 rounded-xl px-4 py-4">
         <div className="flex items-center gap-3">
           <div className={`w-12 h-12 rounded-full flex items-center justify-center ${ok ? "bg-green-100" : "bg-red-100"}`}>
@@ -456,7 +456,7 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
           </div>
           <div>
             <p className={`text-sm font-semibold ${ok ? "text-green-700" : "text-red-700"}`}>{ok ? "已连接" : "离线"}</p>
-            <p className="text-xs text-sakura-400 mt-0.5">{ok ? `${napcat?.groups ?? 0} 个群` : "QQ 消息无法收发"}</p>
+            <p className="text-xs text-lavender-400 mt-0.5">{ok ? `${napcat?.groups ?? 0} 个群` : "QQ 消息无法收发"}</p>
           </div>
         </div>
       </div>
@@ -467,17 +467,17 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
 function OpsPage({ sys }: { sys: SysData | null }) {
   return (
     <div className="space-y-4">
-      <p className="text-sm font-semibold text-sakura-500">运维监控</p>
+      <p className="text-sm font-semibold text-lavender-500">运维监控</p>
       <div className="grid gap-3 grid-cols-1 sm:grid-cols-2">
         <div className="bg-white border border-sakura-100 rounded-xl px-4 py-4 space-y-3">
-          <p className="text-xs font-medium text-sakura-500">系统资源</p>
+          <p className="text-xs font-medium text-lavender-500">系统资源</p>
           <Bar label="CPU" val={`${sys?.cpu ?? 0}%`} w={sys?.cpu ?? 0} />
           <Bar label="内存" val={`${sys?.memory ?? 0}%`} w={sys?.memory ?? 0} />
           <Bar label="磁盘" val={`${sys?.disk ?? 0}%`} w={sys?.disk ?? 0} />
           <Bar label="GPU" val={`${sys?.gpu_util ?? 0}%`} w={sys?.gpu_util ?? 0} />
         </div>
         <div className="bg-white border border-sakura-100 rounded-xl px-4 py-4 space-y-2">
-          <p className="text-xs font-medium text-sakura-500">服务状态</p>
+          <p className="text-xs font-medium text-lavender-500">服务状态</p>
           <Row l="GPU 型号" v={sys?.gpu_name ?? "无"} />
           <Row l="显存" v={`${sys?.gpu_mem_used ?? 0} MB / ${sys?.gpu_mem_total ?? 0} MB`} />
           <Row l="后端口" v=":9845" />
@@ -493,11 +493,11 @@ function OpsPage({ sys }: { sys: SysData | null }) {
 function LivePage() {
   return (
     <div className="space-y-4">
-      <p className="text-sm font-semibold text-sakura-500">虚拟主播</p>
+      <p className="text-sm font-semibold text-lavender-500">虚拟主播</p>
       <div className="bg-white border border-sakura-100 rounded-xl px-4 py-8 text-center">
-        <p className="text-xs text-sakura-400">虚拟主播模块（5 Agent 串联）</p>
-        <p className="text-[11px] text-sakura-300 mt-1">弹幕 → LLM → TTS → 立绘 → RTMP 推流</p>
-        <p className="text-[11px] text-sakura-300 mt-1">B站开发者认证审核中，通过后配置即可上线</p>
+        <p className="text-xs text-lavender-400">虚拟主播模块（5 Agent 串联）</p>
+        <p className="text-[11px] text-lavender-300 mt-1">弹幕 → LLM → TTS → 立绘 → RTMP 推流</p>
+        <p className="text-[11px] text-lavender-300 mt-1">B站开发者认证审核中，通过后配置即可上线</p>
       </div>
     </div>
   );
@@ -773,7 +773,7 @@ function LogsPage() {
   }, []);
   return (
     <div className="space-y-4">
-      <p className="text-sm font-semibold text-sakura-500">日志</p>
+      <p className="text-sm font-semibold text-lavender-500">日志</p>
       <pre className="bg-[#1a1a2e] text-green-400 text-[11px] p-4 rounded-xl overflow-auto max-h-[70vh] font-mono leading-relaxed">{logs || "加载中..."}</pre>
     </div>
   );
