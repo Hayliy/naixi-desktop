@@ -9,7 +9,6 @@ WORKSPACE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__f
 os.makedirs(WORKSPACE_DIR, exist_ok=True)
 
 # ── 工具注册表 ──
-# 每个工具: {name, description, parameters, handler}
 _registry = {}
 
 def register(name, description, parameters, handler):
@@ -19,6 +18,35 @@ def register(name, description, parameters, handler):
         "parameters": parameters,
         "handler": handler,
     }
+
+def load_plugins():
+    """从插件目录加载外部工具"""
+    try:
+        from desktop_core.plugin_mgr import get_plugin_tools
+        existing = get_definitions()
+        plugin_tools = get_plugin_tools(existing)
+        for pt in plugin_tools:
+            fn = pt.get("function", {})
+            name = fn.get("name", "")
+            desc = fn.get("description", "")
+            params = fn.get("parameters", {})
+            if name and name not in _registry:
+                # 注册一个动态执行的 handler，从 plugin_mgr 调用
+                register(name, desc, params, _make_plugin_handler(name))
+                log.info(f"[工具] 插件注册: {name}")
+    except Exception as e:
+        log.warning(f"[工具] 插件加载失败: {e}")
+
+def _make_plugin_handler(tool_name):
+    """为插件工具生成一个异步 handler"""
+    async def handler(args, ctx):
+        try:
+            # 在 plugin_mgr 中查找对应的执行器
+            from desktop_core.plugin_mgr import execute_plugin_tool
+            return await execute_plugin_tool(tool_name, args)
+        except Exception as e:
+            return f"插件工具 {tool_name} 执行失败: {str(e)[:200]}"
+    return handler
 
 def get_definitions():
     """返回 OpenAI 兼容的工具定义列表"""
@@ -194,28 +222,9 @@ async def _code_interpreter(args, ctx):
     code = args.get("code", "")
     if not code:
         return "缺少代码"
-    tmp = tempfile.mkdtemp(prefix="naixi_code_")
-    try:
-        fpath = os.path.join(tmp, "script.py")
-        with open(fpath, "w", encoding="utf-8") as f:
-            f.write(code)
-        proc = await asyncio.create_subprocess_exec(
-            sys.executable, fpath,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            cwd=tmp, timeout=30
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-        except asyncio.TimeoutError:
-            proc.kill()
-            return "代码执行超时（30秒）"
-        out = stdout.decode("utf-8", errors="replace") if stdout else ""
-        err = stderr.decode("utf-8", errors="replace") if stderr else ""
-        if err:
-            return f"输出:\n{out}\n错误:\n{err}"[:3000]
-        return f"输出:\n{out}"[:3000]
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    from desktop_core.sandbox import Sandbox
+    sbox = Sandbox()
+    return await sbox.run_python(code)
 
 async def _read_file(args, ctx):
     path = args.get("path", "")
@@ -478,3 +487,6 @@ register("translate_text", "将文本翻译成指定语言",
 register("read_document", "读取工作区中的文档文件，支持 PDF、Word(.docx)、CSV 等格式",
     {"type": "object", "properties": {"path": {"type": "string", "description": "文件路径（相对于工作区目录）"}}, "required": ["path"]},
     _read_document)
+
+# 加载外部插件
+load_plugins()

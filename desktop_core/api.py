@@ -3,6 +3,8 @@ import json, os, sys, time, logging, asyncio
 from aiohttp import web
 from datetime import datetime
 
+from desktop_core.context import ContextManager
+
 from desktop_core.storage import meta_get, meta_set, encrypt_config, decrypt_config, decrypt_api_key, conv_list, conv_get_messages, conv_delete, conv_save_message_sync as conv_save_message
 from desktop_core import tools
 
@@ -944,7 +946,6 @@ async def api_chat_stream(request):
         if img_p: tool_ctx["image_provider"] = img_p
         vis_p = _find_provider_by_type("vision")
         if vis_p: tool_ctx["vision_provider"] = vis_p
-        # 找第一个 chat 供应商做通用 LLM 调用
         raw_cfg = meta_get("desktop_config")
         if raw_cfg:
             try:
@@ -954,6 +955,8 @@ async def api_chat_stream(request):
                         tool_ctx["chat_provider"] = {"key": pid, **pcfg}
                         break
             except: pass
+        # 上下文管理器
+        ctx_mgr = ContextManager()
         sse = web.StreamResponse()
         sse.headers["Content-Type"] = "text/event-stream"
         sse.headers["Cache-Control"] = "no-cache"
@@ -967,6 +970,12 @@ async def api_chat_stream(request):
         try:
             # ── Agent 循环（最多 10 轮） ──
             for round_num in range(10):
+                # 上下文压缩（超限时自动触发）
+                if ctx_mgr.should_compress(messages):
+                    compressed = ctx_mgr.compress(messages)
+                    if len(compressed) < len(messages):
+                        log.info(f"[Agent] 上下文压缩: {len(messages)} → {len(compressed)} 条消息")
+                        messages = compressed
                 payload = {
                     "model": model,
                     "messages": messages,
