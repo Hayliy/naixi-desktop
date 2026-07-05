@@ -94,7 +94,7 @@ def get_fast_definitions():
     """返回常用工具子集（8个），加快首轮响应速度"""
     fast_tools = ["search_web", "current_datetime", "calculate", "get_weather",
                    "bash", "find_files", "open_url", "generate_image",
-                   "git", "powershell", "web_fetch"]
+                   "git", "powershell", "web_fetch", "clipboard", "mkdir"]
     return [
         {
             "type": "function",
@@ -285,9 +285,11 @@ async def _code_interpreter(args, ctx):
 
 async def _read_file(args, ctx):
     path = args.get("path", "")
+    offset_l = args.get("offset", 0)
+    limit_l = args.get("limit", 0)
+    show_lines = args.get("lines", False)
     if not path:
         return "缺少文件路径"
-    # 绝对路径直接读，相对路径用工作区
     if os.path.isabs(path):
         full = os.path.normpath(path)
     else:
@@ -297,9 +299,39 @@ async def _read_file(args, ctx):
     if not os.path.isfile(full):
         return f"不是文件: {path}"
     try:
-        with open(full, "r", encoding="utf-8") as f:
-            content = f.read()
-        return content[:5000]
+        # 尝试 UTF-8，失败则自动检测编码
+        import codecs
+        encodings = ["utf-8", "utf-8-sig", "gbk", "gb2312", "latin-1", "shift_jis", "euc-kr"]
+        content = None
+        for enc in encodings:
+            try:
+                with codecs.open(full, "r", encoding=enc) as f:
+                    content = f.read()
+                break
+            except (UnicodeDecodeError, UnicodeError):
+                continue
+        if content is None:
+            return f"无法解码文件（尝试了 {len(encodings)} 种编码）"
+        
+        lines = content.splitlines(keepends=True)
+        total_lines = len(lines)
+        
+        if show_lines:
+            # 行号模式
+            start = int(offset_l) if offset_l else 0
+            end = int(limit_l) if limit_l else min(total_lines, 50)
+            result = "".join(f"{i+1:>6} {l}" for i, l in enumerate(lines[start:end], start))
+            return f"文件: {path} ({total_lines} 行, 显示 {start+1}-{min(end, total_lines)})\n{result}"[:8000]
+        
+        if limit_l:
+            start = int(offset_l) if offset_l else 0
+            end = start + int(limit_l)
+            return "".join(lines[start:end])[:8000] if start < total_lines else "（已到文件末尾）"
+        
+        result = content[:8000]
+        if len(content) > 8000:
+            result += f"\n\n...（文件共 {len(content)} 字符，只显示前 8000 字符）"
+        return result
     except Exception as e:
         return f"读取失败: {str(e)[:100]}"
 
@@ -451,9 +483,10 @@ async def _edit_file(args, ctx):
     path = args.get("path", "")
     old_string = args.get("old_string", "")
     new_string = args.get("new_string", "")
+    use_regex = args.get("regex", False)
+    replace_all = args.get("replace_all", False)
     if not path or not old_string:
         return "缺少文件路径或要替换的内容"
-    # 绝对路径直接编辑，相对路径用工作区
     if os.path.isabs(path):
         full = os.path.normpath(path)
     else:
@@ -463,15 +496,22 @@ async def _edit_file(args, ctx):
     try:
         with open(full, "r", encoding="utf-8") as f:
             content = f.read()
-        count = content.count(old_string)
-        if count == 0:
-            return f"未找到要替换的内容: {old_string[:60]}"
-        if count > 1:
-            return f"找到 {count} 处匹配，请提供更精确的上下文（当前只有 1 处匹配才执行替换）"
-        new_content = content.replace(old_string, new_string, 1)
+        
+        if use_regex:
+            import re
+            new_content, count = re.subn(old_string, new_string, content, flags=re.DOTALL)
+        else:
+            count = content.count(old_string)
+            if count == 0:
+                return f"未找到要替换的内容: {old_string[:60]}"
+            if count > 1 and not replace_all:
+                return f"找到 {count} 处匹配。设置 replace_all=true 可全部替换，或提供更精确的上下文"
+            new_content = content.replace(old_string, new_string, -1 if replace_all else 1)
+            count = new_content.count(new_string) - content.count(new_string) + count if not replace_all else content.count(old_string)
+        
         with open(full, "w", encoding="utf-8") as f:
             f.write(new_content)
-        return f"已修改 {path}: 替换 1 处"
+        return f"已修改 {path}: 替换 {count} 处"
     except Exception as e:
         return f"编辑失败: {str(e)[:100]}"
 
@@ -639,8 +679,13 @@ register("code_interpreter", "运行 Python 代码并返回执行结果。适合
     {"type": "object", "properties": {"code": {"type": "string", "description": "要执行的 Python 代码"}}, "required": ["code"]},
     _code_interpreter)
 
-register("read_file", "读取文件内容，支持 txt/json/csv/python 等文本格式。支持绝对路径（如 C:\\xxx）或工作区相对路径",
-    {"type": "object", "properties": {"path": {"type": "string", "description": "文件路径（相对于工作区目录）"}}, "required": ["path"]},
+register("read_file", "读取文件内容。自动检测编码（UTF-8/GBK/GB2312等）。支持行号显示和分页。支持绝对路径",
+    {"type": "object", "properties": {
+        "path": {"type": "string", "description": "文件路径（绝对路径或工作区相对路径）"},
+        "lines": {"type": "boolean", "description": "是否显示行号（默认 false）"},
+        "offset": {"type": "integer", "description": "起始行号（从 0 开始，配合 limit 使用）"},
+        "limit": {"type": "integer", "description": "最大行数/字符数"},
+    }, "required": ["path"]},
     _read_file)
 
 register("write_file", "将内容写入文件。支持绝对路径或工作区相对路径。注意：会覆盖已有文件",
@@ -936,8 +981,14 @@ register("grep_search", "在文件中搜索关键词或模式，支持正则。�
     {"type": "object", "properties": {"pattern": {"type": "string", "description": "搜索关键词或模式"}, "path": {"type": "string", "description": "搜索的子目录（可选，默认全局搜索）"}}, "required": ["pattern"]},
     _grep_search)
 
-register("edit_file", "精确编辑文件内容。用 old_string 定位要修改的位置，替换为 new_string。支持绝对路径或工作区相对路径。适合修改代码、配置文件等。注意：old_string 必须在文件中唯一",
-    {"type": "object", "properties": {"path": {"type": "string", "description": "文件路径（相对于工作区目录）"}, "old_string": {"type": "string", "description": "要替换的原文（必须在文件中唯一）"}, "new_string": {"type": "string", "description": "替换后的新内容"}}, "required": ["path", "old_string", "new_string"]},
+register("edit_file", "精确编辑文件内容。用 old_string 定位要修改的位置，替换为 new_string。支持正则模式和全部替换。支持绝对路径",
+    {"type": "object", "properties": {
+        "path": {"type": "string", "description": "文件路径（绝对路径或工作区相对路径）"},
+        "old_string": {"type": "string", "description": "要替换的原文（或正则模式）"},
+        "new_string": {"type": "string", "description": "替换后的新内容"},
+        "regex": {"type": "boolean", "description": "是否使用正则匹配（默认 false）"},
+        "replace_all": {"type": "boolean", "description": "是否替换所有匹配处（默认 false，只替换第一处）"},
+    }, "required": ["path", "old_string", "new_string"]},
     _edit_file)
 
 register("translate_text", "将文本翻译成指定语言",
@@ -1083,6 +1134,145 @@ async def _env(args, ctx):
 register("env", "读取系统环境变量的值。API Key 等敏感变量会自动脱敏",
     {"type": "object", "properties": {"name": {"type": "string", "description": "环境变量名"}}, "required": ["name"]},
     _env)
+
+# ── 剪贴板工具 ──
+
+async def _clipboard(args, ctx):
+    """读写系统剪贴板"""
+    action = args.get("action", "read")
+    text = args.get("text", "")
+    try:
+        import subprocess
+        if action == "write":
+            # 用 PowerShell 写入剪贴板
+            escaped = text.replace("'", "''")
+            proc = await asyncio.create_subprocess_exec(
+                "powershell", "-Command", f"Set-Clipboard -Value '{escaped}'",
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            await proc.communicate()
+            return f"✅ 已写入剪贴板 ({len(text)} 字符)"
+        else:
+            proc = await asyncio.create_subprocess_exec(
+                "powershell", "-Command", "Get-Clipboard",
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            return (stdout or b"").decode("utf-8", errors="replace").strip() or "（剪贴板为空）"
+    except Exception as e:
+        return f"剪贴板操作失败: {str(e)[:100]}"
+
+register("clipboard", "读取或写入系统剪贴板内容。action=read 读取，action=write 写入",
+    {"type": "object", "properties": {
+        "action": {"type": "string", "description": "操作类型：read（读取剪贴板）或 write（写入剪贴板）"},
+        "text": {"type": "string", "description": "要写入的内容（action=write 时需要）"},
+    }, "required": ["action"]},
+    _clipboard)
+
+# ── 压缩/解压工具 ──
+
+async def _compress(args, ctx):
+    """压缩或解压文件"""
+    action = args.get("action", "zip")
+    source = args.get("source", "")
+    target = args.get("target", "")
+    if not source:
+        return "缺少源路径"
+    import shutil
+    try:
+        src = os.path.normpath(source) if os.path.isabs(source) else os.path.normpath(os.path.join(WORKSPACE_DIR, source))
+        if action == "zip":
+            dst = os.path.normpath(target) if target and os.path.isabs(target) else os.path.normpath(os.path.join(WORKSPACE_DIR, target or f"{source}.zip"))
+            dst = dst if dst.endswith(".zip") else dst + ".zip"
+            shutil.make_archive(dst.replace(".zip", ""), "zip", src)
+            return f"✅ 已压缩: {os.path.basename(dst)} ({os.path.getsize(dst)} bytes)"
+        elif action == "unzip":
+            import zipfile
+            dst = os.path.normpath(target) if target and os.path.isabs(target) else os.path.join(os.path.dirname(src), os.path.splitext(os.path.basename(src))[0])
+            with zipfile.ZipFile(src, 'r') as zf:
+                zf.extractall(dst)
+            return f"✅ 已解压到: {dst}"
+        return f"未知操作: {action}"
+    except Exception as e:
+        return f"压缩操作失败: {str(e)[:100]}"
+
+register("compress", "压缩或解压文件。action=zip 压缩，action=unzip 解压",
+    {"type": "object", "properties": {
+        "action": {"type": "string", "description": "操作：zip（压缩）或 unzip（解压）"},
+        "source": {"type": "string", "description": "源路径（文件或目录）"},
+        "target": {"type": "string", "description": "目标路径（可选，默认自动生成）"},
+    }, "required": ["action", "source"]},
+    _compress)
+
+# ── 创建目录工具 ──
+
+async def _mkdir(args, ctx):
+    """创建目录"""
+    path = args.get("path", "")
+    if not path: return "缺少目录路径"
+    target = os.path.normpath(path) if os.path.isabs(path) else os.path.normpath(os.path.join(WORKSPACE_DIR, path))
+    try:
+        os.makedirs(target, exist_ok=True)
+        return f"✅ 已创建目录: {path}"
+    except Exception as e:
+        return f"创建目录失败: {str(e)[:100]}"
+
+register("mkdir", "创建目录。支持绝对路径或工作区相对路径",
+    {"type": "object", "properties": {"path": {"type": "string", "description": "目录路径（绝对路径或工作区相对路径）"}}, "required": ["path"]},
+    _mkdir)
+
+# ── 批量替换工具 ──
+
+async def _batch_edit(args, ctx):
+    """在多个文件中批量替换文本"""
+    pattern = args.get("pattern", "")
+    old_string = args.get("old_string", "")
+    new_string = args.get("new_string", "")
+    root = args.get("path", "")
+    use_regex = args.get("regex", False)
+    if not pattern or not old_string:
+        return "缺少文件匹配模式或要替换的内容"
+    search_dir = os.path.normpath(root) if root and os.path.isabs(root) else WORKSPACE_DIR
+    import glob, re
+    full_pattern = os.path.join(search_dir, pattern)
+    files = glob.glob(full_pattern, recursive=True)
+    if not files:
+        return f"未找到匹配 {pattern} 的文件"
+    modified = 0
+    errors = []
+    for fpath in files:
+        if not os.path.isfile(fpath):
+            continue
+        try:
+            with open(fpath, "r", encoding="utf-8") as f:
+                content = f.read()
+            if use_regex:
+                new_content, cnt = re.subn(old_string, new_string, content)
+            else:
+                cnt = content.count(old_string)
+                if cnt == 0:
+                    continue
+                new_content = content.replace(old_string, new_string)
+            if new_content != content:
+                with open(fpath, "w", encoding="utf-8") as f:
+                    f.write(new_content)
+                modified += cnt
+        except Exception as e:
+            errors.append(f"{os.path.basename(fpath)}: {str(e)[:50]}")
+    result = f"✅ 批量替换完成: 修改 {modified} 处，涉及 {len(files)} 个文件"
+    if errors:
+        result += f"\n⚠ 以下文件出错: {', '.join(errors[:3])}"
+    return result
+
+register("batch_edit", "在多个文件中批量搜索替换文本。支持 glob 模式匹配文件（如 **/*.py），支持正则",
+    {"type": "object", "properties": {
+        "pattern": {"type": "string", "description": "文件匹配模式，如 **/*.py"},
+        "old_string": {"type": "string", "description": "要替换的原文（或正则模式）"},
+        "new_string": {"type": "string", "description": "替换后的新内容"},
+        "path": {"type": "string", "description": "搜索根目录（可选，默认工作区）"},
+        "regex": {"type": "boolean", "description": "是否使用正则匹配（默认 false）"},
+    }, "required": ["pattern", "old_string", "new_string"]},
+    _batch_edit)
 
 # 加载外部插件
 load_plugins()
