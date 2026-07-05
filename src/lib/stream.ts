@@ -146,6 +146,7 @@ export interface StreamCallbacks {
   onUpdate: (blocks: ContentBlock[], generating: boolean, usage?: { input?: number; output?: number } | null) => void;
   onDone: (usage?: { input?: number; output?: number } | null) => void;
   onError: (err: string) => void;
+  onPermissionRequest?: (reqId: string, name: string, args: Record<string, unknown>) => void;
 }
 
 export async function sendChatStream(
@@ -177,6 +178,15 @@ export async function sendChatStream(
 
     for await (const { eventType, data } of parseSSEStream(reader)) {
       const { state: newState, skipRender } = processStreamChunk(eventType, data, state);
+
+      // Handle permission request events
+      if (eventType === "permission_request" && callbacks.onPermissionRequest) {
+        callbacks.onPermissionRequest(
+          String(data.id || ""),
+          String(data.name || ""),
+          (data.args || {}) as Record<string, unknown>
+        );
+      }
 
       // Update state in place
       Object.assign(state, newState);

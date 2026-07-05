@@ -3,6 +3,12 @@ import json, os, sys, time, logging, asyncio
 from aiohttp import web
 from datetime import datetime
 
+# 权限确认：等待用户批准的高危工具
+_PENDING_PERMISSIONS: dict[str, dict] = {}
+
+# 高危工具列表（执行前需要用户确认）
+HIGH_RISK_TOOLS = {"bash", "kill_process", "run_local_command"}
+
 # tiktoken 精确估算（可选依赖）
 _USE_TIKTOKEN = False
 _TIKTOKEN_ENC = None
@@ -1090,7 +1096,26 @@ async def api_chat_stream(request):
 
                                 await sse.write(f"event: tool_use\ndata: {json.dumps({'name': fn_name, 'args': fn_args, 'id': tc.get('id', '')})}\n\n".encode())
 
-                                tool_result = await tools.execute(fn_name, fn_args, tool_ctx)
+                                # ── 高危工具：权限确认 ──
+                                if fn_name in HIGH_RISK_TOOLS:
+                                    req_id = tc.get("id", f"perm_{time.time()}")
+                                    perm_event = asyncio.Event()
+                                    perm_result = {"approved": False}
+                                    _PENDING_PERMISSIONS[req_id] = {"event": perm_event, "result": perm_result}
+                                    await sse.write(f"event: permission_request\ndata: {json.dumps({'id': req_id, 'name': fn_name, 'args': fn_args})}\n\n".encode())
+                                    try:
+                                        await asyncio.wait_for(perm_event.wait(), timeout=120)
+                                    except asyncio.TimeoutError:
+                                        tool_result = "⏱ 权限确认超时，已取消"
+                                    else:
+                                        if perm_result.get("approved"):
+                                            tool_result = await tools.execute(fn_name, fn_args, tool_ctx)
+                                        else:
+                                            tool_result = "❌ 用户拒绝了操作"
+                                    finally:
+                                        _PENDING_PERMISSIONS.pop(req_id, None)
+                                else:
+                                    tool_result = await tools.execute(fn_name, fn_args, tool_ctx)
 
                                 await sse.write(f"event: tool_result\ndata: {json.dumps({'tool_call_id': tc.get('id', ''), 'name': fn_name, 'content': tool_result[:200]})}\n\n".encode())
 
@@ -1266,6 +1291,9 @@ def setup_routes(app):
     # 启动时连接 MCP 服务器
     app.on_startup.append(_on_startup_mcp)
 
+    # 工具权限确认
+    app.router.add_post("/api/tool/permit", api_tool_permit)
+
 
 async def _on_startup_mcp(app):
     """应用启动时自动连接 MCP 服务器"""
@@ -1326,3 +1354,19 @@ async def api_mcp_disconnect(request):
         return web.json_response({"ok": True})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_tool_permit(request):
+    """用户批准或拒绝高危工具的执行"""
+    try:
+        body = await request.json()
+        req_id = body.get("id", "")
+        approved = body.get("approved", False)
+        if req_id in _PENDING_PERMISSIONS:
+            info = _PENDING_PERMISSIONS[req_id]
+            info["result"]["approved"] = approved
+            info["event"].set()
+            return web.json_response({"ok": True, "approved": approved})
+        return web.json_response({"error": "请求不存在或已超时"}, status=404)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)

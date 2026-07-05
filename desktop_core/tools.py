@@ -321,35 +321,34 @@ async def _get_weather(args, ctx):
 # ── 开发工具：运行命令 ──
 
 async def _run_command(args, ctx):
+    """运行系统命令（通用入口，替代旧的 run_command + run_local_command）"""
     command = args.get("command", "")
-    cwd = args.get("cwd", WORKSPACE_DIR)
+    cwd = args.get("cwd", None)
     if not command:
         return "缺少要执行的命令"
-    # 安全检查：禁止高危命令
-    dangerous = ["rm -rf", "format", "del /f", "rd /s", "shutdown", "reboot", "init 0"]
+    # 安全检查
+    dangerous = ["rm -rf /", "format", "shutdown", "reboot", "init 0", "mkfs", "dd if=", ":(){ :|:& };:"]
     for d in dangerous:
         if d in command.lower():
-            return f"禁止执行危险命令: {d}"
+            return f"❌ 禁止执行危险命令"
     try:
         proc = await asyncio.create_subprocess_shell(
             command,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            cwd=cwd,
-            shell=True,
+            cwd=cwd or os.path.expanduser("~"),
         )
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
         except asyncio.TimeoutError:
             proc.kill()
-            return f"命令执行超时（60秒）"
+            return f"⏱ 命令执行超时（60秒）"
         out = (stdout or b"").decode("utf-8", errors="replace")[:5000]
-        err = (stderr or b"").decode("utf-8", errors="replace")[:2000]
-        result = out
+        err = (stderr or b"").decode("utf-8", errors="replace")[:500]
         if err:
-            result += f"\n--- stderr ---\n{err}"
-        return result or "（命令执行完毕，无输出）"
+            out += f"\n--- stderr ---\n{err}"
+        return out or "（执行完毕，无输出）"
     except Exception as e:
-        return f"命令执行失败: {str(e)[:200]}"
+        return f"❌ 执行失败: {str(e)[:200]}"
 
 # ── 开发工具：内容搜索 ──
 
@@ -621,13 +620,7 @@ async def _open_url(args, ctx):
     sbox = Sandbox()
     return await sbox.open_url(url)
 
-async def _run_local_command(args, ctx):
-    command = args.get("command", "")
-    if not command: return "缺少要执行的命令"
-    from desktop_core.sandbox import Sandbox
-    sbox = Sandbox()
-    result = await sbox.run_system_command(command)
-    return result
+# ── 注册系统工具 ──
 
 register("get_system_info", "获取电脑系统信息，包括操作系统、CPU、内存使用情况等",
     {"type": "object", "properties": {}},
@@ -636,10 +629,6 @@ register("get_system_info", "获取电脑系统信息，包括操作系统、CPU
 register("open_url", "在默认浏览器中打开指定网址",
     {"type": "object", "properties": {"url": {"type": "string", "description": "要打开的完整 URL"}}, "required": ["url"]},
     _open_url)
-
-register("run_local_command", "在电脑上执行系统命令（安全受限）。适合运行程序、查看目录、执行脚本等",
-    {"type": "object", "properties": {"command": {"type": "string", "description": "要执行的命令"}}, "required": ["command"]},
-    _run_local_command)
 
 # ── 文件搜索工具 ──
 
@@ -737,8 +726,8 @@ register("kill_process", "终止指定进程。通过 pid（进程ID）或 name�
     {"type": "object", "properties": {"pid": {"type": "string", "description": "进程 ID（可选）"}, "name": {"type": "string", "description": "进程名（可选，如 notepad.exe）"}}, "required": []},
     _kill_process)
 
-register("run_command", "在终端执行命令，适合运行构建、测试、安装依赖等。注意：禁止 rm -rf、shutdown 等危险命令",
-    {"type": "object", "properties": {"command": {"type": "string", "description": "要执行的命令"}, "cwd": {"type": "string", "description": "工作目录（可选，默认工作区根目录）"}}, "required": ["command"]},
+register("bash", "在电脑上执行命令。适合启动程序、运行脚本、查看目录、安装依赖、执行构建等。注意：禁止 rm -rf /、shutdown 等危险命令",
+    {"type": "object", "properties": {"command": {"type": "string", "description": "要执行的命令"}, "cwd": {"type": "string", "description": "工作目录（可选）"}}, "required": ["command"]},
     _run_command)
 
 register("grep_search", "在项目文件内容中搜索关键词或模式，支持正则。适合查找代码中的函数定义、变量引用、错误信息等",

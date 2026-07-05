@@ -17,6 +17,7 @@ import MsgBubble from "@/components/MsgBubble";
 import AgentStatus from "@/components/AgentStatus";
 import ChatInput from "@/components/ChatInput";
 import ModelSelector from "@/components/ModelSelector";
+import PermissionDialog from "@/components/PermissionDialog";
 import type { ConvItem, MsgItem, ProviderModel } from "@/components/ChatTypes";
 import { convName, QUICK_ACTIONS } from "@/components/ChatTypes";
 import {
@@ -59,6 +60,7 @@ export default function ChatPage() {
   const [availableModels, setAvailableModels] = useState<ProviderModel[]>(MODELS);
   const [agentMode, setAgentMode] = useState(false);
   const [capabilityAction, setCapabilityAction] = useState<typeof QUICK_ACTIONS[number] | null>(null);
+  const [permissionReq, setPermissionReq] = useState<{ id: string; name: string; args: Record<string, unknown> } | null>(null);
   const msgEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [streaming, setStreaming] = useState(false);
@@ -148,6 +150,9 @@ export default function ChatPage() {
         }
         setMsgs(prev => prev.map(m => m.id !== aiId ? m : { ...m, content: `出错了: ${err}`, content_blocks: [{ type: "status", state: "error", text: err }] }));
         setAgentActive(false); setStreaming(false); abortRef.current = null;
+      },
+      onPermissionRequest: (reqId, name, args) => {
+        setPermissionReq({ id: reqId, name, args });
       },
     });
   };
@@ -288,6 +293,10 @@ export default function ChatPage() {
       {capabilityAction && <CapabilityInput action={capabilityAction} config={config}
         onSend={(text) => { setCapabilityAction(null); handleSend(text); }}
         onClose={() => setCapabilityAction(null)} />}
+
+      {permissionReq && <PermissionDialog
+        reqId={permissionReq.id} name={permissionReq.name} args={permissionReq.args}
+        onClose={() => setPermissionReq(null)} />}
 
       {showSettings && (
         <div className="w-72 min-w-[18rem] border-l border-sakura-100 bg-white overflow-y-auto">
