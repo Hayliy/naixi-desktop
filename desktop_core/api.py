@@ -5,6 +5,8 @@ from datetime import datetime
 
 # 权限确认：等待用户批准的高危工具
 _PENDING_PERMISSIONS: dict[str, dict] = {}
+# 会话级信任：{conv_key: {tool_name, ...}} — 用户勾选"始终允许"后不再对该工具弹出确认
+_session_trust: dict[str, set[str]] = {}
 # 活跃的 Agent 任务（用于取消）
 _active_agent_tasks: dict[str, asyncio.Task] = {}
 _agent_cancel_events: dict[str, asyncio.Event] = {}
@@ -1157,28 +1159,42 @@ async def api_chat_stream(request):
                             task_mgr.update_step(sse._task_id, step_idx, "running")
 
                         for retry in range(max_retries):
-                            # 高危工具：权限确认
+                            # 高危工具：权限确认（按信任级别分级）
                             if fn_name in HIGH_RISK_TOOLS:
-                                req_id = call_id or f"perm_{time.time()}"
-                                perm_event = asyncio.Event()
-                                perm_result = {"approved": False}
-                                _PENDING_PERMISSIONS[req_id] = {"event": perm_event, "result": perm_result}
-                                await sse.write(f"event: permission_request\ndata: {json.dumps({'id': req_id, 'name': fn_name, 'args': fn_args})}\n\n".encode())
-                                try:
-                                    await asyncio.wait_for(perm_event.wait(), timeout=120)
-                                except asyncio.TimeoutError:
-                                    if step_idx is not None:
-                                        task_mgr.update_step(sse._task_id, step_idx, "failed", "权限确认超时")
-                                    return call_id, "⏱ 权限确认超时，已取消"
+                                # ── 1. 全局完全信任：跳过所有确认 ──
+                                full_trust = meta_get("desktop_full_trust") == "true"
+                                if full_trust:
+                                    tr = await tools.execute(fn_name, fn_args, tool_ctx)
+                                # ── 2. 会话级信任：该工具已授权，直接执行 ──
+                                elif conv_key and fn_name in _session_trust.get(conv_key, set()):
+                                    tr = await tools.execute(fn_name, fn_args, tool_ctx)
+                                # ── 3. 需要弹窗确认 ──
                                 else:
-                                    if perm_result.get("approved"):
-                                        tr = await tools.execute(fn_name, fn_args, tool_ctx)
-                                    else:
+                                    req_id = call_id or f"perm_{time.time()}"
+                                    perm_event = asyncio.Event()
+                                    perm_result = {"approved": False, "always_allow": False}
+                                    _PENDING_PERMISSIONS[req_id] = {"event": perm_event, "result": perm_result}
+                                    await sse.write(f"event: permission_request\ndata: {json.dumps({'id': req_id, 'name': fn_name, 'args': fn_args})}\n\n".encode())
+                                    try:
+                                        await asyncio.wait_for(perm_event.wait(), timeout=120)
+                                    except asyncio.TimeoutError:
                                         if step_idx is not None:
-                                            task_mgr.update_step(sse._task_id, step_idx, "failed", "用户拒绝")
-                                        tr = "❌ 用户拒绝了操作"
-                                finally:
-                                    _PENDING_PERMISSIONS.pop(req_id, None)
+                                            task_mgr.update_step(sse._task_id, step_idx, "failed", "权限确认超时")
+                                        return call_id, "⏱ 权限确认超时，已取消"
+                                    else:
+                                        if perm_result.get("approved"):
+                                            tr = await tools.execute(fn_name, fn_args, tool_ctx)
+                                            # 勾选"始终允许"→ 加入会话级信任
+                                            if perm_result.get("always_allow") and conv_key:
+                                                if conv_key not in _session_trust:
+                                                    _session_trust[conv_key] = set()
+                                                _session_trust[conv_key].add(fn_name)
+                                        else:
+                                            if step_idx is not None:
+                                                task_mgr.update_step(sse._task_id, step_idx, "failed", "用户拒绝")
+                                            tr = "❌ 用户拒绝了操作"
+                                    finally:
+                                        _PENDING_PERMISSIONS.pop(req_id, None)
                             else:
                                 tr = await tools.execute(fn_name, fn_args, tool_ctx)
 
@@ -1411,6 +1427,8 @@ def setup_routes(app):
 
     # 工具权限确认
     app.router.add_post("/api/tool/permit", api_tool_permit)
+    app.router.add_get("/api/config/trust", api_config_trust)
+    app.router.add_post("/api/config/trust", api_config_trust)
 
     # 任务管理
     app.router.add_get("/api/tasks", api_tasks_list)
@@ -1524,11 +1542,27 @@ async def api_tool_permit(request):
         body = await request.json()
         req_id = body.get("id", "")
         approved = body.get("approved", False)
+        always_allow = body.get("always_allow", False)
         if req_id in _PENDING_PERMISSIONS:
             info = _PENDING_PERMISSIONS[req_id]
             info["result"]["approved"] = approved
+            info["result"]["always_allow"] = always_allow
             info["event"].set()
             return web.json_response({"ok": True, "approved": approved})
         return web.json_response({"error": "请求不存在或已超时"}, status=404)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+
+async def api_config_trust(request):
+    """获取/设置完全信任模式"""
+    if request.method == "GET":
+        val = meta_get("desktop_full_trust")
+        return web.json_response({"full_trust": val == "true"})
+    try:
+        body = await request.json()
+        enabled = body.get("full_trust", False)
+        meta_set("desktop_full_trust", "true" if enabled else "false")
+        return web.json_response({"ok": True, "full_trust": enabled})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)

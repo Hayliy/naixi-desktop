@@ -23,7 +23,7 @@ import type { ConvItem, MsgItem, ProviderModel } from "@/components/ChatTypes";
 import { convName, QUICK_ACTIONS } from "@/components/ChatTypes";
 import {
   Bot, Trash2, Check, X, ChevronLeft, Sparkles, Settings, FileText, Cpu, MessageCircle,
-  CheckCircle2,
+  CheckCircle2, Shield,
 } from "lucide-react";
 
 const MODELS: ProviderModel[] = [{ key: "auto", label: "自动路由（默认）", provider_id: 0 }];
@@ -64,6 +64,7 @@ export default function ChatPage() {
   const [agentMode, setAgentMode] = useState(false);
   const [capabilityAction, setCapabilityAction] = useState<typeof QUICK_ACTIONS[number] | null>(null);
   const [permissionReq, setPermissionReq] = useState<{ id: string; name: string; args: Record<string, unknown> } | null>(null);
+  const [fullTrust, setFullTrust] = useState(false);
   const msgEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [streaming, setStreaming] = useState(false);
@@ -110,6 +111,9 @@ export default function ChatPage() {
   useEffect(() => {
     apiGet<{ prompts: { scene: string; file: string; desc: string }[] }>("/api/prompts")
       .then(d => { const p = ["owner", "group", "stranger"]; setCustomScenes((d.prompts || []).filter(x => !p.includes(x.scene)).map(x => ({ file: x.file, desc: x.desc }))); })
+      .catch(() => {});
+    apiGet<{ full_trust: boolean }>("/api/config/trust")
+      .then(d => setFullTrust(d.full_trust))
       .catch(() => {});
   }, []);
 
@@ -237,6 +241,13 @@ export default function ChatPage() {
                   <button onClick={() => setShowPrompt(!showPrompt)} title="提示词" className={`p-1.5 rounded transition-colors ${showPrompt ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><FileText size={12} /></button>
                   {activeKey && <button onClick={() => setShowDetail(!showDetail)} title="会话详情" className={`p-1.5 rounded transition-colors ${showDetail ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><Sparkles size={12} /></button>}
                   <button onClick={() => setShowTask(!showTask)} className={`p-1.5 rounded transition-colors ${showTask ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`} title="任务进度"><CheckCircle2 size={12} /></button>
+                  <button onClick={async () => {
+                    const next = !fullTrust;
+                    try { await apiPost("/api/config/trust", { full_trust: next }); setFullTrust(next); } catch {}
+                  }} title={fullTrust ? "完全信任模式（点击关闭）" : "完全信任模式（高危工具自动允许）"}
+                    className={`p-1.5 rounded transition-colors ${fullTrust ? "text-red-500 bg-red-50" : "text-sakura-300 hover:text-red-400 hover:bg-red-50"}`}>
+                    <Shield size={12} />
+                  </button>
                   {activeKey && <button onClick={() => handleDelete(activeKey)} title="删除会话" className="p-1.5 hover:bg-red-50 rounded text-sakura-300 hover:text-red-500 transition-colors"><Trash2 size={12} /></button>}
                 </div>
               </div>
@@ -265,6 +276,7 @@ export default function ChatPage() {
                   <Cpu size={9} /><span>Agent</span>
                   {agentMode && <span className="w-1.5 h-1.5 rounded-full bg-teal-500" />}
                 </button>
+                {fullTrust && <span className="text-[10px] text-red-400 flex items-center gap-0.5"><Shield size={9} />完全信任</span>}
               </div>
             </div>
 
