@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { Bot, User, Copy, Check, RotateCcw, Edit3 } from "lucide-react";
+import { Bot, User, Copy, Check, RotateCcw, Edit3, X } from "lucide-react";
 import ContentRenderer from "@/components/ContentRenderer";
 import type { MsgItem } from "@/components/ChatTypes";
 import { fmtTime } from "@/components/ChatTypes";
 
-export default function MsgBubble({ msg, onEdit, onRegenerate }: {
-  msg: MsgItem; onEdit?: (id: number, text: string) => void; onRegenerate?: (id: number) => void;
+export default function MsgBubble({ msg, onEdit, onRegenerate, onDelete }: {
+  msg: MsgItem; onEdit?: (id: number, text: string) => void; onRegenerate?: (id: number) => void; onDelete?: (id: number) => void;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -26,7 +26,15 @@ export default function MsgBubble({ msg, onEdit, onRegenerate }: {
       <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${isUser ? "bg-pink-100 text-pink-500" : "bg-sakura-100 text-sakura-500"}`}>
         {isUser ? <User size={13} /> : <Bot size={13} />}
       </div>
-      <div className={`max-w-[75%] min-w-0 ${isUser ? "items-end" : "items-start"} flex flex-col`}>
+      <div className={`max-w-[75%] min-w-0 ${isUser ? "items-end" : "items-start"} flex flex-col relative`}>
+        {/* 快捷删除按钮：悬浮在气泡右上角，hover 时显示 */}
+        {onDelete && (
+          <button onClick={() => onDelete(msg.id)}
+            title="删除此消息"
+            className="absolute -top-1.5 -right-1.5 p-0.5 rounded-full bg-white border border-sakura-100 text-sakura-300 hover:text-red-500 hover:border-red-200 opacity-0 group-hover:opacity-100 transition-opacity z-10 shadow-sm">
+            <X size={10} />
+          </button>
+        )}
         <div className={`rounded-2xl px-4 py-2.5 text-xs leading-relaxed break-words ${
           isUser ? "bg-pink-500 text-white rounded-tr-md" : "bg-sakura-50 text-sakura-700 rounded-tl-md border border-sakura-100"
         }`}>

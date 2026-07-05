@@ -234,9 +234,9 @@ export default function ChatPage() {
                   </div>
                   <button onClick={() => setShowSettings(!showSettings)} title="模型设置" className={`p-1.5 rounded transition-colors ${showSettings ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><Settings size={12} /></button>
                   <button onClick={() => setShowPrompt(!showPrompt)} title="提示词" className={`p-1.5 rounded transition-colors ${showPrompt ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><FileText size={12} /></button>
-                  {activeKey && <button onClick={() => setShowDetail(!showDetail)} className={`p-1.5 rounded transition-colors ${showDetail ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><Sparkles size={12} /></button>}
+                  {activeKey && <button onClick={() => setShowDetail(!showDetail)} title="会话详情" className={`p-1.5 rounded transition-colors ${showDetail ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><Sparkles size={12} /></button>}
                   <button onClick={() => setShowTask(!showTask)} className={`p-1.5 rounded transition-colors ${showTask ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`} title="任务进度"><CheckCircle2 size={12} /></button>
-                  {activeKey && <button onClick={() => handleDelete(activeKey)} className="p-1.5 hover:bg-red-50 rounded text-sakura-300 hover:text-red-500 transition-colors"><Trash2 size={12} /></button>}
+                  {activeKey && <button onClick={() => handleDelete(activeKey)} title="删除会话" className="p-1.5 hover:bg-red-50 rounded text-sakura-300 hover:text-red-500 transition-colors"><Trash2 size={12} /></button>}
                 </div>
               </div>
 
@@ -280,6 +280,11 @@ export default function ChatPage() {
               ) : msgs.map((m) => (<MsgBubble key={m.id} msg={m}
                 onEdit={(id, text) => setMsgs(prev => prev.map(msg => msg.id === id ? { ...msg, content: text } : msg))}
                 onRegenerate={(id) => { const idx = msgs.findIndex(x => x.id === id); if (idx > 0 && msgs[idx - 1]?.role === "user") handleSend(msgs[idx - 1].content); }}
+                onDelete={async (id) => {
+                  if (!activeKey) return;
+                  setMsgs(prev => prev.filter(m => m.id !== id));
+                  try { await apiPost("/api/conversation/message/delete", { key: activeKey, msg_id: id }); } catch {}
+                }}
               />))}
               <div ref={msgEndRef} />
             </div>

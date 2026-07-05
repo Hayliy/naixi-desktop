@@ -283,6 +283,36 @@ def conv_get_messages(conv_key: str):
     finally:
         conn.close()
 
+def conv_delete_message(conv_key: str, msg_id: int):
+    """删除对话中的单条消息，更新对话摘要"""
+    conn = _get_conn()
+    try:
+        # 获取待删除消息
+        row = conn.execute("SELECT role, content, time FROM conv_messages WHERE id=? AND conv_key=?", (msg_id, conv_key)).fetchone()
+        if not row:
+            return False
+        # 删除消息
+        conn.execute("DELETE FROM conv_messages WHERE id=? AND conv_key=?", (msg_id, conv_key))
+        # 更新消息计数
+        remaining = conn.execute("SELECT COUNT(*) AS cnt FROM conv_messages WHERE conv_key=?", (conv_key,)).fetchone()
+        count = remaining["cnt"] if remaining else 0
+        if count == 0:
+            conn.execute("DELETE FROM convs WHERE key=?", (conv_key,))
+        else:
+            # 更新最新消息为最后一条
+            last = conn.execute(
+                "SELECT role, content, time FROM conv_messages WHERE conv_key=? ORDER BY id DESC LIMIT 1",
+                (conv_key,)
+            ).fetchone()
+            conn.execute(
+                "INSERT OR REPLACE INTO convs (key, last_role, last_msg, last_time, msg_count) VALUES (?, ?, ?, ?, ?)",
+                (conv_key, last["role"], last["content"][:100], last["time"], count)
+            )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
 def conv_delete(conv_key: str):
     """删除对话及其所有消息"""
     conn = _get_conn()

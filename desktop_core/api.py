@@ -38,7 +38,7 @@ def _estimate_tokens(text: str) -> int:
 
 from desktop_core.context import ContextManager
 
-from desktop_core.storage import meta_get, meta_set, encrypt_config, decrypt_config, decrypt_api_key, conv_list, conv_get_messages, conv_delete, conv_save_message_sync as conv_save_message
+from desktop_core.storage import meta_get, meta_set, encrypt_config, decrypt_config, decrypt_api_key, conv_list, conv_get_messages, conv_delete, conv_delete_message, conv_save_message_sync as conv_save_message
 from desktop_core import tools
 
 log = logging.getLogger("desktop")
@@ -1288,6 +1288,17 @@ async def api_conversation_delete(request):
     return web.json_response({"ok": True})
 
 
+async def api_conversation_message_delete(request):
+    """删除对话中的单条消息"""
+    body = await request.json()
+    key = body.get("key", "")
+    msg_id = body.get("msg_id", 0)
+    if not key or not msg_id:
+        return web.json_response({"error": "缺少 key 或 msg_id"}, status=400)
+    ok = conv_delete_message(key, msg_id)
+    return web.json_response({"ok": ok})
+
+
 async def api_providers(request):
     import os
     pj_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "platforms.json")
@@ -1348,6 +1359,7 @@ def setup_routes(app):
     app.router.add_get("/api/conversations", api_conversations_list)
     app.router.add_get("/api/conversation/{key}", api_conversation_get)
     app.router.add_post("/api/conversation/delete", api_conversation_delete)
+    app.router.add_post("/api/conversation/message/delete", api_conversation_message_delete)
 
     # 多类型供应商路由（画图/视频/语音/代码/搜索）
     app.router.add_post("/api/generate_image", api_generate_image)
