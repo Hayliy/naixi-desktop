@@ -227,11 +227,13 @@ async def api_templates_online(request):
 
 async def api_status(request):
     """兼容原 /api/status 格式，返回桌面端可用的默认值"""
+    from desktop_core import tools as _tools_mod
+    tool_count = len(_tools_mod._registry)
     return web.json_response({
         "version": "0.1.0",
         "trust_total": 0, "trust_level": 0, "trust_rate": 100,
         "knowledge_items": 0, "knowledge_cats": 0,
-        "tools": 25, "skills": 0,
+        "tools": tool_count, "skills": 0,
         "agents": 0, "cases": 0,
         "napcat_connected": False,
         "experiences": 0,

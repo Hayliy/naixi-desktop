@@ -94,7 +94,8 @@ def get_fast_definitions():
     """返回常用工具子集（8个），加快首轮响应速度"""
     fast_tools = ["search_web", "current_datetime", "calculate", "get_weather",
                    "bash", "find_files", "open_url", "generate_image",
-                   "git", "powershell", "web_fetch", "clipboard", "mkdir"]
+                   "git", "powershell", "web_fetch", "clipboard", "mkdir",
+                   "visualize", "read_image", "read_file", "write_file"]
     return [
         {
             "type": "function",
