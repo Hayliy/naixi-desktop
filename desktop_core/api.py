@@ -34,6 +34,7 @@ def _estimate_tokens(text: str) -> int:
     return max(1, int(cn / 1.5 + rest / 3.5))
 
 from desktop_core.context import ContextManager
+from desktop_core.task_manager import get_manager as get_task_manager
 
 from desktop_core.storage import meta_get, meta_set, encrypt_config, decrypt_config, decrypt_api_key, conv_list, conv_get_messages, conv_delete, conv_save_message_sync as conv_save_message
 from desktop_core import tools
@@ -1016,28 +1017,44 @@ async def api_chat_stream(request):
 
         full_response = ""
         usage_info = None
+        task_mgr = get_task_manager()
+        MAX_ROUNDS = 25
+        errors_in_round = 0  # 连续错误计数，用于降级
 
         try:
-            # ── Agent 循环（最多 25 轮，满足复杂开发任务） ──
-            for round_num in range(25):
-                # 为开发任务添加工具使用指引
-                if round_num == 0 and any(kw in text.lower() for kw in ["写代码", "开发", "创建项目", "改代码", "修复", "重构", "添加功能"]):
-                    dev_prompt = (
-                        "\n\n【开发任务指引】\n"
-                        "1. 先用 list_files 或 grep_search 了解项目结构\n"
-                        "2. 用 read_file 读取相关文件了解现有代码\n"
-                        "3. 用 edit_file 或 write_file 修改/创建文件\n"
-                        "4. 用 run_command 执行构建、测试验证\n"
-                        "5. 如果出错，分析错误信息后修复再试"
-                    )
-                    messages.insert(-1, {"role": "system", "content": dev_prompt})
-                # 上下文压缩（超限时自动触发）
+            # ── Agent 循环 ──
+            for round_num in range(MAX_ROUNDS):
+                # ── 任务指引（首轮注入） ──
+                if round_num == 0:
+                    if any(kw in text.lower() for kw in ["写代码", "开发", "创建项目", "改代码", "修复", "重构", "添加功能", "添功能"]):
+                        dev_prompt = (
+                            "\n\n【开发任务指引】\n"
+                            "1. 先用 list_files 或 grep_search 了解项目结构\n"
+                            "2. 用 read_file 读取相关文件了解现有代码\n"
+                            "3. 用 edit_file 或 write_file 修改/创建文件\n"
+                            "4. 用 run_command 执行构建、测试验证\n"
+                            "5. 如果出错，分析错误信息后修复再试"
+                        )
+                        messages.insert(-1, {"role": "system", "content": dev_prompt})
+                    # 注入任务进度摘要
+                    task_summary = task_mgr.summarize()
+                    if task_summary:
+                        messages.insert(-1, {"role": "system", "content": task_summary})
+
+                # ── 错误恢复：连续失败3次时尝试降级 ──
+                if errors_in_round >= 3:
+                    fallback_msg = "之前尝试的工具调用失败了。请换一种方式完成任务，或者告诉用户做不到"
+                    messages.append({"role": "system", "content": fallback_msg})
+                    errors_in_round = 0
+
+                # ── 上下文压缩（超限时自动触发） ──
                 if ctx_mgr.should_compress(messages):
                     compressed = ctx_mgr.compress(messages)
                     if len(compressed) < len(messages):
                         log.info(f"[Agent] 上下文压缩: {len(messages)} → {len(compressed)} 条消息")
                         messages = compressed
-                # 首轮用常用工具子集（8个）加快响应，后续轮次用全部工具
+
+                # ── 请求 LLM ──
                 current_tools = tools.get_fast_definitions() if round_num == 0 else TOOLS
                 payload = {
                     "model": model,
@@ -1062,83 +1079,118 @@ async def api_chat_stream(request):
                         content = msg.get("content", "")
                         tool_calls = msg.get("tool_calls", [])
 
-                        # ── 累加 Token 用量（跨多轮） ──
-                        round_input = 0
-                        round_output = 0
-                        if "usage" in result:
-                            u = result["usage"]
-                            # 兼容不同 API 的字段名
-                            round_input = u.get("prompt_tokens", u.get("input_tokens", u.get("input", 0)))
-                            round_output = u.get("completion_tokens", u.get("output_tokens", u.get("output", 0)))
-                        if not round_input and not round_output:
-                            # API 未返回用量时，用 tiktoken 精确估算（降级到字符估算）
-                            _est_token = _estimate_tokens
-                            msgs_text = json.dumps([m.get("content","") for m in messages], ensure_ascii=False)
-                            round_input = max(50, _est_token(msgs_text))
-                            round_output = max(10, _est_token(content)) if content else 20
-                        if usage_info:
-                            usage_info["input"] = (usage_info.get("input", 0) or 0) + round_input
-                            usage_info["output"] = (usage_info.get("output", 0) or 0) + round_output
-                        else:
-                            usage_info = {"input": round_input, "output": round_output}
+                # ── Token 用量 ──
+                round_input, round_output = 0, 0
+                if "usage" in result:
+                    u = result["usage"]
+                    round_input = u.get("prompt_tokens", u.get("input_tokens", u.get("input", 0)))
+                    round_output = u.get("completion_tokens", u.get("output_tokens", u.get("output", 0)))
+                if not round_input and not round_output:
+                    _est = _estimate_tokens
+                    msgs_text = json.dumps([m.get("content", "") for m in messages], ensure_ascii=False)
+                    round_input = max(50, _est(msgs_text))
+                    round_output = max(10, _est(content)) if content else 20
+                if usage_info:
+                    usage_info["input"] = (usage_info.get("input", 0) or 0) + round_input
+                    usage_info["output"] = (usage_info.get("output", 0) or 0) + round_output
+                else:
+                    usage_info = {"input": round_input, "output": round_output}
 
-                        # 保存 assistant 回复到历史
-                        msg_entry = {"role": "assistant", "content": content}
-                        if tool_calls:
-                            msg_entry["tool_calls"] = tool_calls
-                        messages.append(msg_entry)
+                # ── 保存 assistant 回复 ──
+                msg_entry = {"role": "assistant", "content": content}
+                if tool_calls:
+                    msg_entry["tool_calls"] = tool_calls
+                messages.append(msg_entry)
 
-                        # ── 处理工具调用 ──
-                        if finish == "tool_calls" and tool_calls:
-                            for tc in tool_calls:
-                                fn = tc.get("function", {})
-                                fn_name = fn.get("name", "")
+                # ── 处理工具调用（支持并行执行独立工具） ──
+                if finish == "tool_calls" and tool_calls:
+                    # 给 LLM 发送 tool_use 事件
+                    for tc in tool_calls:
+                        fn = tc.get("function", {})
+                        fn_name = fn.get("name", "")
+                        try: fn_args = json.loads(fn.get("arguments", "{}"))
+                        except: fn_args = {}
+                        await sse.write(f"event: tool_use\ndata: {json.dumps({'name': fn_name, 'args': fn_args, 'id': tc.get('id', '')})}\n\n".encode())
+
+                    # 并行执行：分组执行独立的工具调用
+                    # 策略：优先串行（更安全），但如果 LLM 一次返回多个工具，尝试并行
+                    parallel_results = {}
+                    exec_tasks = []
+
+                    async def _exec_one(tc):
+                        fn = tc.get("function", {})
+                        fn_name = fn.get("name", "")
+                        try: fn_args = json.loads(fn.get("arguments", "{}"))
+                        except: fn_args = {}
+                        call_id = tc.get("id", "")
+                        max_retries = 2
+
+                        for retry in range(max_retries):
+                            # 高危工具：权限确认
+                            if fn_name in HIGH_RISK_TOOLS:
+                                req_id = call_id or f"perm_{time.time()}"
+                                perm_event = asyncio.Event()
+                                perm_result = {"approved": False}
+                                _PENDING_PERMISSIONS[req_id] = {"event": perm_event, "result": perm_result}
+                                await sse.write(f"event: permission_request\ndata: {json.dumps({'id': req_id, 'name': fn_name, 'args': fn_args})}\n\n".encode())
                                 try:
-                                    fn_args = json.loads(fn.get("arguments", "{}"))
-                                except:
-                                    fn_args = {}
-
-                                await sse.write(f"event: tool_use\ndata: {json.dumps({'name': fn_name, 'args': fn_args, 'id': tc.get('id', '')})}\n\n".encode())
-
-                                # ── 高危工具：权限确认 ──
-                                if fn_name in HIGH_RISK_TOOLS:
-                                    req_id = tc.get("id", f"perm_{time.time()}")
-                                    perm_event = asyncio.Event()
-                                    perm_result = {"approved": False}
-                                    _PENDING_PERMISSIONS[req_id] = {"event": perm_event, "result": perm_result}
-                                    await sse.write(f"event: permission_request\ndata: {json.dumps({'id': req_id, 'name': fn_name, 'args': fn_args})}\n\n".encode())
-                                    try:
-                                        await asyncio.wait_for(perm_event.wait(), timeout=120)
-                                    except asyncio.TimeoutError:
-                                        tool_result = "⏱ 权限确认超时，已取消"
-                                    else:
-                                        if perm_result.get("approved"):
-                                            tool_result = await tools.execute(fn_name, fn_args, tool_ctx)
-                                        else:
-                                            tool_result = "❌ 用户拒绝了操作"
-                                    finally:
-                                        _PENDING_PERMISSIONS.pop(req_id, None)
+                                    await asyncio.wait_for(perm_event.wait(), timeout=120)
+                                except asyncio.TimeoutError:
+                                    return call_id, "⏱ 权限确认超时，已取消"
                                 else:
-                                    tool_result = await tools.execute(fn_name, fn_args, tool_ctx)
+                                    if perm_result.get("approved"):
+                                        tr = await tools.execute(fn_name, fn_args, tool_ctx)
+                                    else:
+                                        tr = "❌ 用户拒绝了操作"
+                                finally:
+                                    _PENDING_PERMISSIONS.pop(req_id, None)
+                            else:
+                                tr = await tools.execute(fn_name, fn_args, tool_ctx)
 
-                                await sse.write(f"event: tool_result\ndata: {json.dumps({'tool_call_id': tc.get('id', ''), 'name': fn_name, 'content': tool_result[:200]})}\n\n".encode())
+                            # 错误恢复：失败时重试（最多2次）
+                            if tr and ("失败" in tr[:20] or "出错" in tr[:20] or "❌" in tr[:10]):
+                                if retry < max_retries - 1:
+                                    log.info(f"[Agent] 工具 {fn_name} 失败，重试第 {retry+2} 次")
+                                    await asyncio.sleep(1)
+                                    continue
+                            break
+                        return call_id, tr
 
-                                messages.append({
-                                    "role": "tool",
-                                    "tool_call_id": tc.get("id", ""),
-                                    "name": fn_name,
-                                    "content": tool_result,
-                                })
-                            continue
+                    # 几个工具同时跑（并行）
+                    if len(tool_calls) > 1:
+                        exec_tasks = [_exec_one(tc) for tc in tool_calls]
+                        results = await asyncio.gather(*exec_tasks, return_exceptions=True)
+                        for r in results:
+                            if isinstance(r, Exception):
+                                log.warning(f"[Agent] 工具并行执行异常: {r}")
+                                continue
+                            call_id, result_text = r
+                            if call_id:
+                                parallel_results[call_id] = result_text
+                    else:
+                        call_id, result_text = await _exec_one(tool_calls[0])
+                        if call_id:
+                            parallel_results[call_id] = result_text
 
-                        # ── 文字回复：流式输出 ──
-                        if content:
-                            full_response = content
-                            chunk_size = 20
-                            for i in range(0, len(content), chunk_size):
-                                await sse.write(f"event: text-delta\ndata: {json.dumps({'text': content[i:i + chunk_size]})}\n\n".encode())
-                                await asyncio.sleep(0.01)
-                        break
+                    # 将结果添加到 messages
+                    errors_in_round = 0
+                    for tc in tool_calls:
+                        call_id = tc.get("id", "")
+                        tr = parallel_results.get(call_id, "（工具执行失败）")
+                        if "失败" in tr[:20] or "❌" in tr[:10] or "出错" in tr[:20]:
+                            errors_in_round += 1
+                        await sse.write(f"event: tool_result\ndata: {json.dumps({'tool_call_id': call_id, 'name': tc.get('function', {}).get('name', ''), 'content': tr[:200]})}\n\n".encode())
+                        messages.append({"role": "tool", "tool_call_id": call_id, "name": tc.get("function", {}).get("name", ""), "content": tr})
+                    continue
+
+                # ── 文字回复：流式输出 ──
+                if content:
+                    full_response = content
+                    chunk_size = 20
+                    for i in range(0, len(content), chunk_size):
+                        await sse.write(f"event: text-delta\ndata: {json.dumps({'text': content[i:i + chunk_size]})}\n\n".encode())
+                        await asyncio.sleep(0.01)
+                break
 
             # 保存 AI 回复
             if conv_key and full_response:
