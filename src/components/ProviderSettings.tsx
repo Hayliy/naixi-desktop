@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Plus, Trash2, Check, X, Loader2, Settings, ChevronDown, ChevronUp, Pencil, Save } from "lucide-react";
+import { Plus, Trash2, Check, X, Loader2, Settings, ChevronDown, ChevronUp, Pencil, Save, Eye, EyeOff } from "lucide-react";
 import { useAppConfig } from "@/contexts/AppContext";
 import { apiGet, apiPost } from "@/lib/api";
 
@@ -140,6 +140,7 @@ export default function ProviderSettings() {
   const [formName, setFormName] = useState("");
   const [formHost, setFormHost] = useState("https://api.openai.com/v1");
   const [formKey, setFormKey] = useState("");
+  const [showFormKey, setShowFormKey] = useState(false);
   const [formModels, setFormModels] = useState("");
   const [formCapability, setFormCapability] = useState("chat");
   const [testing, setTesting] = useState(false);
@@ -300,8 +301,15 @@ export default function ProviderSettings() {
           <input className="w-full px-3 py-2 rounded-lg border border-sakura-100 bg-white text-sakura-600 placeholder:text-sakura-300 font-mono text-[10px]"
             placeholder="API 地址（如 https://api.openai.com/v1）" value={formHost} onChange={e => setFormHost(e.target.value)} />
 
-          <input className="w-full px-3 py-2 rounded-lg border border-sakura-100 bg-white text-sakura-600 placeholder:text-sakura-300 font-mono text-[10px]"
-            placeholder="API Key（Ollama 不需要）" value={formKey} onChange={e => setFormKey(e.target.value)} />
+          <div className="relative">
+            <input type={showFormKey ? "text" : "password"}
+              className="w-full px-3 py-2 pr-9 rounded-lg border border-sakura-100 bg-white text-sakura-600 placeholder:text-sakura-300 font-mono text-[10px]"
+              placeholder="API Key（Ollama 不需要）" value={formKey} onChange={e => setFormKey(e.target.value)} />
+            <button type="button" onClick={() => setShowFormKey(!showFormKey)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-sakura-300 hover:text-sakura-500 transition-colors">
+              {showFormKey ? <EyeOff size={13} /> : <Eye size={13} />}
+            </button>
+          </div>
 
           <div>
             <p className="text-[10px] text-sakura-400 mb-1">模型名（留空自动使用名称）</p>
@@ -347,6 +355,7 @@ function EditProviderCard({ provider, onSave, onCancel }: {
   const [apiUrl, setApiUrl] = useState(provider.api_url);
   const [apiKey, setApiKey] = useState(provider.api_key);
   const [model, setModel] = useState(provider.model);
+  const [showEditKey, setShowEditKey] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
@@ -395,8 +404,15 @@ function EditProviderCard({ provider, onSave, onCancel }: {
         </div>
         <div>
           <p className="text-[10px] text-sakura-400 mb-0.5">API Key</p>
-          <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-white text-sakura-600 text-[11px] font-mono"
-            value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="留空不改变" />
+          <div className="relative">
+            <input type={showEditKey ? "text" : "password"}
+              className="w-full px-2.5 py-1.5 pr-9 rounded-lg border border-sakura-100 bg-white text-sakura-600 text-[11px] font-mono"
+              value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="留空不改变" />
+            <button type="button" onClick={() => setShowEditKey(!showEditKey)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-sakura-300 hover:text-sakura-500 transition-colors">
+              {showEditKey ? <EyeOff size={13} /> : <Eye size={13} />}
+            </button>
+          </div>
         </div>
         <div>
           <p className="text-[10px] text-sakura-400 mb-0.5">模型名</p>
