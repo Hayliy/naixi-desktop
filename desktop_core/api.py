@@ -1009,9 +1009,24 @@ async def api_chat_stream(request):
                         content = msg.get("content", "")
                         tool_calls = msg.get("tool_calls", [])
 
+                        # ── 累加 Token 用量（跨多轮） ──
+                        round_input = 0
+                        round_output = 0
                         if "usage" in result:
                             u = result["usage"]
-                            usage_info = {"input": u.get("prompt_tokens", 0), "output": u.get("completion_tokens", 0)}
+                            # 兼容不同 API 的字段名
+                            round_input = u.get("prompt_tokens", u.get("input_tokens", u.get("input", 0)))
+                            round_output = u.get("completion_tokens", u.get("output_tokens", u.get("output", 0)))
+                        if not round_input and not round_output:
+                            # API 未返回用量时，根据文本长度估算
+                            msgs_text = json.dumps([m.get("content","") for m in messages], ensure_ascii=False)
+                            round_input = max(50, len(msgs_text) // 4)
+                            round_output = max(10, len(content) // 4) if content else 20
+                        if usage_info:
+                            usage_info["input"] = (usage_info.get("input", 0) or 0) + round_input
+                            usage_info["output"] = (usage_info.get("output", 0) or 0) + round_output
+                        else:
+                            usage_info = {"input": round_input, "output": round_output}
 
                         # 保存 assistant 回复到历史
                         msg_entry = {"role": "assistant", "content": content}
