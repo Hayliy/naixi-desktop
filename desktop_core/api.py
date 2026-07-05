@@ -8,6 +8,8 @@ _PENDING_PERMISSIONS: dict[str, dict] = {}
 # 活跃的 Agent 任务（用于取消）
 _active_agent_tasks: dict[str, asyncio.Task] = {}
 _agent_cancel_events: dict[str, asyncio.Event] = {}
+# 活跃的任务追踪（conv_key → task_id）
+_active_tasks: dict[str, str] = {}
 
 # 高危工具列表（执行前需要用户确认）
 HIGH_RISK_TOOLS = {"bash", "kill_process", "run_local_command"}
@@ -37,6 +39,7 @@ def _estimate_tokens(text: str) -> int:
     return max(1, int(cn / 1.5 + rest / 3.5))
 
 from desktop_core.context import ContextManager
+from desktop_core.task_manager import get_manager as get_task_manager
 
 from desktop_core.storage import meta_get, meta_set, encrypt_config, decrypt_config, decrypt_api_key, conv_list, conv_get_messages, conv_delete, conv_save_message_sync as conv_save_message
 from desktop_core import tools
@@ -1117,6 +1120,23 @@ async def api_chat_stream(request):
 
                 # ── 处理工具调用（支持并行执行独立工具） ──
                 if finish == "tool_calls" and tool_calls:
+                    # ── 任务管理（用 conv_key 追踪，避免函数属性持久化） ──
+                    task_mgr = get_task_manager()
+                    task_id = _active_tasks.get(conv_key, "")
+                    if not task_id:
+                        # 首次工具调用：创建任务
+                        steps = [{"desc": f"调用 {tc.get('function',{}).get('name','?')}", "status": "running"} for tc in tool_calls]
+                        task = task_mgr.create_task(text[:60], steps)
+                        if conv_key:
+                            _active_tasks[conv_key] = task.task_id
+                        task_id = task.task_id
+                    else:
+                        # 已有任务：追加步骤
+                        task = task_mgr.get_task(task_id)
+                        if task:
+                            for tc in tool_calls:
+                                task.steps.append({"desc": f"调用 {tc.get('function',{}).get('name','?')}", "status": "running"})
+                    
                     # 给 LLM 发送 tool_use 事件
                     for tc in tool_calls:
                         fn = tc.get("function", {})
@@ -1187,11 +1207,23 @@ async def api_chat_stream(request):
 
                     # 将结果添加到 messages
                     errors_in_round = 0
-                    for tc in tool_calls:
+                    for i, tc in enumerate(tool_calls):
                         call_id = tc.get("id", "")
                         tr = parallel_results.get(call_id, "（工具执行失败）")
                         if "失败" in tr[:20] or "❌" in tr[:10] or "出错" in tr[:20]:
                             errors_in_round += 1
+                            # 更新任务步骤状态
+                            tid = _active_tasks.get(conv_key, "")
+                            if tid:
+                                t = get_task_manager().get_task(tid)
+                                if t and i < len(t.steps):
+                                    t.steps[i]["status"] = "failed"
+                        else:
+                            tid = _active_tasks.get(conv_key, "")
+                            if tid:
+                                t = get_task_manager().get_task(tid)
+                                if t and i < len(t.steps):
+                                    t.steps[i]["status"] = "done"
                         await sse.write(f"event: tool_result\ndata: {json.dumps({'tool_call_id': call_id, 'name': tc.get('function', {}).get('name', ''), 'content': tr[:200]})}\n\n".encode())
                         messages.append({"role": "tool", "tool_call_id": call_id, "name": tc.get("function", {}).get("name", ""), "content": tr})
                     continue
@@ -1203,6 +1235,12 @@ async def api_chat_stream(request):
                     for i in range(0, len(content), chunk_size):
                         await sse.write(f"event: text-delta\ndata: {json.dumps({'text': content[i:i + chunk_size]})}\n\n".encode())
                         await asyncio.sleep(0.01)
+                # 标记任务完成
+                tid = _active_tasks.pop(conv_key, None)
+                if tid:
+                    t = get_task_manager().get_task(tid)
+                    if t:
+                        t.status = "done"
                 break
 
             # 保存 AI 回复
@@ -1211,6 +1249,7 @@ async def api_chat_stream(request):
                 except: pass
 
         except Exception as e:
+            _active_tasks.pop(conv_key, None)
             await sse.write(f"event: status\ndata: {json.dumps({'state': 'error', 'text': str(e)})}\n\n".encode())
             await sse.write(f"event: finish\ndata: {json.dumps({'usage': usage_info})}\n\n".encode())
             await sse.write_eof()
