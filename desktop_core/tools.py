@@ -641,6 +641,48 @@ register("run_local_command", "在电脑上执行系统命令（安全受限）�
     {"type": "object", "properties": {"command": {"type": "string", "description": "要执行的命令"}}, "required": ["command"]},
     _run_local_command)
 
+# ── 文件搜索工具 ──
+
+async def _find_files(args, ctx):
+    """在电脑上搜索文件（限制搜索范围和时间）"""
+    name = args.get("name", "")
+    if not name: return "缺少文件名"
+    search_paths = [
+        os.path.expanduser("~\\Desktop"),
+        os.path.expanduser("~\\Downloads"),
+        os.path.expanduser("~\\AppData\\Local"),
+        "C:\\Program Files",
+        "C:\\Program Files (x86)",
+        "D:\\Program Files",
+        "D:\\软件",
+    ]
+    results = []
+    max_depth = 4  # 最大目录深度
+    max_results = 8  # 最多返回条数
+    for root in search_paths:
+        if not os.path.isdir(root): continue
+        try:
+            for dirpath, dirs, files in os.walk(root):
+                depth = dirpath.replace(root, "").count(os.sep)
+                if depth >= max_depth:
+                    dirs.clear()
+                    continue
+                dirs[:] = [d for d in dirs if d not in ("node_modules", ".git", "__pycache__", "venv", ".venv", "cache", "Cache")]
+                for f in files:
+                    if name.lower() in f.lower():
+                        results.append(os.path.join(dirpath, f))
+                        if len(results) >= max_results: break
+                if len(results) >= max_results: break
+        except: pass
+        if len(results) >= max_results: break
+    if results:
+        return "找到以下文件:\n" + "\n".join(results)
+    return f"未找到包含「{name}」的文件（搜索范围: 桌面/下载/程序目录）"
+
+register("find_files", "在电脑上搜索文件。适合查找程序安装位置、文档等",
+    {"type": "object", "properties": {"name": {"type": "string", "description": "文件名关键词，如「鸣潮」「Wuthering」"}}, "required": ["name"]},
+    _find_files)
+
 # ── 截图工具 ──
 
 async def _screenshot(args, ctx):

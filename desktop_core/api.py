@@ -951,6 +951,25 @@ async def api_chat_stream(request):
         scene = body.get("scene", "owner")
         system_prompt = _get_prompt_text(scene)
 
+        # Agent 模式：追加系统操作能力说明
+        is_agent = "/agent/" in request.path
+        has_system_kw = any(kw in text.lower() for kw in ["打开", "运行", "启动", "执行", "截图", "进程", "系统", "电脑", "安装", "搜索文件", "找文件"])
+        if is_agent or has_system_kw:
+            system_prompt += (
+                "\n\n【系统操作能力】\n"
+                "如果用户让你打开程序/游戏，你应该：\n"
+                "1. 先调用 find_files 搜索程序的安装位置\n"
+                "2. 找到后用 run_local_command(\"start 完整路径\") 启动\n"
+                "3. 如果找不到，再告诉用户未安装\n"
+                "其他能力：\n"
+                "- 打开网址：open_url(\"https://...\")\n"
+                "- 查看系统信息：get_system_info()\n"
+                "- 截图：screenshot() + analyze_image() 分析\n"
+                "- 进程管理：list_processes() / kill_process()\n"
+                "- 文件搜索：find_files(\"关键词\")\n"
+                "注意：优先用工具完成任务，不要只给文字建议。"
+            )
+
         # 构造消息列表
         messages = []
         if system_prompt:
