@@ -941,8 +941,19 @@ async def api_chat_stream(request):
         TOOLS = tools.get_definitions()
         tool_ctx = {}
         img_p = _find_provider_by_type("image")
-        if img_p:
-            tool_ctx["image_provider"] = img_p
+        if img_p: tool_ctx["image_provider"] = img_p
+        vis_p = _find_provider_by_type("vision")
+        if vis_p: tool_ctx["vision_provider"] = vis_p
+        # 找第一个 chat 供应商做通用 LLM 调用
+        raw_cfg = meta_get("desktop_config")
+        if raw_cfg:
+            try:
+                all_p = json.loads(raw_cfg).get("api_providers", {})
+                for pid, pcfg in all_p.items():
+                    if pcfg.get("type", "chat") == "chat":
+                        tool_ctx["chat_provider"] = {"key": pid, **pcfg}
+                        break
+            except: pass
         sse = web.StreamResponse()
         sse.headers["Content-Type"] = "text/event-stream"
         sse.headers["Cache-Control"] = "no-cache"

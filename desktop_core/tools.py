@@ -307,6 +307,116 @@ async def _search_knowledge(args, ctx):
     except:
         return "知识库读取失败"
 
+# ── 新增工具：图片分析 ──
+
+async def _analyze_image(args, ctx):
+    """调用视觉模型分析图片"""
+    image_url = args.get("url", "")
+    question = args.get("question", "请描述这张图片")
+    if not image_url:
+        return "缺少图片 URL"
+    provider = ctx.get("vision_provider")
+    if not provider:
+        provider = ctx.get("chat_provider")
+    if not provider:
+        return "未配置视觉模型供应商"
+    import aiohttp
+    api_url = provider.get("api_url", "").rstrip("/")
+    api_key = provider.get("api_key", "")
+    model = provider.get("model", "qwen-vl-plus")
+    from desktop_core.storage import decrypt_api_key
+    decrypted = decrypt_api_key(api_key)
+    if decrypted: api_key = decrypted
+    chat_url = api_url.rstrip("/chat/completions") + "/chat/completions"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": image_url}}, {"type": "text", "text": question}]}],
+        "max_tokens": 1024,
+    }
+    async with aiohttp.ClientSession(headers=headers) as s:
+        async with s.post(chat_url, json=payload, timeout=aiohttp.ClientTimeout(total=60)) as r:
+            if r.status != 200:
+                err = await r.text()
+                return f"图片分析失败: {err[:200]}"
+            result = await r.json()
+            content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+            return content or "未获取到分析结果"
+
+# ── 新增工具：翻译 ──
+
+async def _translate_text(args, ctx):
+    text = args.get("text", "")
+    target = args.get("target", "中文")
+    if not text:
+        return "缺少要翻译的文本"
+    provider = ctx.get("chat_provider")
+    if not provider:
+        return "未配置对话模型供应商"
+    import aiohttp
+    api_url = provider.get("api_url", "").rstrip("/")
+    api_key = provider.get("api_key", "")
+    model = provider.get("model", "")
+    from desktop_core.storage import decrypt_api_key
+    decrypted = decrypt_api_key(api_key)
+    if decrypted: api_key = decrypted
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    prompt = f"请将以下文本翻译成{target}，只返回翻译结果，不要多余解释：\n\n{text}"
+    payload = {"model": model or "default", "messages": [{"role": "user", "content": prompt}], "max_tokens": 2048}
+    async with aiohttp.ClientSession(headers=headers) as s:
+        async with s.post(api_url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as r:
+            if r.status != 200:
+                return f"翻译失败: HTTP {r.status}"
+            result = await r.json()
+            return result.get("choices", [{}])[0].get("message", {}).get("content", "") or "翻译失败"
+
+# ── 新增工具：文档读取 ──
+
+async def _read_document(args, ctx):
+    filepath = args.get("path", "")
+    if not filepath:
+        return "缺少文件路径"
+    full = os.path.normpath(os.path.join(WORKSPACE_DIR, filepath))
+    if not full.startswith(WORKSPACE_DIR):
+        return "不允许访问工作区外的文件"
+    if not os.path.exists(full):
+        return f"文件不存在: {filepath}"
+    ext = os.path.splitext(full)[1].lower()
+    try:
+        if ext == ".pdf":
+            try:
+                import pdfminer.high_level
+                text = pdfminer.high_level.extract_text(full)
+                return text[:5000] if text.strip() else "（PDF 无提取到文本）"
+            except ImportError:
+                return "需要安装 pdfminer.six 库以支持 PDF 解析"
+        elif ext in (".docx", ".doc"):
+            try:
+                import docx
+                doc = docx.Document(full)
+                text = "\n".join(p.text for p in doc.paragraphs)
+                return text[:5000] if text.strip() else "（文档无内容）"
+            except ImportError:
+                return "需要安装 python-docx 库以支持 Word 解析"
+        elif ext in (".csv", ".tsv"):
+            try:
+                import csv, io
+                with open(full, "r", encoding="utf-8-sig") as f:
+                    reader = csv.DictReader(f)
+                    rows = list(reader)
+                if not rows:
+                    return "（CSV 无数据）"
+                header = ", ".join(rows[0].keys())
+                preview = "\n".join(", ".join(r.values()) for r in rows[:20])
+                return f"列: {header}\n共 {len(rows)} 行\n数据预览:\n{preview}"[:5000]
+            except Exception as e:
+                return f"CSV 解析失败: {str(e)[:100]}"
+        else:
+            with open(full, "r", encoding="utf-8", errors="replace") as f:
+                return f.read()[:5000]
+    except Exception as e:
+        return f"读取失败: {str(e)[:100]}"
+
 # ── 注册所有工具 ──
 
 register("search_web", "搜索网络获取实时信息，如新闻、天气、百科知识等",
@@ -356,3 +466,15 @@ register("get_weather", "查询某个城市的天气信息",
 register("search_knowledge", "在本地知识库中搜索信息",
     {"type": "object", "properties": {"query": {"type": "string", "description": "搜索关键词"}}, "required": ["query"]},
     _search_knowledge)
+
+register("analyze_image", "分析图片内容，识别图片中的物体、场景、文字等信息。需要先获取图片 URL",
+    {"type": "object", "properties": {"url": {"type": "string", "description": "图片 URL"}, "question": {"type": "string", "description": "对图片的问题，如「图中有什么？」"}}, "required": ["url"]},
+    _analyze_image)
+
+register("translate_text", "将文本翻译成指定语言",
+    {"type": "object", "properties": {"text": {"type": "string", "description": "要翻译的原文"}, "target": {"type": "string", "description": "目标语言，如「中文」「英文」「日语」"}}, "required": ["text"]},
+    _translate_text)
+
+register("read_document", "读取工作区中的文档文件，支持 PDF、Word(.docx)、CSV 等格式",
+    {"type": "object", "properties": {"path": {"type": "string", "description": "文件路径（相对于工作区目录）"}}, "required": ["path"]},
+    _read_document)
