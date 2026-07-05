@@ -1106,6 +1106,20 @@ async def api_chat_stream(request):
 
                 # ── 处理工具调用（支持并行执行独立工具） ──
                 if finish == "tool_calls" and tool_calls:
+                    # ── 任务管理：首次工具调用时创建任务 ──
+                    if not hasattr(api_chat_stream, "_current_task"):
+                        task = task_mgr.create_task(text[:60], 
+                            [{"desc": f"调用 {tc.get('function',{}).get('name','?')}", "status": "running"} 
+                             for tc in tool_calls])
+                        api_chat_stream._current_task = task.task_id
+                        api_chat_stream._task_step = 0
+                    else:
+                        task = task_mgr.get_task(api_chat_stream._current_task)
+                        # 为新轮次的工具调用添加步骤
+                        if task:
+                            for tc in tool_calls:
+                                task.steps.append({"desc": f"调用 {tc.get('function',{}).get('name','?')}", "status": "running"})
+                    
                     # 给 LLM 发送 tool_use 事件
                     for tc in tool_calls:
                         fn = tc.get("function", {})
@@ -1176,11 +1190,20 @@ async def api_chat_stream(request):
 
                     # 将结果添加到 messages
                     errors_in_round = 0
-                    for tc in tool_calls:
+                    for i, tc in enumerate(tool_calls):
                         call_id = tc.get("id", "")
                         tr = parallel_results.get(call_id, "（工具执行失败）")
                         if "失败" in tr[:20] or "❌" in tr[:10] or "出错" in tr[:20]:
                             errors_in_round += 1
+                            # 更新任务步骤状态为失败
+                            task = task_mgr.get_task(getattr(api_chat_stream, "_current_task", ""))
+                            if task and i < len(task.steps):
+                                task.steps[i]["status"] = "failed"
+                        else:
+                            # 更新任务步骤状态为完成
+                            task = task_mgr.get_task(getattr(api_chat_stream, "_current_task", ""))
+                            if task and i < len(task.steps):
+                                task.steps[i]["status"] = "done"
                         await sse.write(f"event: tool_result\ndata: {json.dumps({'tool_call_id': call_id, 'name': tc.get('function', {}).get('name', ''), 'content': tr[:200]})}\n\n".encode())
                         messages.append({"role": "tool", "tool_call_id": call_id, "name": tc.get("function", {}).get("name", ""), "content": tr})
                     continue
@@ -1192,6 +1215,13 @@ async def api_chat_stream(request):
                     for i in range(0, len(content), chunk_size):
                         await sse.write(f"event: text-delta\ndata: {json.dumps({'text': content[i:i + chunk_size]})}\n\n".encode())
                         await asyncio.sleep(0.01)
+                # 标记任务完成
+                task_id = getattr(api_chat_stream, "_current_task", "")
+                if task_id:
+                    task = task_mgr.get_task(task_id)
+                    if task:
+                        task.status = "done"
+                    api_chat_stream._current_task = ""
                 break
 
             # 保存 AI 回复
