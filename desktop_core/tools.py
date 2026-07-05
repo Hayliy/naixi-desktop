@@ -93,7 +93,8 @@ def get_definitions(category=None):
 def get_fast_definitions():
     """返回常用工具子集（8个），加快首轮响应速度"""
     fast_tools = ["search_web", "current_datetime", "calculate", "get_weather",
-                   "bash", "find_files", "open_url", "generate_image"]
+                   "bash", "find_files", "open_url", "generate_image",
+                   "git", "powershell", "web_fetch"]
     return [
         {
             "type": "function",
@@ -305,9 +306,11 @@ async def _read_file(args, ctx):
 async def _write_file(args, ctx):
     path = args.get("path", "")
     content = args.get("content", "")
-    full = os.path.normpath(os.path.join(WORKSPACE_DIR, path))
-    if not full.startswith(WORKSPACE_DIR):
-        return "不允许访问工作区外的文件"
+    # 绝对路径直接写，相对路径用工作区
+    if os.path.isabs(path):
+        full = os.path.normpath(path)
+    else:
+        full = os.path.normpath(os.path.join(WORKSPACE_DIR, path))
     os.makedirs(os.path.dirname(full), exist_ok=True)
     try:
         with open(full, "w", encoding="utf-8") as f:
@@ -450,9 +453,11 @@ async def _edit_file(args, ctx):
     new_string = args.get("new_string", "")
     if not path or not old_string:
         return "缺少文件路径或要替换的内容"
-    full = os.path.normpath(os.path.join(WORKSPACE_DIR, path))
-    if not full.startswith(WORKSPACE_DIR):
-        return "不允许编辑工作区外的文件"
+    # 绝对路径直接编辑，相对路径用工作区
+    if os.path.isabs(path):
+        full = os.path.normpath(path)
+    else:
+        full = os.path.normpath(os.path.join(WORKSPACE_DIR, path))
     if not os.path.exists(full):
         return f"文件不存在: {path}"
     try:
@@ -638,7 +643,7 @@ register("read_file", "读取文件内容，支持 txt/json/csv/python 等文本
     {"type": "object", "properties": {"path": {"type": "string", "description": "文件路径（相对于工作区目录）"}}, "required": ["path"]},
     _read_file)
 
-register("write_file", "将内容写入工作区中的文件。注意：会覆盖已有文件",
+register("write_file", "将内容写入文件。支持绝对路径或工作区相对路径。注意：会覆盖已有文件",
     {"type": "object", "properties": {"path": {"type": "string", "description": "文件路径（相对于工作区目录）"}, "content": {"type": "string", "description": "文件内容"}}, "required": ["path", "content"]},
     _write_file)
 
@@ -931,7 +936,7 @@ register("grep_search", "在文件中搜索关键词或模式，支持正则。�
     {"type": "object", "properties": {"pattern": {"type": "string", "description": "搜索关键词或模式"}, "path": {"type": "string", "description": "搜索的子目录（可选，默认全局搜索）"}}, "required": ["pattern"]},
     _grep_search)
 
-register("edit_file", "精确编辑文件内容。用 old_string 定位要修改的位置，替换为 new_string。适合修改代码、配置文件等。注意：old_string 必须在文件中唯一",
+register("edit_file", "精确编辑文件内容。用 old_string 定位要修改的位置，替换为 new_string。支持绝对路径或工作区相对路径。适合修改代码、配置文件等。注意：old_string 必须在文件中唯一",
     {"type": "object", "properties": {"path": {"type": "string", "description": "文件路径（相对于工作区目录）"}, "old_string": {"type": "string", "description": "要替换的原文（必须在文件中唯一）"}, "new_string": {"type": "string", "description": "替换后的新内容"}}, "required": ["path", "old_string", "new_string"]},
     _edit_file)
 
@@ -942,6 +947,142 @@ register("translate_text", "将文本翻译成指定语言",
 register("read_document", "读取工作区中的文档文件，支持 PDF、Word(.docx)、CSV 等格式",
     {"type": "object", "properties": {"path": {"type": "string", "description": "文件路径（相对于工作区目录）"}}, "required": ["path"]},
     _read_document)
+
+# ── Git 工具 ──
+
+async def _git(args, ctx):
+    """执行 Git 命令"""
+    cmd = args.get("command", "")
+    if not cmd: return "请提供 git 命令，如 status/add/commit/log/diff"
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", *cmd.split(),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        out = (stdout or b"").decode("utf-8", errors="replace")[:5000]
+        err = (stderr or b"").decode("utf-8", errors="replace")[:500]
+        return (out + "\n--- stderr ---\n" + err if err else out) or "（无输出）"
+    except Exception as e:
+        return f"Git 执行失败: {str(e)[:200]}"
+
+register("git", "执行 Git 命令。支持 status/add/commit/diff/log/push/pull 等",
+    {"type": "object", "properties": {"command": {"type": "string", "description": "Git 子命令，如 status / add -A / commit -m 'msg' / diff"}}, "required": ["command"]},
+    _git)
+
+# ── PowerShell 工具 ──
+
+async def _powershell(args, ctx):
+    """执行 PowerShell 命令"""
+    cmd = args.get("command", "")
+    if not cmd: return "缺少要执行的 PowerShell 命令"
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "powershell", "-Command", cmd,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+        out = (stdout or b"").decode("utf-8", errors="replace")[:5000]
+        err = (stderr or b"").decode("utf-8", errors="replace")[:500]
+        return (out + "\n--- stderr ---\n" + err if err else out) or "（执行完毕，无输出）"
+    except Exception as e:
+        return f"PowerShell 执行失败: {str(e)[:200]}"
+
+register("powershell", "执行 PowerShell 命令。适合 Windows 系统管理、注册表操作、进程管理、文件操作等",
+    {"type": "object", "properties": {"command": {"type": "string", "description": "要执行的 PowerShell 命令"}}, "required": ["command"]},
+    _powershell)
+
+# ── 包管理工具 ──
+
+async def _pip_install(args, ctx):
+    """安装 Python 包"""
+    packages = args.get("packages", "")
+    if not packages: return "缺少要安装的包名"
+    import sys
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "pip", "install", *packages.split(),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        out = (stdout or b"").decode("utf-8", errors="replace")[:2000]
+        err = (stderr or b"").decode("utf-8", errors="replace")[:1000]
+        if "Successfully installed" in out:
+            return f"✅ 安装成功: {packages}"
+        return (out + "\n--- stderr ---\n" + err if err else out) or "安装完成"
+    except Exception as e:
+        return f"安装失败: {str(e)[:200]}"
+
+register("pip_install", "安装 Python 包（pip install）。适合安装项目依赖",
+    {"type": "object", "properties": {"packages": {"type": "string", "description": "要安装的包名，多个包用空格分隔"}}, "required": ["packages"]},
+    _pip_install)
+
+# ── WebFetch 工具 ──
+
+async def _web_fetch(args, ctx):
+    """抓取网页内容"""
+    url = args.get("url", "")
+    if not url: return "缺少 URL"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    import aiohttp
+    try:
+        async with aiohttp.ClientSession(headers=headers) as s:
+            async with s.get(url, timeout=15, allow_redirects=True) as r:
+                if r.status != 200:
+                    return f"抓取失败: HTTP {r.status}"
+                html = await r.text()
+                text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL|re.IGNORECASE)
+                text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL|re.IGNORECASE)
+                text = re.sub(r'<[^>]+>', ' ', text)
+                text = re.sub(r'\s+', ' ', text).strip()
+                return text[:5000] if text else "页面无内容"
+    except Exception as e:
+        return f"抓取失败: {str(e)[:100]}"
+
+register("web_fetch", "抓取指定网页的文本内容。适合阅读新闻、文章、文档等在线内容。返回纯文本",
+    {"type": "object", "properties": {"url": {"type": "string", "description": "网页完整 URL"}}, "required": ["url"]},
+    _web_fetch)
+
+# ── Glob 搜索工具 ──
+
+async def _glob_search(args, ctx):
+    """按模式匹配文件名"""
+    pattern = args.get("pattern", "")
+    root = args.get("path", "")
+    if not pattern: return "缺少搜索模式（如 **/*.py）"
+    import glob
+    search_root = os.path.normpath(root) if root and os.path.isabs(root) else WORKSPACE_DIR
+    full_pattern = os.path.join(search_root, pattern) if not os.path.isabs(pattern) else pattern
+    try:
+        matches = glob.glob(full_pattern, recursive=True)
+        if not matches:
+            return f"未找到匹配 {pattern} 的文件"
+        # 只显示路径，不预览内容
+        lines = [f"{i+1}. {os.path.relpath(m, search_root) if not root else m}" for i, m in enumerate(matches[:30])]
+        return "找到以下文件:\n" + "\n".join(lines)
+    except Exception as e:
+        return f"搜索失败: {str(e)[:100]}"
+
+register("glob_search", "按文件名模式搜索文件。支持通配符：* 匹配任意字符，** 匹配任意目录。如 **/*.py 或 src/**/*.tsx",
+    {"type": "object", "properties": {"pattern": {"type": "string", "description": "文件名模式，如 **/*.py 或 *.json"}, "path": {"type": "string", "description": "搜索根目录（可选，默认工作区）"}}, "required": ["pattern"]},
+    _glob_search)
+
+# ── 环境变量工具 ──
+
+async def _env(args, ctx):
+    """读取环境变量"""
+    name = args.get("name", "")
+    if not name: return "请提供环境变量名"
+    val = os.environ.get(name, "")
+    if val:
+        # 对 API Key 脱敏
+        safe = val[:8] + "..." if len(val) > 12 and ("KEY" in name.upper() or "TOKEN" in name.upper() or "SECRET" in name.upper()) else val
+        return f"{name}={safe}"
+    return f"环境变量 {name} 未设置"
+
+register("env", "读取系统环境变量的值。API Key 等敏感变量会自动脱敏",
+    {"type": "object", "properties": {"name": {"type": "string", "description": "环境变量名"}}, "required": ["name"]},
+    _env)
 
 # 加载外部插件
 load_plugins()
