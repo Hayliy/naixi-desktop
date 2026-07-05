@@ -424,7 +424,10 @@ async def _search_knowledge(args, ctx):
     if not query:
         return "缺少搜索关键词"
     from desktop_core.storage import meta_get
-    raw = meta_get("knowledge_base")
+    try:
+        raw = meta_get("knowledge_base")
+    except Exception:
+        return "知识库不可用（数据库未初始化）"
     if not raw:
         return "知识库为空"
     try:
