@@ -29,3 +29,6 @@ __pycache__/
 
 # 内置 SearXNG（154MB，打包时附加下载）
 searxng/
+
+# 工作区文件（用户创建的临时文件）
+workspace/
