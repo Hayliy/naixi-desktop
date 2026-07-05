@@ -33,7 +33,8 @@ export default function ConvList({
           </div>
         ) : filtered.map((c) => (
           <button key={c.key} onClick={() => onSelect(c.key)}
-            className={`w-full text-left px-3 py-2.5 border-b border-sakura-50 transition-colors hover:bg-sakura-50 ${activeKey === c.key ? "bg-sakura-100" : ""}`}>
+            className={`w-full text-left px-3 py-2.5 border-b border-sakura-50 transition-colors hover:bg-sakura-50 ${activeKey === c.key ? "bg-sakura-100" : ""}`}
+            title={`${customNames[c.key] || convName(c.key)} — ${c.last_msg}`}>
             <div className="flex items-start gap-2">
               <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${c.last_role === "assistant" ? "bg-sakura-100 text-sakura-500" : "bg-pink-100 text-pink-500"}`}>
                 {c.last_role === "assistant" ? <Bot size={14} /> : <User size={14} />}
