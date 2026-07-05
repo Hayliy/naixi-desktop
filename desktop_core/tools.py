@@ -604,6 +604,40 @@ register("analyze_image", "分析图片内容，识别图片中的物体、场�
     {"type": "object", "properties": {"url": {"type": "string", "description": "图片 URL"}, "question": {"type": "string", "description": "对图片的问题，如「图中有什么？」"}}, "required": ["url"]},
     _analyze_image)
 
+# ── 系统交互工具 ──
+
+async def _get_system_info(args, ctx):
+    from desktop_core.sandbox import Sandbox
+    sbox = Sandbox()
+    return await sbox.get_system_info()
+
+async def _open_url(args, ctx):
+    url = args.get("url", "")
+    if not url: return "缺少 URL"
+    from desktop_core.sandbox import Sandbox
+    sbox = Sandbox()
+    return await sbox.open_url(url)
+
+async def _run_local_command(args, ctx):
+    command = args.get("command", "")
+    if not command: return "缺少要执行的命令"
+    from desktop_core.sandbox import Sandbox
+    sbox = Sandbox()
+    result = await sbox.run_system_command(command)
+    return result
+
+register("get_system_info", "获取电脑系统信息，包括操作系统、CPU、内存使用情况等",
+    {"type": "object", "properties": {}},
+    _get_system_info)
+
+register("open_url", "在默认浏览器中打开指定网址",
+    {"type": "object", "properties": {"url": {"type": "string", "description": "要打开的完整 URL"}}, "required": ["url"]},
+    _open_url)
+
+register("run_local_command", "在电脑上执行系统命令（安全受限）。适合运行程序、查看目录、执行脚本等",
+    {"type": "object", "properties": {"command": {"type": "string", "description": "要执行的命令"}}, "required": ["command"]},
+    _run_local_command)
+
 register("run_command", "在终端执行命令，适合运行构建、测试、安装依赖等。注意：禁止 rm -rf、shutdown 等危险命令",
     {"type": "object", "properties": {"command": {"type": "string", "description": "要执行的命令"}, "cwd": {"type": "string", "description": "工作目录（可选，默认工作区根目录）"}}, "required": ["command"]},
     _run_command)
