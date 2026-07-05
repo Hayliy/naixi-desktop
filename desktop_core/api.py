@@ -1197,3 +1197,73 @@ def setup_routes(app):
     app.router.add_get("/api/workflow/templates/categories", api_templates_categories)
     app.router.add_post("/api/workflow/templates/use", api_templates_use)
     app.router.add_get("/api/workflow/templates/online", api_templates_online)
+
+    # MCP 管理
+    app.router.add_get("/api/mcp/servers", api_mcp_list)
+    app.router.add_post("/api/mcp/servers", api_mcp_save)
+    app.router.add_post("/api/mcp/connect", api_mcp_connect)
+    app.router.add_post("/api/mcp/disconnect", api_mcp_disconnect)
+
+    # 启动时连接 MCP 服务器
+    app.on_startup.append(_on_startup_mcp)
+
+
+async def _on_startup_mcp(app):
+    """应用启动时自动连接 MCP 服务器"""
+    try:
+        from desktop_core import tools
+        count = await tools.connect_mcp_servers()
+        if count > 0:
+            log.info(f"[MCP] 已连接 {count} 个 MCP 服务器")
+    except Exception as e:
+        log.warning(f"[MCP] 启动连接失败: {e}")
+
+
+# ── MCP 管理 API ──
+
+async def api_mcp_list(request):
+    """列出已配置的 MCP 服务器"""
+    raw = meta_get("desktop_config")
+    if not raw:
+        return web.json_response({"servers": {}})
+    try:
+        cfg = json.loads(raw)
+        servers = cfg.get("mcp_servers", {})
+        return web.json_response({"servers": servers})
+    except:
+        return web.json_response({"servers": {}})
+
+async def api_mcp_save(request):
+    """保存 MCP 服务器配置"""
+    try:
+        body = await request.json()
+        servers = body.get("servers", {})
+        raw = meta_get("desktop_config")
+        cfg = json.loads(raw) if raw else {}
+        cfg["mcp_servers"] = servers
+        meta_set("desktop_config", json.dumps(cfg, ensure_ascii=False))
+        return web.json_response({"ok": True, "count": len(servers)})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+async def api_mcp_connect(request):
+    """连接所有 MCP 服务器并刷新工具列表"""
+    try:
+        from desktop_core import tools
+        await tools.connect_mcp_servers()
+        # 刷新工具注册表
+        TOOLS = tools.get_definitions()
+        return web.json_response({"ok": True, "tool_count": len(TOOLS)})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+async def api_mcp_disconnect(request):
+    """断开 MCP 连接"""
+    try:
+        from desktop_core.mcp_client import MCPManager
+        mgr = tools.get_mcp_manager() if hasattr(tools, 'get_mcp_manager') else None
+        if mgr:
+            await mgr.disconnect_all()
+        return web.json_response({"ok": True})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
