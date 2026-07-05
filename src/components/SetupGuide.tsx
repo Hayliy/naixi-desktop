@@ -55,10 +55,18 @@ export default function SetupGuide({ onClose, standalone }: { onClose: () => voi
   const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
   const [webhookUrl, setWebhookUrl] = useState("http://localhost:9845/api/webhook/my-workflow");
   const [platforms, setPlatforms] = useState<any[]>([]);
+  const [settingsTab, setSettingsTab] = useState("api");
+  const [prompts, setPrompts] = useState<Record<string, { label: string; prompt: string }>>({});
+  const [promptDirty, setPromptDirty] = useState(false);
+  const [promptSaved, setPromptSaved] = useState(false);
 
   useEffect(() => {
     apiGet("/api/desktop/platforms").then((d: any) => {
       if (d?.platforms) setPlatforms(d.platforms);
+    }).catch(() => {});
+    // 加载提示词
+    apiGet("/api/desktop/prompts").then((d: any) => {
+      if (d?.prompts) setPrompts(d.prompts);
     }).catch(() => {});
   }, []);
 
@@ -114,20 +122,134 @@ export default function SetupGuide({ onClose, standalone }: { onClose: () => voi
   if (standalone) {
     return (
       <div className="space-y-6">
-        {/* 全页面模式下的完整设置 */}
-        <SetupSteps
-          step={step} setStep={setStep}
-          selectedProvider={selectedProvider} setSelectedProvider={setSelectedProvider}
-          apiKey={apiKey} setApiKey={setApiKey}
-          apiUrl={apiUrl} setApiUrl={setApiUrl}
-          saved={saved}
-          testing={testing} testResult={testResult}
-          handleTest={handleTest} handleSave={handleSave}
-          webhookUrl={webhookUrl}
-          platforms={platforms}
-          provider={provider}
-          onFinish={handleFinish}
-        />
+        {/* 全页面模式：标签页切换 */}
+        <div className="flex items-center gap-1 border-b border-sakura-100 pb-3">
+          {[
+            { key: "api", label: "API 配置" },
+            { key: "platforms", label: "平台连接" },
+            { key: "prompts", label: "提示词" },
+          ].map(tab => (
+            <button key={tab.key} onClick={() => setSettingsTab(tab.key)}
+              className={`px-4 py-2 rounded-lg text-xs transition-colors ${
+                settingsTab === tab.key
+                  ? "bg-sakura-100 text-sakura-600 font-medium"
+                  : "text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50"
+              }`}
+            >{tab.label}</button>
+          ))}
+        </div>
+
+        {settingsTab === "api" && (
+          <SetupSteps
+            step={step} setStep={setStep}
+            selectedProvider={selectedProvider} setSelectedProvider={setSelectedProvider}
+            apiKey={apiKey} setApiKey={setApiKey}
+            apiUrl={apiUrl} setApiUrl={setApiUrl}
+            saved={saved}
+            testing={testing} testResult={testResult}
+            handleTest={handleTest} handleSave={handleSave}
+            webhookUrl={webhookUrl}
+            platforms={platforms}
+            provider={provider}
+            onFinish={handleFinish}
+          />
+        )}
+
+        {settingsTab === "platforms" && (
+          <div className="space-y-4">
+            <p className="text-sm font-medium text-sakura-600">连接到消息平台</p>
+            <p className="text-xs text-sakura-400">将工作流发布为 API，在目标平台上配置 webhook 回调</p>
+            <div className="bg-sakura-50 border border-sakura-200 rounded-xl px-4 py-3">
+              <p className="text-[11px] text-sakura-500 mb-1">你的 webhook 地址</p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 px-3 py-2 bg-white border border-sakura-200 rounded-lg text-xs font-mono text-sakura-700 truncate">{webhookUrl}</code>
+                <button onClick={() => navigator.clipboard.writeText(webhookUrl)}
+                  className="px-3 py-2 bg-sakura-100 text-sakura-600 rounded-lg text-xs hover:bg-sakura-200 shrink-0">复制</button>
+              </div>
+            </div>
+            <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+              {platforms.map((p: any) => (
+                <details key={p.id} className="border border-gray-200 rounded-xl overflow-hidden">
+                  <summary className="px-4 py-3 text-xs font-medium text-gray-700 cursor-pointer hover:bg-gray-50 flex items-center gap-2">
+                    <span className="text-sakura-500">▸</span>
+                    <span>{p.name}</span>
+                    <span className="text-gray-400 ml-1">({p.platform})</span>
+                  </summary>
+                  <div className="px-4 py-3 border-t border-gray-100 bg-gray-50/50">
+                    <p className="text-xs text-gray-500 mb-3">{p.description}</p>
+                    <ol className="space-y-2">
+                      {p.steps.map((s: string, i: number) => (
+                        <li key={i} className="text-xs text-gray-600 flex gap-2">
+                          <span className="text-sakura-400 font-medium shrink-0">{i + 1}.</span>
+                          <span>{s}</span>
+                        </li>
+                      ))}
+                    </ol>
+                    {p.links && p.links.length > 0 && (
+                      <div className="mt-3 flex gap-2">
+                        {p.links.map((link: any, i: number) => (
+                          <a key={i} href={link.url} target="_blank" rel="noopener noreferrer"
+                            className="text-xs text-sakura-500 underline hover:text-sakura-600">{link.label} →</a>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </details>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {settingsTab === "prompts" && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-sakura-600">场景提示词</p>
+                <p className="text-xs text-sakura-400 mt-0.5">自定义各个对话场景的系统提示词</p>
+              </div>
+              {promptDirty && (
+                <button onClick={async () => {
+                  try {
+                    await apiPost("/api/desktop/prompts", { prompts });
+                    setPromptSaved(true);
+                    setPromptDirty(false);
+                    setTimeout(() => setPromptSaved(false), 2000);
+                  } catch {}
+                }}
+                  className="px-4 py-2 bg-sakura-500 text-white rounded-lg text-xs hover:bg-sakura-600 transition-colors">
+                  {promptSaved ? "已保存 ✓" : "保存全部"}
+                </button>
+              )}
+            </div>
+            {Object.entries(prompts).map(([key, p]: [string, any]) => (
+              <div key={key} className="border border-gray-200 rounded-xl overflow-hidden">
+                <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+                  <span className="text-xs font-medium text-gray-700">{p.label}</span>
+                  <button onClick={async () => {
+                    try {
+                      const r = await apiPost<any>("/api/desktop/prompts/reset", { scene: key });
+                      if (r?.prompt) {
+                        setPrompts(prev => ({ ...prev, [key]: r.prompt }));
+                        setPromptDirty(true);
+                      }
+                    } catch {}
+                  }}
+                    className="text-[10px] text-sakura-400 hover:text-sakura-500 underline">恢复默认</button>
+                </div>
+                <textarea
+                  value={p.prompt}
+                  onChange={e => {
+                    setPrompts(prev => ({ ...prev, [key]: { ...prev[key], prompt: e.target.value } }));
+                    setPromptDirty(true);
+                    setPromptSaved(false);
+                  }}
+                  className="w-full h-[160px] px-4 py-3 text-xs font-mono leading-relaxed outline-none resize-none border-0 focus:ring-0"
+                  placeholder="输入提示词..."
+                />
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     );
   }

@@ -70,7 +70,7 @@ function ConvList({
     <div className="w-64 min-w-[16rem] border-r border-sakura-100 bg-white flex flex-col">
       {/* 搜索 + 新对话 */}
       <div className="p-3 border-b border-sakura-100 space-y-2">
-        <button onClick={onNew} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs rounded-lg bg-gradient-to-br from-sakura-400 to-sakura-500 text-white hover:shadow-md transition-shadow">
+        <button onClick={onNew} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs rounded-lg bg-gradient-to-br from-sakura-400 to-sakura-200 text-white hover:shadow-md transition-shadow">
           <Plus size={13} />
           <span>新对话</span>
         </button>
@@ -177,13 +177,13 @@ function MsgBubble({ msg, onEdit, onRegenerate }: { msg: MsgItem; onEdit?: (id: 
               value={editText} onChange={e => setEditText(e.target.value)} rows={3} />
             <div className="flex gap-1 justify-end">
               <button onClick={() => setEditing(false)} className="px-2 py-0.5 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
-              <button onClick={handleEditSave} className="px-2 py-0.5 rounded text-[10px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white">保存</button>
+              <button onClick={handleEditSave} className="px-2 py-0.5 rounded text-[10px] bg-gradient-to-br from-sakura-400 to-sakura-200 text-white">保存</button>
             </div>
           </div>
         ) : (
           <div className={`rounded-xl px-3 py-2 text-xs leading-relaxed ${
             isUser
-              ? "bg-gradient-to-br from-sakura-400 to-sakura-500 text-white rounded-tr-sm"
+              ? "bg-gradient-to-br from-sakura-400 to-sakura-200 text-white rounded-tr-sm"
               : "bg-white border border-blue-100 text-sakura-600 rounded-tl-sm"
           }`}>
             {msg.content_blocks && msg.content_blocks.length > 0 ? (
@@ -287,7 +287,7 @@ function ChatInput({ onSend }: { onSend: (text: string) => void }) {
           onKeyDown={handleKeyDown}
         />
         <button onClick={handleSend} disabled={!text.trim()}
-          className="w-9 h-9 rounded-xl bg-gradient-to-br from-sakura-400 to-sakura-500 flex items-center justify-center shrink-0 disabled:opacity-40 hover:shadow-md transition-shadow">
+          className="w-9 h-9 rounded-xl bg-gradient-to-br from-sakura-400 to-sakura-200 flex items-center justify-center shrink-0 disabled:opacity-40 hover:shadow-md transition-shadow">
           <Send size={14} className="text-white" />
         </button>
       </div>
@@ -722,7 +722,7 @@ export default function ChatPage() {
                       onClick={() => setScene(key)}
                       className={`flex items-center gap-1 px-1.5 py-1 rounded text-[10px] transition-colors ${
                         scene === key
-                          ? "bg-gradient-to-r from-sakura-100 to-sakura-500 text-sakura-600 font-medium"
+                          ? "bg-gradient-to-r from-sakura-100 to-sakura-200 text-sakura-600 font-medium"
                           : "text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50"
                       }`}
                       title={label}

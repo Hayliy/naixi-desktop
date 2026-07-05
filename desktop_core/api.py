@@ -229,6 +229,114 @@ async def api_desktop_config_set(request):
         return web.json_response({"error": str(e)}, status=400)
 
 
+# ── 默认提示词（基于 GitHub 开源项目最佳实践）──
+
+DEFAULT_PROMPTS = {
+    "assistant": {
+        "label": "日常助手",
+        "prompt": (
+            "你是一个温柔的 AI 助手，名叫奶昔。\n\n"
+            "【角色设定】\n"
+            "你是用户的专属助手，温暖、耐心、细心。用友好的语气和用户交流，自称「我」。\n\n"
+            "【行为准则】\n"
+            "1. 回答简洁直接，不啰嗦不绕弯\n"
+            "2. 不知道的事直接说不知道，不要编造\n"
+            "3. 需要搜索信息时直接搜索，不要先问用户要不要查\n"
+            "4. 给出建议时说明理由，让用户自己做选择\n"
+            "5. 涉及代码/技术问题时给出具体示例\n\n"
+            "【禁止行为】\n"
+            "- 不要用「你好呀～有什么想聊的吗」等客服式开场\n"
+            "- 不要说「我来帮你」「请稍等」等机械句式\n"
+            "- 不要每句话都用感叹号或颜文字\n"
+            "- 不要主动提及你是 AI 或语言模型\n\n"
+            "【对话风格】\n"
+            "像朋友一样自然交流，偶尔可以关心用户近况。"
+        ),
+    },
+    "creative": {
+        "label": "创作模式",
+        "prompt": (
+            "你是一个创意助手，名叫奶昔。\n\n"
+            "【角色设定】\n"
+            "你擅长头脑风暴、创意写作、内容生成。思维活跃，想法多样。\n\n"
+            "【行为准则】\n"
+            "1. 提供多个方案让用户选择\n"
+            "2. 在创意方向上大胆提出想法\n"
+            "3. 用户给出方向后深入细化\n"
+            "4. 涉及事实性内容时先确认再输出\n\n"
+            "【对话风格】\n"
+            "开放、积极、有想象力。适当使用例子说明想法。"
+        ),
+    },
+    "qa": {
+        "label": "快捷问答",
+        "prompt": (
+            "你是一个高效的问答助手，名叫奶昔。\n\n"
+            "【角色设定】\n"
+            "你的核心任务是快速、准确地回答问题。不闲聊，不绕弯子。\n\n"
+            "【行为准则】\n"
+            "1. 直接回答问题，不要铺垫\n"
+            "2. 回答控制在 3-5 句话以内\n"
+            "3. 需要搜索时直接搜索并返回结果\n"
+            "4. 不知道就说不知道，不要尝试猜测\n"
+            "5. 涉及数据/统计时注明来源\n\n"
+            "【禁止行为】\n"
+            "- 不要反问用户问题\n"
+            "- 不要提供未经请求的额外信息\n"
+            "- 不要使用表情符号或闲聊语气"
+        ),
+    },
+}
+
+
+async def api_prompts_get(request):
+    """读取所有提示词，未自定义时返回默认值"""
+    raw = meta_get("desktop_prompts")
+    if raw:
+        try:
+            stored = json.loads(raw)
+            # 合并默认值和已存储的（确保新增场景有默认值）
+            result = dict(DEFAULT_PROMPTS)
+            for k, v in stored.items():
+                if k in result:
+                    result[k].update(v)
+            return web.json_response({"prompts": result})
+        except:
+            pass
+    return web.json_response({"prompts": dict(DEFAULT_PROMPTS)})
+
+
+async def api_prompts_set(request):
+    """保存自定义提示词"""
+    try:
+        body = await request.json()
+        prompts = body.get("prompts", {})
+        # 只保存用户修改过的场景，不覆盖未发送的场景
+        existing_raw = meta_get("desktop_prompts")
+        existing = json.loads(existing_raw) if existing_raw else {}
+        existing.update(prompts)
+        meta_set("desktop_prompts", json.dumps(existing, ensure_ascii=False))
+        return web.json_response({"ok": True})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+
+async def api_prompts_reset(request):
+    """恢复某个场景的默认提示词"""
+    try:
+        body = await request.json()
+        scene = body.get("scene", "")
+        if scene in DEFAULT_PROMPTS:
+            existing_raw = meta_get("desktop_prompts")
+            existing = json.loads(existing_raw) if existing_raw else {}
+            existing[scene] = dict(DEFAULT_PROMPTS[scene])
+            meta_set("desktop_prompts", json.dumps(existing, ensure_ascii=False))
+            return web.json_response({"ok": True, "prompt": DEFAULT_PROMPTS[scene]})
+        return web.json_response({"error": "场景不存在"}, status=400)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+
 async def api_desktop_test_connection(request):
     """测试 API Key 连通性"""
     try:
@@ -289,6 +397,11 @@ def setup_routes(app):
     app.router.add_post("/api/desktop/config", api_desktop_config_set)
     app.router.add_post("/api/desktop/test-connection", api_desktop_test_connection)
     app.router.add_get("/api/desktop/platforms", api_desktop_platforms)
+
+    # 提示词管理
+    app.router.add_get("/api/desktop/prompts", api_prompts_get)
+    app.router.add_post("/api/desktop/prompts", api_prompts_set)
+    app.router.add_post("/api/desktop/prompts/reset", api_prompts_reset)
 
     # 工作流
     app.router.add_get("/api/workflows", api_workflow_list)
