@@ -8,8 +8,6 @@ _PENDING_PERMISSIONS: dict[str, dict] = {}
 # 活跃的 Agent 任务（用于取消）
 _active_agent_tasks: dict[str, asyncio.Task] = {}
 _agent_cancel_events: dict[str, asyncio.Event] = {}
-# 活跃的任务追踪（conv_key → task_id）
-_active_tasks: dict[str, str] = {}
 
 # 高危工具列表（执行前需要用户确认）
 HIGH_RISK_TOOLS = {"bash", "kill_process", "run_local_command"}
@@ -39,7 +37,6 @@ def _estimate_tokens(text: str) -> int:
     return max(1, int(cn / 1.5 + rest / 3.5))
 
 from desktop_core.context import ContextManager
-from desktop_core.task_manager import get_manager as get_task_manager
 
 from desktop_core.storage import meta_get, meta_set, encrypt_config, decrypt_config, decrypt_api_key, conv_list, conv_get_messages, conv_delete, conv_save_message_sync as conv_save_message
 from desktop_core import tools
@@ -1027,6 +1024,16 @@ async def api_chat_stream(request):
         MAX_ROUNDS = 25
         errors_in_round = 0
 
+        # ── 创建任务（存到 SSE 对象上，每次请求独立） ──
+        from desktop_core.task_manager import get_manager as get_task_manager
+        task_mgr = get_task_manager()
+        user_text_preview = text[:120].replace("\n", " ")
+        task = task_mgr.create_task(user_text_preview)
+        sse._task_id = task.id  # 关键：存在 SSE 对象上，不污染模块级变量
+        # 清理旧任务（防止长期积累）
+        try: task_mgr.clean_old_tasks(max_age=3600)
+        except: pass
+
         # 注册取消事件（供前端终止 Agent 循环）
         cancel_event = asyncio.Event()
         if conv_key:
@@ -1043,6 +1050,8 @@ async def api_chat_stream(request):
                     await sse.write(f"event: status\ndata: {json.dumps({'state': 'done', 'text': '已取消'})}\n\n".encode())
                     await sse.write(f"event: finish\ndata: {json.dumps({'usage': usage_info})}\n\n".encode())
                     await sse.write_eof()
+                    # 标记任务取消
+                    task_mgr.update_task_status(sse._task_id, "failed", "用户取消")
                     return sse
                 # ── 任务指引（首轮注入） ──
                 if round_num == 0:
@@ -1120,23 +1129,6 @@ async def api_chat_stream(request):
 
                 # ── 处理工具调用（支持并行执行独立工具） ──
                 if finish == "tool_calls" and tool_calls:
-                    # ── 任务管理（用 conv_key 追踪，避免函数属性持久化） ──
-                    task_mgr = get_task_manager()
-                    task_id = _active_tasks.get(conv_key, "")
-                    if not task_id:
-                        # 首次工具调用：创建任务
-                        steps = [{"desc": f"调用 {tc.get('function',{}).get('name','?')}", "status": "running"} for tc in tool_calls]
-                        task = task_mgr.create_task(text[:60], steps)
-                        if conv_key:
-                            _active_tasks[conv_key] = task.task_id
-                        task_id = task.task_id
-                    else:
-                        # 已有任务：追加步骤
-                        task = task_mgr.get_task(task_id)
-                        if task:
-                            for tc in tool_calls:
-                                task.steps.append({"desc": f"调用 {tc.get('function',{}).get('name','?')}", "status": "running"})
-                    
                     # 给 LLM 发送 tool_use 事件
                     for tc in tool_calls:
                         fn = tc.get("function", {})
@@ -1158,6 +1150,12 @@ async def api_chat_stream(request):
                         call_id = tc.get("id", "")
                         max_retries = 2
 
+                        # ── 任务步进：添加步骤并标记进行中 ──
+                        step_desc = f"{fn_name}({str(fn_args)[:60]})"
+                        step_idx = task_mgr.add_step(sse._task_id, step_desc)
+                        if step_idx is not None:
+                            task_mgr.update_step(sse._task_id, step_idx, "running")
+
                         for retry in range(max_retries):
                             # 高危工具：权限确认
                             if fn_name in HIGH_RISK_TOOLS:
@@ -1169,11 +1167,15 @@ async def api_chat_stream(request):
                                 try:
                                     await asyncio.wait_for(perm_event.wait(), timeout=120)
                                 except asyncio.TimeoutError:
+                                    if step_idx is not None:
+                                        task_mgr.update_step(sse._task_id, step_idx, "failed", "权限确认超时")
                                     return call_id, "⏱ 权限确认超时，已取消"
                                 else:
                                     if perm_result.get("approved"):
                                         tr = await tools.execute(fn_name, fn_args, tool_ctx)
                                     else:
+                                        if step_idx is not None:
+                                            task_mgr.update_step(sse._task_id, step_idx, "failed", "用户拒绝")
                                         tr = "❌ 用户拒绝了操作"
                                 finally:
                                     _PENDING_PERMISSIONS.pop(req_id, None)
@@ -1186,6 +1188,13 @@ async def api_chat_stream(request):
                                     log.info(f"[Agent] 工具 {fn_name} 失败，重试第 {retry+2} 次")
                                     await asyncio.sleep(1)
                                     continue
+                                # 所有重试都失败→标记步骤失败
+                                if step_idx is not None:
+                                    task_mgr.update_step(sse._task_id, step_idx, "failed", tr[:100])
+                            else:
+                                # 执行成功
+                                if step_idx is not None:
+                                    task_mgr.update_step(sse._task_id, step_idx, "done")
                             break
                         return call_id, tr
 
@@ -1207,23 +1216,11 @@ async def api_chat_stream(request):
 
                     # 将结果添加到 messages
                     errors_in_round = 0
-                    for i, tc in enumerate(tool_calls):
+                    for tc in tool_calls:
                         call_id = tc.get("id", "")
                         tr = parallel_results.get(call_id, "（工具执行失败）")
                         if "失败" in tr[:20] or "❌" in tr[:10] or "出错" in tr[:20]:
                             errors_in_round += 1
-                            # 更新任务步骤状态
-                            tid = _active_tasks.get(conv_key, "")
-                            if tid:
-                                t = get_task_manager().get_task(tid)
-                                if t and i < len(t.steps):
-                                    t.steps[i]["status"] = "failed"
-                        else:
-                            tid = _active_tasks.get(conv_key, "")
-                            if tid:
-                                t = get_task_manager().get_task(tid)
-                                if t and i < len(t.steps):
-                                    t.steps[i]["status"] = "done"
                         await sse.write(f"event: tool_result\ndata: {json.dumps({'tool_call_id': call_id, 'name': tc.get('function', {}).get('name', ''), 'content': tr[:200]})}\n\n".encode())
                         messages.append({"role": "tool", "tool_call_id": call_id, "name": tc.get("function", {}).get("name", ""), "content": tr})
                     continue
@@ -1236,11 +1233,7 @@ async def api_chat_stream(request):
                         await sse.write(f"event: text-delta\ndata: {json.dumps({'text': content[i:i + chunk_size]})}\n\n".encode())
                         await asyncio.sleep(0.01)
                 # 标记任务完成
-                tid = _active_tasks.pop(conv_key, None)
-                if tid:
-                    t = get_task_manager().get_task(tid)
-                    if t:
-                        t.status = "done"
+                task_mgr.update_task_status(sse._task_id, "done")
                 break
 
             # 保存 AI 回复
@@ -1249,10 +1242,12 @@ async def api_chat_stream(request):
                 except: pass
 
         except Exception as e:
-            _active_tasks.pop(conv_key, None)
             await sse.write(f"event: status\ndata: {json.dumps({'state': 'error', 'text': str(e)})}\n\n".encode())
             await sse.write(f"event: finish\ndata: {json.dumps({'usage': usage_info})}\n\n".encode())
             await sse.write_eof()
+            # 标记任务失败
+            try: task_mgr.update_task_status(sse._task_id, "failed", str(e)[:100])
+            except: pass
             return sse
         finally:
             await cleanup()

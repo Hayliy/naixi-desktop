@@ -3,6 +3,17 @@
 完全独立自包含，不依赖 QQ 机器人后端的任何文件。
 """
 import sys, os, asyncio, logging, subprocess, time
+from logging.handlers import RotatingFileHandler
+
+# 日志文件（崩溃时也能查到原因）
+LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+os.makedirs(LOG_DIR, exist_ok=True)
+LOG_FILE = os.path.join(LOG_DIR, "naixi_desktop.log")
+_handler = RotatingFileHandler(LOG_FILE, maxBytes=5*1024*1024, backupCount=3, encoding="utf-8")
+_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+logging.getLogger().addHandler(_handler)
+logging.getLogger().setLevel(logging.INFO)
 
 # 桌面端核心模块路径
 DESKTOP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
