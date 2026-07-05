@@ -666,40 +666,121 @@ register("open_url", "在默认浏览器中打开指定网址",
 # ── 文件搜索工具 ──
 
 async def _find_files(args, ctx):
-    """在电脑上搜索文件（限制搜索范围和时间）"""
+    """在电脑上搜索文件（Windows 注册表 + 常见安装目录 + 文件系统）"""
+    import subprocess
     name = args.get("name", "")
     if not name: return "缺少文件名"
+    results = []
+    name_lower = name.lower()
+    
+    # ── 1. Windows 注册表搜索已安装程序 ──
+    try:
+        import winreg
+        reg_paths = [
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths"),
+            (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths"),
+        ]
+        for hkey, subkey in reg_paths:
+            try:
+                with winreg.OpenKey(hkey, subkey) as key:
+                    i = 0
+                    while True:
+                        try:
+                            app_key_name = winreg.EnumKey(key, i)
+                            i += 1
+                        except OSError:
+                            break
+                        if name_lower in app_key_name.lower() or name_lower in app_key_name.lower().replace(".exe", ""):
+                            try:
+                                with winreg.OpenKey(key, app_key_name) as app_key:
+                                    for vn in ["", "DisplayIcon", "InstallLocation", "DisplayName"]:
+                                        try:
+                                            val = winreg.QueryValueEx(app_key, vn)[0]
+                                        except OSError:
+                                            continue
+                                        if val and os.path.isfile(val) and val.lower().endswith(".exe"):
+                                            results.append(f"[注册表] {val}")
+                                            break
+                            except OSError:
+                                continue
+            except OSError:
+                continue
+    except ImportError:
+        pass
+    
+    # ── 2. 常见安装目录搜索 ──
     search_paths = [
+        os.path.expanduser("~"),
         os.path.expanduser("~\\Desktop"),
         os.path.expanduser("~\\Downloads"),
         os.path.expanduser("~\\AppData\\Local"),
+        os.path.expanduser("~\\AppData\\Roaming"),
         "C:\\Program Files",
         "C:\\Program Files (x86)",
         "D:\\Program Files",
+        "D:\\Games",
         "D:\\软件",
     ]
-    results = []
-    max_depth = 4  # 最大目录深度
-    max_results = 8  # 最多返回条数
+    
+    # 先找目录名匹配的（游戏通常装在 D:\Games\鸣潮 这种目录里）
+    for root in search_paths:
+        if not os.path.isdir(root): continue
+        try:
+            for entry in os.listdir(root):
+                if name_lower in entry.lower():
+                    full = os.path.join(root, entry)
+                    if os.path.isdir(full):
+                        # 目录内找 .exe
+                        for f in os.listdir(full):
+                            if f.lower().endswith(".exe") and "uninstall" not in f.lower():
+                                results.append(os.path.join(full, f))
+                                break
+        except: pass
+    
+    # 然后搜索文件（深度限制 4 层）
+    max_results = 10
     for root in search_paths:
         if not os.path.isdir(root): continue
         try:
             for dirpath, dirs, files in os.walk(root):
                 depth = dirpath.replace(root, "").count(os.sep)
-                if depth >= max_depth:
-                    dirs.clear()
-                    continue
+                if depth >= 4:
+                    dirs.clear(); continue
                 dirs[:] = [d for d in dirs if d not in ("node_modules", ".git", "__pycache__", "venv", ".venv", "cache", "Cache")]
                 for f in files:
-                    if name.lower() in f.lower():
-                        results.append(os.path.join(dirpath, f))
+                    if name_lower in f.lower():
+                        fpath = os.path.join(dirpath, f)
+                        if fpath not in results:
+                            results.append(fpath)
+                            if len(results) >= max_results: break
+                if len(results) >= max_results: break
+        except: pass
+    
+    # ── 3. 开始菜单搜索快捷方式 ──
+    start_menu = os.path.expanduser("~\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs")
+    if os.path.isdir(start_menu):
+        try:
+            for root, dirs, files in os.walk(start_menu):
+                for f in files:
+                    if f.endswith(".lnk") and name_lower in f.lower():
+                        results.append(f"[开始菜单] {f.replace('.lnk','')}")
                         if len(results) >= max_results: break
                 if len(results) >= max_results: break
         except: pass
-        if len(results) >= max_results: break
+    
     if results:
-        return "找到以下文件:\n" + "\n".join(results)
-    return f"未找到包含「{name}」的文件（搜索范围: 桌面/下载/程序目录）"
+        # 去重并返回
+        seen = set()
+        unique = []
+        for r in results:
+            if r not in seen:
+                seen.add(r)
+                unique.append(r)
+        return "找到以下文件/程序:\n" + "\n".join(unique[:10])
+    return f"未找到与「{name}」相关的文件或程序"
 
 register("find_files", "在电脑上搜索文件。适合查找程序安装位置、文档等",
     {"type": "object", "properties": {"name": {"type": "string", "description": "文件名关键词，如「鸣潮」「Wuthering」"}}, "required": ["name"]},
