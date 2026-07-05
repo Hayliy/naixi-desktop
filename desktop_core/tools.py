@@ -638,6 +638,60 @@ register("run_local_command", "在电脑上执行系统命令（安全受限）�
     {"type": "object", "properties": {"command": {"type": "string", "description": "要执行的命令"}}, "required": ["command"]},
     _run_local_command)
 
+# ── 截图工具 ──
+
+async def _screenshot(args, ctx):
+    """截图并保存到工作区，返回图片路径"""
+    try:
+        from PIL import ImageGrab
+        import os, time
+        img = ImageGrab.grab()
+        from desktop_core.tools import WORKSPACE_DIR
+        fname = f"screenshot_{int(time.time())}.png"
+        fpath = os.path.join(WORKSPACE_DIR, fname)
+        img.save(fpath)
+        return f"截图已保存: {fname} ({img.size[0]}x{img.size[1]}, {os.path.getsize(fpath)} bytes)"
+    except Exception as e:
+        return f"截图失败: {str(e)[:100]}"
+
+# ── 进程管理工具 ──
+
+async def _list_processes(args, ctx):
+    """列出系统进程"""
+    from desktop_core.sandbox import Sandbox
+    sbox = Sandbox()
+    return await sbox.run_system_command("tasklist /NH /FO CSV")
+
+async def _kill_process(args, ctx):
+    """终止进程"""
+    pid = args.get("pid", "")
+    name = args.get("name", "")
+    if not pid and not name:
+        return "请提供 pid 或 name"
+    from desktop_core.sandbox import Sandbox
+    sbox = Sandbox()
+    if pid:
+        return await sbox.run_system_command(f"taskkill /PID {pid} /F")
+    else:
+        # 安全检查：禁止杀掉关键系统进程
+        dangerous = ["svchost", "winlogon", "csrss", "services", "lsass", "system", "smss"]
+        for d in dangerous:
+            if d.lower() in name.lower():
+                return f"❌ 禁止终止系统关键进程: {name}"
+        return await sbox.run_system_command(f"taskkill /IM {name} /F")
+
+register("screenshot", "截取当前屏幕的截图，保存到工作区。适合查看用户界面、获取信息等",
+    {"type": "object", "properties": {}},
+    _screenshot)
+
+register("list_processes", "列出当前系统正在运行的进程列表",
+    {"type": "object", "properties": {}},
+    _list_processes)
+
+register("kill_process", "终止指定进程。通过 pid（进程ID）或 name（进程名，如 notepad.exe）",
+    {"type": "object", "properties": {"pid": {"type": "string", "description": "进程 ID（可选）"}, "name": {"type": "string", "description": "进程名（可选，如 notepad.exe）"}}, "required": []},
+    _kill_process)
+
 register("run_command", "在终端执行命令，适合运行构建、测试、安装依赖等。注意：禁止 rm -rf、shutdown 等危险命令",
     {"type": "object", "properties": {"command": {"type": "string", "description": "要执行的命令"}, "cwd": {"type": "string", "description": "工作目录（可选，默认工作区根目录）"}}, "required": ["command"]},
     _run_command)
