@@ -965,7 +965,7 @@ async def api_chat_stream(request):
                 "\n\n【系统操作能力】\n"
                 "如果用户让你打开程序/游戏，你应该：\n"
                 "1. 先调用 find_files 搜索程序的安装位置\n"
-                "2. 找到后用 run_local_command(\"start 完整路径\") 启动\n"
+                "2. 找到后用 bash(\"start 完整路径\") 启动\n"
                 "3. 如果找不到，再告诉用户未安装\n"
                 "其他能力：\n"
                 "- 打开网址：open_url(\"https://...\")\n"
@@ -973,7 +973,8 @@ async def api_chat_stream(request):
                 "- 截图：screenshot() + analyze_image() 分析\n"
                 "- 进程管理：list_processes() / kill_process()\n"
                 "- 文件搜索：find_files(\"关键词\")\n"
-                "注意：优先用工具完成任务，不要只给文字建议。"
+                "- 系统命令：bash(\"命令\") 可执行任何系统命令（权限需用户确认）\n"
+                "注意：优先用工具完成任务，不要只给文字建议。你拥有操控用户电脑的能力。"
             )
 
         # 构造消息列表
@@ -1036,10 +1037,13 @@ async def api_chat_stream(request):
                     if len(compressed) < len(messages):
                         log.info(f"[Agent] 上下文压缩: {len(messages)} → {len(compressed)} 条消息")
                         messages = compressed
+                # 首轮用常用工具子集（8个）加快响应，后续轮次用全部工具
+                current_tools = tools.get_fast_definitions() if round_num == 0 else TOOLS
                 payload = {
                     "model": model,
                     "messages": messages,
-                    "tools": TOOLS,
+                    "tools": current_tools,
+                    "tool_choice": "auto",
                     "stream": False,
                 }
                 async with aiohttp.ClientSession(headers=headers) as session:

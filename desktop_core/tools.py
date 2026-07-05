@@ -11,12 +11,13 @@ os.makedirs(WORKSPACE_DIR, exist_ok=True)
 # ── 工具注册表 ──
 _registry = {}
 
-def register(name, description, parameters, handler):
+def register(name, description, parameters, handler, category="core"):
     _registry[name] = {
         "name": name,
         "description": description,
         "parameters": parameters,
         "handler": handler,
+        "category": category,
     }
 
 def load_plugins():
@@ -71,8 +72,12 @@ def _make_plugin_handler(tool_name):
             return f"插件工具 {tool_name} 执行失败: {str(e)[:200]}"
     return handler
 
-def get_definitions():
-    """返回 OpenAI 兼容的工具定义列表"""
+def get_definitions(category=None):
+    """返回 OpenAI 兼容的工具定义列表
+    category=None 返回全部, core/extra/system 返回对应类别的子集"""
+    tools = _registry.values()
+    if category:
+        tools = [t for t in tools if t.get("category") == category]
     return [
         {
             "type": "function",
@@ -82,7 +87,35 @@ def get_definitions():
                 "parameters": t["parameters"],
             }
         }
-        for t in _registry.values()
+        for t in tools
+    ]
+
+def get_fast_definitions():
+    """返回常用工具子集（8个），加快首轮响应速度"""
+    fast_tools = ["search_web", "current_datetime", "calculate", "get_weather",
+                   "bash", "find_files", "open_url", "generate_image"]
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t["description"],
+                "parameters": t["parameters"],
+            }
+        }
+        for t in _registry.values() if t["name"] in fast_tools
+    ]
+    """只返回指定名称的工具定义"""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t["description"],
+                "parameters": t["parameters"],
+            }
+        }
+        for t in _registry.values() if t["name"] in names
     ]
 
 async def execute(name, args, context=None):
