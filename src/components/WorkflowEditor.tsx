@@ -65,7 +65,7 @@ const NODE_COLORS: Record<string, string> = {
   "question-classifier": "border-pink-400 bg-pink-50",
   "document-extractor": "border-teal-400 bg-teal-50",
   assigner: "border-cyan-400 bg-cyan-50",
-  "variable-aggregator": "border-lavender-400 bg-lavender-50",
+  "variable-aggregator": "border-sakura-400 bg-sakura-50",
   "list-operator": "border-sky-400 bg-sky-50",
   answer: "border-green-400 bg-green-50",
   loop: "border-rose-400 bg-rose-50",
@@ -163,7 +163,7 @@ const PALETTE_ITEMS = [
   { type: "loop", label: "条件循环", icon: <RotateCcw size={14} />, color: "border-rose-400 bg-rose-50" },
   { type: "answer", label: "中间输出", icon: <MessageSquare size={14} />, color: "border-green-400 bg-green-50" },
   { type: "human-input", label: "人工输入", icon: <FileText size={14} />, color: "border-sky-400 bg-sky-50" },
-  { type: "variable-aggregator", label: "变量聚合", icon: <Combine size={14} />, color: "border-lavender-400 bg-lavender-50" },
+  { type: "variable-aggregator", label: "变量聚合", icon: <Combine size={14} />, color: "border-sakura-400 bg-sakura-50" },
 ];
 
 function getDefaultConfig(type: string): Record<string, any> {
@@ -806,7 +806,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
             placeholder="描述（可选）"
           />
 
-          <button onClick={() => setShowTemplates(true)} className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-lavender-100 text-lavender-600 hover:bg-lavender-200">
+          <button onClick={() => setShowTemplates(true)} className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-sakura-100 text-sakura-600 hover:bg-sakura-200">
             <BookOpen size={12} /> 模板市场
           </button>
           <button onClick={() => setShowDebugPanel(!showDebugPanel)} className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${showDebugPanel ? 'bg-sakura-100 text-sakura-600' : 'bg-gray-100 text-gray-500'} hover:bg-gray-200`}>

@@ -24,7 +24,7 @@ function TextBlock({ text }: { text: string }) {
   if (!text) return null;
   const lines = text.split("\n");
   return (
-    <div className="text-xs leading-relaxed whitespace-pre-wrap [&_strong]:font-semibold [&_strong]:text-sakura-700 [&_em]:italic [&_code]:bg-sakura-100 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[11px] [&_code]:font-mono [&_a]:text-lavender-600 [&_a]:underline [&_a:hover]:text-lavender-800 [&_hr]:border-sakura-100 [&_hr]:my-2 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_blockquote]:border-l-2 [&_blockquote]:border-lavender-300 [&_blockquote]:pl-3 [&_blockquote]:text-sakura-400 [&_blockquote]:italic [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-sakura-600 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-sakura-500 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-sakura-500 [&_p]:my-1">
+    <div className="text-xs leading-relaxed whitespace-pre-wrap [&_strong]:font-semibold [&_strong]:text-sakura-700 [&_em]:italic [&_code]:bg-sakura-100 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[11px] [&_code]:font-mono [&_a]:text-sakura-600 [&_a]:underline [&_a:hover]:text-sakura-800 [&_hr]:border-sakura-100 [&_hr]:my-2 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_blockquote]:border-l-2 [&_blockquote]:border-sakura-300 [&_blockquote]:pl-3 [&_blockquote]:text-sakura-400 [&_blockquote]:italic [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-sakura-600 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-sakura-500 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-sakura-500 [&_p]:my-1">
       {lines.map((line, i) => {
         // 标题
         if (line.startsWith("### ")) return <h3 key={i}>{renderInline(line.slice(4))}</h3>;
@@ -188,8 +188,8 @@ function ToolUseBlock({ name, args, state }: { name: string; args?: Record<strin
     return <Wrench size={11} />;
   })();
 
-  const bgColor = isError ? "border-red-100 bg-red-50" : isRunning ? "border-lavender-100 bg-lavender-50" : "border-green-100 bg-green-50";
-  const textColor = isError ? "text-red-600" : isRunning ? "text-lavender-600" : "text-green-700";
+  const bgColor = isError ? "border-red-100 bg-red-50" : isRunning ? "border-sakura-100 bg-sakura-50" : "border-green-100 bg-green-50";
+  const textColor = isError ? "text-red-600" : isRunning ? "text-sakura-600" : "text-green-700";
 
   return (
     <div className={`my-1 rounded-lg border overflow-hidden ${bgColor}`}>

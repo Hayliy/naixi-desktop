@@ -49,7 +49,7 @@ function convName(key: string, msgs?: MsgItem[], customName?: string) {
    ═══════════════════════════════════════════ */
 const QUICK_ACTIONS = [
   { icon: ImageIcon, label: "画图", color: "text-pink-500", bg: "bg-pink-50", template: "画一张" },
-  { icon: Video, label: "视频", color: "text-lavender-500", bg: "bg-lavender-50", template: "生成一段视频：" },
+  { icon: Video, label: "视频", color: "text-sakura-500", bg: "bg-sakura-50", template: "生成一段视频：" },
   { icon: Music, label: "语音", color: "text-blue-500", bg: "bg-blue-50", template: "用语音说：" },
   { icon: Code, label: "代码", color: "text-green-500", bg: "bg-green-50", template: "写一段代码：" },
   { icon: Globe, label: "搜索", color: "text-amber-500", bg: "bg-amber-50", template: "搜索一下：" },
@@ -70,7 +70,7 @@ function ConvList({
     <div className="w-64 min-w-[16rem] border-r border-sakura-100 bg-white flex flex-col">
       {/* 搜索 + 新对话 */}
       <div className="p-3 border-b border-sakura-100 space-y-2">
-        <button onClick={onNew} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs rounded-lg bg-gradient-to-br from-sakura-400 to-lavender-400 text-white hover:shadow-md transition-shadow">
+        <button onClick={onNew} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs rounded-lg bg-gradient-to-br from-sakura-400 to-sakura-500 text-white hover:shadow-md transition-shadow">
           <Plus size={13} />
           <span>新对话</span>
         </button>
@@ -91,7 +91,7 @@ function ConvList({
           <button key={c.key} onClick={() => onSelect(c.key)}
             className={`w-full text-left px-3 py-2.5 border-b border-sakura-50 transition-colors hover:bg-sakura-50 ${activeKey === c.key ? "bg-sakura-100" : ""}`}>
             <div className="flex items-start gap-2">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${c.last_role === "assistant" ? "bg-lavender-100 text-lavender-500" : "bg-pink-100 text-pink-500"}`}>
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${c.last_role === "assistant" ? "bg-sakura-100 text-sakura-500" : "bg-pink-100 text-pink-500"}`}>
                 {c.last_role === "assistant" ? <Bot size={14} /> : <User size={14} />}
               </div>
               <div className="flex-1 min-w-0">
@@ -148,7 +148,7 @@ function MsgBubble({ msg, onEdit, onRegenerate }: { msg: MsgItem; onEdit?: (id: 
 
   return (
     <div className={`flex gap-2 group ${isUser ? "flex-row-reverse" : ""}`}>
-      <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${isUser ? "bg-pink-100 text-pink-500" : "bg-lavender-100 text-lavender-500"}`}>
+      <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${isUser ? "bg-pink-100 text-pink-500" : "bg-sakura-100 text-sakura-500"}`}>
         {isUser ? <User size={12} /> : <Bot size={12} />}
       </div>
       <div className={`max-w-[75%] ${isUser ? "items-end" : "items-start"} flex flex-col`}>
@@ -177,13 +177,13 @@ function MsgBubble({ msg, onEdit, onRegenerate }: { msg: MsgItem; onEdit?: (id: 
               value={editText} onChange={e => setEditText(e.target.value)} rows={3} />
             <div className="flex gap-1 justify-end">
               <button onClick={() => setEditing(false)} className="px-2 py-0.5 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
-              <button onClick={handleEditSave} className="px-2 py-0.5 rounded text-[10px] bg-gradient-to-br from-sakura-400 to-lavender-400 text-white">保存</button>
+              <button onClick={handleEditSave} className="px-2 py-0.5 rounded text-[10px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white">保存</button>
             </div>
           </div>
         ) : (
           <div className={`rounded-xl px-3 py-2 text-xs leading-relaxed ${
             isUser
-              ? "bg-gradient-to-br from-sakura-400 to-lavender-400 text-white rounded-tr-sm"
+              ? "bg-gradient-to-br from-sakura-400 to-sakura-500 text-white rounded-tr-sm"
               : "bg-white border border-blue-100 text-sakura-600 rounded-tl-sm"
           }`}>
             {msg.content_blocks && msg.content_blocks.length > 0 ? (
@@ -287,7 +287,7 @@ function ChatInput({ onSend }: { onSend: (text: string) => void }) {
           onKeyDown={handleKeyDown}
         />
         <button onClick={handleSend} disabled={!text.trim()}
-          className="w-9 h-9 rounded-xl bg-gradient-to-br from-sakura-400 to-lavender-400 flex items-center justify-center shrink-0 disabled:opacity-40 hover:shadow-md transition-shadow">
+          className="w-9 h-9 rounded-xl bg-gradient-to-br from-sakura-400 to-sakura-500 flex items-center justify-center shrink-0 disabled:opacity-40 hover:shadow-md transition-shadow">
           <Send size={14} className="text-white" />
         </button>
       </div>
@@ -722,14 +722,14 @@ export default function ChatPage() {
                       onClick={() => setScene(key)}
                       className={`flex items-center gap-1 px-1.5 py-1 rounded text-[10px] transition-colors ${
                         scene === key
-                          ? "bg-gradient-to-r from-sakura-100 to-lavender-100 text-sakura-600 font-medium"
+                          ? "bg-gradient-to-r from-sakura-100 to-sakura-500 text-sakura-600 font-medium"
                           : "text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50"
                       }`}
                       title={label}
                     >
                       <SIcon size={9} />
                       <span className="max-w-[4rem] truncate">{label}</span>
-                      {scene === key && <span className="w-1.5 h-1.5 rounded-full bg-lavender-500" />}
+                      {scene === key && <span className="w-1.5 h-1.5 rounded-full bg-sakura-500" />}
                     </button>
                   ))}
                 </div>

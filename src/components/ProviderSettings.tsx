@@ -174,7 +174,7 @@ export default function ProviderSettings() {
           <div className="flex justify-end gap-2 pt-1 border-t border-sakura-100">
             <button onClick={() => setShowForm(false)} className="px-3 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:bg-sakura-50 transition-colors">取消</button>
             <button onClick={handleSave} disabled={!formName || !formHost}
-              className="px-4 py-1.5 rounded-lg text-[11px] bg-gradient-to-br from-sakura-400 to-lavender-500 text-white disabled:opacity-40 transition-shadow">
+              className="px-4 py-1.5 rounded-lg text-[11px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-40 transition-shadow">
               保存
             </button>
           </div>

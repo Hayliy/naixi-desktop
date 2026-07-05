@@ -179,11 +179,11 @@ export default function PromptPanel({
                     onClick={() => onSceneChange(scene)}
                     className={`flex flex-col items-center gap-1 px-2 py-2 rounded-lg text-[10px] transition-colors border ${
                       active
-                        ? "bg-gradient-to-br from-sakura-100 to-lavender-100 border-sakura-200 text-sakura-600 font-medium"
+                        ? "bg-gradient-to-br from-sakura-100 to-sakura-100 border-sakura-200 text-sakura-600 font-medium"
                         : "bg-white border-sakura-100 text-sakura-400 hover:border-sakura-200"
                     }`}
                   >
-                    <Icon size={12} className={active ? "text-lavender-500" : "text-sakura-300"} />
+                    <Icon size={12} className={active ? "text-sakura-500" : "text-sakura-300"} />
                     <span className="truncate w-full text-center">{label}</span>
                     {p && <span className="text-[9px] text-sakura-300">{p.lines}行</span>}
                   </button>
@@ -261,17 +261,17 @@ function PromptCard({
 
   return (
     <div className={`bg-white border rounded-lg overflow-hidden transition-colors ${
-      active ? "border-lavender-300 ring-1 ring-lavender-100" : "border-sakura-100"
+      active ? "border-sakura-300 ring-1 ring-sakura-100" : "border-sakura-100"
     }`}>
       <div className="flex items-center gap-2 px-2.5 py-2">
-        <Icon size={12} className={active ? "text-lavender-500" : "text-sakura-300"} />
+        <Icon size={12} className={active ? "text-sakura-500" : "text-sakura-300"} />
         <div className="flex-1 min-w-0">
           <p className={`text-[11px] truncate ${active ? "text-sakura-600 font-medium" : "text-sakura-500"}`}>{prompt.desc}</p>
           <p className="text-[9px] text-sakura-300">{prompt.lines}行 · {prompt.char_count}字符</p>
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
           {!isScene && onActivate && (
-            <button onClick={onActivate} className={`p-1 rounded text-[9px] ${active ? "text-lavender-500 bg-lavender-50" : "text-sakura-300 hover:text-sakura-500"}`}>
+            <button onClick={onActivate} className={`p-1 rounded text-[9px] ${active ? "text-sakura-500 bg-sakura-50" : "text-sakura-300 hover:text-sakura-500"}`}>
               {active ? "已用" : "启用"}
             </button>
           )}
@@ -337,7 +337,7 @@ function PromptEditor({
         <button
           onClick={onSave}
           disabled={saving || (isCreating && !title.trim())}
-          className="flex items-center gap-1 px-2.5 py-1 rounded text-[10px] bg-gradient-to-r from-sakura-400 to-lavender-500 text-white disabled:opacity-40 transition-shadow"
+          className="flex items-center gap-1 px-2.5 py-1 rounded text-[10px] bg-gradient-to-r from-sakura-400 to-sakura-500 text-white disabled:opacity-40 transition-shadow"
         >
           {saving ? "保存中..." : <><Save size={9} /> {isCreating ? "创建" : "保存"}</>}
         </button>
