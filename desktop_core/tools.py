@@ -666,14 +666,41 @@ register("open_url", "在默认浏览器中打开指定网址",
 # ── 文件搜索工具 ──
 
 async def _find_files(args, ctx):
-    """在电脑上搜索文件（Windows 注册表 + 常见安装目录 + 文件系统）"""
+    """在电脑上搜索程序或文件。先找可执行程序，再找其他文件"""
     import subprocess
     name = args.get("name", "")
     if not name: return "缺少文件名"
-    results = []
     name_lower = name.lower()
     
-    # ── 1. Windows 注册表搜索已安装程序 ──
+    # 已知程序快速映射
+    known_apps = {
+        "记事本": "notepad.exe", "计算器": "calc.exe", "画图": "mspaint.exe",
+        "cmd": "cmd.exe", "命令提示符": "cmd.exe", "powershell": "powershell.exe",
+        "chrome": "chrome.exe", "edge": "msedge.exe", "浏览器": "msedge.exe",
+        "任务管理器": "taskmgr.exe", "资源管理器": "explorer.exe",
+        "控制面板": "control.exe", "注册表": "regedit.exe",
+    }
+    if name_lower in known_apps or name in known_apps:
+        target = known_apps.get(name_lower) or known_apps.get(name, "")
+        if target:
+            try:
+                proc = await asyncio.create_subprocess_exec("where", target, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+                path = stdout.decode("utf-8", errors="replace").strip().split("\n")[0]
+                if path:
+                    return f"找到以下程序:\n{path}"
+            except: pass
+    
+    exe_results = []  # .exe / 启动程序
+    other_results = []  # 其他文件
+    
+    # 跳过这些缓存/临时目录
+    skip_dirs = {"cache", "Cache", "caches", "Caches", "temp", "Temp", "tmp", "Tmp",
+                 "node_modules", ".git", "__pycache__", "venv", ".venv",
+                 "Media Cache Files", "Code Cache", "GPUCache", "Service Worker",
+                 "Adobe", "AdobeGC", "adobe"}
+    
+    # ── 1. Windows 注册表搜索已安装程序（最高优先级） ──
     try:
         import winreg
         reg_paths = [
@@ -702,7 +729,7 @@ async def _find_files(args, ctx):
                                         except OSError:
                                             continue
                                         if val and os.path.isfile(val) and val.lower().endswith(".exe"):
-                                            results.append(f"[注册表] {val}")
+                                            exe_results.append(val)
                                             break
                             except OSError:
                                 continue
@@ -711,52 +738,52 @@ async def _find_files(args, ctx):
     except ImportError:
         pass
     
-    # ── 2. 常见安装目录搜索 ──
+    # ── 2. 常见安装目录搜索可执行程序 ──
     search_paths = [
-        os.path.expanduser("~"),
-        os.path.expanduser("~\\Desktop"),
-        os.path.expanduser("~\\Downloads"),
+        "D:\\Program Files", "D:\\Program Files (x86)",
+        "D:\\Games", "D:\\游戏",
+        "C:\\Program Files", "C:\\Program Files (x86)",
+        "D:\\软件", "D:\\应用", "D:\\Apps",
         os.path.expanduser("~\\AppData\\Local"),
         os.path.expanduser("~\\AppData\\Roaming"),
-        "C:\\Program Files",
-        "C:\\Program Files (x86)",
-        "D:\\Program Files",
-        "D:\\Games",
-        "D:\\软件",
     ]
     
-    # 先找目录名匹配的（游戏通常装在 D:\Games\鸣潮 这种目录里）
+    # 第一遍：深度2层内找 .exe 和目录名匹配
     for root in search_paths:
         if not os.path.isdir(root): continue
         try:
             for entry in os.listdir(root):
+                if entry in skip_dirs: continue
                 if name_lower in entry.lower():
                     full = os.path.join(root, entry)
                     if os.path.isdir(full):
-                        # 目录内找 .exe
-                        for f in os.listdir(full):
-                            if f.lower().endswith(".exe") and "uninstall" not in f.lower():
-                                results.append(os.path.join(full, f))
-                                break
+                        # 目录匹配：找里面的 .exe
+                        try:
+                            for f in os.listdir(full):
+                                if f.lower().endswith(".exe") and "uninstall" not in f.lower():
+                                    exe_results.append(os.path.join(full, f))
+                                    break
+                        except: pass
+                    elif full.lower().endswith(".exe"):
+                        exe_results.append(full)
         except: pass
     
-    # 然后搜索文件（深度限制 4 层）
-    max_results = 10
+    # 第二遍：深度3层内搜 .exe（仅在 Games/Program Files 等目录）
     for root in search_paths:
         if not os.path.isdir(root): continue
         try:
             for dirpath, dirs, files in os.walk(root):
-                depth = dirpath.replace(root, "").count(os.sep)
-                if depth >= 4:
+                dname = os.path.basename(dirpath)
+                if dname in skip_dirs:
                     dirs.clear(); continue
-                dirs[:] = [d for d in dirs if d not in ("node_modules", ".git", "__pycache__", "venv", ".venv", "cache", "Cache")]
-                for f in files:
-                    if name_lower in f.lower():
-                        fpath = os.path.join(dirpath, f)
-                        if fpath not in results:
-                            results.append(fpath)
-                            if len(results) >= max_results: break
-                if len(results) >= max_results: break
+                depth = dirpath.replace(root, "").count(os.sep)
+                if depth >= 3:
+                    dirs.clear(); continue
+                # 只看目录名匹配的
+                if name_lower in dname.lower():
+                    for f in files:
+                        if f.lower().endswith(".exe") and "uninstall" not in f.lower():
+                            exe_results.append(os.path.join(dirpath, f))
         except: pass
     
     # ── 3. 开始菜单搜索快捷方式 ──
@@ -766,23 +793,60 @@ async def _find_files(args, ctx):
             for root, dirs, files in os.walk(start_menu):
                 for f in files:
                     if f.endswith(".lnk") and name_lower in f.lower():
-                        results.append(f"[开始菜单] {f.replace('.lnk','')}")
-                        if len(results) >= max_results: break
-                if len(results) >= max_results: break
+                        exe_results.append(f"[快捷方式] {f.replace('.lnk','')}")
+                        if len(exe_results) >= 8: break
+                if len(exe_results) >= 8: break
         except: pass
     
-    if results:
-        # 去重并返回
+    # ── 4. 桌面/下载目录搜文件（仅当没找到可执行程序时） ──
+    if not exe_results:
+        doc_dirs = [os.path.expanduser("~\\Desktop"), os.path.expanduser("~\\Downloads")]
+        for root in doc_dirs:
+            if not os.path.isdir(root): continue
+            try:
+                for f in os.listdir(root):
+                    if name_lower in f.lower():
+                        other_results.append(os.path.join(root, f))
+            except: pass
+    
+    # ── 组装结果 ──
+    if exe_results:
+        # 去重（标准化路径）
         seen = set()
         unique = []
-        for r in results:
-            if r not in seen:
-                seen.add(r)
-                unique.append(r)
-        return "找到以下文件/程序:\n" + "\n".join(unique[:10])
-    return f"未找到与「{name}」相关的文件或程序"
+        for r in exe_results:
+            norm = os.path.normpath(r.strip().lower())
+            if norm not in seen: seen.add(norm); unique.append(r.strip())
+        return "找到以下程序:\n" + "\n".join(unique[:8])
+    if other_results:
+        return "找到以下文件:\n" + "\n".join(other_results[:8])
+    # ── 5. 中文名搜不到时自动试英文名 ──
+    lang_map = {"鸣潮": ["Wuthering", "Wuthering Waves"],
+                "微信": ["WeChat"],
+                "浏览器": ["chrome", "msedge", "firefox"],
+                "qq": ["QQ", "WeCom"]}
+    for cn, ens in lang_map.items():
+        if name_lower == cn or cn in name_lower:
+            for en in ens:
+                for root in ["D:\\Program Files", "D:\\软件", "D:\\Games",
+                             "C:\\Program Files", "C:\\Program Files (x86)"]:
+                    if not os.path.isdir(root): continue
+                    try:
+                        for entry in os.listdir(root):
+                            if en.lower() in entry.lower():
+                                full = os.path.join(root, entry)
+                                if os.path.isdir(full):
+                                    for f in os.listdir(full):
+                                        if f.lower().endswith(".exe") and "uninstall" not in f.lower():
+                                            exe_results.append(os.path.join(full, f))
+                                            break
+                    except: pass
+            if exe_results:
+                return "找到以下程序:\n" + "\n".join(exe_results[:8])
+            break
+    return f"未找到与「{name}」相关的程序或文件"
 
-register("find_files", "在电脑上搜索文件。适合查找程序安装位置、文档等",
+register("find_files", "在电脑上搜索程序或文件。自动搜索注册表、常见安装目录、开始菜单。先找可执行程序，再找其他文件。中文名搜不到时自动试英文名",
     {"type": "object", "properties": {"name": {"type": "string", "description": "文件名关键词，如「鸣潮」「Wuthering」"}}, "required": ["name"]},
     _find_files)
 
