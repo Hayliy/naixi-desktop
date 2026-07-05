@@ -1,0 +1,212 @@
+{
+  "platforms": [
+    {
+      "id": "napcat",
+      "name": "QQ",
+      "platform": "Napcat / LLOneBot",
+      "icon": "MessageCircle",
+      "description": "通过 Napcat 或 LLOneBot 将 QQ 消息转发到桌面端工作流",
+      "steps": [
+        "安装并启动 Napcat（https://napcat.napnei.shop）或 LLOneBot",
+        "打开 Napcat 后台 → 网络配置 → HTTP 事件回调",
+        "添加回调地址为下方 webhook URL",
+        "选择需要监听的事件类型（群消息/私聊等）",
+        "保存后 QQ 消息会自动触发桌面端工作流"
+      ],
+      "links": [
+        { "label": "Napcat 官方文档", "url": "https://napcat.napnei.shop/docs" },
+        { "label": "LLOneBot GitHub", "url": "https://github.com/LLOneBot/LLOneBot" }
+      ]
+    },
+    {
+      "id": "feishu",
+      "name": "飞书",
+      "platform": "Feishu / Lark",
+      "icon": "MessageCircle",
+      "description": "创建飞书机器人应用，将消息回调到桌面端工作流",
+      "steps": [
+        "打开飞书开放平台（https://open.feishu.cn）→ 创建企业自建应用",
+        "开启「机器人」能力 → 事件订阅 → 添加请求网址 URL",
+        "填入下方 webhook URL",
+        "订阅消息事件（接收消息 im.message.receive_v1）",
+        "发布应用 → 版本管理与审核",
+        "审核通过后添加到飞书通讯录即可使用"
+      ],
+      "links": [
+        { "label": "飞书开放平台文档", "url": "https://open.feishu.cn/document" }
+      ]
+    },
+    {
+      "id": "wecom",
+      "name": "企业微信",
+      "platform": "WeCom",
+      "icon": "MessageCircle",
+      "description": "企业微信机器人应用的 webhook 回调",
+      "steps": [
+        "打开企业微信管理后台 → 应用管理 → 创建应用",
+        "配置应用的可信 IP（服务器公网 IP）",
+        "开启接收消息 → 设置 URL 为下方 webhook 地址",
+        "设置 Token 和 EncodingAESKey（保存到桌面端配置）",
+        "配置企业可信域名（需 ICP 备案域名）",
+        "保存后成员发送消息到该应用即可触发工作流"
+      ],
+      "links": [
+        { "label": "企业微信开发文档", "url": "https://developer.work.weixin.qq.com/document" }
+      ]
+    },
+    {
+      "id": "dingtalk",
+      "name": "钉钉",
+      "platform": "DingTalk",
+      "icon": "MessageCircle",
+      "description": "钉钉机器人出站消息回调",
+      "steps": [
+        "打开钉钉开放平台（https://open.dingtalk.com）→ 创建应用",
+        "添加机器人能力 → 选择「出站」类型",
+        "配置消息接收地址为下方 webhook URL",
+        "设置加签密钥（保存到桌面端配置）",
+        "发布应用 → 选择可见范围",
+        "安装后群聊 @机器人即可触发工作流"
+      ],
+      "links": [
+        { "label": "钉钉开放平台文档", "url": "https://open.dingtalk.com/document" }
+      ]
+    },
+    {
+      "id": "discord",
+      "name": "Discord",
+      "platform": "Discord",
+      "icon": "MessageCircle",
+      "description": "Discord Slash Command 和消息响应",
+      "steps": [
+        "打开 Discord Developer Portal（https://discord.com/developers/applications）",
+        "创建 Application → Bot → 获取 Token",
+        "开启 Message Content Intent",
+        "生成邀请链接 → 将 Bot 添加到服务器",
+        "配置 Bot 的消息接收地址为下方 webhook URL",
+        "在频道中发送消息即可触发工作流"
+      ],
+      "links": [
+        { "label": "Discord Developer Portal", "url": "https://discord.com/developers/docs" }
+      ]
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "platform": "Slack",
+      "icon": "MessageCircle",
+      "description": "Slack App Event 订阅",
+      "steps": [
+        "打开 Slack API（https://api.slack.com/apps）→ 创建 App",
+        "开启 Event Subscriptions → 设置 Request URL 为下方 webhook 地址",
+        "订阅消息事件（message.channels, message.im 等）",
+        "安装 App 到工作区",
+        "在频道中 @App 或发送消息即可触发工作流"
+      ],
+      "links": [
+        { "label": "Slack API 文档", "url": "https://api.slack.com/docs" }
+      ]
+    },
+    {
+      "id": "telegram",
+      "name": "Telegram",
+      "platform": "Telegram Bot",
+      "icon": "MessageCircle",
+      "description": "Telegram Bot webhook 回调",
+      "steps": [
+        "在 Telegram 中搜索 @BotFather → 创建新 Bot → 获取 Token",
+        "设置 webhook：访问 https://api.telegram.org/bot<TOKEN>/setWebhook?url=<你的 webhook URL>",
+        "Bot 会自动将收到的消息转发到 webhook 地址",
+        "将用户添加到 Bot 即可开始使用"
+      ],
+      "links": [
+        { "label": "Telegram Bot API", "url": "https://core.telegram.org/bots/api" }
+      ]
+    },
+    {
+      "id": "whatsapp",
+      "name": "WhatsApp",
+      "platform": "WhatsApp Business API",
+      "icon": "MessageCircle",
+      "description": "WhatsApp Cloud API webhook 回调",
+      "steps": [
+        "访问 Meta Developer Platform（https://developers.facebook.com）",
+        "创建 App → 添加 WhatsApp 产品",
+        "配置 Webhook 回调 URL 为下方 webhook 地址",
+        "填写验证 Token（保存到桌面端配置）",
+        "订阅消息事件（messages）",
+        "将 Business 账号关联的 WhatsApp 号发送消息即可触发"
+      ],
+      "links": [
+        { "label": "Meta WhatsApp 文档", "url": "https://developers.facebook.com/docs/whatsapp" }
+      ]
+    },
+    {
+      "id": "email",
+      "name": "电子邮件",
+      "platform": "Email Webhook",
+      "icon": "Mail",
+      "description": "通过邮件触发工作流（需邮件转发服务）",
+      "steps": [
+        "注册 Mailgun / SendGrid / CloudMailin 等服务",
+        "创建邮件接收路由 → 目标设为下方 webhook URL",
+        "设置接收邮箱地址",
+        "向该邮箱发送邮件即可触发工作流执行",
+        "邮件内容（标题/正文/附件）会作为工作流输入"
+      ],
+      "links": [
+        { "label": "Mailgun 文档", "url": "https://documentation.mailgun.com" },
+        { "label": "CloudMailin 文档", "url": "https://cloudmailin.com/docs" }
+      ]
+    },
+    {
+      "id": "github",
+      "name": "GitHub",
+      "platform": "GitHub Webhook",
+      "description": "通过 GitHub 仓库事件触发工作流",
+      "icon": "GitBranch",
+      "steps": [
+        "打开 GitHub 仓库 → Settings → Webhooks → Add webhook",
+        "Payload URL 设置为下方 webhook 地址",
+        "Content type 选择 application/json",
+        "选择触发事件（push / issues / pull_request 等）",
+        "保存后仓库事件会自动触发工作流"
+      ],
+      "links": [
+        { "label": "GitHub Webhook 文档", "url": "https://docs.github.com/webhooks" }
+      ]
+    },
+    {
+      "id": "gitlab",
+      "name": "GitLab",
+      "platform": "GitLab Webhook",
+      "description": "通过 GitLab 仓库事件触发工作流",
+      "icon": "GitBranch",
+      "steps": [
+        "打开 GitLab 仓库 → Settings → Webhooks",
+        "URL 设置为下方 webhook 地址",
+        "选择触发事件（Push / Merge Request 等）",
+        "可加 Secret Token 验证（保存到桌面端配置）",
+        "保存后仓库事件会自动触发工作流"
+      ],
+      "links": [
+        { "label": "GitLab Webhook 文档", "url": "https://docs.gitlab.com/ee/user/project/integrations/webhooks.html" }
+      ]
+    },
+    {
+      "id": "generic",
+      "name": "自定义 HTTP",
+      "platform": "Generic Webhook",
+      "icon": "Globe",
+      "description": "任意系统或脚本通过 HTTP 请求触发工作流",
+      "steps": [
+        "编写任意语言脚本（Python / Bash / JS 等）",
+        "发送 POST 请求到下方 webhook URL",
+        "请求体 JSON 格式：{\"input\": { ... }}",
+        "工作流开始执行并返回结果",
+        "支持任意能发送 HTTP 请求的系统对接"
+      ],
+      "links": []
+    }
+  ]
+}

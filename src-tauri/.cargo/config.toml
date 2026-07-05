@@ -1,0 +1,4 @@
+# MinGW linker for GNU target (fallback only)
+[target.x86_64-pc-windows-gnu]
+linker = "D:\\软件\\mingw64\\bin\\x86_64-w64-mingw32-gcc.exe"
+rustflags = ["-C", "link-args=-static-libgcc"]

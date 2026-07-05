@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #FFF5F7;
+  --sidebar: rgba(255, 240, 245, 0.85);
+  --card: rgba(255, 255, 255, 0.65);
+  --border: #FFD6E0;
+  --text: #4A3040;
+  --text-sec: #C48898;
+  --pink: #FF6B8A;
+  --pink-light: #FFE4EC;
+}
+
+body {
+  font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  margin: 0;
+  padding: 0;
+}
+
+/* 自定义滚动条 */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #FFD6E0; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #FFB7C5; }
+
+/* 页面切换：隐藏非活跃页但保留挂载状态 */
+.page-hidden { display: none !important; }
+.page-visible { display: block; }
