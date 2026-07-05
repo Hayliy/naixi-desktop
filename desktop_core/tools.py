@@ -1274,6 +1274,164 @@ register("batch_edit", "在多个文件中批量搜索替换文本。支持 glob
     }, "required": ["pattern", "old_string", "new_string"]},
     _batch_edit)
 
+# ── 图片读取工具 ──
+
+async def _read_image(args, ctx):
+    """读取本地图片文件并用 Vision API 分析内容"""
+    path = args.get("path", "")
+    question = args.get("question", "请描述这张图片的内容")
+    if not path:
+        return "缺少图片路径"
+    if os.path.isabs(path):
+        full = os.path.normpath(path)
+    else:
+        full = os.path.normpath(os.path.join(WORKSPACE_DIR, path))
+    if not os.path.isfile(full):
+        return f"文件不存在: {path}"
+    # 检查文件格式
+    ext = os.path.splitext(full)[1].lower()
+    if ext not in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"):
+        return f"不支持的图片格式: {ext}（支持 PNG/JPG/GIF/BMP/WEBP）"
+    try:
+        import base64
+        with open(full, "rb") as f:
+            img_b64 = base64.b64encode(f.read()).decode("utf-8")
+        mime = "image/png" if ext == ".png" else "image/jpeg" if ext in (".jpg", ".jpeg") else "image/gif" if ext == ".gif" else "image/webp"
+        # 找 vision 供应商
+        vision_provider = ctx.get("vision_provider") or ctx.get("chat_provider")
+        if not vision_provider:
+            return "未配置视觉/对话供应商，无法分析图片"
+        p_url = vision_provider.get("api_url", "")
+        p_key = vision_provider.get("api_key", "")
+        p_model = vision_provider.get("model", "qwen-vl-plus")
+        from desktop_core.storage import decrypt_api_key
+        dec_key = decrypt_api_key(p_key)
+        if dec_key:
+            p_key = dec_key
+        import aiohttp
+        headers = {"Authorization": f"Bearer {p_key}", "Content-Type": "application/json"}
+        payload = {
+            "model": p_model,
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}"}},
+                    {"type": "text", "text": question},
+                ]}
+            ],
+            "stream": False,
+        }
+        async with aiohttp.ClientSession(headers=headers) as s:
+            async with s.post(p_url, json=payload, timeout=aiohttp.ClientTimeout(total=60)) as r:
+                if r.status != 200:
+                    err = await r.text()
+                    return f"Vision API 返回 {r.status}: {err[:200]}"
+                result = await r.json()
+                content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                return content[:2000] if content else "（模型未返回描述）"
+    except Exception as e:
+        return f"分析图片失败: {str(e)[:100]}"
+
+register("read_image", "读取本地图片文件并用 AI 分析内容。支持 PNG/JPG/GIF/BMP/WEBP 格式。需要配置视觉供应商",
+    {"type": "object", "properties": {
+        "path": {"type": "string", "description": "图片文件路径（绝对路径或工作区相对路径）"},
+        "question": {"type": "string", "description": "对图片的问题，如「图中有什么？」"},
+    }, "required": ["path"]},
+    _read_image)
+
+# ── 可视化工具 ──
+
+async def _visualize(args, ctx):
+    """生成 SVG 图表/流程图"""
+    chart_type = args.get("type", "bar")
+    title = args.get("title", "")
+    data = args.get("data", "")
+    labels = args.get("labels", "")
+    if not data:
+        return "缺少数据"
+    try:
+        items = [x.strip() for x in data.split(",")]
+        lbs = [x.strip() for x in labels.split(",")] if labels else [f"项{i+1}" for i in range(len(items))]
+        values = [float(x) for x in items]
+        if len(lbs) > len(values):
+            lbs = lbs[:len(values)]
+        elif len(lbs) < len(values):
+            lbs.extend([f"项{i+1}" for i in range(len(lbs), len(values))])
+        
+        max_val = max(values) if values else 1
+        w, h = 680, 400
+        bar_w = max(30, min(60, (w - 80) // len(values)))
+        
+        if chart_type == "bar":
+            bars = []
+            for i, (lb, v) in enumerate(zip(lbs, values)):
+                bh = int((v / max_val) * (h - 120))
+                x = 50 + i * (bar_w + 15)
+                y = h - 60 - bh
+                bars.append(f'<rect x="{x}" y="{y}" width="{bar_w}" height="{bh}" rx="3" fill="url(#grad{i%5})"/>')
+                bars.append(f'<text x="{x + bar_w//2}" y="{h - 42}" text-anchor="middle" font-size="11" fill="#888">{lb[:6]}</text>')
+                bars.append(f'<text x="{x + bar_w//2}" y="{y - 6}" text-anchor="middle" font-size="10" fill="#666">{v}</text>')
+            
+            svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="{w}" height="{h}">
+<defs>
+  <linearGradient id="grad0" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f472b6"/><stop offset="100%" stop-color="#ec4899"/></linearGradient>
+  <linearGradient id="grad1" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#a78bfa"/><stop offset="100%" stop-color="#8b5cf6"/></linearGradient>
+  <linearGradient id="grad2" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#60a5fa"/><stop offset="100%" stop-color="#3b82f6"/></linearGradient>
+  <linearGradient id="grad3" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#34d399"/><stop offset="100%" stop-color="#10b981"/></linearGradient>
+  <linearGradient id="grad4" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fbbf24"/><stop offset="100%" stop-color="#f59e0b"/></linearGradient>
+</defs>
+<rect width="{w}" height="{h}" fill="#fefdfb" rx="8"/>
+<text x="{w//2}" y="30" text-anchor="middle" font-size="16" font-weight="bold" fill="#444">{title or "图表"}</text>
+{chr(10).join(bars)}
+</svg>"""
+        elif chart_type == "pie":
+            total = sum(values)
+            angles = [(v / total) * 360 for v in values]
+            cx, cy, r = w//2, h//2, 120
+            colors = ["#f472b6", "#a78bfa", "#60a5fa", "#34d399", "#fbbf24", "#fb923c", "#f87171", "#e879f9"]
+            sectors = []
+            start = 0
+            for i, (lb, v, ang) in enumerate(zip(lbs, values, angles)):
+                end = start + ang
+                rad_s = start * 3.14159 / 180
+                rad_e = end * 3.14159 / 180
+                x1 = cx + r * __import__("math").cos(rad_s)
+                y1 = cy + r * __import__("math").sin(rad_s)
+                x2 = cx + r * __import__("math").cos(rad_e)
+                y2 = cy + r * __import__("math").sin(rad_e)
+                large = 1 if ang > 180 else 0
+                d = f"M {cx} {cy} L {x1:.1f} {y1:.1f} A {r} {r} 0 {large} 1 {x2:.1f} {y2:.1f} Z"
+                sectors.append(f'<path d="{d}" fill="{colors[i%len(colors)]}" stroke="white" stroke-width="2"/>')
+                # 图例
+                lx, ly = 30, 60 + i * 22
+                sectors.append(f'<rect x="{lx}" y="{ly}" width="12" height="12" rx="2" fill="{colors[i%len(colors)]}"/>')
+                sectors.append(f'<text x="{lx+18}" y="{ly+10}" font-size="11" fill="#666">{lb}</text>')
+                start = end
+            svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="{w}" height="{h}">
+<rect width="{w}" height="{h}" fill="#fefdfb" rx="8"/>
+<text x="{w//2}" y="30" text-anchor="middle" font-size="16" font-weight="bold" fill="#444">{title or "饼图"}</text>
+{chr(10).join(sectors)}
+</svg>"""
+        else:
+            return f"不支持的图表类型: {chart_type}（支持: bar, pie）"
+        
+        # 保存为文件
+        fname = f"chart_{int(time.time())}.svg"
+        fpath = os.path.join(WORKSPACE_DIR, fname)
+        with open(fpath, "w", encoding="utf-8") as f:
+            f.write(svg)
+        return f"✅ 图表已生成: {fname}\n可以发送SVG标记使用:\n```svg\n{svg[:2000]}\n```"
+    except Exception as e:
+        return f"生成图表失败: {str(e)[:100]}"
+
+register("visualize", "生成数据图表（柱状图/饼图）或流程图。返回 SVG 格式",
+    {"type": "object", "properties": {
+        "type": {"type": "string", "description": "图表类型：bar（柱状图）或 pie（饼图）"},
+        "title": {"type": "string", "description": "图表标题"},
+        "data": {"type": "string", "description": "数据，逗号分隔，如 30,50,20"},
+        "labels": {"type": "string", "description": "标签，逗号分隔，如 一月,二月,三月"},
+    }, "required": ["data"]},
+    _visualize)
+
 # 加载外部插件
 load_plugins()
 

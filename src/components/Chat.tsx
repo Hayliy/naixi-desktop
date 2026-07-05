@@ -18,10 +18,12 @@ import AgentStatus from "@/components/AgentStatus";
 import ChatInput from "@/components/ChatInput";
 import ModelSelector from "@/components/ModelSelector";
 import PermissionDialog from "@/components/PermissionDialog";
+import TaskPanel from "@/components/TaskPanel";
 import type { ConvItem, MsgItem, ProviderModel } from "@/components/ChatTypes";
 import { convName, QUICK_ACTIONS } from "@/components/ChatTypes";
 import {
   Bot, Trash2, Check, X, ChevronLeft, Sparkles, Settings, FileText, Cpu, MessageCircle,
+  CheckCircle2,
 } from "lucide-react";
 
 const MODELS: ProviderModel[] = [{ key: "auto", label: "自动路由（默认）", provider_id: 0 }];
@@ -46,6 +48,7 @@ export default function ChatPage() {
   });
   const [agentActive, setAgentActive] = useState(false);
   const [showDetail, setShowDetail] = useState(false);
+  const [showTask, setShowTask] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showPrompt, setShowPrompt] = useState(false);
   const [scene, setScene] = useState("owner");
@@ -224,6 +227,7 @@ export default function ChatPage() {
                   <button onClick={() => setShowSettings(!showSettings)} title="模型设置" className={`p-1.5 rounded transition-colors ${showSettings ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><Settings size={12} /></button>
                   <button onClick={() => setShowPrompt(!showPrompt)} title="提示词" className={`p-1.5 rounded transition-colors ${showPrompt ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><FileText size={12} /></button>
                   {activeKey && <button onClick={() => setShowDetail(!showDetail)} className={`p-1.5 rounded transition-colors ${showDetail ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><Sparkles size={12} /></button>}
+                  <button onClick={() => setShowTask(!showTask)} className={`p-1.5 rounded transition-colors ${showTask ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`} title="任务进度"><CheckCircle2 size={12} /></button>
                   {activeKey && <button onClick={() => handleDelete(activeKey)} className="p-1.5 hover:bg-red-50 rounded text-sakura-300 hover:text-red-500 transition-colors"><Trash2 size={12} /></button>}
                 </div>
               </div>
@@ -297,6 +301,8 @@ export default function ChatPage() {
       {permissionReq && <PermissionDialog
         reqId={permissionReq.id} name={permissionReq.name} args={permissionReq.args}
         onClose={() => setPermissionReq(null)} />}
+
+      {showTask && <TaskPanel onClose={() => setShowTask(false)} />}
 
       {showSettings && (
         <div className="w-72 min-w-[18rem] border-l border-sakura-100 bg-white overflow-y-auto">

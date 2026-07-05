@@ -1350,6 +1350,30 @@ def setup_routes(app):
     # 工具权限确认
     app.router.add_post("/api/tool/permit", api_tool_permit)
 
+    # 任务管理
+    app.router.add_get("/api/tasks", api_tasks_list)
+    app.router.add_post("/api/tasks/clear", api_tasks_clear)
+
+
+# ── 任务管理 API ──
+
+async def api_tasks_list(request):
+    """获取当前所有任务列表"""
+    from desktop_core.task_manager import get_manager
+    mgr = get_manager()
+    tasks = [mgr.get_task(tid).to_dict() for tid in list(mgr._tasks.keys())[-10:] if mgr.get_task(tid)]
+    return web.json_response({"tasks": tasks})
+
+
+async def api_tasks_clear(request):
+    """清除已完成的任务"""
+    from desktop_core.task_manager import get_manager
+    mgr = get_manager()
+    to_del = [tid for tid, t in list(mgr._tasks.items()) if t.status in ("done", "failed")]
+    for tid in to_del:
+        del mgr._tasks[tid]
+    return web.json_response({"ok": True, "cleared": len(to_del)})
+
 
 async def _on_startup_mcp(app):
     """应用启动时自动连接 MCP 服务器"""
