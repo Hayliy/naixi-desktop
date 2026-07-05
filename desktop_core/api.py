@@ -3,6 +3,30 @@ import json, os, sys, time, logging, asyncio
 from aiohttp import web
 from datetime import datetime
 
+# tiktoken 精确估算（可选依赖）
+_USE_TIKTOKEN = False
+_TIKTOKEN_ENC = None
+try:
+    import tiktoken as _tk
+    _TIKTOKEN_ENC = _tk.get_encoding("cl100k_base")
+    _USE_TIKTOKEN = True
+except Exception:
+    pass
+
+def _estimate_tokens(text: str) -> int:
+    """估算文本的 token 数量。优先 tiktoken，降级到字符估算"""
+    if not text:
+        return 0
+    if _USE_TIKTOKEN and _TIKTOKEN_ENC:
+        try:
+            return len(_TIKTOKEN_ENC.encode(text))
+        except Exception:
+            pass
+    # 降级：中英文混合估算
+    cn = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+    rest = len(text) - cn
+    return max(1, int(cn / 1.5 + rest / 3.5))
+
 from desktop_core.context import ContextManager
 
 from desktop_core.storage import meta_get, meta_set, encrypt_config, decrypt_config, decrypt_api_key, conv_list, conv_get_messages, conv_delete, conv_save_message_sync as conv_save_message
@@ -1018,10 +1042,11 @@ async def api_chat_stream(request):
                             round_input = u.get("prompt_tokens", u.get("input_tokens", u.get("input", 0)))
                             round_output = u.get("completion_tokens", u.get("output_tokens", u.get("output", 0)))
                         if not round_input and not round_output:
-                            # API 未返回用量时，根据文本长度估算
+                            # API 未返回用量时，用 tiktoken 精确估算（降级到字符估算）
+                            _est_token = _estimate_tokens
                             msgs_text = json.dumps([m.get("content","") for m in messages], ensure_ascii=False)
-                            round_input = max(50, len(msgs_text) // 4)
-                            round_output = max(10, len(content) // 4) if content else 20
+                            round_input = max(50, _est_token(msgs_text))
+                            round_output = max(10, _est_token(content)) if content else 20
                         if usage_info:
                             usage_info["input"] = (usage_info.get("input", 0) or 0) + round_input
                             usage_info["output"] = (usage_info.get("output", 0) or 0) + round_output
