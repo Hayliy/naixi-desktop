@@ -365,6 +365,18 @@ async def _run_command(args, ctx):
         if d in command.lower():
             return f"❌ 禁止执行危险命令"
     try:
+        # ── 启动 .exe 程序：避免弹终端窗口 ──
+        cmd_stripped = command.strip().strip("\"")
+        exe_to_launch = None
+        if cmd_stripped.lower().startswith("start "):
+            exe_to_launch = cmd_stripped[6:].strip().strip("\"")
+        elif cmd_stripped.lower().endswith(".exe") and os.path.isfile(cmd_stripped):
+            exe_to_launch = cmd_stripped
+        if exe_to_launch and os.path.isfile(exe_to_launch):
+            subprocess.Popen([exe_to_launch], shell=False, close_fds=True)
+            return f"✅ 已启动: {os.path.basename(exe_to_launch)}"
+        
+        # ── 普通命令执行 ──
         proc = await asyncio.create_subprocess_shell(
             command,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
