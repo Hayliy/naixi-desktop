@@ -265,6 +265,18 @@ async def api_desktop_config_get(request):
 async def api_desktop_config_set(request):
     try:
         body = await request.json()
+        # 合并现有配置，而不是整条替换（防止 curl 测试误覆盖）
+        raw = meta_get("desktop_config")
+        if raw:
+            try:
+                existing = json.loads(raw)
+                # 只合并已知的顶层键
+                for key in ("api_providers", "platform_configs", "mcp_servers", "desktop_full_trust"):
+                    if key in body:
+                        existing[key] = body[key]
+                body = existing
+            except:
+                pass
         encrypt_config(body)  # 加密所有 api_key 再存库
         meta_set("desktop_config", json.dumps(body, ensure_ascii=False))
         return web.json_response({"ok": True})
