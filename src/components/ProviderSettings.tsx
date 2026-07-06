@@ -538,63 +538,99 @@ function MCPSection() {
             </button>
           )}
 
-          {/* 服务器列表 */}
+          {/* 服务器列表（固定高度滚动） */}
+          <div className="max-h-[200px] overflow-y-auto space-y-1.5 pr-0.5">
           {Object.entries(servers).map(([key, srv]) => (
-            <div key={key} className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-sakura-50 border border-sakura-100">
-              <div className="flex-1 min-w-0">
-                <p className="text-[11px] font-medium text-sakura-600 truncate">{key}</p>
-                <p className="text-[10px] text-sakura-400 truncate font-mono">{srv.command} {srv.args?.join(" ")}</p>
-              </div>
-              <button onClick={() => handleTestSingle(key)}
-                className="p-1 rounded hover:bg-teal-50 text-sakura-300 hover:text-teal-500 transition-colors shrink-0"
-                title="测试连接">
-                <Zap size={11} />
-              </button>
-              <button onClick={() => handleEdit(key)}
-                className="p-1 rounded hover:bg-sakura-100 text-sakura-300 hover:text-sakura-500 transition-colors shrink-0"
-                title="编辑">
-                <Pencil size={11} />
-              </button>
-              <button onClick={() => handleDelete(key)}
-                className="p-1 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500 transition-colors shrink-0">
-                <Trash2 size={11} />
-              </button>
-            </div>
-          ))}
-
-          {/* 添加/编辑表单 */}
-          {showForm ? (
-            <div className="bg-white border border-sakura-100 rounded-lg p-3 space-y-2 text-xs mt-2">
-              <p className="text-[11px] font-semibold text-sakura-500">{editingKey ? "编辑 MCP 服务器" : "添加 MCP 服务器"}</p>
-              <div>
-                <p className="text-[10px] text-sakura-400 mb-0.5">名称</p>
-                <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px]"
-                  value={name} onChange={e => setName(e.target.value)} placeholder="例如: fetch" />
-              </div>
-              <div>
-                <p className="text-[10px] text-sakura-400 mb-0.5">启动命令</p>
-                <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] font-mono"
-                  value={command} onChange={e => setCommand(e.target.value)} placeholder="例如: uvx" />
-              </div>
-              <div>
-                <p className="text-[10px] text-sakura-400 mb-0.5">参数（空格分隔）</p>
-                <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] font-mono"
-                  value={args} onChange={e => setArgs(e.target.value)} placeholder="例如: mcp-server-fetch" />
-              </div>
-              <div className="flex justify-end gap-2 pt-1">
-                <button onClick={() => { setShowForm(false); setEditingKey(null); setName(""); setCommand(""); setArgs(""); }}
-                  className="px-3 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:bg-sakura-50 transition-colors">取消</button>
-                <button onClick={handleAdd} disabled={!name.trim() || !command.trim()}
-                  className="flex items-center gap-1 px-4 py-1.5 rounded-lg text-[11px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-40">
-                  {editingKey ? <Check size={11} /> : <Plus size={11} />} {editingKey ? "保存" : "添加"}
+            <div key={key}>
+              {/* 服务器卡片 */}
+              <div className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-sakura-50 border border-sakura-100">
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11px] font-medium text-sakura-600 truncate">{key}</p>
+                  <p className="text-[10px] text-sakura-400 truncate font-mono">{srv.command} {srv.args?.join(" ")}</p>
+                </div>
+                <button onClick={() => handleTestSingle(key)}
+                  className="p-1 rounded hover:bg-teal-50 text-sakura-300 hover:text-teal-500 transition-colors shrink-0"
+                  title="测试连接">
+                  <Zap size={11} />
+                </button>
+                <button onClick={() => handleEdit(key)}
+                  className="p-1 rounded hover:bg-sakura-100 text-sakura-300 hover:text-sakura-500 transition-colors shrink-0"
+                  title="编辑">
+                  <Pencil size={11} />
+                </button>
+                <button onClick={() => handleDelete(key)}
+                  className="p-1 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500 transition-colors shrink-0">
+                  <Trash2 size={11} />
                 </button>
               </div>
+              {/* 编辑表单：出现在当前卡片下方 */}
+              {editingKey === key && (
+                <div className="bg-white border border-sakura-100 rounded-lg p-3 space-y-2 text-xs mt-1.5 mb-1.5">
+                  <p className="text-[11px] font-semibold text-sakura-500">编辑 MCP 服务器</p>
+                  <div>
+                    <p className="text-[10px] text-sakura-400 mb-0.5">名称</p>
+                    <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px]"
+                      value={name} onChange={e => setName(e.target.value)} placeholder="例如: fetch" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-sakura-400 mb-0.5">启动命令</p>
+                    <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] font-mono"
+                      value={command} onChange={e => setCommand(e.target.value)} placeholder="例如: uvx" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-sakura-400 mb-0.5">参数（空格分隔）</p>
+                    <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] font-mono"
+                      value={args} onChange={e => setArgs(e.target.value)} placeholder="例如: mcp-server-fetch" />
+                  </div>
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button onClick={() => { setShowForm(false); setEditingKey(null); setName(""); setCommand(""); setArgs(""); }}
+                      className="px-3 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:bg-sakura-50 transition-colors">取消</button>
+                    <button onClick={handleAdd} disabled={!name.trim() || !command.trim()}
+                      className="flex items-center gap-1 px-4 py-1.5 rounded-lg text-[11px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-40">
+                      <Check size={11} /> 保存
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
-          ) : (
-            <button onClick={() => setShowForm(true)}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 transition-colors w-full">
-              <Plus size={11} /> 添加 MCP 服务器
-            </button>
+          ))}
+          </div>
+
+          {/* 添加按钮（当不在编辑时显示） */}
+          {!editingKey && (
+            showForm ? (
+              <div className="bg-white border border-sakura-100 rounded-lg p-3 space-y-2 text-xs">
+                <p className="text-[11px] font-semibold text-sakura-500">添加 MCP 服务器</p>
+                <div>
+                  <p className="text-[10px] text-sakura-400 mb-0.5">名称</p>
+                  <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px]"
+                    value={name} onChange={e => setName(e.target.value)} placeholder="例如: fetch" />
+                </div>
+                <div>
+                  <p className="text-[10px] text-sakura-400 mb-0.5">启动命令</p>
+                  <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] font-mono"
+                    value={command} onChange={e => setCommand(e.target.value)} placeholder="例如: uvx" />
+                </div>
+                <div>
+                  <p className="text-[10px] text-sakura-400 mb-0.5">参数（空格分隔）</p>
+                  <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] font-mono"
+                    value={args} onChange={e => setArgs(e.target.value)} placeholder="例如: mcp-server-fetch" />
+                </div>
+                <div className="flex justify-end gap-2 pt-1">
+                  <button onClick={() => { setShowForm(false); setName(""); setCommand(""); setArgs(""); }}
+                    className="px-3 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:bg-sakura-50 transition-colors">取消</button>
+                  <button onClick={handleAdd} disabled={!name.trim() || !command.trim()}
+                    className="flex items-center gap-1 px-4 py-1.5 rounded-lg text-[11px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-40">
+                    <Plus size={11} /> 添加
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button onClick={() => setShowForm(true)}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 transition-colors w-full">
+                <Plus size={11} /> 添加 MCP 服务器
+              </button>
+            )
           )}
         </div>
       )}
