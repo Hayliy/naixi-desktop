@@ -22,11 +22,13 @@ import ChatInput from "@/components/ChatInput";
 import ModelSelector from "@/components/ModelSelector";
 import PermissionDialog from "@/components/PermissionDialog";
 import TaskPanel from "@/components/TaskPanel";
+import TeamPanel from "@/components/TeamPanel";
+import type { TeamMember } from "@/components/TeamPanel";
 import type { ConvItem, MsgItem, ProviderModel } from "@/components/ChatTypes";
 import { convName, QUICK_ACTIONS } from "@/components/ChatTypes";
 import {
   Bot, Trash2, Check, X, ChevronLeft, Sparkles, Settings, FileText, Cpu, MessageCircle,
-  CheckCircle2, Shield, Volume2, Library, User, Palette, Search, Download, Star, Reply,
+  CheckCircle2, Shield, Volume2, Library, User, Palette, Search, Download, Star, Reply, Users,
 } from "lucide-react";
 
 const MODELS: ProviderModel[] = [{ key: "auto", label: "自动路由（默认）", provider_id: 0 }];
@@ -50,8 +52,10 @@ export default function ChatPage() {
     try { return localStorage.getItem("naixi_model_key") || MODELS[0].key; } catch { return MODELS[0].key; }
   });
   const [agentActive, setAgentActive] = useState(false);
-  type SideTab = "settings" | "resource" | "prompt" | "detail" | "task" | null;
+  type SideTab = "settings" | "resource" | "prompt" | "detail" | "task" | "team" | null;
   const [sideTab, setSideTab] = useState<SideTab>(null);
+  const [team, setTeam] = useState<TeamMember[]>([]);
+  const [teamName, setTeamName] = useState("");
   const [scene, setScene] = useState("owner");
   const [customScenes, setCustomScenes] = useState<{ file: string; desc: string }[]>([]);
   const [isNewChat, setIsNewChat] = useState(false);
@@ -225,6 +229,63 @@ export default function ChatPage() {
     });
   };
 
+  const handleTeamChat = async (text: string) => {
+    const userMsg: MsgItem = { id: Date.now(), role: "user", content: text, time: Math.floor(Date.now() / 1000) };
+    setMsgs(prev => [...prev, userMsg]);
+    setAgentActive(true); setStreaming(true); setIsNewChat(false);
+
+    const convKey = activeKey || `chat:${Date.now().toString(36)}`;
+    const selectedModel = availableModels.find(m => m.key === modelKey);
+
+    let accumulated = `用户需求: ${text}`;
+
+    for (let i = 0; i < team.length; i++) {
+      const member = team[i];
+      const aiId = Date.now() + i + 1;
+      const fullPrompt = `【角色: ${member.name}】\n${member.prompt}\n\n${accumulated}\n\n请以${member.name}的身份完成你的任务。`;
+
+      const aiMsg: MsgItem = {
+        id: aiId, role: "assistant",
+        content: "",
+        content_blocks: [{ type: "status", state: "loading", text: `${member.name} 正在工作...` }],
+        time: Math.floor(Date.now() / 1000),
+      };
+      setMsgs(prev => [...prev, aiMsg]);
+      // 在下一 tick 获取最新 msgs
+      await new Promise(r => setTimeout(r, 50));
+
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      let output = "";
+      await sendChatStream("/api/chat/stream", {
+        text: fullPrompt, key: convKey, model: modelKey,
+        provider_id: selectedModel?.provider_id || 0, scene,
+      }, {
+        onUpdate: (blocks) => {
+          output = blocks.find(b => b.type === "text")?.text || "";
+          setMsgs(prev => prev.map(m => m.id !== aiId ? m : { ...m, content_blocks: blocks, content: output }));
+        },
+        onDone: (usage) => {
+          if (usage) setRealTokens({ input: usage.input || 0, output: usage.output || 0 });
+        },
+        onError: (err) => {
+          if (err.includes("abort") || err.includes("AbortError")) return;
+          output = `出错了: ${err}`;
+          setMsgs(prev => prev.map(m => m.id !== aiId ? m : { ...m, content: output, content_blocks: [{ type: "status", state: "error", text: err }] }));
+        },
+      });
+
+      accumulated += `\n\n【${member.name} 的输出】\n${output || "(无输出)"}`;
+    }
+
+    setAgentActive(false); setStreaming(false); abortRef.current = null;
+    try {
+      const res = await apiGet<{ conversations: ConvItem[] }>("/api/conversations");
+      setConvs(res.conversations);
+    } catch {}
+  };
+
   const handleExport = () => {
     if (msgs.length === 0) return;
     const lines = msgs.map((m: MsgItem) => `[${m.role === "user" ? "我" : "AI"} ${new Date(m.time).toLocaleString()}]\n${m.content}`);
@@ -238,6 +299,13 @@ export default function ChatPage() {
 
   const handleSend = async (text: string) => {
     const t = text.trim();
+
+    // 团队模式：逐轮调用
+    if (team.length > 0) {
+      await handleTeamChat(t);
+      return;
+    }
+
     if (t.startsWith("生成一段视频：")) {
       await handleNormalChat(t.replace("生成一段视频：", "请生成视频："));
     } else if (t.startsWith("用语音说：")) {
@@ -354,6 +422,13 @@ export default function ChatPage() {
                     <X size={9} className="ml-0.5" />
                   </button>
                 )}
+                {team.length > 0 && (
+                  <button onClick={() => { setTeam([]); setTeamName(""); }}
+                    className="flex items-center gap-1 px-1.5 py-1 rounded text-[10px] bg-gradient-to-r from-amber-100 to-orange-100 text-amber-600 font-medium">
+                    <Users size={9} /><span className="max-w-[100px] truncate">{teamName || `团队 (${team.length}人)`}</span>
+                    <X size={9} className="ml-0.5" />
+                  </button>
+                )}
                 {fullTrust && <span className="text-[10px] text-red-400 flex items-center gap-0.5"><Shield size={9} />完全信任</span>}
               </div>
             </div>
@@ -455,6 +530,13 @@ export default function ChatPage() {
               <div className="flex-1 overflow-y-auto"><ErrorBoundary name="提示词面板"><PromptPanel activeScene={scene} onSceneChange={setScene} /></ErrorBoundary></div>
             )}
             {sideTab === "task" && <TaskPanel onClose={() => setSideTab(null)} />}
+            {sideTab === "team" && (
+              <TeamPanel onClose={() => setSideTab(null)} onApplyTeam={(members, name) => {
+                setTeam(members);
+                setTeamName(name);
+                setSideTab(null);
+              }} />
+            )}
             {sideTab === "settings" && (
               <div className="flex-1 overflow-y-auto p-3"><ErrorBoundary name="供应商设置"><ProviderSettings /></ErrorBoundary></div>
             )}
@@ -467,6 +549,7 @@ export default function ChatPage() {
               ["prompt", "提示词", FileText],
               ["detail", "会话详情", Sparkles],
               ["task", "任务进度", CheckCircle2],
+              ["team", "专家团队", Users],
             ] as [SideTab, string, any][]).filter(([k]) => k !== "detail" || activeKey).map(([k, label, Icon]) => (
               <button key={k} onClick={() => setSideTab(t => t === k ? null : k)}
                 title={label}

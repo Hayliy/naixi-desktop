@@ -3,11 +3,16 @@ import { applyTheme, getTheme } from "@/lib/theme";
 
 type ThemeMode = "light" | "dark";
 
-const HUE_NAMES: Record<number, string> = {
-  0: "玫瑰红", 15: "珊瑚橙", 30: "暖杏", 45: "琥珀",
-  60: "柠檬黄", 120: "薄荷绿", 180: "天蓝", 210: "雾蓝",
-  240: "薰衣草", 270: "紫罗兰", 300: "粉紫", 330: "梅子",
-};
+const PRESETS = [
+  { hue: 350, name: "樱粉", light: "sakura" },
+  { hue: 240, name: "薰衣草", light: "lavender" },
+  { hue: 200, name: "天空蓝", light: "sky" },
+  { hue: 150, name: "薄荷绿", light: "mint" },
+  { hue: 30,  name: "暖杏", light: "warm" },
+  { hue: 330, name: "梅子", light: "plum" },
+  { hue: 270, name: "紫罗兰", light: "violet" },
+  { hue: 0,   name: "玫瑰红", light: "rose" },
+];
 
 export default function ThemeSettings() {
   const [theme, setTheme] = useState<ThemeMode>(() => getTheme().theme);
@@ -33,15 +38,31 @@ export default function ThemeSettings() {
 
       <div>
         <p className="text-[10px] text-sakura-400 mb-1.5">主题色</p>
-        <input type="range" min="0" max="360" value={hue} onChange={e => setHue(Number(e.target.value))}
-          className="w-full" style={{ accentColor: `hsl(${hue}, 65%, 55%)` }} />
+        {/* 预设色板 */}
+        <div className="flex flex-wrap gap-2 mb-2.5">
+          {PRESETS.map(p => (
+            <button key={p.hue} onClick={() => setHue(p.hue)}
+              title={p.name}
+              className={`w-7 h-7 rounded-full border-2 transition-all ${
+                hue === p.hue ? "scale-110 border-sakura-500 shadow-sm" : "border-transparent hover:scale-105"
+              }`}
+              style={{
+                background: `hsl(${p.hue}, 65%, ${theme === "light" ? "70%" : "35%"})`,
+                boxShadow: hue === p.hue ? `0 0 0 2px hsl(${p.hue}, 65%, 55%)` : "none",
+              }} />
+          ))}
+        </div>
+        {/* 自定义滑块 */}
+        <div className="relative">
+          <input type="range" min="0" max="360" value={hue} onChange={e => setHue(Number(e.target.value))}
+            className="w-full" style={{ accentColor: `hsl(${hue}, 65%, 55%)` }} />
+        </div>
         <div className="flex items-center gap-2 mt-1">
-          <span className="w-5 h-5 rounded-full shrink-0 border" style={{ background: `hsl(${hue}, 65%, 70%)`, borderColor: `hsl(${hue}, 65%, 80%)` }} />
+          <span className="w-5 h-5 rounded-full shrink-0 border" style={{ background: `hsl(${hue}, 65%, ${theme === "light" ? "70%" : "35%"})`, borderColor: `hsl(${hue}, 65%, 80%)` }} />
           <span className="text-[10px] text-sakura-500">
-            {[0,15,30,45,60,120,180,210,240,270,300,330].reduce((a,b) => Math.abs(b-hue) < Math.abs(a-hue) ? b : a)}
-            {Object.entries(HUE_NAMES).find(([k]) => Math.abs(+k - hue) < 8)?.[1] || "自定义"}
+            {PRESETS.reduce((a,b) => Math.abs(b.hue-hue) < Math.abs(a.hue-hue) ? b : a, PRESETS[0]).name}
           </span>
-          <span className="text-[10px] text-sakura-300 ml-auto">{theme === "light" ? "浅色" : "暗色"}</span>
+          <span className="text-[10px] text-sakura-300 ml-auto">hsl({hue}&deg;, 65%, ...)</span>
         </div>
       </div>
 
