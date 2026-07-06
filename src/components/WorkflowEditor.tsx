@@ -21,6 +21,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { apiGet, apiPost } from "@/lib/api";
+import { useToast } from "@/components/Toast";
 import {
   Play, Save, Trash2, Plus, X, ChevronRight, ChevronDown, RefreshCw, Variable,
   Bot, Code, Globe, BookOpen, GitBranch, Wrench,
@@ -191,6 +192,56 @@ function getDefaultConfig(type: string): Record<string, any> {
 // ── 主组件 ──
 
 export default function WorkflowEditor({ workflowId: initialId }: { workflowId?: string }) {
+  const { notify } = useToast();
+  const { fitView } = useReactFlow();
+
+  /** 自动布局：按拓扑层次排列节点 */
+  const autoLayout = useCallback((nodes: Node[], edges: Edge[]) => {
+    if (!nodes.length) return nodes;
+    // 1. 找源节点（无入边）
+    const hasIncoming = new Set(edges.map(e => e.target));
+    const sources = nodes.filter(n => !hasIncoming.has(n.id));
+    // 2. BFS 分配层级
+    const levelMap: Record<string, number> = {};
+    const queue: { id: string; level: number }[] = sources.map(n => ({ id: n.id, level: 0 }));
+    for (const q of queue) levelMap[q.id] = q.level;
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      const outEdges = edges.filter(e => e.source === cur.id);
+      for (const e of outEdges) {
+        if (!(e.target in levelMap) || levelMap[e.target] < cur.level + 1) {
+          levelMap[e.target] = cur.level + 1;
+          queue.push({ id: e.target, level: cur.level + 1 });
+        }
+      }
+    }
+    // 3. 为无层级节点分配
+    for (const n of nodes) {
+      if (!(n.id in levelMap)) levelMap[n.id] = 0;
+    }
+    // 4. 按层级分组，计算位置
+    const byLevel: Record<number, Node[]> = {};
+    for (const n of nodes) {
+      const lvl = levelMap[n.id] || 0;
+      if (!byLevel[lvl]) byLevel[lvl] = [];
+      byLevel[lvl].push(n);
+    }
+    const levelKeys = Object.keys(byLevel).map(Number).sort((a, b) => a - b);
+    const H_SPACING = 250;
+    const V_SPACING = 120;
+    const TOP = 80;
+    const LEFT = 80;
+    return nodes.map(n => {
+      const lvl = levelMap[n.id] || 0;
+      const siblings = byLevel[lvl] || [];
+      const idx = siblings.indexOf(n);
+      const total = siblings.length;
+      const x = LEFT + lvl * H_SPACING;
+      const y = TOP + idx * V_SPACING - ((total - 1) * V_SPACING) / 2;
+      return { ...n, position: { x, y } };
+    });
+  }, []);
+
   const [nodes, setNodes, onNodesChange] = useNodesState(DEFAULT_NODES);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
@@ -239,14 +290,14 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
   useEffect(() => {
     apiGet<any>("/api/workflows").then(d => {
       if (d?.workflows) setWorkflows(d.workflows);
-    }).catch(() => {});
+    }).catch(e => console.warn("加载工作流列表失败", e));
     // 加载模板
     apiGet<any>("/api/workflow/templates").then(d => {
       if (d?.templates) setTemplateList(d.templates);
-    }).catch(() => {});
+    }).catch(e => console.warn("加载模板失败", e));
     apiGet<any>("/api/workflow/templates/categories").then(d => {
       if (d?.categories) setTemplateCategories(d.categories);
-    }).catch(() => {});
+    }).catch(e => console.warn("加载模板分类失败", e));
   }, []);
 
   // 加载指定工作流
@@ -260,13 +311,20 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
           try {
             const loadedNodes = typeof d.nodes === "string" ? JSON.parse(d.nodes) : d.nodes;
             const loadedEdges = typeof d.edges === "string" ? JSON.parse(d.edges) : d.edges;
-            if (loadedNodes?.length) setNodes(loadedNodes.map((n: any) => ({ ...n, type: "base" })));
+            if (loadedNodes?.length) {
+              const laidOut = autoLayout(loadedNodes.map((n: any) => ({
+                ...n, type: "base",
+                data: n.data || { label: n.id || "节点", type: "llm", config: {} },
+              })), loadedEdges || []);
+              setNodes(laidOut);
+            }
             if (loadedEdges?.length) setEdges(loadedEdges);
-          } catch {}
+            setTimeout(() => fitView({ duration: 300 }), 150);
+          } catch (e) { console.warn("解析工作流数据出错", e); }
         }
-      }).catch(() => {});
+      }).catch(e => console.warn("加载工作流失败", e));
     }
-  }, [initialId]);
+  }, [initialId, autoLayout, fitView]);
 
   const onConnect = useCallback(
     (params: Connection) => setEdges(eds => addEdge(params, eds)),
@@ -301,10 +359,10 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
       const r: any = await apiPost("/api/workflows/save", payload);
       if (r?.success) {
         setWorkflowId(id);
-        alert("工作流已保存");
+        notify("工作流已保存", "success");
       }
     } catch (e: any) {
-      alert("保存失败: " + (e?.message || "未知错误"));
+      notify("保存失败: " + (e?.message || "未知错误"), "error");
     }
   }, [workflowId, workflowName, workflowDesc, nodes, edges]);
 
@@ -336,13 +394,14 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
     try {
       const r: any = await apiPost("/api/workflow/templates/use", { id: tid });
       if (r?.nodes) {
-        setNodes(r.nodes.map((n: any, i: number) => ({
+        const laidOut = autoLayout(r.nodes.map((n: any) => ({
           ...n,
           type: "base",
-          position: n?.position?.x != null ? n.position : { x: 80 + (i % 3) * 200, y: 80 + Math.floor(i / 3) * 120 },
           data: n.data || { label: n.id || "节点", type: "llm", config: {} },
-        })));
+        })), r.edges || []);
+        setNodes(laidOut);
         setEdges(r.edges || []);
+        setTimeout(() => fitView({ duration: 300 }), 100);
         setWorkflowName(r.name || "来自模板");
         setWorkflowDesc(r.description || "");
         setWorkflowId(`wf_${Date.now()}`);
@@ -350,14 +409,14 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
         setRunResult(null);
       }
     } catch {}
-  }, [setNodes, setEdges]);
+  }, [setNodes, setEdges, autoLayout, fitView]);
 
   // 加载工作流
   const loadWorkflow = useCallback(async (id: string) => {
     try {
       const d = await apiGet<any>(`/api/workflows/${id}`);
       if (!d) {
-        alert("未找到该工作流");
+        notify("未找到该工作流", "warning");
         return;
       }
       setWorkflowId(d.id || "");
@@ -379,21 +438,22 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
       }
 
       if (parsedNodes.length > 0) {
-        setNodes(parsedNodes.map((n: any, i: number) => ({
+        const laidOut = autoLayout(parsedNodes.map((n: any) => ({
           ...n,
           type: "base",
-          position: n?.position?.x != null ? n.position : { x: 80 + (i % 3) * 200, y: 80 + Math.floor(i / 3) * 120 },
           data: n.data || { label: n.id || "节点", type: "llm", config: {} },
-        })));
+        })), parsedEdges);
+        setNodes(laidOut);
+        setTimeout(() => fitView({ duration: 300 }), 100);
       } else {
         setNodes(DEFAULT_NODES.map(n => ({ ...n })));
       }
       setEdges(parsedEdges);
     } catch (e: any) {
       console.error("加载工作流失败", e);
-      alert("加载工作流失败: " + (e?.message || "未知错误"));
+      notify("加载工作流失败: " + (e?.message || "未知错误"), "error");
     }
-  }, [setNodes, setEdges]);
+  }, [setNodes, setEdges, autoLayout, fitView]);
 
   // 新建工作流
   const handleNew = useCallback(() => {
@@ -405,7 +465,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
     setSelectedNode(null);
     setRunResult(null);
     setNodeStatuses({});
-  }, [setNodes, setEdges]);
+  }, [setNodes, setEdges, autoLayout, fitView]);
 
   // 删除工作流
   const handleDelete = useCallback(async () => {
@@ -417,10 +477,10 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
         handleNew();
         apiGet<any>("/api/workflows").then(d => {
           if (d?.workflows) setWorkflows(d.workflows);
-        }).catch(() => {});
+        }).catch(e => console.warn("加载工作流列表失败", e));
       }
     } catch (e: any) {
-      alert("删除失败: " + (e?.message || "未知错误"));
+      notify("删除失败: " + (e?.message || "未知错误"), "error");
     }
   }, [workflowId, workflowName, handleNew, setWorkflows]);
 
@@ -428,7 +488,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
   const handleRefresh = useCallback(() => {
     apiGet<any>("/api/workflows").then(d => {
       if (d?.workflows) setWorkflows(d.workflows);
-    }).catch(() => {});
+    }).catch(e => console.warn("刷新工作流列表失败", e));
   }, [setWorkflows]);
 
   // 选择工作流
@@ -439,15 +499,15 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
 
   // 发布工作流为 API
   const handlePublish = useCallback(async () => {
-    if (!workflowId) { alert("请先保存工作流"); return; }
+    if (!workflowId) { notify("请先保存工作流", "warning"); return; }
     try {
       const r: any = await apiPost("/api/workflows/publish", { id: workflowId });
       setPublishResult(r);
       if (r?.success) {
-        alert("工作流已发布\n可通过 API 端点调用");
+        notify("工作流已发布，可通过 API 端点调用", "success");
       }
     } catch (e: any) {
-      alert("发布失败: " + (e?.message || "未知错误"));
+      notify("发布失败: " + (e?.message || "未知错误"), "error");
     }
   }, [workflowId]);
 
@@ -475,27 +535,28 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
       const text = await file.text();
       const r: any = await apiPost("/api/workflows/import", { dsl: text });
       if (r?.nodes) {
-        setNodes(r.nodes.map((n: any) => ({
+        const laidOut = autoLayout(r.nodes.map((n: any) => ({
           ...n,
           type: "base",
-          position: n.position || { x: 100, y: 200 },
           data: n.data || { label: n.id || "节点", type: "llm", config: {} },
-        })));
+        })), r.edges || []);
+        setNodes(laidOut);
         setEdges(r.edges || []);
+        setTimeout(() => fitView({ duration: 300 }), 100);
         setWorkflowName(r.name || "导入的工作流");
         setWorkflowDesc(r.description || "");
         setWorkflowId(`wf_${Date.now()}`);
         setRunResult(null);
         setNodeStatuses({});
-        alert("导入成功");
+        notify("导入成功", "success");
       } else if (r?.error) {
-        alert("导入失败: " + r.error);
+        notify("导入失败: " + r.error, "error");
       }
     } catch (e: any) {
-      alert("导入失败: " + (e?.message || "文件格式错误"));
+      notify("导入失败: " + (e?.message || "文件格式错误"), "error");
     }
     e.target.value = "";
-  }, [setNodes, setEdges]);
+  }, [setNodes, setEdges, autoLayout, fitView]);
 
   // 搜索在线模板（按按钮/回车触发，直接读 input ref 避免闭包陈旧值）
   const handleSearchOnline = useCallback(async () => {
@@ -540,30 +601,31 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
       const text = await resp.text();
       const r: any = await apiPost("/api/workflows/import", { dsl: text });
       if (r?.nodes) {
-        setNodes(r.nodes.map((n: any) => ({
+        const laidOut = autoLayout(r.nodes.map((n: any) => ({
           ...n, type: "base",
-          position: n.position || { x: 100, y: 200 },
           data: n.data || { label: n.id || "节点", type: "llm", config: {} },
-        })));
+        })), r.edges || []);
+        setNodes(laidOut);
         setEdges(r.edges || []);
+        setTimeout(() => fitView({ duration: 300 }), 100);
         setWorkflowName(r.name || "在线模板");
         setWorkflowDesc(r.description || "");
         setWorkflowId(`wf_${Date.now()}`);
         setRunResult(null);
         setNodeStatuses({});
         setShowTemplates(false);
-        alert("模板导入成功");
+        notify("模板导入成功", "success");
       } else if (r?.error) {
-        alert("导入失败: " + r.error);
+        notify("导入失败: " + r.error, "error");
       }
     } catch (e: any) {
-      alert("下载模板失败: " + (e?.message || "网络错误"));
+      notify("下载模板失败: " + (e?.message || "网络错误"), "error");
     }
-  }, [setNodes, setEdges]);
+  }, [setNodes, setEdges, autoLayout, fitView]);
 
   // 导出 DSL
   const handleExport = useCallback(async () => {
-    if (!workflowId) { alert("请先保存工作流"); return; }
+    if (!workflowId) { notify("请先保存工作流", "warning"); return; }
     try {
       const r = await apiGet<any>(`/api/workflows/${workflowId}/export`);
       if (r?.dsl) {
@@ -575,10 +637,10 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
         a.click();
         URL.revokeObjectURL(url);
       } else if (r?.error) {
-        alert("导出失败: " + r.error);
+        notify("导出失败: " + r.error, "error");
       }
     } catch (e: any) {
-      alert("导出失败: " + (e?.message || "未知错误"));
+      notify("导出失败: " + (e?.message || "未知错误"), "error");
     }
   }, [workflowId, workflowName]);
 
