@@ -32,3 +32,5 @@ searxng/
 
 # 工作区文件（用户创建的临时文件）
 workspace/
+__pycache__/
+logs/
