@@ -25,7 +25,7 @@ import type { ConvItem, MsgItem, ProviderModel } from "@/components/ChatTypes";
 import { convName, QUICK_ACTIONS } from "@/components/ChatTypes";
 import {
   Bot, Trash2, Check, X, ChevronLeft, Sparkles, Settings, FileText, Cpu, MessageCircle,
-  CheckCircle2, Shield, Volume2, Library, User,
+  CheckCircle2, Shield, Volume2, Library, User, Palette, Search, Download,
 } from "lucide-react";
 
 const MODELS: ProviderModel[] = [{ key: "auto", label: "自动路由（默认）", provider_id: 0 }];
@@ -71,6 +71,7 @@ export default function ChatPage() {
   const [currentExpert, setCurrentExpert] = useState<{ name: string; prompt: string } | null>(() => {
     try { const r = localStorage.getItem("naixi_expert"); return r ? JSON.parse(r) : null; } catch { return null; }
   });
+  const [msgSearch, setMsgSearch] = useState("");
   const msgEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [streaming, setStreaming] = useState(false);
@@ -178,6 +179,17 @@ export default function ChatPage() {
   };
 
   const handleSend = async (text: string) => {
+
+  const handleExport = () => {
+    if (msgs.length === 0) return;
+    const lines = msgs.map((m: MsgItem) => `[${m.role === "user" ? "我" : "AI"} ${new Date(m.time).toLocaleString()}]\n${m.content}`);
+    const text = lines.join("\n\n---\n\n");
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `对话_${activeKey || "export"}.txt`;
+    a.click(); URL.revokeObjectURL(url);
+  };
     const t = text.trim();
     if (t.startsWith("生成一段视频：")) {
       await handleNormalChat(t.replace("生成一段视频：", "请生成视频："));
@@ -255,6 +267,7 @@ export default function ChatPage() {
                     <Shield size={12} />
                   </button>
                   <TtsToggle />
+                  <ThemeToggle />
                   <button onClick={() => setShowResource(!showResource)} title="资源库"
                     className={`p-1.5 rounded transition-colors ${showResource ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}>
                     <Library size={12} />
@@ -300,6 +313,22 @@ export default function ChatPage() {
 
             <AgentStatus active={agentActive} />
 
+            {/* 消息搜索 + 导出 */}
+            {msgs.length > 0 && (
+              <div className="flex items-center gap-1.5 px-4 pt-2">
+                <div className="flex-1 flex items-center gap-1 px-2 py-1 rounded-lg bg-sakura-50 border border-sakura-100">
+                  <Search size={10} className="text-sakura-300 shrink-0" />
+                  <input value={msgSearch} onChange={e => setMsgSearch(e.target.value)}
+                    className="flex-1 bg-transparent text-[10px] text-sakura-600 outline-none placeholder:text-sakura-300"
+                    placeholder="搜索消息..." />
+                </div>
+                <button onClick={handleExport} title="导出对话"
+                  className="p-1 rounded text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50 transition-colors">
+                  <Download size={11} />
+                </button>
+              </div>
+            )}
+
             <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
               {msgLoading ? (
                 <div className="flex items-center justify-center py-12"><Bot size={18} className="text-sakura-300 animate-bounce" /></div>
@@ -308,7 +337,7 @@ export default function ChatPage() {
                   <MessageCircle size={20} className="text-sakura-200" />
                   <span>开始你的第一条消息</span>
                 </div>
-              ) : msgs.map((m) => (<MsgBubble key={m.id} msg={m}
+              ) : msgs.filter(m => !msgSearch || m.content.toLowerCase().includes(msgSearch.toLowerCase())).map((m) => (<MsgBubble key={m.id} msg={m}
                 onEdit={(id, text) => setMsgs(prev => prev.map(msg => msg.id === id ? { ...msg, content: text } : msg))}
                 onRegenerate={(id) => { const idx = msgs.findIndex(x => x.id === id); if (idx > 0 && msgs[idx - 1]?.role === "user") handleSend(msgs[idx - 1].content); }}
                 onDelete={async (id) => {
@@ -404,6 +433,28 @@ function TtsToggle() {
       title={mode === "api" ? "AI 语音朗读（点击切换为浏览器合成）" : "浏览器合成朗读（点击切换为 AI 语音）"}
       className={`p-1.5 rounded transition-colors ${mode === "api" ? "text-purple-500 bg-purple-50" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}>
       <Volume2 size={12} />
+    </button>
+  );
+}
+
+/* ─── 主题切换按钮 ─── */
+function ThemeToggle() {
+  const [theme, setTheme] = useState<"light" | "dark">(() =>
+    (localStorage.getItem("naixi_theme") as "light" | "dark") || "light"
+  );
+
+  const toggle = () => {
+    const next = theme === "light" ? "dark" : "light";
+    setTheme(next);
+    document.documentElement.setAttribute("data-theme", next);
+    localStorage.setItem("naixi_theme", next);
+  };
+
+  return (
+    <button onClick={toggle}
+      title={theme === "dark" ? "切换为浅色模式" : "切换为暗色模式"}
+      className={`p-1.5 rounded transition-colors ${theme === "dark" ? "text-purple-500 bg-purple-50" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}>
+      <Palette size={12} />
     </button>
   );
 }

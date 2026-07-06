@@ -112,12 +112,20 @@ function CodeBlock({ text, language }: { text: string; language?: string }) {
 
 /* ─── image ─── */
 function ImageBlock({ url, base64, mime_type }: { url?: string; base64?: string; mime_type?: string }) {
+  const [show, setShow] = useState(false);
   const src = url || (base64 ? `data:${mime_type || "image/png"};base64,${base64}` : "");
   if (!src) return null;
   return (
-    <div className="my-1 rounded-lg overflow-hidden border border-sakura-100">
-      <img src={src} alt="chat image" className="max-w-full max-h-80 object-contain" loading="lazy" />
-    </div>
+    <>
+      <div className="my-1 rounded-lg overflow-hidden border border-sakura-100 cursor-pointer" onClick={() => setShow(true)}>
+        <img src={src} alt="chat image" className="max-w-full max-h-80 object-contain hover:opacity-80 transition-opacity" loading="lazy" />
+      </div>
+      {show && (
+        <div className="fixed inset-0 z-[200] bg-black/60 flex items-center justify-center p-8" onClick={() => setShow(false)}>
+          <img src={src} alt="预览" className="max-w-[90vw] max-h-[90vh] rounded-xl shadow-2xl object-contain" />
+        </div>
+      )}
+    </>
   );
 }
 
