@@ -72,6 +72,10 @@ export default function ChatPage() {
     try { const r = localStorage.getItem("naixi_expert"); return r ? JSON.parse(r) : null; } catch { return null; }
   });
   const [msgSearch, setMsgSearch] = useState("");
+  const [showStarredOnly, setShowStarredOnly] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [starredMsgs, setStarredMsgs] = useState<number[]>([]);
+  const [replyToId, setReplyToId] = useState<number | null>(null);
   const msgEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [streaming, setStreaming] = useState(false);
@@ -125,6 +129,25 @@ export default function ChatPage() {
   }, []);
 
   useEffect(() => { localStorage.setItem("naixi_custom_names", JSON.stringify(customNames)); }, [customNames]);
+
+  // 加载收藏消息
+  useEffect(() => {
+    if (activeKey) {
+      try { setStarredMsgs(JSON.parse(localStorage.getItem(`naixi_starred_${activeKey}`) || "[]")); } catch { setStarredMsgs([]); }
+    }
+  }, [activeKey]);
+
+  // 快捷键：? 弹出快捷键列表
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "?" && !(e.target as HTMLElement)?.closest("input,textarea")) {
+        e.preventDefault();
+        setShowShortcuts(s => !s);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   useEffect(() => {
     if (!activeKey) return;
@@ -313,7 +336,7 @@ export default function ChatPage() {
 
             <AgentStatus active={agentActive} />
 
-            {/* 消息搜索 + 导出 */}
+            {/* 消息搜索 + 导出 + 收藏筛选 */}
             {msgs.length > 0 && (
               <div className="flex items-center gap-1.5 px-4 pt-2">
                 <div className="flex-1 flex items-center gap-1 px-2 py-1 rounded-lg bg-sakura-50 border border-sakura-100">
@@ -322,6 +345,10 @@ export default function ChatPage() {
                     className="flex-1 bg-transparent text-[10px] text-sakura-600 outline-none placeholder:text-sakura-300"
                     placeholder="搜索消息..." />
                 </div>
+                <button onClick={() => setShowStarredOnly(!showStarredOnly)} title={showStarredOnly ? "显示全部" : "仅显示收藏"}
+                  className={`p-1 rounded transition-colors ${showStarredOnly ? "text-amber-500 bg-amber-50" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}>
+                  <Star size={11} />
+                </button>
                 <button onClick={handleExport} title="导出对话"
                   className="p-1 rounded text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50 transition-colors">
                   <Download size={11} />
@@ -337,7 +364,11 @@ export default function ChatPage() {
                   <MessageCircle size={20} className="text-sakura-200" />
                   <span>开始你的第一条消息</span>
                 </div>
-              ) : msgs.filter(m => !msgSearch || m.content.toLowerCase().includes(msgSearch.toLowerCase())).map((m) => (<MsgBubble key={m.id} msg={m}
+              ) : msgs.filter(m => {
+                if (msgSearch && !m.content.toLowerCase().includes(msgSearch.toLowerCase())) return false;
+                if (showStarredOnly && !starredMsgs.includes(m.id)) return false;
+                return true;
+              }).map((m) => (<MsgBubble key={m.id} msg={m}
                 onEdit={(id, text) => setMsgs(prev => prev.map(msg => msg.id === id ? { ...msg, content: text } : msg))}
                 onRegenerate={(id) => { const idx = msgs.findIndex(x => x.id === id); if (idx > 0 && msgs[idx - 1]?.role === "user") handleSend(msgs[idx - 1].content); }}
                 onDelete={async (id) => {
@@ -345,11 +376,32 @@ export default function ChatPage() {
                   setMsgs(prev => prev.filter(m => m.id !== id));
                   try { await apiPost("/api/conversation/message/delete", { key: activeKey, msg_id: id }); } catch {}
                 }}
+                onStar={(id) => {
+                  const cur = starredMsgs;
+                  const next = cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id];
+                  setStarredMsgs(next);
+                  localStorage.setItem(`naixi_starred_${activeKey}`, JSON.stringify(next));
+                }}
+                starred={starredMsgs.includes(m.id)}
+                onReply={(id) => setReplyToId(id)}
               />))}
               <div ref={msgEndRef} />
             </div>
 
-            <ChatInput onSend={handleSend} streaming={streaming} onStop={stopStreaming}
+          {/* 回复引用栏 */}
+          {replyToId && (
+            <div className="flex items-center gap-2 px-4 py-1.5 bg-amber-50 border-t border-amber-100 text-[10px] text-amber-600">
+              <Reply size={10} />
+              <span className="flex-1 truncate">回复: {msgs.find(m => m.id === replyToId)?.content.slice(0, 80)}</span>
+              <button onClick={() => setReplyToId(null)} className="p-0.5 hover:bg-amber-100 rounded"><X size={10} /></button>
+            </div>
+          )}
+
+            <ChatInput onSend={(text) => {
+              if (replyToId) text = `> ${msgs.find(m => m.id === replyToId)?.content.slice(0, 80) || ""}\n\n${text}`;
+              setReplyToId(null);
+              handleSend(text);
+            }} streaming={streaming} onStop={stopStreaming}
               onCapabilityClick={(a) => setCapabilityAction(a)} />
           </>
         )}
@@ -394,6 +446,33 @@ export default function ChatPage() {
         onClose={() => setPermissionReq(null)} />}
 
       {showTask && <TaskPanel onClose={() => setShowTask(false)} />}
+
+      {/* 快捷键列表 */}
+      {showShortcuts && (
+        <div className="fixed inset-0 z-[200] bg-black/30 flex items-center justify-center" onClick={() => setShowShortcuts(false)}>
+          <div className="bg-white rounded-xl shadow-xl border border-sakura-100 p-5 max-w-xs w-full mx-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-semibold text-sakura-600">快捷键</span>
+              <button onClick={() => setShowShortcuts(false)} className="p-0.5 hover:bg-sakura-50 rounded"><X size={13} /></button>
+            </div>
+            <div className="space-y-2 text-xs">
+              {[
+                ["Ctrl + Enter", "发送消息"],
+                ["Enter", "换行"],
+                ["?", "打开/关闭快捷键列表"],
+                ["Esc", "取消/关闭"],
+                ["↑ (输入框)", "上一条消息"],
+                ["Ctrl + L", "清屏（未实现）"],
+              ].map(([key, desc]) => (
+                <div key={key} className="flex items-center justify-between">
+                  <code className="px-1.5 py-0.5 rounded bg-sakura-50 text-[10px] font-mono text-sakura-500">{key}</code>
+                  <span className="text-[10px] text-sakura-400">{desc}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {showSettings && (
         <div className="w-72 min-w-[18rem] border-l border-sakura-100 bg-white overflow-y-auto">

@@ -1,12 +1,13 @@
 import { useState, useEffect } from "react";
-import { Bot, User, Copy, Check, RotateCcw, Edit3, X, Volume2, VolumeX } from "lucide-react";
+import { Bot, User, Copy, Check, RotateCcw, Edit3, X, Volume2, VolumeX, Star, Reply } from "lucide-react";
 import ContentRenderer from "@/components/ContentRenderer";
 import type { MsgItem } from "@/components/ChatTypes";
 import { fmtTime } from "@/components/ChatTypes";
 import { apiGet } from "@/lib/api";
 
-export default function MsgBubble({ msg, onEdit, onRegenerate, onDelete }: {
+export default function MsgBubble({ msg, onEdit, onRegenerate, onDelete, onStar, onReply, starred }: {
   msg: MsgItem; onEdit?: (id: number, text: string) => void; onRegenerate?: (id: number) => void; onDelete?: (id: number) => void;
+  onStar?: (id: number) => void; onReply?: (id: number) => void; starred?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const [speaking, setSpeaking] = useState(false);
@@ -111,10 +112,22 @@ export default function MsgBubble({ msg, onEdit, onRegenerate, onDelete }: {
         </div>
         <div className="flex items-center gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
           <span className="text-[10px] text-sakura-300">{fmtTime(msg.time)}</span>
-          {/* 朗读按钮：所有消息都可用 */}
+          {/* 朗读 */}
           {displayContent && (
             <button onClick={toggleSpeak} className="p-0.5 rounded hover:bg-sakura-50 text-sakura-300 hover:text-sakura-500" title={speaking ? "停止朗读" : "朗读"}>
               {speaking ? <VolumeX size={10} /> : <Volume2 size={10} />}
+            </button>
+          )}
+          {/* 引用回复 */}
+          {onReply && (
+            <button onClick={() => onReply(msg.id)} className="p-0.5 rounded hover:bg-sakura-50 text-sakura-300 hover:text-sakura-500" title="回复">
+              <Reply size={10} />
+            </button>
+          )}
+          {/* 收藏 */}
+          {onStar && (
+            <button onClick={() => onStar(msg.id)} className="p-0.5 rounded hover:bg-amber-50 text-sakura-300 hover:text-amber-500" title={starred ? "取消收藏" : "收藏"}>
+              <Star size={10} className={starred ? "fill-amber-400 text-amber-400" : ""} />
             </button>
           )}
           {!isUser && (
