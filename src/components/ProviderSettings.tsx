@@ -441,6 +441,7 @@ function MCPSection() {
   const [servers, setServers] = useState<Record<string, { command: string; args: string[]; env: Record<string, string> }>>({});
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [command, setCommand] = useState("");
   const [args, setArgs] = useState("");
@@ -459,6 +460,10 @@ function MCPSection() {
   const handleAdd = async () => {
     if (!name.trim() || !command.trim()) return;
     const updated = { ...servers };
+    // 如果正在编辑旧名称但改了名，删掉旧条目
+    if (editingKey && editingKey !== name.trim()) {
+      delete updated[editingKey];
+    }
     updated[name.trim()] = {
       command: command.trim(),
       args: args.split(" ").filter(Boolean),
@@ -468,8 +473,19 @@ function MCPSection() {
       await apiPost("/api/mcp/servers", { servers: updated });
       setServers(updated);
       setShowForm(false);
+      setEditingKey(null);
       setName(""); setCommand(""); setArgs("");
     } catch {}
+  };
+
+  const handleEdit = (key: string) => {
+    const srv = servers[key];
+    if (!srv) return;
+    setEditingKey(key);
+    setName(key);
+    setCommand(srv.command);
+    setArgs(srv.args?.join(" ") || "");
+    setShowForm(true);
   };
 
   const handleDelete = async (key: string) => {
@@ -516,6 +532,11 @@ function MCPSection() {
                 <p className="text-[11px] font-medium text-sakura-600 truncate">{key}</p>
                 <p className="text-[10px] text-sakura-400 truncate font-mono">{srv.command} {srv.args?.join(" ")}</p>
               </div>
+              <button onClick={() => handleEdit(key)}
+                className="p-1 rounded hover:bg-sakura-100 text-sakura-300 hover:text-sakura-500 transition-colors shrink-0"
+                title="编辑">
+                <Pencil size={11} />
+              </button>
               <button onClick={() => handleDelete(key)}
                 className="p-1 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500 transition-colors shrink-0">
                 <Trash2 size={11} />
@@ -523,10 +544,10 @@ function MCPSection() {
             </div>
           ))}
 
-          {/* 添加表单 */}
+          {/* 添加/编辑表单 */}
           {showForm ? (
             <div className="bg-white border border-sakura-100 rounded-lg p-3 space-y-2 text-xs mt-2">
-              <p className="text-[11px] font-semibold text-sakura-500">添加 MCP 服务器</p>
+              <p className="text-[11px] font-semibold text-sakura-500">{editingKey ? "编辑 MCP 服务器" : "添加 MCP 服务器"}</p>
               <div>
                 <p className="text-[10px] text-sakura-400 mb-0.5">名称</p>
                 <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px]"
@@ -543,11 +564,11 @@ function MCPSection() {
                   value={args} onChange={e => setArgs(e.target.value)} placeholder="例如: mcp-server-fetch" />
               </div>
               <div className="flex justify-end gap-2 pt-1">
-                <button onClick={() => setShowForm(false)}
+                <button onClick={() => { setShowForm(false); setEditingKey(null); setName(""); setCommand(""); setArgs(""); }}
                   className="px-3 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:bg-sakura-50 transition-colors">取消</button>
                 <button onClick={handleAdd} disabled={!name.trim() || !command.trim()}
                   className="flex items-center gap-1 px-4 py-1.5 rounded-lg text-[11px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-40">
-                  <Plus size={11} /> 添加
+                  {editingKey ? <Check size={11} /> : <Plus size={11} />} {editingKey ? "保存" : "添加"}
                 </button>
               </div>
             </div>

@@ -18,16 +18,35 @@ class MCPServer:
 
     async def connect(self):
         """启动子进程并等待就绪"""
+        import shutil
         merged_env = dict(os.environ)
         if self.env:
             merged_env.update(self.env)
+        # 自动解析命令路径（支持 npx 等不在系统 PATH 中的命令）
+        node_bin = r"C:\Users\21222\.workbuddy\binaries\node\versions\22.22.2"
+        # 确保 Node.js 目录在 PATH 中（npx.cmd 需要 node.exe）
+        if node_bin not in merged_env.get("PATH", ""):
+            merged_env["PATH"] = node_bin + os.pathsep + merged_env.get("PATH", "")
+        # 搜索命令
+        resolved_command = shutil.which(self.command)
+        if not resolved_command:
+            # Windows 上 npx 需要 .cmd 扩展名
+            if os.name == "nt":
+                cmd_path = os.path.join(node_bin, self.command + ".cmd")
+                if os.path.exists(cmd_path):
+                    resolved_command = cmd_path
+                elif os.path.exists(self.command):
+                    resolved_command = self.command
+            else:
+                resolved_command = self.command
         self._process = await asyncio.create_subprocess_exec(
-            self.command, *self.args,
+            resolved_command, *self.args,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=merged_env,
         )
+        log.info(f"[MCP] {self.name}: 已启动 {resolved_command} {' '.join(self.args)}")
         # 发送 initialize 请求
         init_result = await self._request("initialize", {
             "protocolVersion": "2025-11-05",

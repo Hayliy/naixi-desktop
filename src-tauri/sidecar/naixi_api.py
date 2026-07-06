@@ -102,6 +102,20 @@ async def main():
     # 启动内置 SearXNG（如果存在）
     _start_searxng()
 
+    # 自动连接 MCP 服务器（自动补全 npx 路径）
+    try:
+        # 将 managed Node.js 加入 PATH，让 MCP 子进程能找到 npx
+        node_bin = os.path.dirname(sys.executable) if "python" in sys.executable else ""
+        node_bin_dir = os.path.dirname(r"C:\Users\21222\.workbuddy\binaries\node\versions\22.22.2\npx")
+        if node_bin_dir not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = node_bin_dir + os.pathsep + os.environ.get("PATH", "")
+        from desktop_core.tools import connect_mcp_servers
+        mcp_count = await connect_mcp_servers()
+        if mcp_count > 0:
+            log.info(f"MCP: {mcp_count} 个服务器已自动连接")
+    except Exception as e:
+        log.warning(f"MCP 自动连接失败: {e}")
+
     @web.middleware
     async def cors_middleware(request, handler):
         if request.method == "OPTIONS":
