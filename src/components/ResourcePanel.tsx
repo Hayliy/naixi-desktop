@@ -104,7 +104,7 @@ export default function ResourcePanel({ onClose, onApply }: {
   const closeForm = () => { setShowForm(false); setEditIdx(-1); setFName(""); setFPrompt(""); setFDesc(""); setFCat("通用"); };
 
   return (
-    <div className="w-80 min-w-[20rem] border-l border-sakura-100 bg-white flex flex-col h-full">
+    <div className="flex-1 w-full border-l border-sakura-100 bg-white flex flex-col h-full">
       <div className="sticky top-0 bg-white border-b border-sakura-100 px-3 py-2 flex items-center justify-between z-10">
         <span className="text-xs font-semibold text-sakura-500">资源库</span>
         <button onClick={onClose} className="p-0.5 hover:bg-sakura-50 rounded text-sakura-300"><X size={13} /></button>

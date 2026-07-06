@@ -16,7 +16,7 @@ export default function DetailPanel({ activeKey, messageCount, tokenEstimate, mo
   const convId = parts[1] || activeKey;
 
   return (
-    <div className="w-48 min-w-[12rem] border-l border-sakura-100 bg-white flex flex-col">
+    <div className="flex-1 w-full border-l border-sakura-100 bg-white flex flex-col">
       <div className="flex items-center justify-between px-3 py-2.5 border-b border-sakura-100">
         <span className="text-xs font-semibold text-sakura-500">会话详情</span>
         <button onClick={onClose} className="p-0.5 hover:bg-sakura-50 rounded text-sakura-300 hover:text-sakura-500 transition-colors">

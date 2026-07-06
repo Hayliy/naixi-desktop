@@ -431,11 +431,36 @@ export default function ChatPage() {
         )}
       </div>
 
-      {/* ─── 统一侧边栏 ─── */}
+      {/* ─── 统一侧边栏（VSCode 风格：左侧内容 + 右侧图标条） ─── */}
       {sideTab && (
-        <div className="w-72 min-w-[18rem] border-l border-sakura-100 bg-white flex flex-col">
-          {/* 侧边栏头部：Tab 切换按钮 */}
-          <div className="flex items-center border-b border-sakura-100 shrink-0 overflow-x-auto">
+        <div className="flex border-l border-sakura-100 bg-white">
+          {/* 内容区 */}
+          <div className="w-80 min-w-[20rem] flex flex-col">
+            {sideTab === "detail" && activeKey && <DetailPanel activeKey={activeKey} messageCount={msgs.length} tokenEstimate={realTokens ? (realTokens.input! + realTokens.output!) : 0} modelKey={modelKey} onClose={() => setSideTab(null)} />}
+            {sideTab === "resource" && (
+              <ResourcePanel onClose={() => setSideTab(null)} onApply={(text, label, type) => {
+                if (type === "experts") {
+                  setCurrentExpert({ name: label, prompt: text });
+                  localStorage.setItem("naixi_expert", JSON.stringify({ name: label, prompt: text }));
+                  handleSend(label + " 请以该身份回复");
+                } else if (type === "skills") {
+                  handleSend("执行 Skill「" + label + "」: " + text);
+                } else {
+                  handleSend("请根据以下提示词回复: " + text);
+                }
+                setSideTab(null);
+              }} />
+            )}
+            {sideTab === "prompt" && (
+              <div className="flex-1 overflow-y-auto"><ErrorBoundary name="提示词面板"><PromptPanel activeScene={scene} onSceneChange={setScene} /></ErrorBoundary></div>
+            )}
+            {sideTab === "task" && <TaskPanel onClose={() => setSideTab(null)} />}
+            {sideTab === "settings" && (
+              <div className="flex-1 overflow-y-auto p-3"><ErrorBoundary name="供应商设置"><ProviderSettings /></ErrorBoundary></div>
+            )}
+          </div>
+          {/* 右侧图标条 */}
+          <div className="w-9 flex flex-col items-center pt-2 gap-1 border-l border-sakura-100 bg-sakura-50 shrink-0">
             {([
               ["settings", "模型供应商", Settings],
               ["resource", "资源库", Library],
@@ -444,40 +469,18 @@ export default function ChatPage() {
               ["task", "任务进度", CheckCircle2],
             ] as [SideTab, string, any][]).filter(([k]) => k !== "detail" || activeKey).map(([k, label, Icon]) => (
               <button key={k} onClick={() => setSideTab(t => t === k ? null : k)}
-                className={`flex items-center gap-1 px-2.5 py-2 text-[10px] font-medium border-b-2 transition-colors shrink-0 ${
-                  sideTab === k ? "border-sakura-400 text-sakura-600" : "border-transparent text-sakura-300 hover:text-sakura-500"
+                title={label}
+                className={`w-7 h-7 flex items-center justify-center rounded-lg transition-colors ${
+                  sideTab === k ? "bg-sakura-200 text-sakura-600" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-100"
                 }`}>
-                <Icon size={11} />
-                {label}
+                <Icon size={14} />
               </button>
             ))}
             <div className="flex-1" />
-            <button onClick={() => setSideTab(null)} className="p-1.5 mr-1 text-sakura-300 hover:text-sakura-500"><X size={12} /></button>
+            <button onClick={() => setSideTab(null)} title="关闭侧边栏" className="w-7 h-7 flex items-center justify-center rounded-lg text-sakura-300 hover:text-red-400 mb-2 hover:bg-red-50">
+              <X size={12} />
+            </button>
           </div>
-
-          {/* 内容区 */}
-          {sideTab === "detail" && activeKey && <DetailPanel activeKey={activeKey} messageCount={msgs.length} tokenEstimate={realTokens ? (realTokens.input! + realTokens.output!) : 0} modelKey={modelKey} onClose={() => setSideTab(null)} />}
-          {sideTab === "resource" && (
-            <ResourcePanel onClose={() => setSideTab(null)} onApply={(text, label, type) => {
-              if (type === "experts") {
-                setCurrentExpert({ name: label, prompt: text });
-                localStorage.setItem("naixi_expert", JSON.stringify({ name: label, prompt: text }));
-                handleSend(label + " 请以该身份回复");
-              } else if (type === "skills") {
-                handleSend("执行 Skill「" + label + "」: " + text);
-              } else {
-                handleSend("请根据以下提示词回复: " + text);
-              }
-              setSideTab(null);
-            }} />
-          )}
-          {sideTab === "prompt" && (
-            <div className="flex-1 overflow-y-auto"><ErrorBoundary name="提示词面板"><PromptPanel activeScene={scene} onSceneChange={setScene} /></ErrorBoundary></div>
-          )}
-          {sideTab === "task" && <TaskPanel onClose={() => setSideTab(null)} />}
-          {sideTab === "settings" && (
-            <div className="flex-1 overflow-y-auto p-3"><ErrorBoundary name="供应商设置"><ProviderSettings /></ErrorBoundary></div>
-          )}
         </div>
       )}
 
