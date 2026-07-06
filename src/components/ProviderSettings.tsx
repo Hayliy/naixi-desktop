@@ -260,6 +260,22 @@ export default function ProviderSettings() {
         ))}
       </div>
 
+      {/* 头像与昵称设置 */}
+      <div className="mt-4 border-t border-sakura-100 pt-3">
+        <details className="group">
+          <summary className="flex items-center gap-1.5 text-xs font-semibold text-sakura-500 hover:text-sakura-600 cursor-pointer mb-2 list-none">
+            <ChevronDown size={13} className="group-open:rotate-180 transition-transform" />
+            头像与昵称
+          </summary>
+          <div className="space-y-3 pt-2 text-xs">
+            <AvatarRow label="我的头像" storageKey="naixi_user_avatar" previewKey="用户" />
+            <AvatarRow label="我的昵称" storageKey="naixi_user_name" isName />
+            <AvatarRow label="奶昔头像" storageKey="naixi_bot_avatar" previewKey="奶昔" />
+            <AvatarRow label="奶昔昵称" storageKey="naixi_bot_name" isName />
+          </div>
+        </details>
+      </div>
+
       {/* MCP 服务器管理 */}
       <MCPSection />
       {/* 主题设置 */}
@@ -453,202 +469,30 @@ function EditProviderCard({ provider, onSave, onCancel }: {
 /* ─── MCP 服务器管理 ─── */
 
 function MCPSection() {
-  const { notify } = useToast();
-  const [servers, setServers] = useState<Record<string, { command: string; args: string[]; env: Record<string, string> }>>({});
-  const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [editingKey, setEditingKey] = useState<string | null>(null);
-  const [name, setName] = useState("");
-  const [command, setCommand] = useState("");
-  const [args, setArgs] = useState("");
-  const [collapsed, setCollapsed] = useState(true);
+}
 
-  const loadServers = async () => {
-    try {
-      const res = await apiGet<{ servers: any }>("/api/mcp/servers");
-      setServers(res.servers || {});
-    } catch {}
-    setLoading(false);
-  };
-
-  useEffect(() => { loadServers(); }, []);
-
-  const handleAdd = async () => {
-    if (!name.trim() || !command.trim()) return;
-    const updated = { ...servers };
-    // 如果正在编辑旧名称但改了名，删掉旧条目
-    if (editingKey && editingKey !== name.trim()) {
-      delete updated[editingKey];
-    }
-    updated[name.trim()] = {
-      command: command.trim(),
-      args: args.split(" ").filter(Boolean),
-      env: {},
-    };
-    try {
-      await apiPost("/api/mcp/servers", { servers: updated });
-      setServers(updated);
-      setShowForm(false);
-      setEditingKey(null);
-      setName(""); setCommand(""); setArgs("");
-    } catch {}
-  };
-
-  const handleEdit = (key: string) => {
-    const srv = servers[key];
-    if (!srv) return;
-    setEditingKey(key);
-    setName(key);
-    setCommand(srv.command);
-    setArgs(srv.args?.join(" ") || "");
-    setShowForm(true);
-  };
-
-  const handleDelete = async (key: string) => {
-    const updated = { ...servers };
-    delete updated[key];
-    try {
-      await apiPost("/api/mcp/servers", { servers: updated });
-      setServers(updated);
-    } catch {}
-  };
-
-  const handleConnect = async () => {
-    try {
-      const res = await apiPost<{ ok: boolean; tool_count: number }>("/api/mcp/connect");
-      if (res.ok) notify(`MCP 连接成功，当前共 ${res.tool_count} 个工具`, "success");
-    } catch {}
-  };
-
-  const handleTestSingle = async (key: string) => {
-    try {
-      const res = await apiPost<{ ok: boolean; error?: string; tools?: string[] }>("/api/mcp/test", { name: key });
-      if (res.ok) {
-        notify(`✅ ${key} 连接成功！工具: ${(res.tools || []).join(", ")}`, "success");
-      } else {
-        notify(`❌ ${key} 连接失败: ${res.error || "未知错误"}`, "error");
-      }
-    } catch (e) {
-      notify(`❌ ${key} 测试异常: ${String(e)}`, "error");
-    }
-  };
-
-  if (loading) return null;
+/* ─── 头像与昵称设置项 ─── */
+function AvatarRow({ label, storageKey, isName, previewKey }: { label: string; storageKey: string; isName?: boolean; previewKey?: string }) {
+  const [val, setVal] = useState(() => localStorage.getItem(storageKey) || "");
+  const save = (v: string) => { setVal(v); localStorage.setItem(storageKey, v); };
+  const clear = () => { setVal(""); localStorage.removeItem(storageKey); };
 
   return (
-    <div className="mt-6 border-t border-sakura-100 pt-4">
-      <button onClick={() => setCollapsed(!collapsed)}
-        className="flex items-center gap-1.5 text-xs font-semibold text-sakura-500 hover:text-sakura-600 transition-colors mb-2">
-        {collapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
-        MCP 服务器
-        <span className="text-[10px] text-sakura-300 font-normal">({Object.keys(servers).length})</span>
-      </button>
-
-      {!collapsed && (
-        <div className="space-y-1.5">
-          {/* 连接按钮 */}
-          {Object.keys(servers).length > 0 && (
-            <button onClick={handleConnect}
-              className="w-full px-3 py-1.5 rounded-lg text-[11px] bg-gradient-to-br from-teal-400 to-teal-500 text-white hover:shadow-md transition-shadow mb-1">
-              连接 MCP 服务器
-            </button>
+    <div className="flex items-center gap-2">
+      {!isName && (
+        <div className="w-7 h-7 rounded-full overflow-hidden bg-sakura-100 shrink-0">
+          {val ? (
+            <img src={val} alt={label} className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-[8px] text-sakura-400">{previewKey?.[0] || "?"}</div>
           )}
-
-          {/* 添加/编辑表单 — 放在最前面 */}
-          {!editingKey && (
-            showForm ? (
-              <div className="bg-white border border-sakura-100 rounded-lg px-2.5 py-2 space-y-2 text-xs">
-                <p className="text-[11px] font-semibold text-sakura-500">添加 MCP 服务器</p>
-                <div>
-                  <p className="text-[10px] text-sakura-400 mb-0.5">名称</p>
-                  <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px]"
-                    value={name} onChange={e => setName(e.target.value)} placeholder="例如: fetch" />
-                </div>
-                <div>
-                  <p className="text-[10px] text-sakura-400 mb-0.5">启动命令</p>
-                  <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] font-mono"
-                    value={command} onChange={e => setCommand(e.target.value)} placeholder="例如: uvx" />
-                </div>
-                <div>
-                  <p className="text-[10px] text-sakura-400 mb-0.5">参数（空格分隔）</p>
-                  <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] font-mono"
-                    value={args} onChange={e => setArgs(e.target.value)} placeholder="例如: mcp-server-fetch" />
-                </div>
-                <div className="flex justify-end gap-2 pt-1">
-                  <button onClick={() => { setShowForm(false); setName(""); setCommand(""); setArgs(""); }}
-                    className="px-3 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:bg-sakura-50 transition-colors">取消</button>
-                  <button onClick={handleAdd} disabled={!name.trim() || !command.trim()}
-                    className="flex items-center gap-1 px-4 py-1.5 rounded-lg text-[11px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-40">
-                    <Plus size={11} /> 添加
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button onClick={() => setShowForm(true)}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 transition-colors w-full">
-                <Plus size={11} /> 添加 MCP 服务器
-              </button>
-            )
-          )}
-
-          {/* 服务器列表（固定高度滚动） */}
-          <div className="max-h-[300px] overflow-y-auto space-y-1.5 pr-0.5">
-          {Object.entries(servers).map(([key, srv]) => (
-            <div key={key}>
-              {/* 服务器卡片 */}
-              <div className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-sakura-50 border border-sakura-100">
-                <div className="flex-1 min-w-0">
-                  <p className="text-[11px] font-medium text-sakura-600 truncate">{key}</p>
-                  <p className="text-[10px] text-sakura-400 truncate font-mono">{srv.command} {srv.args?.join(" ")}</p>
-                </div>
-                <button onClick={() => handleTestSingle(key)}
-                  className="p-1 rounded hover:bg-teal-50 text-sakura-300 hover:text-teal-500 transition-colors shrink-0"
-                  title="测试连接">
-                  <Zap size={11} />
-                </button>
-                <button onClick={() => handleEdit(key)}
-                  className="p-1 rounded hover:bg-sakura-100 text-sakura-300 hover:text-sakura-500 transition-colors shrink-0"
-                  title="编辑">
-                  <Pencil size={11} />
-                </button>
-                <button onClick={() => handleDelete(key)}
-                  className="p-1 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500 transition-colors shrink-0">
-                  <Trash2 size={11} />
-                </button>
-              </div>
-              {/* 编辑表单：出现在当前卡片下方 */}
-              {editingKey === key && (
-                <div className="bg-white border border-sakura-100 rounded-lg px-2.5 py-2 space-y-2 text-xs mt-1">
-                  <p className="text-[11px] font-semibold text-sakura-500">编辑 MCP 服务器</p>
-                  <div>
-                    <p className="text-[10px] text-sakura-400 mb-0.5">名称</p>
-                    <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px]"
-                      value={name} onChange={e => setName(e.target.value)} placeholder="例如: fetch" />
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-sakura-400 mb-0.5">启动命令</p>
-                    <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] font-mono"
-                      value={command} onChange={e => setCommand(e.target.value)} placeholder="例如: uvx" />
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-sakura-400 mb-0.5">参数（空格分隔）</p>
-                    <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] font-mono"
-                      value={args} onChange={e => setArgs(e.target.value)} placeholder="例如: mcp-server-fetch" />
-                  </div>
-                  <div className="flex justify-end gap-2 pt-1">
-                    <button onClick={() => { setShowForm(false); setEditingKey(null); setName(""); setCommand(""); setArgs(""); }}
-                      className="px-3 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:bg-sakura-50 transition-colors">取消</button>
-                    <button onClick={handleAdd} disabled={!name.trim() || !command.trim()}
-                      className="flex items-center gap-1 px-4 py-1.5 rounded-lg text-[11px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-40">
-                      <Check size={11} /> 保存
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-          </div>
         </div>
+      )}
+      <input value={val} onChange={e => save(e.target.value)}
+        className={`flex-1 px-2 py-1 rounded border border-sakura-100 bg-sakura-50 text-[10px] text-sakura-600 ${isName ? "" : "font-mono"}`}
+        placeholder={isName ? "留空使用默认" : "头像图片 URL（留空自动 DiceBear）"} />
+      {val && (
+        <button onClick={clear} className="p-0.5 text-sakura-300 hover:text-red-500 shrink-0"><X size={10} /></button>
       )}
     </div>
   );

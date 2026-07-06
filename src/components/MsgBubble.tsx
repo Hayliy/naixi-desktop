@@ -5,7 +5,7 @@ import type { MsgItem } from "@/components/ChatTypes";
 import { fmtTime } from "@/components/ChatTypes";
 import { apiGet } from "@/lib/api";
 
-import { getAvatarUrl } from "@/lib/avatar";
+import { getAvatarUrl, resolveAvatarUrl, resolveDisplayName, AVATAR_KEYS } from "@/lib/avatar";
 
 export default function MsgBubble({ msg, onEdit, onRegenerate, onDelete, onStar, onReply, starred, expertName }: {
   msg: MsgItem; onEdit?: (id: number, text: string) => void; onRegenerate?: (id: number) => void; onDelete?: (id: number) => void;
@@ -90,9 +90,15 @@ export default function MsgBubble({ msg, onEdit, onRegenerate, onDelete, onStar,
   return (
     <div className={`flex items-start gap-2 px-3 py-3 group ${isUser ? "flex-row-reverse" : ""}`}>
       <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 overflow-hidden ${isUser ? "bg-pink-100 text-pink-500" : "bg-sakura-100 text-sakura-500"}`}>
-        {isUser ? <User size={13} /> : expertName ? (
+        {isUser ? (
+          <img src={resolveAvatarUrl(AVATAR_KEYS.USER_AVATAR, "用户")} alt="用户"
+            className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+        ) : expertName ? (
           <img src={getAvatarUrl(expertName)} alt={expertName} className="w-full h-full object-cover" />
-        ) : <Bot size={13} />}
+        ) : (
+          <img src={resolveAvatarUrl(AVATAR_KEYS.BOT_AVATAR, "奶昔")} alt="奶昔"
+            className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+        )}
       </div>
       <div className={`max-w-[75%] min-w-0 ${isUser ? "items-end" : "items-start"} flex flex-col relative`}>
         {/* 专家团队模式：显示名称 */}

@@ -8,6 +8,8 @@ interface ExpertInfo {
   name: string;
   category: string;
   prompt: string;
+  avatar?: string;
+  nickname?: string;
 }
 
 export interface TeamMember {
@@ -49,6 +51,8 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
   const [fName, setFName] = useState("");
   const [fPrompt, setFPrompt] = useState("");
   const [fCat, setFCat] = useState("");
+  const [fAvatar, setFAvatar] = useState("");
+  const [fNickname, setFNickname] = useState("");
   const [expandedExpert, setExpandedExpert] = useState<string | null>(null);
 
   useEffect(() => {
@@ -121,9 +125,11 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
       setFName(expert.name);
       setFPrompt(expert.prompt);
       setFCat(expert.category);
+      setFAvatar(expert.avatar || "");
+      setFNickname(expert.nickname || "");
       setEditIdx(idx ?? -1);
     } else {
-      setFName(""); setFPrompt(""); setFCat(category || "");
+      setFName(""); setFPrompt(""); setFCat(category || ""); setFAvatar(""); setFNickname("");
       setEditIdx(-1);
     }
     setShowForm(true);
@@ -132,11 +138,18 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
   const saveCustom = () => {
     if (!fName.trim() || !fPrompt.trim()) { notify("名称和内容不能为空", "warning"); return; }
     let updated: ExpertInfo[];
+    const item: ExpertInfo = {
+      name: fName.trim(),
+      prompt: fPrompt.trim(),
+      category: fCat.trim() || "自定义",
+      avatar: fAvatar.trim() || undefined,
+      nickname: fNickname.trim() || undefined,
+    };
     if (editIdx >= 0) {
       updated = [...customExperts];
-      updated[editIdx] = { name: fName.trim(), prompt: fPrompt.trim(), category: fCat.trim() || "自定义" };
+      updated[editIdx] = item;
     } else {
-      updated = [...customExperts, { name: fName.trim(), prompt: fPrompt.trim(), category: fCat.trim() || "自定义" }];
+      updated = [...customExperts, item];
     }
     setCustomExperts(updated);
     localStorage.setItem("naixi_custom_experts", JSON.stringify(updated));
@@ -247,7 +260,17 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
           <p className="text-[10px] font-medium text-sakura-500 mb-1.5">{editIdx >= 0 ? "编辑专家" : "添加自定义专家"}</p>
           <div className="space-y-1.5">
             <input value={fName} onChange={e => setFName(e.target.value)}
-              className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[10px] text-sakura-600" placeholder="专家名称" />
+              className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[10px] text-sakura-600" placeholder="专家名称（如：架构师）" />
+            <input value={fNickname} onChange={e => setFNickname(e.target.value)}
+              className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[10px] text-sakura-600" placeholder="显示昵称（可选，留空用名称）" />
+            <input value={fCat} onChange={e => setFCat(e.target.value)}
+              className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[10px] text-sakura-600" placeholder="分类（如：代码开发）" />
+            <input value={fAvatar} onChange={e => setFAvatar(e.target.value)}
+              className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[10px] text-sakura-600 font-mono" placeholder="头像 URL（可选，留空自动生成）" />
+            {fAvatar && (
+              <img src={fAvatar} alt="预览" className="w-8 h-8 rounded-full border border-sakura-100"
+                onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+            )}
             <input value={fCat} onChange={e => setFCat(e.target.value)}
               className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[10px] text-sakura-600" placeholder="分类（如：代码开发）" />
             <textarea value={fPrompt} onChange={e => setFPrompt(e.target.value)}
