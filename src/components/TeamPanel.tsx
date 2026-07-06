@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Plus, Trash2, Check, X, ChevronDown, ChevronUp, Save, Users, ArrowUp, ArrowDown, Play, Eye, Pencil } from "lucide-react";
-import { useToast } from "@/components/Toast";
+import { getAvatarUrl } from "@/lib/avatar";
 import { apiGet, apiPost } from "@/lib/api";
 
 interface ExpertInfo {
@@ -170,6 +170,8 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
           <div className="space-y-1 mb-2 max-h-[120px] overflow-y-auto pr-0.5">
             {team.map((m, i) => (
               <div key={i} className="flex items-center gap-1 px-2 py-1 rounded bg-sakura-50 border border-sakura-100 text-xs">
+                <img src={getAvatarUrl(m.name)} alt={m.name}
+                  className="w-4 h-4 rounded-full bg-sakura-100 shrink-0" loading="lazy" />
                 <span className="w-4 h-4 rounded flex items-center justify-center text-[8px] font-bold bg-sakura-200 text-sakura-500 shrink-0">{i + 1}</span>
                 <span className="flex-1 text-[10px] text-sakura-600 truncate">{m.name}</span>
                 <button onClick={() => moveMember(i, -1)} disabled={i === 0}
@@ -280,7 +282,9 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
             const isExpanded = expandedExpert === expert.name;
             return (
               <div key={expert.name + (isCustom ? "_c" : "") + i}>
-                <div className={`flex items-center gap-1 px-2 py-1.5 rounded-lg transition-colors ${isExpanded ? "bg-sakura-100" : "hover:bg-sakura-50"}`}>
+                <div className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition-colors ${isExpanded ? "bg-sakura-100" : "hover:bg-sakura-50"}`}>
+                  <img src={getAvatarUrl(expert.name)} alt={expert.name}
+                    className="w-6 h-6 rounded-full bg-sakura-100 shrink-0" loading="lazy" />
                   <button onClick={() => toggleExpand(expert.name)}
                     className="flex-1 flex items-center gap-2 min-w-0 text-left">
                     <div className="flex-1 min-w-0">
