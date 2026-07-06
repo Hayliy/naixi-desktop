@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { applyTheme, getTheme } from "@/lib/theme";
 
 type ThemeMode = "light" | "dark";
 
@@ -9,23 +10,13 @@ const HUE_NAMES: Record<number, string> = {
 };
 
 export default function ThemeSettings() {
-  const [theme, setTheme] = useState<ThemeMode>(() => {
-    return (localStorage.getItem("naixi_theme") as ThemeMode) || "light";
-  });
-  const [hue, setHue] = useState(() => {
-    return Number(localStorage.getItem("naixi_theme_hue")) || 350;
-  });
+  const [theme, setTheme] = useState<ThemeMode>(() => getTheme().theme);
+  const [hue, setHue] = useState(() => getTheme().hue);
 
-  useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
-    document.documentElement.style.setProperty("--accent-h", String(hue));
-    localStorage.setItem("naixi_theme", theme);
-    localStorage.setItem("naixi_theme_hue", String(hue));
-  }, [theme, hue]);
+  useEffect(() => { applyTheme(theme, hue); }, [theme, hue]);
 
   return (
     <div className="space-y-3 text-xs">
-      {/* 亮/暗切换 */}
       <div>
         <p className="text-[10px] text-sakura-400 mb-1.5">主题模式</p>
         <div className="flex gap-1.5">
@@ -34,21 +25,23 @@ export default function ThemeSettings() {
               className={`flex-1 px-3 py-1.5 rounded-lg text-[11px] border transition-colors ${
                 theme === m ? "bg-sakura-200 text-sakura-600 border-sakura-300" : "bg-sakura-50 text-sakura-400 border-sakura-100 hover:bg-sakura-100"
               }`}>
-              {m === "light" ? "☀️ 浅色" : "🌙 暗色"}
+              {m === "light" ? "浅色" : "暗色"}
             </button>
           ))}
         </div>
       </div>
 
-      {/* 色调滑块 */}
       <div>
         <p className="text-[10px] text-sakura-400 mb-1.5">主题色</p>
         <input type="range" min="0" max="360" value={hue} onChange={e => setHue(Number(e.target.value))}
-          className="w-full accent-pink-400" />
+          className="w-full" style={{ accentColor: `hsl(${hue}, 65%, 55%)` }} />
         <div className="flex items-center gap-2 mt-1">
-          <span className="w-5 h-5 rounded-full border border-sakura-200 shrink-0" style={{ background: `hsl(${hue}, 70%, 70%)` }} />
-          <span className="text-[10px] text-sakura-400">{HUE_NAMES[Object.keys(HUE_NAMES).reduce((a, b) => Math.abs(+b - hue) < Math.abs(+a - hue) ? b : a) as any] || "自定义"}</span>
-          <span className="text-[10px] text-sakura-300 ml-auto">hsl({hue}, 70%, 70%)</span>
+          <span className="w-5 h-5 rounded-full shrink-0 border" style={{ background: `hsl(${hue}, 65%, 70%)`, borderColor: `hsl(${hue}, 65%, 80%)` }} />
+          <span className="text-[10px] text-sakura-500">
+            {[0,15,30,45,60,120,180,210,240,270,300,330].reduce((a,b) => Math.abs(b-hue) < Math.abs(a-hue) ? b : a)}
+            {Object.entries(HUE_NAMES).find(([k]) => Math.abs(+k - hue) < 8)?.[1] || "自定义"}
+          </span>
+          <span className="text-[10px] text-sakura-300 ml-auto">{theme === "light" ? "浅色" : "暗色"}</span>
         </div>
       </div>
     </div>

@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import { Plus, Trash2, Check, X, Loader2, Settings, ChevronDown, ChevronUp, Pencil, Save, Eye, EyeOff, Zap } from "lucide-react";
+import { Plus, Trash2, Check, X, Loader2, Settings, ChevronDown, ChevronUp, Pencil, Save, Eye, EyeOff, Zap, Folder, Tag } from "lucide-react";
 import { useAppConfig } from "@/contexts/AppContext";
 import { apiGet, apiPost } from "@/lib/api";
 import { useToast } from "@/components/Toast";
+import ThemeSettings from "@/components/ThemeSettings";
 
 const PROVIDER_TYPES = [
   // ─── 国际 ───
@@ -261,6 +262,19 @@ export default function ProviderSettings() {
 
       {/* MCP 服务器管理 */}
       <MCPSection />
+      {/* 主题设置 */}
+      <div className="mt-4 border-t border-sakura-100 pt-3">
+        <details className="group">
+          <summary className="flex items-center gap-1.5 text-xs font-semibold text-sakura-500 hover:text-sakura-600 cursor-pointer mb-2 list-none">
+            <ChevronDown size={13} className="group-open:rotate-180 transition-transform" />
+            主题与快捷键
+          </summary>
+          <div className="space-y-3 pt-2">
+            <ThemeSettings />
+            <ShortcutsSettings />
+          </div>
+        </details>
+      </div>
 
       {/* 新增表单 */}
       {showForm && (
@@ -636,6 +650,56 @@ function MCPSection() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ─── 快捷键设置 ─── */
+const DEFAULT_SHORTCUTS: { key: string; desc: string }[] = [
+  { key: "Ctrl+Enter", desc: "发送消息" },
+  { key: "Enter", desc: "换行" },
+  { key: "Tab", desc: "打开/关闭快捷键列表" },
+  { key: "Escape", desc: "取消/关闭当前弹窗" },
+  { key: "Ctrl+L", desc: "清空对话" },
+  { key: "↑ (输入框)", desc: "上一条消息" },
+];
+
+function ShortcutsSettings() {
+  const [s, setS] = useState<{ key: string; desc: string }[]>(() => {
+    try { return JSON.parse(localStorage.getItem("naixi_shortcuts") || "null") || DEFAULT_SHORTCUTS; } catch { return DEFAULT_SHORTCUTS; }
+  });
+  const [ei, setEi] = useState<number | null>(null);
+  const [ek, setEk] = useState("");
+  const [ed, setEd] = useState("");
+  const save = (v: typeof s) => { setS(v); localStorage.setItem("naixi_shortcuts", JSON.stringify(v)); };
+
+  return (
+    <div className="space-y-2 text-xs">
+      <p className="text-[10px] text-sakura-400 mb-1">快捷键列表（按 Tab 打开）</p>
+      <div className="space-y-1">
+        {s.map((item, i) => ei === i ? (
+          <div key={i} className="flex items-center gap-1">
+            <input value={ek} onChange={e => setEk(e.target.value)} className="flex-1 px-1.5 py-0.5 rounded border border-sakura-100 bg-sakura-50 text-[10px] font-mono text-sakura-600 w-20" placeholder="快捷键" />
+            <input value={ed} onChange={e => setEd(e.target.value)} className="flex-1 px-1.5 py-0.5 rounded border border-sakura-100 bg-sakura-50 text-[10px] text-sakura-600" placeholder="说明" />
+            <button onClick={() => { if (ek.trim() && ed.trim()) { const n = [...s]; n[i] = { key: ek.trim(), desc: ed.trim() }; save(n); setEi(null); } }} className="p-0.5 text-sakura-400 hover:text-sakura-600"><Check size={10} /></button>
+          </div>
+        ) : (
+          <div key={i} className="flex items-center justify-between group">
+            <span className="flex items-center gap-1.5">
+              <code className="px-1 py-0.5 rounded bg-sakura-50 text-[10px] font-mono text-sakura-500">{item.key}</code>
+              <span className="text-[10px] text-sakura-400">{item.desc}</span>
+            </span>
+            <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100">
+              <button onClick={() => { setEi(i); setEk(item.key); setEd(item.desc); }} className="p-0.5 text-sakura-300 hover:text-sakura-500"><Pencil size={9} /></button>
+              <button onClick={() => save(s.filter((_, j) => j !== i))} className="p-0.5 text-sakura-300 hover:text-red-500"><X size={9} /></button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <button onClick={() => save([...s, { key: "新快捷键", desc: "说明" }])}
+        className="flex items-center gap-1 text-[10px] text-sakura-400 hover:text-sakura-500">
+        <Plus size={10} /> 添加快捷键
+      </button>
     </div>
   );
 }

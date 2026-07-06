@@ -11,40 +11,8 @@
   --text-sec: #C48898;
   --pink: #FF6B8A;
   --pink-light: #FFE4EC;
-  --accent-h: 350; /* sakura 粉色色调 */
+  --accent-h: 350;
 }
-/* ─── 暗色模式 ─── */
-[data-theme="dark"] {
-  --bg: #1A1420;
-  --sidebar: rgba(30, 20, 35, 0.9);
-  --card: rgba(40, 30, 48, 0.7);
-  --border: #4A3050;
-  --text: #E8D0E8;
-  --text-sec: #A880A8;
-}
-/* ─── 自定义主题色 ─── */
-[data-theme^="hue-"] {
-  --pink: hsl(calc(var(--accent-h)), 80%, 65%);
-  --pink-light: hsl(calc(var(--accent-h)), 80%, 92%);
-}
-/* ─── 主题色响应（Tailwind 覆盖层） ─── */
-[data-theme="dark"] .bg-sakura-50 { background: #2A2032 !important; }
-[data-theme="dark"] .bg-sakura-100 { background: #352542 !important; }
-[data-theme="dark"] .border-sakura-100 { border-color: #4A3050 !important; }
-[data-theme="dark"] .text-sakura-300 { color: #A880A8 !important; }
-[data-theme="dark"] .text-sakura-400 { color: #C090C0 !important; }
-[data-theme="dark"] .text-sakura-500 { color: #D8A8D8 !important; }
-[data-theme="dark"] .text-sakura-600 { color: #E8C0E8 !important; }
-[data-theme="dark"] .text-sakura-700 { color: #F0D0F0 !important; }
-[data-theme="dark"] .bg-white { background: #22182A !important; }
-[data-theme="dark"] .bg-red-50 { background: #3A2030 !important; }
-[data-theme="dark"] .bg-teal-400, [data-theme="dark"] .bg-teal-500 { background: #5A4A80 !important; }
-[data-theme="dark"] .text-white { color: #E8D0E8 !important; }
-[data-theme="dark"] .text-pink-500 { color: #D080B0 !important; }
-[data-theme="dark"] .bg-pink-100 { background: #403050 !important; }
-[data-theme="dark"] .bg-pink-500 { background: #805070 !important; }
-[data-theme="dark"] .border-sakura-200 { border-color: #5A4070 !important; }
-[data-theme="dark"] .bg-gradient-to-r, [data-theme="dark"] .bg-gradient-to-br { opacity: 0.7; }
 
 body {
   font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;

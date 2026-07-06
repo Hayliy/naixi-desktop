@@ -4,6 +4,7 @@
    ═══════════════════════════════════════════════════════ */
 import { useState, useEffect, useRef } from "react";
 import { apiGet, apiPost } from "@/lib/api";
+import { applyTheme, getTheme } from "@/lib/theme";
 import { useToast } from "@/components/Toast";
 import { sendChatStream } from "@/lib/stream";
 import ContentRenderer, { type ContentBlock } from "@/components/ContentRenderer";
@@ -25,7 +26,7 @@ import type { ConvItem, MsgItem, ProviderModel } from "@/components/ChatTypes";
 import { convName, QUICK_ACTIONS } from "@/components/ChatTypes";
 import {
   Bot, Trash2, Check, X, ChevronLeft, Sparkles, Settings, FileText, Cpu, MessageCircle,
-  CheckCircle2, Shield, Volume2, Library, User, Palette, Search, Download,
+  CheckCircle2, Shield, Volume2, Library, User, Palette, Search, Download, Star, Reply,
 } from "lucide-react";
 
 const MODELS: ProviderModel[] = [{ key: "auto", label: "自动路由（默认）", provider_id: 0 }];
@@ -73,7 +74,6 @@ export default function ChatPage() {
   });
   const [msgSearch, setMsgSearch] = useState("");
   const [showStarredOnly, setShowStarredOnly] = useState(false);
-  const [showShortcuts, setShowShortcuts] = useState(false);
   const [starredMsgs, setStarredMsgs] = useState<number[]>([]);
   const [replyToId, setReplyToId] = useState<number | null>(null);
   const msgEndRef = useRef<HTMLDivElement>(null);
@@ -94,6 +94,10 @@ export default function ChatPage() {
 
   // ── 初始化加载 ──
   useEffect(() => {
+    // 初始化主题
+    const { theme: t, hue: h } = getTheme();
+    applyTheme(t, h);
+    // 加载会话列表
     setConvLoading(true);
     apiGet<{ conversations: ConvItem[]; total: number }>("/api/conversations")
       .then(d => { setConvs(d.conversations); setConvLoading(false); })
@@ -137,12 +141,12 @@ export default function ChatPage() {
     }
   }, [activeKey]);
 
-  // 快捷键：? 弹出快捷键列表
+  // 快捷键：Tab 打开设置面板（快捷键列表）
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "?" && !(e.target as HTMLElement)?.closest("input,textarea")) {
+      if (e.key === "Tab" && !(e.target as HTMLElement)?.closest("input,textarea")) {
         e.preventDefault();
-        setShowShortcuts(s => !s);
+        setShowSettings(s => !s);
       }
     };
     window.addEventListener("keydown", handler);
@@ -201,8 +205,6 @@ export default function ChatPage() {
     });
   };
 
-  const handleSend = async (text: string) => {
-
   const handleExport = () => {
     if (msgs.length === 0) return;
     const lines = msgs.map((m: MsgItem) => `[${m.role === "user" ? "我" : "AI"} ${new Date(m.time).toLocaleString()}]\n${m.content}`);
@@ -213,6 +215,8 @@ export default function ChatPage() {
     a.href = url; a.download = `对话_${activeKey || "export"}.txt`;
     a.click(); URL.revokeObjectURL(url);
   };
+
+  const handleSend = async (text: string) => {
     const t = text.trim();
     if (t.startsWith("生成一段视频：")) {
       await handleNormalChat(t.replace("生成一段视频：", "请生成视频："));
@@ -447,33 +451,6 @@ export default function ChatPage() {
 
       {showTask && <TaskPanel onClose={() => setShowTask(false)} />}
 
-      {/* 快捷键列表 */}
-      {showShortcuts && (
-        <div className="fixed inset-0 z-[200] bg-black/30 flex items-center justify-center" onClick={() => setShowShortcuts(false)}>
-          <div className="bg-white rounded-xl shadow-xl border border-sakura-100 p-5 max-w-xs w-full mx-4" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-semibold text-sakura-600">快捷键</span>
-              <button onClick={() => setShowShortcuts(false)} className="p-0.5 hover:bg-sakura-50 rounded"><X size={13} /></button>
-            </div>
-            <div className="space-y-2 text-xs">
-              {[
-                ["Ctrl + Enter", "发送消息"],
-                ["Enter", "换行"],
-                ["?", "打开/关闭快捷键列表"],
-                ["Esc", "取消/关闭"],
-                ["↑ (输入框)", "上一条消息"],
-                ["Ctrl + L", "清屏（未实现）"],
-              ].map(([key, desc]) => (
-                <div key={key} className="flex items-center justify-between">
-                  <code className="px-1.5 py-0.5 rounded bg-sakura-50 text-[10px] font-mono text-sakura-500">{key}</code>
-                  <span className="text-[10px] text-sakura-400">{desc}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
       {showSettings && (
         <div className="w-72 min-w-[18rem] border-l border-sakura-100 bg-white overflow-y-auto">
           <div className="sticky top-0 bg-white border-b border-sakura-100 px-3 py-2 flex items-center justify-between z-10">
@@ -525,8 +502,7 @@ function ThemeToggle() {
   const toggle = () => {
     const next = theme === "light" ? "dark" : "light";
     setTheme(next);
-    document.documentElement.setAttribute("data-theme", next);
-    localStorage.setItem("naixi_theme", next);
+    applyTheme(next, getTheme().hue);
   };
 
   return (

@@ -1,0 +1,17 @@
+= null;
+      },
+      onPermissionRequest: (reqId, name, args) => {
+        setPermissionReq({ id: reqId, name, args });
+      },
+    });
+  };
+
+  const handleSend = async (text: string) => {
+  const handleExport = () => {
+    if (msgs.length === 0) return;
+    const lines = msgs.map((m: MsgItem) => `[${m.role === "user" ? "我" : "AI"} ${new Date(m.time).toLocaleString()}]\n${m.content}`);
+    const text = lines.join("\n\n---\n\n");
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a

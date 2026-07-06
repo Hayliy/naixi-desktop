@@ -47,10 +47,17 @@ export default function ConvList({
           <input className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-sakura-100 bg-sakura-50 text-sakura-600 placeholder:text-sakura-300 focus:outline-none focus:ring-1 focus:ring-sakura-300" placeholder="搜索对话..." value={search} onChange={e => onSearchChange(e.target.value)} />
         </div>
         {/* 分组/标签过滤器 */}
-        {(allGroups.length > 0 || allTags.length > 0) && (
+        {(filterGroup || filterTag || allGroups.length > 0 || allTags.length > 0) && (
           <div className="flex flex-wrap gap-1">
             {filterGroup && <button onClick={() => setFilterGroup("")} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] bg-sakura-100 text-sakura-500"><Folder size={9} /> {filterGroup} <X size={8} /></button>}
             {filterTag && <button onClick={() => setFilterTag("")} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] bg-amber-100 text-amber-600"><Tag size={9} /> {filterTag} <X size={8} /></button>}
+            {/* 未筛选时显示所有可用分组/标签供点击筛选 */}
+            {!filterGroup && !filterTag && allGroups.slice(0, 5).map(g => (
+              <button key={g} onClick={() => setFilterGroup(g)} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] bg-sakura-50 text-sakura-400 hover:bg-sakura-100"><Folder size={9} />{g}</button>
+            ))}
+            {!filterGroup && !filterTag && allTags.slice(0, 8).map(t => (
+              <button key={t} onClick={() => setFilterTag(t)} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] bg-amber-50 text-amber-500 hover:bg-amber-100"><Tag size={9} />{t}</button>
+            ))}
           </div>
         )}
       </div>
