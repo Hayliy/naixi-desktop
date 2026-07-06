@@ -374,6 +374,7 @@ export default function ChatPage() {
                   <button onClick={() => setSideTab(t => t === "prompt" ? null : "prompt")} title="提示词" className={`p-1.5 rounded transition-colors ${sideTab === "prompt" ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><FileText size={12} /></button>
                   {activeKey && <button onClick={() => setSideTab(t => t === "detail" ? null : "detail")} title="会话详情" className={`p-1.5 rounded transition-colors ${sideTab === "detail" ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><Sparkles size={12} /></button>}
                   <button onClick={() => setSideTab(t => t === "task" ? null : "task")} className={`p-1.5 rounded transition-colors ${sideTab === "task" ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`} title="任务进度"><CheckCircle2 size={12} /></button>
+                  <button onClick={() => setSideTab(t => t === "team" ? null : "team")} title="专家团队" className={`p-1.5 rounded transition-colors ${sideTab === "team" ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><Users size={12} /></button>
                   <button onClick={async () => {
                     const next = !fullTrust;
                     try { await apiPost("/api/config/trust", { full_trust: next }); setFullTrust(next); } catch {}
