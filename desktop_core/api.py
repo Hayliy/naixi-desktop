@@ -1404,55 +1404,121 @@ async def api_providers(request):
 # ── 提示词 / 专家 / Skill API ──
 
 async def api_prompts_github(request):
-    """返回从 GitHub 下载的所有提示词"""
+    """返回从 GitHub 下载的所有提示词（合并自定义）"""
     import os, json as _json
     fp = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "prompts", "prompts.json")
+    data = []
     if os.path.exists(fp):
         with open(fp, 'r', encoding='utf-8') as f:
             data = _json.load(f)
-        category = request.query.get("category", "")
-        search = request.query.get("search", "")
-        if category:
-            data = [p for p in data if p.get("category") == category]
-        if search:
-            kw = search.lower()
-            data = [p for p in data if kw in p.get("act", "").lower() or kw in p.get("prompt", "").lower()]
-        return web.json_response({"prompts": data, "total": len(data)})
-    return web.json_response({"prompts": [], "total": 0})
+    # 合并自定义
+    custom = _load_custom("custom_prompts")
+    data = custom + data
+    category = request.query.get("category", "")
+    search = request.query.get("search", "")
+    if category:
+        data = [p for p in data if p.get("category") == category]
+    if search:
+        kw = search.lower()
+        data = [p for p in data if kw in p.get("act", "").lower() or kw in p.get("prompt", "").lower()]
+    return web.json_response({"prompts": data, "total": len(data)})
 
 async def api_experts_list(request):
-    """返回专家列表"""
+    """返回专家列表（合并自定义）"""
     import os, json as _json
     fp = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "prompts", "experts.json")
+    data = []
     if os.path.exists(fp):
         with open(fp, 'r', encoding='utf-8') as f:
             data = _json.load(f)
-        category = request.query.get("category", "")
-        search = request.query.get("search", "")
-        if category:
-            data = [e for e in data if e.get("category") == category]
-        if search:
-            kw = search.lower()
-            data = [e for e in data if kw in e.get("name", "").lower()]
-        return web.json_response({"experts": data, "total": len(data)})
-    return web.json_response({"experts": [], "total": 0})
+    custom = _load_custom("custom_experts")
+    data = custom + data
+    category = request.query.get("category", "")
+    search = request.query.get("search", "")
+    if category:
+        data = [e for e in data if e.get("category") == category]
+    if search:
+        kw = search.lower()
+        data = [e for e in data if kw in e.get("name", "").lower()]
+    return web.json_response({"experts": data, "total": len(data)})
 
 async def api_skills_list(request):
-    """返回 Skill 列表"""
+    """返回 Skill 列表（合并自定义）"""
     import os, json as _json
     fp = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "prompts", "skills.json")
+    data = []
     if os.path.exists(fp):
         with open(fp, 'r', encoding='utf-8') as f:
             data = _json.load(f)
-        category = request.query.get("category", "")
-        search = request.query.get("search", "")
-        if category:
-            data = [s for s in data if s.get("category") == category]
-        if search:
-            kw = search.lower()
-            data = [s for s in data if kw in s.get("name", "").lower()]
-        return web.json_response({"skills": data, "total": len(data)})
-    return web.json_response({"skills": [], "total": 0})
+    custom = _load_custom("custom_skills")
+    data = custom + data
+    category = request.query.get("category", "")
+    search = request.query.get("search", "")
+    if category:
+        data = [s for s in data if s.get("category") == category]
+    if search:
+        kw = search.lower()
+        data = [s for s in data if kw in s.get("name", "").lower()]
+    return web.json_response({"skills": data, "total": len(data)})
+
+
+# ── 自定义 CRUD ──
+
+def _load_custom(meta_key: str) -> list:
+    """从 meta 表加载自定义数据"""
+    from desktop_core.storage import meta_get
+    raw = meta_get(meta_key)
+    if raw:
+        try: return json.loads(raw)
+        except: pass
+    return []
+
+def _save_custom(meta_key: str, items: list):
+    """保存自定义数据到 meta 表"""
+    from desktop_core.storage import meta_set
+    meta_set(meta_key, json.dumps(items, ensure_ascii=False))
+
+async def api_custom_list(request):
+    """列出某类型的自定义资源"""
+    meta_key = request.query.get("type", "")
+    if meta_key not in ("custom_prompts", "custom_experts", "custom_skills"):
+        return web.json_response({"items": [], "total": 0})
+    return web.json_response({"items": _load_custom(meta_key), "total": 0})
+
+async def api_custom_save(request):
+    """保存自定义资源（添加/编辑）"""
+    try:
+        body = await request.json()
+        meta_key = body.get("type", "")
+        if meta_key not in ("custom_prompts", "custom_experts", "custom_skills"):
+            return web.json_response({"error": "无效的类型"}, status=400)
+        item = body.get("item", {})
+        items = _load_custom(meta_key)
+        idx = body.get("index", -1)
+        if idx >= 0 and idx < len(items):
+            items[idx] = item
+        else:
+            items.insert(0, item)  # 新添加的放最前面
+        _save_custom(meta_key, items)
+        return web.json_response({"ok": True, "total": len(items)})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+async def api_custom_delete(request):
+    """删除自定义资源"""
+    try:
+        body = await request.json()
+        meta_key = body.get("type", "")
+        if meta_key not in ("custom_prompts", "custom_experts", "custom_skills"):
+            return web.json_response({"error": "无效的类型"}, status=400)
+        idx = body.get("index", -1)
+        items = _load_custom(meta_key)
+        if 0 <= idx < len(items):
+            items.pop(idx)
+            _save_custom(meta_key, items)
+        return web.json_response({"ok": True})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
 
 
 # ── 路由注册 ──
@@ -1496,6 +1562,9 @@ def setup_routes(app):
     app.router.add_get("/api/github/prompts", api_prompts_github)
     app.router.add_get("/api/github/experts", api_experts_list)
     app.router.add_get("/api/github/skills", api_skills_list)
+    app.router.add_get("/api/custom/list", api_custom_list)
+    app.router.add_post("/api/custom/save", api_custom_save)
+    app.router.add_post("/api/custom/delete", api_custom_delete)
     app.router.add_post("/api/desktop/prompts", api_desktop_prompts_set)
     app.router.add_post("/api/desktop/prompts/reset", api_desktop_prompts_reset)
 

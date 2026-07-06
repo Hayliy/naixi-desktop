@@ -9,6 +9,7 @@ import { sendChatStream } from "@/lib/stream";
 import ContentRenderer, { type ContentBlock } from "@/components/ContentRenderer";
 import DetailPanel from "@/components/DetailPanel";
 import ProviderSettings from "@/components/ProviderSettings";
+import ResourcePanel from "@/components/ResourcePanel";
 import PromptPanel from "@/components/PromptPanel";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { useAppConfig } from "@/contexts/AppContext";
@@ -24,7 +25,7 @@ import type { ConvItem, MsgItem, ProviderModel } from "@/components/ChatTypes";
 import { convName, QUICK_ACTIONS } from "@/components/ChatTypes";
 import {
   Bot, Trash2, Check, X, ChevronLeft, Sparkles, Settings, FileText, Cpu, MessageCircle,
-  CheckCircle2, Shield, Volume2, Library,
+  CheckCircle2, Shield, Volume2, Library, User,
 } from "lucide-react";
 
 const MODELS: ProviderModel[] = [{ key: "auto", label: "自动路由（默认）", provider_id: 0 }];
