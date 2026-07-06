@@ -78,6 +78,7 @@ export default function ChatPage() {
   const [replyToId, setReplyToId] = useState<number | null>(null);
   const msgEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const shortcutsRef = useRef<{ key: string; desc: string }[]>([]);
   const [streaming, setStreaming] = useState(false);
 
   const stopStreaming = async () => {
@@ -141,31 +142,33 @@ export default function ChatPage() {
     }
   }, [activeKey]);
 
-  // 注册自定义快捷键（从 localStorage 读取 naixi_shortcuts）
+  // 快捷键处理：Tab 开设置 + 自定义快捷键
   useEffect(() => {
+    const raw = localStorage.getItem("naixi_shortcuts");
+    try { shortcutsRef.current = JSON.parse(raw) || []; } catch { shortcutsRef.current = []; }
+
     const handler = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement)?.closest("input,textarea,button,a")) return;
-      try {
-        const raw = localStorage.getItem("naixi_shortcuts");
-        if (!raw) return;
-        const shortcuts: { key: string; desc: string }[] = JSON.parse(raw);
-        for (const s of shortcuts) {
-          const parts = s.key.toLowerCase().split("+");
-          const key = parts.pop() || "";
-          const ctrl = parts.includes("ctrl");
-          const shift = parts.includes("shift");
-          const alt = parts.includes("alt");
-          if (e.key.toLowerCase() === key && e.ctrlKey === ctrl && e.shiftKey === shift && e.altKey === alt) {
-            if (s.desc === "清空对话") {
-              e.preventDefault();
-              handleNew();
-            } else if (s.desc === "发送消息" || s.desc === "换行" || s.desc === "取消/关闭当前弹窗") {
-              // 这些由浏览器/输入框原生处理，不需要拦截
-              return;
-            }
-          }
+      // Tab 开设置
+      if (e.key === "Tab" && !(e.target as HTMLElement)?.closest("input,textarea,button,a")) {
+        e.preventDefault();
+        setShowSettings(s => !s);
+        return;
+      }
+      // 自定义快捷键：不在输入框内时才匹配（输入框内按键让浏览器原生处理）
+      if ((e.target as HTMLElement)?.closest("input,textarea,[contenteditable]")) return;
+      for (const s of shortcutsRef.current) {
+        const parts = s.key.toLowerCase().split("+");
+        const key = parts.pop() || "";
+        if (e.key.toLowerCase() !== key) continue;
+        if (parts.includes("ctrl") !== e.ctrlKey) continue;
+        if (parts.includes("shift") !== e.shiftKey) continue;
+        if (parts.includes("alt") !== e.altKey) continue;
+        if (s.desc === "清空对话") {
+          e.preventDefault();
+          handleNew();
+          return;
         }
-      } catch {}
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
