@@ -1035,6 +1035,9 @@ async def api_chat_stream(request):
         # 清理旧任务（防止长期积累）
         try: task_mgr.clean_old_tasks(max_age=3600)
         except: pass
+        # 清理上一轮 session 的工具发现缓存
+        try: tools.clear_discovered()
+        except: pass
 
         # 注册取消事件（供前端终止 Agent 循环）
         cancel_event = asyncio.Event()

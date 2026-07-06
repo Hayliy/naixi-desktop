@@ -91,12 +91,13 @@ def get_definitions(category=None):
     ]
 
 def get_fast_definitions():
-    """返回常用工具子集（约 20 个）+ 已连接的 MCP 工具，避免首轮 token 爆炸"""
+    """返回常用工具子集（约 20 个）+ 已连接的 MCP 工具 + 动态发现的工具，避免首轮 token 爆炸"""
     fast_tools = {"search_web", "current_datetime", "calculate", "get_weather",
                    "bash", "find_files", "open_url", "generate_image",
                    "git", "web_fetch", "clipboard", "mkdir",
                    "visualize", "read_image", "read_file", "write_file",
-                   "screenshot", "get_system_info", "list_files", "grep_search"}
+                   "screenshot", "get_system_info", "list_files", "grep_search",
+                   "search_tools"}
     result = [
         {
             "type": "function",
@@ -117,6 +118,8 @@ def get_fast_definitions():
                     result.extend(srv.get_tool_definitions())
     except Exception:
         pass
+    # 额外包含通过 search_tools 发现的 MCP 工具
+    result.extend(get_discovered_definitions())
     return result
 
 async def execute(name, args, context=None):
@@ -1431,6 +1434,64 @@ register("visualize", "生成数据图表（柱状图/饼图）或流程图。�
         "labels": {"type": "string", "description": "标签，逗号分隔，如 一月,二月,三月"},
     }, "required": ["data"]},
     _visualize)
+
+# ── 工具发现机制（MCP 动态注入） ──
+
+async def _search_tools(args, ctx):
+    """搜索当前未展示的可用工具（如 MCP 工具），找到后下一轮自动出现在工具列表中"""
+    keyword = args.get("keyword", "")
+    if not keyword:
+        return "请提供搜索关键词，例如「fetch」「数据库」「GitHub」"
+    mgr = get_mcp_manager()
+    found = []
+    if mgr:
+        for srv_name, srv in mgr._servers.items():
+            if not srv.is_connected:
+                continue
+            for t in srv._tools:
+                name = t.get("name", "")
+                desc = t.get("description", "")
+                kw = keyword.lower()
+                if kw in name.lower() or kw in desc.lower():
+                    # 记录发现的工具到上下文，供下一轮注入
+                    _discovered_mcp_tools[name] = (srv_name, t)
+                    found.append(f"{name}: {desc[:120]}")
+    if found:
+        return f"找到 {len(found)} 个「{keyword}」工具，已自动加载到下一轮：\n" + "\n".join(found)
+    return f"未找到「{keyword}」相关工具"
+
+# 动态注入：记录通过 search_tools 发现的 MCP 工具
+_discovered_mcp_tools: dict = {}
+
+def get_discovered_definitions():
+    """返回通过 search_tools 发现的 MCP 工具定义"""
+    if not _discovered_mcp_tools:
+        return []
+    mgr = get_mcp_manager()
+    if not mgr:
+        return []
+    result = []
+    for name in list(_discovered_mcp_tools.keys()):
+        srv_name, t = _discovered_mcp_tools[name]
+        srv = mgr._servers.get(srv_name)
+        if srv and srv.is_connected:
+            for td in srv.get_tool_definitions():
+                if td.get("function", {}).get("name") == name:
+                    result.append(td)
+    return result
+
+def clear_discovered():
+    """清除上一轮的工具发现缓存"""
+    _discovered_mcp_tools.clear()
+
+register("search_tools", "当你需要某种能力但在当前工具列表中找不到时调用此功能。"
+    "输入关键词搜索可用的额外工具，找到后会自动出现在下一轮的工具列表中。"
+    "例如：搜'fetch'返回网页抓取工具，搜'database'返回数据库工具，搜'git'返回代码工具。"
+    "如果觉得当前工具有点勉强或不确定，也值得搜一下看看有没有更好的。",
+    {"type": "object", "properties": {
+        "keyword": {"type": "string", "description": "搜索关键词，如'fetch''数据库''图片''视频''代码'等"}
+    }, "required": ["keyword"]},
+    _search_tools)
 
 # 加载外部插件
 load_plugins()
