@@ -509,36 +509,11 @@ export default function ChatPage() {
         )}
       </div>
 
-      {/* ─── 统一侧边栏（标签页整合：顶部图标条 + 内容区，不再占额外宽度） ─── */}
+      {/* ─── 统一侧边栏（VSCode 风格：左侧内容 + 右侧图标条） ─── */}
       {sideTab && (
-        <div className="w-80 border-l border-sakura-100 bg-white flex flex-col shrink-0">
-          {/* 顶部标签栏 */}
-          <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-sakura-100 bg-sakura-50 shrink-0">
-            {([
-              ["settings", "设置", Settings],
-              ["resource", "资源", Library],
-              ["prompt", "提示词", FileText],
-              ["detail", "详情", Sparkles],
-              ["task", "任务", CheckCircle2],
-              ["team", "团队", Users],
-            ] as [SideTab, string, any][]).filter(([k]) => k !== "detail" || activeKey).map(([k, label, Icon]) => (
-              <button key={k} onClick={() => setSideTab(t => t === k ? null : k)}
-                title={label}
-                className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] transition-colors ${
-                  sideTab === k ? "bg-white text-sakura-600 shadow-sm" : "text-sakura-400 hover:text-sakura-500 hover:bg-sakura-100"
-                }`}>
-                <Icon size={12} />
-                <span>{label}</span>
-              </button>
-            ))}
-            <div className="flex-1" />
-            <button onClick={() => setSideTab(null)} title="关闭侧边栏"
-              className="flex items-center gap-1 px-1.5 py-1 rounded-md text-[10px] text-sakura-300 hover:text-red-400 hover:bg-red-50 transition-colors">
-              <X size={11} />
-            </button>
-          </div>
+        <div className="flex border-l border-sakura-100 bg-white">
           {/* 内容区 */}
-          <div className="flex-1 flex flex-col min-h-0">
+          <div className="w-80 min-w-[20rem] flex flex-col">
             {sideTab === "detail" && activeKey && <DetailPanel activeKey={activeKey} messageCount={msgs.length} tokenEstimate={realTokens ? (realTokens.input! + realTokens.output!) : 0} modelKey={modelKey} onClose={() => setSideTab(null)} />}
             {sideTab === "resource" && (
               <ResourcePanel onClose={() => setSideTab(null)} onApply={(text, label, type) => {
@@ -555,7 +530,7 @@ export default function ChatPage() {
               }} />
             )}
             {sideTab === "prompt" && (
-              <div className="flex-1 overflow-y-auto px-3 py-3"><ErrorBoundary name="提示词面板"><PromptPanel activeScene={scene} onSceneChange={setScene} /></ErrorBoundary></div>
+              <div className="flex-1 overflow-y-auto"><ErrorBoundary name="提示词面板"><PromptPanel activeScene={scene} onSceneChange={setScene} /></ErrorBoundary></div>
             )}
             {sideTab === "task" && <TaskPanel onClose={() => setSideTab(null)} />}
             {sideTab === "team" && (
@@ -566,8 +541,31 @@ export default function ChatPage() {
               }} />
             )}
             {sideTab === "settings" && (
-              <div className="flex-1 overflow-y-auto px-3 py-3"><ErrorBoundary name="供应商设置"><ProviderSettings /></ErrorBoundary></div>
+              <div className="flex-1 overflow-y-auto p-3"><ErrorBoundary name="供应商设置"><ProviderSettings /></ErrorBoundary></div>
             )}
+          </div>
+          {/* 右侧图标条 */}
+          <div className="w-9 flex flex-col items-center pt-2 gap-1 border-l border-sakura-100 bg-sakura-50 shrink-0">
+            {([
+              ["settings", "模型供应商", Settings],
+              ["resource", "资源库", Library],
+              ["prompt", "提示词", FileText],
+              ["detail", "会话详情", Sparkles],
+              ["task", "任务进度", CheckCircle2],
+              ["team", "专家团队", Users],
+            ] as [SideTab, string, any][]).filter(([k]) => k !== "detail" || activeKey).map(([k, label, Icon]) => (
+              <button key={k} onClick={() => setSideTab(t => t === k ? null : k)}
+                title={label}
+                className={`w-7 h-7 flex items-center justify-center rounded-lg transition-colors ${
+                  sideTab === k ? "bg-sakura-200 text-sakura-600" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-100"
+                }`}>
+                <Icon size={14} />
+              </button>
+            ))}
+            <div className="flex-1" />
+            <button onClick={() => setSideTab(null)} title="关闭侧边栏" className="w-7 h-7 flex items-center justify-center rounded-lg text-sakura-300 hover:text-red-400 mb-2 hover:bg-red-50">
+              <X size={12} />
+            </button>
           </div>
         </div>
       )}
