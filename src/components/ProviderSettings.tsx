@@ -199,8 +199,8 @@ export default function ProviderSettings() {
         </button>
       </div>
 
-      {/* Provider 列表 */}
-      <div className="space-y-1">
+      {/* Provider 列表 - 固定高度，超出滚动 */}
+      <div className="space-y-1 max-h-[320px] overflow-y-auto overflow-x-hidden pr-0.5">
         {providers.length === 0 ? (
           <div className="text-center py-10 text-sakura-300 text-xs">还没有供应商，点击上方添加</div>
         ) : providers.map(p => (
