@@ -194,7 +194,7 @@ export default function ChatPage() {
     setAgentActive(true); setStreaming(true); setIsNewChat(false);
 
     const aiId = Date.now() + 1;
-    const aiMsg: MsgItem = { id: aiId, role: "assistant", content: "", content_blocks: [{ type: "status", state: "loading", text: "思考中..." }], time: Math.floor(Date.now() / 1000) };
+    const aiMsg: MsgItem = { id: aiId, role: "assistant", content: "", content_blocks: [{ type: "status", state: "loading", text: "思考中..." }], time: Math.floor(Date.now() / 1000), expert_name: currentExpert?.name || undefined } as any;
     setMsgs(prev => [...prev, aiMsg]);
 
     const selectedModel = availableModels.find(m => m.key === modelKey);
@@ -249,7 +249,8 @@ export default function ChatPage() {
         content: "",
         content_blocks: [{ type: "status", state: "loading", text: `${member.name} 正在工作...` }],
         time: Math.floor(Date.now() / 1000),
-      };
+        expert_name: member.name,
+      } as any;
       setMsgs(prev => [...prev, aiMsg]);
       // 在下一 tick 获取最新 msgs
       await new Promise(r => setTimeout(r, 50));
@@ -469,6 +470,7 @@ export default function ChatPage() {
                 if (showStarredOnly && !starredMsgs.includes(m.id)) return false;
                 return true;
               }).map((m) => (<MsgBubble key={m.id} msg={m}
+                expertName={(m as any).expert_name || undefined}
                 onEdit={(id, text) => setMsgs(prev => prev.map(msg => msg.id === id ? { ...msg, content: text } : msg))}
                 onRegenerate={(id) => { const idx = msgs.findIndex(x => x.id === id); if (idx > 0 && msgs[idx - 1]?.role === "user") handleSend(msgs[idx - 1].content); }}
                 onDelete={async (id) => {

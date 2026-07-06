@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { apiGet, apiPost } from "@/lib/api";
 import { X, Search, ChevronDown, ChevronUp, Sparkles, User, Cpu, Play, Plus, Trash2, Pencil, Check } from "lucide-react";
 import { useToast } from "@/components/Toast";
+import { getAvatarUrl } from "@/lib/avatar";
 
 type TabType = "prompts" | "experts" | "skills";
 const TAB_LABELS: Record<TabType, string> = { prompts: "提示词", experts: "专家团队", skills: "Skill 技能" };
@@ -186,8 +187,10 @@ export default function ResourcePanel({ onClose, onApply }: {
               <div key={i} className={`bg-sakura-50 border rounded-lg ${item._custom ? "border-purple-200" : "border-sakura-100"}`}>
                 <button onClick={() => setExpanded(isExpanded ? null : `${tab}-${i}`)}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left">
-                  {tab === "experts" ? <User size={11} className="text-sakura-400 shrink-0" /> :
-                   tab === "skills" ? <Cpu size={11} className="text-sakura-400 shrink-0" /> :
+                  {tab === "experts" ? (
+                    <img src={getAvatarUrl(name)} alt={name}
+                      className="w-6 h-6 rounded-full bg-sakura-100 shrink-0" loading="lazy" />
+                  ) : tab === "skills" ? <Cpu size={11} className="text-sakura-400 shrink-0" /> :
                    <Sparkles size={11} className="text-sakura-400 shrink-0" />}
                   <div className="flex-1 min-w-0">
                     <p className="text-[11px] font-medium text-sakura-600 truncate">{name}</p>

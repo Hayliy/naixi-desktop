@@ -5,9 +5,11 @@ import type { MsgItem } from "@/components/ChatTypes";
 import { fmtTime } from "@/components/ChatTypes";
 import { apiGet } from "@/lib/api";
 
-export default function MsgBubble({ msg, onEdit, onRegenerate, onDelete, onStar, onReply, starred }: {
+import { getAvatarUrl } from "@/lib/avatar";
+
+export default function MsgBubble({ msg, onEdit, onRegenerate, onDelete, onStar, onReply, starred, expertName }: {
   msg: MsgItem; onEdit?: (id: number, text: string) => void; onRegenerate?: (id: number) => void; onDelete?: (id: number) => void;
-  onStar?: (id: number) => void; onReply?: (id: number) => void; starred?: boolean;
+  onStar?: (id: number) => void; onReply?: (id: number) => void; starred?: boolean; expertName?: string;
 }) {
   const [copied, setCopied] = useState(false);
   const [speaking, setSpeaking] = useState(false);
@@ -87,10 +89,16 @@ export default function MsgBubble({ msg, onEdit, onRegenerate, onDelete, onStar,
 
   return (
     <div className={`flex items-start gap-2 px-3 py-3 group ${isUser ? "flex-row-reverse" : ""}`}>
-      <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${isUser ? "bg-pink-100 text-pink-500" : "bg-sakura-100 text-sakura-500"}`}>
-        {isUser ? <User size={13} /> : <Bot size={13} />}
+      <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 overflow-hidden ${isUser ? "bg-pink-100 text-pink-500" : "bg-sakura-100 text-sakura-500"}`}>
+        {isUser ? <User size={13} /> : expertName ? (
+          <img src={getAvatarUrl(expertName)} alt={expertName} className="w-full h-full object-cover" />
+        ) : <Bot size={13} />}
       </div>
       <div className={`max-w-[75%] min-w-0 ${isUser ? "items-end" : "items-start"} flex flex-col relative`}>
+        {/* 专家团队模式：显示名称 */}
+        {expertName && !isUser && (
+          <span className="text-[9px] text-sakura-400 mb-0.5 ml-1">{expertName}</span>
+        )}
         {/* 快捷删除按钮：悬浮在气泡右上角，hover 时显示 */}
         {onDelete && (
           <button onClick={() => onDelete(msg.id)}
