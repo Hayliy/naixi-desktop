@@ -174,8 +174,56 @@ def init_tables():
                 time REAL NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_msg_conv ON conv_messages(conv_key, id);
+            CREATE TABLE IF NOT EXISTS avatars (
+                seed TEXT PRIMARY KEY,
+                url TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
         """)
         conn.commit()
+    finally:
+        conn.close()
+
+# ── 头像缓存 ──
+
+def avatar_get(seed: str) -> str | None:
+    """获取缓存的头像 URL"""
+    conn = _get_conn()
+    try:
+        row = conn.execute("SELECT url FROM avatars WHERE seed=?", (seed,)).fetchone()
+        return row["url"] if row else None
+    finally:
+        conn.close()
+
+def avatar_set(seed: str, url: str):
+    """缓存头像 URL"""
+    conn = _get_conn()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO avatars (seed, url, created_at) VALUES (?, ?, datetime('now'))",
+            (seed, url)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+def avatar_count() -> int:
+    """获取已缓存头像总数"""
+    conn = _get_conn()
+    try:
+        row = conn.execute("SELECT COUNT(*) AS cnt FROM avatars").fetchone()
+        return row["cnt"] if row else 0
+    finally:
+        conn.close()
+
+def avatar_list() -> list[dict]:
+    """列出所有缓存头像（按创建时间倒序）"""
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT seed, url, created_at FROM avatars ORDER BY created_at DESC"
+        ).fetchall()
+        return [{"seed": r["seed"], "url": r["url"], "created_at": r["created_at"]} for r in rows]
     finally:
         conn.close()
 

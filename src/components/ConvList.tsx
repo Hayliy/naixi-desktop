@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Search, Plus, MessageCircle, Bot, User, X, Tag, Folder, Star } from "lucide-react";
+import { Search, Plus, MessageCircle, X, Tag, Folder } from "lucide-react";
 import type { ConvItem, MsgItem } from "@/components/ChatTypes";
 import { fmtTime, convName } from "@/components/ChatTypes";
+import { resolveAvatarUrl, getAvatarUrl, AVATAR_KEYS } from "@/lib/avatar";
 
 const GROUPS_KEY = "naixi_groups";
 const TAGS_KEY = "naixi_tags";
@@ -77,8 +78,15 @@ export default function ConvList({
               className={`w-full text-left px-3 py-2.5 border-b border-sakura-50 transition-colors hover:bg-sakura-50 ${activeKey === c.key ? "bg-sakura-100" : ""}`}
               title={`${customNames[c.key] || convName(c.key)} — ${c.last_msg}`}>
               <div className="flex items-start gap-2">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${c.last_role === "assistant" ? "bg-sakura-100 text-sakura-500" : "bg-pink-100 text-pink-500"}`}>
-                  {c.last_role === "assistant" ? <Bot size={14} /> : <User size={14} />}
+                <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 bg-sakura-50">
+                  <img
+                    src={c.last_role === "assistant"
+                      ? resolveAvatarUrl(AVATAR_KEYS.BOT_AVATAR, "奶昔")
+                      : resolveAvatarUrl(AVATAR_KEYS.USER_AVATAR, "用户")}
+                    alt=""
+                    className="w-full h-full object-cover"
+                    onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
+                  />
                 </div>
                 <div className="flex-1 min-w-0 pr-4">
                   <div className="flex items-center justify-between gap-1">

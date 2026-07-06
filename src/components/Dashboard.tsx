@@ -4,6 +4,7 @@ import { AppShell, Sidebar, Header, Main } from "@/components/shell";
 import { AppProvider } from "@/contexts/AppContext";
 import { ToastProvider } from "@/components/Toast";
 import { Card } from "@/components/ui";
+import { loadAvatarCache } from "@/lib/avatar";
 import ChatPage from "@/components/Chat";
 import WorkflowEditor from "@/components/WorkflowEditor";
 import ErrorBoundary from "@/components/ErrorBoundary";
@@ -99,6 +100,9 @@ export default function Dashboard() {
   const [showSetup, setShowSetup] = useState(false);
 
   useEffect(() => {
+    // 加载头像缓存
+    loadAvatarCache();
+
     const fetch = () => {
       apiGet<StatusData>("/api/status").then(setSt).catch(() => {});
       apiGet<NapcatData>("/api/napcat/status").then(setNapcat).catch(() => {});

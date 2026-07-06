@@ -497,6 +497,86 @@ def _find_provider_by_type(provider_type: str) -> dict | None:
     return None
 
 
+# ── 通用画图函数（提取供头像生成复用） ──
+
+async def _generate_image_from_prompt(prompt: str, size: str = "1024*1024") -> str:
+    """调用配置的画图模型生成图片，返回图片 URL（异常时抛出 ValueError）"""
+    provider = _find_provider_by_type("image")
+    if not provider:
+        provider = _find_provider_by_type("chat")
+    if not provider:
+        raise ValueError("未配置画图/对话模型供应商")
+
+    import aiohttp
+    api_url = provider.get("api_url", "").rstrip("/")
+    api_key = provider.get("api_key", "")
+    model = provider.get("model", "")
+
+    from desktop_core.storage import decrypt_api_key
+    decrypted = decrypt_api_key(api_key)
+    if decrypted:
+        api_key = decrypted
+
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    is_dashscope = "dashscope" in api_url or "aliyuncs" in api_url
+
+    if is_dashscope:
+        wanx_url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis"
+        headers["x-dashscope-async"] = "enable"
+        payload = {
+            "model": model or "wanx2.1-t2i-turbo",
+            "input": {"prompt": prompt},
+            "parameters": {"size": size, "n": 1},
+        }
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.post(wanx_url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if resp.status != 200:
+                    err_text = await resp.text()
+                    raise ValueError(f"Wanx 创建任务失败 {resp.status}: {err_text[:200]}")
+                result = await resp.json()
+                task_id = result.get("output", {}).get("task_id", "")
+                if not task_id:
+                    raise ValueError(f"Wanx 未返回任务 ID: {str(result)[:200]}")
+
+            for attempt in range(30):
+                await asyncio.sleep(5)
+                async with session.get(f"https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}", timeout=10) as qr:
+                    if qr.status != 200:
+                        continue
+                    qd = await qr.json()
+                    status = qd.get("output", {}).get("task_status", "")
+                    if status == "SUCCEEDED":
+                        results = qd.get("output", {}).get("results", [])
+                        if results:
+                            return results[0].get("url", "")
+                        raise ValueError("Wanx 成功但无结果")
+                    elif status in ("FAILED", "CANCELED"):
+                        err = qd.get("output", {}).get("failure", "任务失败")
+                        raise ValueError(f"Wanx 生成失败: {err}")
+
+            raise ValueError("Wanx 生成超时")
+    else:
+        payload = {
+            "model": model or "dall-e-3",
+            "prompt": prompt,
+            "n": 1,
+            "size": "1024x1024",
+        }
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.post(api_url, json=payload, timeout=aiohttp.ClientTimeout(total=120)) as resp:
+                if resp.status != 200:
+                    err_text = await resp.text()
+                    raise ValueError(f"API 返回 {resp.status}: {err_text[:200]}")
+                result = await resp.json()
+                if "data" in result and len(result["data"]) > 0:
+                    return result["data"][0].get("url", "")
+                if "output" in result:
+                    results = result["output"].get("results", [])
+                    if results:
+                        return results[0].get("url", "")
+                raise ValueError(f"无法解析返回结果: {str(result)[:200]}")
+
+
 async def api_generate_image(request):
     """调用配置的画图模型生成图片"""
     try:
@@ -504,89 +584,124 @@ async def api_generate_image(request):
         prompt = body.get("prompt", "")
         if not prompt:
             return web.json_response({"error": "缺少提示词"}, status=400)
-
-        provider = _find_provider_by_type("image")
-        if not provider:
-            provider = _find_provider_by_type("chat")
-        if not provider:
-            return web.json_response({"error": "未配置画图/对话模型供应商"}, status=400)
-
-        import aiohttp
-        api_url = provider.get("api_url", "").rstrip("/")
-        api_key = provider.get("api_key", "")
-        model = provider.get("model", "")
-
-        decrypt_key = decrypt_api_key(api_key)
-        if decrypt_key:
-            api_key = decrypt_key
-
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-
-        # 判断是否是百炼 Wanx（需用专用端点+格式）
-        is_dashscope = "dashscope" in api_url or "aliyuncs" in api_url
-
-        if is_dashscope:
-            # Wanx 异步任务模式
-            wanx_url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis"
-            headers["x-dashscope-async"] = "enable"
-            payload = {
-                "model": model or "wanx2.1-t2i-turbo",
-                "input": {"prompt": prompt},
-                "parameters": {"size": "1024*1024", "n": 1},
-            }
-            async with aiohttp.ClientSession(headers=headers) as session:
-                # 创建任务
-                async with session.post(wanx_url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                    if resp.status != 200:
-                        err_text = await resp.text()
-                        return web.json_response({"error": f"Wanx 创建任务失败 {resp.status}: {err_text[:200]}"}, status=502)
-                    result = await resp.json()
-                    task_id = result.get("output", {}).get("task_id", "")
-                    if not task_id:
-                        return web.json_response({"error": f"Wanx 未返回任务 ID: {str(result)[:200]}"}, status=502)
-
-                # 轮询任务结果
-                for attempt in range(30):
-                    await asyncio.sleep(5)
-                    async with session.get(f"https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}", timeout=10) as qr:
-                        if qr.status != 200:
-                            continue
-                        qd = await qr.json()
-                        status = qd.get("output", {}).get("task_status", "")
-                        if status == "SUCCEEDED":
-                            results = qd.get("output", {}).get("results", [])
-                            if results:
-                                return web.json_response({"ok": True, "url": results[0].get("url", "")})
-                            return web.json_response({"error": "Wanx 成功但无结果"}, status=502)
-                        elif status in ("FAILED", "CANCELED"):
-                            err = qd.get("output", {}).get("failure", "任务失败")
-                            return web.json_response({"error": f"Wanx 生成失败: {err}"}, status=502)
-
-                return web.json_response({"error": "Wanx 生成超时"}, status=502)
-        else:
-            # OpenAI 兼容格式
-            payload = {
-                "model": model or "dall-e-3",
-                "prompt": prompt,
-                "n": 1,
-                "size": "1024x1024",
-            }
-            async with aiohttp.ClientSession(headers=headers) as session:
-                async with session.post(api_url, json=payload, timeout=aiohttp.ClientTimeout(total=120)) as resp:
-                    if resp.status != 200:
-                        err_text = await resp.text()
-                        return web.json_response({"error": f"API 返回 {resp.status}: {err_text[:200]}"}, status=502)
-                    result = await resp.json()
-                    if "data" in result and len(result["data"]) > 0:
-                        return web.json_response({"ok": True, "url": result["data"][0].get("url", "")})
-                    if "output" in result:
-                        results = result["output"].get("results", [])
-                        if results:
-                            return web.json_response({"ok": True, "url": results[0].get("url", "")})
-                    return web.json_response({"error": f"无法解析返回结果: {str(result)[:200]}"}, status=502)
-
+        url = await _generate_image_from_prompt(prompt)
+        return web.json_response({"ok": True, "url": url})
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=502)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
+
+
+# ── 头像生成与缓存 ──
+
+ANIME_AVATAR_PROMPT = "二次元猫娘萝莉风格头像，半身肖像，猫耳，可爱萌系，精致插画风，柔和光影"
+
+# 后台生成进度追踪
+_generation_task: asyncio.Task | None = None
+_generation_total = 0
+_generation_completed = 0
+
+async def api_avatar_get(request):
+    """获取头像：查缓存 → 未命中则生成 → 返回"""
+    seed = request.query.get("seed", "")
+    if not seed:
+        return web.json_response({"error": "缺少 seed 参数"}, status=400)
+
+    from desktop_core.storage import avatar_get, avatar_set
+
+    # 查缓存
+    cached = avatar_get(seed)
+    if cached:
+        return web.json_response({"ok": True, "url": cached, "cached": True})
+
+    # 检查是否配置了画图模型
+    provider = _find_provider_by_type("image")
+    if not provider:
+        provider = _find_provider_by_type("chat")
+    if not provider:
+        return web.json_response({"error": "未配置画图模型供应商"}, status=400)
+
+    # 未缓存，生成
+    try:
+        prompt = f"{ANIME_AVATAR_PROMPT}，风格关键词：{seed}"
+        url = await _generate_image_from_prompt(prompt)
+        avatar_set(seed, url)
+        return web.json_response({"ok": True, "url": url, "cached": False})
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=502)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_avatar_prefill(request):
+    """批量预生成头像（后台异步，不阻塞返回）"""
+    global _generation_task, _generation_total, _generation_completed
+
+    if _generation_task is not None and not _generation_task.done():
+        return web.json_response({"ok": False, "error": "已有生成任务在进行中"})
+
+    # 检查是否配置了画图模型
+    provider = _find_provider_by_type("image")
+    if not provider:
+        provider = _find_provider_by_type("chat")
+    if not provider:
+        return web.json_response({"ok": False, "error": "未配置任何画图/对话模型供应商，请先在「模型供应商」中添加"})
+
+    try:
+        body = await request.json() if request.can_read_body else {}
+    except:
+        body = {}
+    count = min(int(body.get("count", 20)), 50)
+    prompt_prefix = body.get("prompt", ANIME_AVATAR_PROMPT)
+
+    _generation_total = count
+    _generation_completed = 0
+
+    async def _fill():
+        global _generation_completed
+        from desktop_core.storage import avatar_count, avatar_get, avatar_set
+        start = avatar_count()
+        for i in range(count):
+            seed = f"avatar-{start + i}"
+            if avatar_get(seed):
+                _generation_completed += 1
+                continue
+            try:
+                prompt = f"{prompt_prefix}，风格种子：{seed}"
+                url = await _generate_image_from_prompt(prompt)
+                avatar_set(seed, url)
+                _generation_completed += 1
+                log.info(f"头像 [{_generation_completed}/{count}] {seed} 已生成")
+            except Exception as e:
+                _generation_completed += 1
+                log.warning(f"头像 [{_generation_completed}/{count}] {seed} 生成失败: {e}")
+                continue
+        log.info(f"头像批量生成完成：共 {count} 个")
+
+    _generation_task = asyncio.create_task(_fill())
+    return web.json_response({"ok": True, "message": f"开始后台预生成 {count} 个头像"})
+
+
+async def api_avatar_gen_status(request):
+    """后台生成进度"""
+    global _generation_task, _generation_total, _generation_completed
+    return web.json_response({
+        "running": _generation_task is not None and not _generation_task.done(),
+        "completed": _generation_completed,
+        "total": _generation_total,
+    })
+
+
+async def api_avatar_list(request):
+    """列出所有已缓存头像"""
+    from desktop_core.storage import avatar_list
+    return web.json_response({"ok": True, "avatars": avatar_list()})
+
+
+async def api_avatar_stats(request):
+    """头像缓存统计"""
+    from desktop_core.storage import avatar_count
+    return web.json_response({"ok": True, "total": avatar_count()})
 
 
 async def api_generate_video(request):
@@ -1551,6 +1666,13 @@ def setup_routes(app):
     app.router.add_post("/api/config/tts", api_config_tts_set)
     app.router.add_post("/api/generate_code", api_generate_code)
     app.router.add_post("/api/search", api_search)
+
+    # 头像生成与缓存
+    app.router.add_get("/api/avatar/get", api_avatar_get)
+    app.router.add_post("/api/avatar/prefill", api_avatar_prefill)
+    app.router.add_get("/api/avatar/gen-status", api_avatar_gen_status)
+    app.router.add_get("/api/avatar/list", api_avatar_list)
+    app.router.add_get("/api/avatar/stats", api_avatar_stats)
 
     # 提示词管理（新版，PromptPanel 使用）
     app.router.add_get("/api/prompts", api_prompts_get)
