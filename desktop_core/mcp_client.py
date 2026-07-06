@@ -41,8 +41,13 @@ class MCPServer:
                 resolved_command = self.command
         import subprocess as _sp
         startup_kw = {}
-        if os.name == "nt":  # Windows: 不弹 cmd 窗口
+        if os.name == "nt":  # Windows: 彻底隐藏 cmd 窗口，不闪屏
             startup_kw["creationflags"] = _sp.CREATE_NO_WINDOW
+            # 额外用 STARTUPINFO 隐藏（对 bat/cmd 有效）
+            si = _sp.STARTUPINFO()
+            si.dwFlags |= _sp.STARTF_USESHOWWINDOW
+            si.wShowWindow = _sp.SW_HIDE
+            startup_kw["startupinfo"] = si
         self._process = await asyncio.create_subprocess_exec(
             resolved_command, *self.args,
             stdin=asyncio.subprocess.PIPE,
