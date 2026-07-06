@@ -1,14 +1,13 @@
-import { X, Layers, MessageSquare, Clock, Cpu, Database, Key } from "lucide-react";
+import { Layers, MessageSquare, Clock, Cpu, Database, Key } from "lucide-react";
 
 interface DetailPanelProps {
   activeKey: string | null;
   messageCount: number;
   tokenEstimate: number;
   modelKey: string;
-  onClose: () => void;
 }
 
-export default function DetailPanel({ activeKey, messageCount, tokenEstimate, modelKey, onClose }: DetailPanelProps) {
+export default function DetailPanel({ activeKey, messageCount, tokenEstimate, modelKey }: DetailPanelProps) {
   if (!activeKey) return null;
 
   const parts = activeKey.split(":");
@@ -16,15 +15,7 @@ export default function DetailPanel({ activeKey, messageCount, tokenEstimate, mo
   const convId = parts[1] || activeKey;
 
   return (
-    <div className="w-48 min-w-[12rem] border-l border-sakura-100 bg-white flex flex-col">
-      <div className="flex items-center justify-between px-3 py-2.5 border-b border-sakura-100">
-        <span className="text-xs font-semibold text-sakura-500">会话详情</span>
-        <button onClick={onClose} className="p-0.5 hover:bg-sakura-50 rounded text-sakura-300 hover:text-sakura-500 transition-colors">
-          <X size={13} />
-        </button>
-      </div>
-
-      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 text-xs">
+    <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 text-xs">
         {/* 基本信息 */}
         <Section title="基本信息">
           <Row icon={<MessageSquare size={12} />} label="类型" value={convType} />
@@ -47,7 +38,6 @@ export default function DetailPanel({ activeKey, messageCount, tokenEstimate, mo
           <Row icon={<Database size={12} />} label="状态" value={messageCount > 0 ? "活跃" : "空"} />
         </Section>
       </div>
-    </div>
   );
 }
 

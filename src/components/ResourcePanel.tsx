@@ -104,14 +104,9 @@ export default function ResourcePanel({ onClose, onApply }: {
   const closeForm = () => { setShowForm(false); setEditIdx(-1); setFName(""); setFPrompt(""); setFDesc(""); setFCat("通用"); };
 
   return (
-    <div className="w-80 min-w-[20rem] border-l border-sakura-100 bg-white flex flex-col h-full">
-      <div className="sticky top-0 bg-white border-b border-sakura-100 px-3 py-2 flex items-center justify-between z-10">
-        <span className="text-xs font-semibold text-sakura-500">资源库</span>
-        <button onClick={onClose} className="p-0.5 hover:bg-sakura-50 rounded text-sakura-300"><X size={13} /></button>
-      </div>
-
+    <div className="flex flex-col h-full">
       {/* Tab */}
-      <div className="flex border-b border-sakura-100">
+      <div className="flex border-b border-sakura-100 shrink-0">
         {(Object.entries(TAB_LABELS) as [TabType, string][]).map(([k, v]) => (
           <button key={k} onClick={() => { setTab(k); setExpanded(null); closeForm(); }}
             className={`flex-1 text-[11px] py-2 text-center font-medium transition-colors ${tab === k ? "text-sakura-600 border-b-2 border-sakura-400" : "text-sakura-300 hover:text-sakura-500"}`}>{v}</button>
