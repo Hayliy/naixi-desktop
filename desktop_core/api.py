@@ -1401,6 +1401,60 @@ async def api_providers(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
+# ── 提示词 / 专家 / Skill API ──
+
+async def api_prompts_github(request):
+    """返回从 GitHub 下载的所有提示词"""
+    import os, json as _json
+    fp = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "prompts", "prompts.json")
+    if os.path.exists(fp):
+        with open(fp, 'r', encoding='utf-8') as f:
+            data = _json.load(f)
+        category = request.query.get("category", "")
+        search = request.query.get("search", "")
+        if category:
+            data = [p for p in data if p.get("category") == category]
+        if search:
+            kw = search.lower()
+            data = [p for p in data if kw in p.get("act", "").lower() or kw in p.get("prompt", "").lower()]
+        return web.json_response({"prompts": data, "total": len(data)})
+    return web.json_response({"prompts": [], "total": 0})
+
+async def api_experts_list(request):
+    """返回专家列表"""
+    import os, json as _json
+    fp = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "prompts", "experts.json")
+    if os.path.exists(fp):
+        with open(fp, 'r', encoding='utf-8') as f:
+            data = _json.load(f)
+        category = request.query.get("category", "")
+        search = request.query.get("search", "")
+        if category:
+            data = [e for e in data if e.get("category") == category]
+        if search:
+            kw = search.lower()
+            data = [e for e in data if kw in e.get("name", "").lower()]
+        return web.json_response({"experts": data, "total": len(data)})
+    return web.json_response({"experts": [], "total": 0})
+
+async def api_skills_list(request):
+    """返回 Skill 列表"""
+    import os, json as _json
+    fp = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "prompts", "skills.json")
+    if os.path.exists(fp):
+        with open(fp, 'r', encoding='utf-8') as f:
+            data = _json.load(f)
+        category = request.query.get("category", "")
+        search = request.query.get("search", "")
+        if category:
+            data = [s for s in data if s.get("category") == category]
+        if search:
+            kw = search.lower()
+            data = [s for s in data if kw in s.get("name", "").lower()]
+        return web.json_response({"skills": data, "total": len(data)})
+    return web.json_response({"skills": [], "total": 0})
+
+
 # ── 路由注册 ──
 
 def setup_routes(app):
@@ -1439,6 +1493,9 @@ def setup_routes(app):
 
     # 提示词管理（旧版，SetupGuide 使用）
     app.router.add_get("/api/desktop/prompts", api_desktop_prompts_get)
+    app.router.add_get("/api/github/prompts", api_prompts_github)
+    app.router.add_get("/api/github/experts", api_experts_list)
+    app.router.add_get("/api/github/skills", api_skills_list)
     app.router.add_post("/api/desktop/prompts", api_desktop_prompts_set)
     app.router.add_post("/api/desktop/prompts/reset", api_desktop_prompts_reset)
 
