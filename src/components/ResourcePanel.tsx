@@ -135,7 +135,7 @@ export default function ResourcePanel({ onClose, onApply }: {
       </div>
 
       {/* 列表 */}
-      <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1">
+      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
         {/* 添加按钮 */}
         {!showForm && (
           <button onClick={() => { setEditIdx(-1); setFName(""); setFPrompt(""); setFDesc(""); setFCat("通用"); setShowForm(true); }}

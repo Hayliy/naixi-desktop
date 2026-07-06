@@ -45,7 +45,7 @@ export default function TaskPanel({ onClose }: { onClose: () => void }) {
           <X size={13} />
         </button>
       </div>
-      <div className="flex-1 overflow-y-auto p-3 space-y-2 text-xs">
+      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 text-xs">
         {loading && tasks.length === 0 ? (
           <div className="flex items-center justify-center py-8 text-sakura-300">
             <Loader2 size={14} className="animate-spin mr-1" /> 加载中...

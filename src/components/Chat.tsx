@@ -530,7 +530,7 @@ export default function ChatPage() {
               }} />
             )}
             {sideTab === "prompt" && (
-              <div className="flex-1 overflow-y-auto"><ErrorBoundary name="提示词面板"><PromptPanel activeScene={scene} onSceneChange={setScene} /></ErrorBoundary></div>
+              <div className="flex-1 overflow-y-auto px-3 py-3"><ErrorBoundary name="提示词面板"><PromptPanel activeScene={scene} onSceneChange={setScene} /></ErrorBoundary></div>
             )}
             {sideTab === "task" && <TaskPanel onClose={() => setSideTab(null)} />}
             {sideTab === "team" && (
@@ -541,7 +541,7 @@ export default function ChatPage() {
               }} />
             )}
             {sideTab === "settings" && (
-              <div className="flex-1 overflow-y-auto p-3"><ErrorBoundary name="供应商设置"><ProviderSettings /></ErrorBoundary></div>
+              <div className="flex-1 overflow-y-auto px-3 py-3"><ErrorBoundary name="供应商设置"><ProviderSettings /></ErrorBoundary></div>
             )}
           </div>
           {/* 右侧图标条 */}

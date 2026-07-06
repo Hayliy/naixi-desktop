@@ -294,7 +294,7 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
       </div>
 
       {/* 专家列表 */}
-      <div className="flex-1 overflow-y-auto min-h-0 px-2 py-1 space-y-0.5">
+      <div className="flex-1 overflow-y-auto min-h-0 px-3 py-3 space-y-3">
         {loading ? (
           <p className="text-[10px] text-sakura-300 text-center py-4">加载中...</p>
         ) : filtered.length === 0 ? (
