@@ -39,11 +39,16 @@ def _start_searxng():
         log.warning(f"SearXNG 未安装，搜索将使用降级方案")
         return
     try:
-        _searxng_proc = subprocess.Popen(
+        import subprocess as _sp
+        startup_kw = {}
+        if os.name == "nt":
+            startup_kw["creationflags"] = _sp.CREATE_NO_WINDOW
+        _searxng_proc = _sp.Popen(
             [SEARXNG_EXE],
             cwd=SEARXNG_DIR,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=_sp.DEVNULL,
+            stderr=_sp.DEVNULL,
+            **startup_kw,
         )
         log.info(f"SearXNG 已启动 (PID={_searxng_proc.pid})")
         # 等待端口可用

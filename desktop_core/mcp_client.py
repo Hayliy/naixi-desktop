@@ -39,12 +39,17 @@ class MCPServer:
                     resolved_command = self.command
             else:
                 resolved_command = self.command
+        import subprocess as _sp
+        startup_kw = {}
+        if os.name == "nt":  # Windows: 不弹 cmd 窗口
+            startup_kw["creationflags"] = _sp.CREATE_NO_WINDOW
         self._process = await asyncio.create_subprocess_exec(
             resolved_command, *self.args,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=merged_env,
+            **startup_kw,
         )
         log.info(f"[MCP] {self.name}: 已启动 {resolved_command} {' '.join(self.args)}")
         # 发送 initialize 请求（首次可能需下载依赖，给 60 秒）
