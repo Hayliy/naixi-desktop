@@ -4,6 +4,7 @@
    ═══════════════════════════════════════════════════════ */
 import { useState, useEffect, useRef } from "react";
 import { apiGet, apiPost } from "@/lib/api";
+import { useToast } from "@/components/Toast";
 import { sendChatStream } from "@/lib/stream";
 import ContentRenderer, { type ContentBlock } from "@/components/ContentRenderer";
 import DetailPanel from "@/components/DetailPanel";
@@ -347,6 +348,7 @@ export default function ChatPage() {
 /* ─── TTS 模式切换按钮 ─── */
 function TtsToggle() {
   const [mode, setMode] = useState<"browser" | "api">("browser");
+  const { notify } = useToast();
 
   useEffect(() => {
     apiGet<{ mode: string }>("/api/config/tts")
@@ -359,7 +361,7 @@ function TtsToggle() {
     try {
       await apiPost("/api/config/tts", { mode: next });
       setMode(next);
-      alert(next === "api" ? "已切换为 AI 语音朗读（需配置语音供应商）" : "已切换为浏览器合成朗读");
+      notify(next === "api" ? "已切换为 AI 语音朗读（需配置语音供应商）" : "已切换为浏览器合成朗读", "info");
     } catch {}
   };
 

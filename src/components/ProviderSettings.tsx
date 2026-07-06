@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Plus, Trash2, Check, X, Loader2, Settings, ChevronDown, ChevronUp, Pencil, Save, Eye, EyeOff, Zap } from "lucide-react";
 import { useAppConfig } from "@/contexts/AppContext";
 import { apiGet, apiPost } from "@/lib/api";
+import { useToast } from "@/components/Toast";
 
 const PROVIDER_TYPES = [
   // ─── 国际 ───
@@ -438,6 +439,7 @@ function EditProviderCard({ provider, onSave, onCancel }: {
 /* ─── MCP 服务器管理 ─── */
 
 function MCPSection() {
+  const { notify } = useToast();
   const [servers, setServers] = useState<Record<string, { command: string; args: string[]; env: Record<string, string> }>>({});
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -500,7 +502,7 @@ function MCPSection() {
   const handleConnect = async () => {
     try {
       const res = await apiPost<{ ok: boolean; tool_count: number }>("/api/mcp/connect");
-      if (res.ok) alert(`MCP 连接成功，当前共 ${res.tool_count} 个工具`);
+      if (res.ok) notify(`MCP 连接成功，当前共 ${res.tool_count} 个工具`, "success");
     } catch {}
   };
 
@@ -508,12 +510,12 @@ function MCPSection() {
     try {
       const res = await apiPost<{ ok: boolean; error?: string; tools?: string[] }>("/api/mcp/test", { name: key });
       if (res.ok) {
-        alert(`✅ ${key} 连接成功！工具: ${(res.tools || []).join(", ")}`);
+        notify(`✅ ${key} 连接成功！工具: ${(res.tools || []).join(", ")}`, "success");
       } else {
-        alert(`❌ ${key} 连接失败: ${res.error || "未知错误"}`);
+        notify(`❌ ${key} 连接失败: ${res.error || "未知错误"}`, "error");
       }
     } catch (e) {
-      alert(`❌ ${key} 测试异常: ${String(e)}`);
+      notify(`❌ ${key} 测试异常: ${String(e)}`, "error");
     }
   };
 
