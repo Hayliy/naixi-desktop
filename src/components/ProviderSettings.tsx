@@ -658,7 +658,7 @@ function MCPSection() {
 const DEFAULT_SHORTCUTS: { key: string; desc: string }[] = [
   { key: "Ctrl+Enter", desc: "发送消息" },
   { key: "Enter", desc: "换行" },
-  { key: "Tab", desc: "打开/关闭快捷键列表" },
+  { key: "Ctrl+,", desc: "打开/关闭设置面板" },
   { key: "Escape", desc: "取消/关闭当前弹窗" },
   { key: "Ctrl+L", desc: "清空对话" },
   { key: "↑ (输入框)", desc: "上一条消息" },

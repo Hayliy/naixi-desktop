@@ -50,10 +50,8 @@ export default function ChatPage() {
     try { return localStorage.getItem("naixi_model_key") || MODELS[0].key; } catch { return MODELS[0].key; }
   });
   const [agentActive, setAgentActive] = useState(false);
-  const [showDetail, setShowDetail] = useState(false);
-  const [showTask, setShowTask] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  const [showPrompt, setShowPrompt] = useState(false);
+  type SideTab = "settings" | "resource" | "prompt" | "detail" | "task" | null;
+  const [sideTab, setSideTab] = useState<SideTab>(null);
   const [scene, setScene] = useState("owner");
   const [customScenes, setCustomScenes] = useState<{ file: string; desc: string }[]>([]);
   const [isNewChat, setIsNewChat] = useState(false);
@@ -68,7 +66,6 @@ export default function ChatPage() {
   const [capabilityAction, setCapabilityAction] = useState<typeof QUICK_ACTIONS[number] | null>(null);
   const [permissionReq, setPermissionReq] = useState<{ id: string; name: string; args: Record<string, unknown> } | null>(null);
   const [fullTrust, setFullTrust] = useState(false);
-  const [showResource, setShowResource] = useState(false);
   const [currentExpert, setCurrentExpert] = useState<{ name: string; prompt: string } | null>(() => {
     try { const r = localStorage.getItem("naixi_expert"); return r ? JSON.parse(r) : null; } catch { return null; }
   });
@@ -142,20 +139,22 @@ export default function ChatPage() {
     }
   }, [activeKey]);
 
-  // 快捷键处理：Tab 开设置 + 自定义快捷键
+  // 快捷键处理：Ctrl+, 开设置 + 自定义快捷键
   useEffect(() => {
     const raw = localStorage.getItem("naixi_shortcuts");
     try { shortcutsRef.current = JSON.parse(raw) || []; } catch { shortcutsRef.current = []; }
 
     const handler = (e: KeyboardEvent) => {
-      // Tab 开设置
-      if (e.key === "Tab" && !(e.target as HTMLElement)?.closest("input,textarea,button,a")) {
+      // Ctrl+, 开/关设置面板
+      if (e.key === "," && e.ctrlKey && !e.shiftKey && !e.altKey) {
         e.preventDefault();
-        setShowSettings(s => !s);
+        setSideTab(t => t === "settings" ? null : "settings");
         return;
       }
-      // 自定义快捷键：不在输入框内时才匹配（输入框内按键让浏览器原生处理）
+      // 自定义快捷键：不在输入框内时才匹配
       if ((e.target as HTMLElement)?.closest("input,textarea,[contenteditable]")) return;
+      // 跳过 Tab（浏览器原生焦点跳转，不参与快捷键匹配）
+      if (e.key === "Tab") return;
       for (const s of shortcutsRef.current) {
         const parts = s.key.toLowerCase().split("+");
         const key = parts.pop() || "";
@@ -303,10 +302,10 @@ export default function ChatPage() {
                     <Sparkles size={10} />
                     <span>{realTokens ? `${(realTokens.input! + realTokens.output!) > 1000 ? `${((realTokens.input! + realTokens.output!) / 1000).toFixed(1)}k` : realTokens.input! + realTokens.output!} tokens` : "-"}</span>
                   </div>
-                  <button onClick={() => setShowSettings(!showSettings)} title="模型设置" className={`p-1.5 rounded transition-colors ${showSettings ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><Settings size={12} /></button>
-                  <button onClick={() => setShowPrompt(!showPrompt)} title="提示词" className={`p-1.5 rounded transition-colors ${showPrompt ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><FileText size={12} /></button>
-                  {activeKey && <button onClick={() => setShowDetail(!showDetail)} title="会话详情" className={`p-1.5 rounded transition-colors ${showDetail ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><Sparkles size={12} /></button>}
-                  <button onClick={() => setShowTask(!showTask)} className={`p-1.5 rounded transition-colors ${showTask ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`} title="任务进度"><CheckCircle2 size={12} /></button>
+                  <button onClick={() => setSideTab(t => t === "settings" ? null : "settings")} title="模型设置" className={`p-1.5 rounded transition-colors ${sideTab === "settings" ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><Settings size={12} /></button>
+                  <button onClick={() => setSideTab(t => t === "prompt" ? null : "prompt")} title="提示词" className={`p-1.5 rounded transition-colors ${sideTab === "prompt" ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><FileText size={12} /></button>
+                  {activeKey && <button onClick={() => setSideTab(t => t === "detail" ? null : "detail")} title="会话详情" className={`p-1.5 rounded transition-colors ${sideTab === "detail" ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><Sparkles size={12} /></button>}
+                  <button onClick={() => setSideTab(t => t === "task" ? null : "task")} className={`p-1.5 rounded transition-colors ${sideTab === "task" ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`} title="任务进度"><CheckCircle2 size={12} /></button>
                   <button onClick={async () => {
                     const next = !fullTrust;
                     try { await apiPost("/api/config/trust", { full_trust: next }); setFullTrust(next); } catch {}
@@ -316,8 +315,8 @@ export default function ChatPage() {
                   </button>
                   <TtsToggle />
                   <ThemeToggle />
-                  <button onClick={() => setShowResource(!showResource)} title="资源库"
-                    className={`p-1.5 rounded transition-colors ${showResource ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}>
+                  <button onClick={() => setSideTab(t => t === "resource" ? null : "resource")} title="资源库"
+                    className={`p-1.5 rounded transition-colors ${sideTab === "resource" ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}>
                     <Library size={12} />
                   </button>
                   {activeKey && <button onClick={() => handleDelete(activeKey)} title="删除会话" className="p-1.5 hover:bg-red-50 rounded text-sakura-300 hover:text-red-500 transition-colors"><Trash2 size={12} /></button>}
@@ -432,33 +431,53 @@ export default function ChatPage() {
         )}
       </div>
 
-      {showDetail && activeKey && <DetailPanel activeKey={activeKey} messageCount={msgs.length} tokenEstimate={realTokens ? (realTokens.input! + realTokens.output!) : 0} modelKey={modelKey} onClose={() => setShowDetail(false)} />}
-
-      {showResource && (
-        <ResourcePanel onClose={() => setShowResource(false)} onApply={(text, label, type) => {
-          if (type === "experts") {
-            // 切换专家
-            setCurrentExpert({ name: label, prompt: text });
-            localStorage.setItem("naixi_expert", JSON.stringify({ name: label, prompt: text }));
-            handleSend(label + " 请以该身份回复");
-          } else if (type === "skills") {
-            // 执行 Skill
-            handleSend("执行 Skill「" + label + "」: " + text);
-          } else {
-            // 应用提示词
-            handleSend("请根据以下提示词回复: " + text);
-          }
-          setShowResource(false);
-        }} />
-      )}
-
-      {showPrompt && (
-        <div className="w-60 min-w-[15rem] border-l border-sakura-100 bg-white flex flex-col">
-          <div className="flex items-center justify-between px-3 py-2 border-b border-sakura-100 shrink-0">
-            <span className="text-xs font-semibold text-sakura-500">提示词</span>
-            <button onClick={() => setShowPrompt(false)} className="p-0.5 hover:bg-sakura-50 rounded text-sakura-300"><X size={13} /></button>
+      {/* ─── 统一侧边栏 ─── */}
+      {sideTab && (
+        <div className="w-72 min-w-[18rem] border-l border-sakura-100 bg-white flex flex-col">
+          {/* 侧边栏头部：Tab 切换按钮 */}
+          <div className="flex items-center border-b border-sakura-100 shrink-0 overflow-x-auto">
+            {([
+              ["settings", "模型供应商", Settings],
+              ["resource", "资源库", Library],
+              ["prompt", "提示词", FileText],
+              ["detail", "会话详情", Sparkles],
+              ["task", "任务进度", CheckCircle2],
+            ] as [SideTab, string, any][]).filter(([k]) => k !== "detail" || activeKey).map(([k, label, Icon]) => (
+              <button key={k} onClick={() => setSideTab(t => t === k ? null : k)}
+                className={`flex items-center gap-1 px-2.5 py-2 text-[10px] font-medium border-b-2 transition-colors shrink-0 ${
+                  sideTab === k ? "border-sakura-400 text-sakura-600" : "border-transparent text-sakura-300 hover:text-sakura-500"
+                }`}>
+                <Icon size={11} />
+                {label}
+              </button>
+            ))}
+            <div className="flex-1" />
+            <button onClick={() => setSideTab(null)} className="p-1.5 mr-1 text-sakura-300 hover:text-sakura-500"><X size={12} /></button>
           </div>
-          <div className="flex-1 overflow-y-auto"><ErrorBoundary name="提示词面板"><PromptPanel activeScene={scene} onSceneChange={setScene} /></ErrorBoundary></div>
+
+          {/* 内容区 */}
+          {sideTab === "detail" && activeKey && <DetailPanel activeKey={activeKey} messageCount={msgs.length} tokenEstimate={realTokens ? (realTokens.input! + realTokens.output!) : 0} modelKey={modelKey} onClose={() => setSideTab(null)} />}
+          {sideTab === "resource" && (
+            <ResourcePanel onClose={() => setSideTab(null)} onApply={(text, label, type) => {
+              if (type === "experts") {
+                setCurrentExpert({ name: label, prompt: text });
+                localStorage.setItem("naixi_expert", JSON.stringify({ name: label, prompt: text }));
+                handleSend(label + " 请以该身份回复");
+              } else if (type === "skills") {
+                handleSend("执行 Skill「" + label + "」: " + text);
+              } else {
+                handleSend("请根据以下提示词回复: " + text);
+              }
+              setSideTab(null);
+            }} />
+          )}
+          {sideTab === "prompt" && (
+            <div className="flex-1 overflow-y-auto"><ErrorBoundary name="提示词面板"><PromptPanel activeScene={scene} onSceneChange={setScene} /></ErrorBoundary></div>
+          )}
+          {sideTab === "task" && <TaskPanel onClose={() => setSideTab(null)} />}
+          {sideTab === "settings" && (
+            <div className="flex-1 overflow-y-auto p-3"><ErrorBoundary name="供应商设置"><ProviderSettings /></ErrorBoundary></div>
+          )}
         </div>
       )}
 
@@ -470,17 +489,6 @@ export default function ChatPage() {
         reqId={permissionReq.id} name={permissionReq.name} args={permissionReq.args}
         onClose={() => setPermissionReq(null)} />}
 
-      {showTask && <TaskPanel onClose={() => setShowTask(false)} />}
-
-      {showSettings && (
-        <div className="w-72 min-w-[18rem] border-l border-sakura-100 bg-white overflow-y-auto">
-          <div className="sticky top-0 bg-white border-b border-sakura-100 px-3 py-2 flex items-center justify-between z-10">
-            <span className="text-xs font-semibold text-sakura-500">模型供应商</span>
-            <button onClick={() => setShowSettings(false)} className="p-0.5 hover:bg-sakura-50 rounded text-sakura-300"><X size={13} /></button>
-          </div>
-          <div className="p-3"><ErrorBoundary name="供应商设置"><ProviderSettings /></ErrorBoundary></div>
-        </div>
-      )}
     </div>
   );
 }
