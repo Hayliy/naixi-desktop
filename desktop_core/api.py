@@ -1082,7 +1082,9 @@ async def api_chat_stream(request):
                         messages = compressed
 
                 # ── 请求 LLM ──
-                current_tools = TOOLS  # 所有工具（含 MCP），36+ 个足够 LLM 决策
+                # 首轮只发 20 核心工具 + MCP，避免 token 爆炸；
+                # 后续轮次 LLM 已了解可用能力，发全部工具
+                current_tools = tools.get_fast_definitions() if round_num == 0 else TOOLS
                 payload = {
                     "model": model,
                     "messages": messages,
