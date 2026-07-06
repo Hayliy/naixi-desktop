@@ -47,12 +47,12 @@ class MCPServer:
             env=merged_env,
         )
         log.info(f"[MCP] {self.name}: 已启动 {resolved_command} {' '.join(self.args)}")
-        # 发送 initialize 请求
+        # 发送 initialize 请求（首次可能需下载依赖，给 60 秒）
         init_result = await self._request("initialize", {
             "protocolVersion": "2025-11-05",
             "capabilities": {},
             "clientInfo": {"name": "naixi-desktop", "version": "1.0"},
-        })
+        }, timeout=60)
         if init_result:
             await self._request("notifications/initialized", {})
             # 获取工具列表
@@ -62,7 +62,7 @@ class MCPServer:
                 log.info(f"[MCP] {self.name}: 发现 {len(self._tools)} 个工具")
         return len(self._tools) > 0
 
-    async def _request(self, method: str, params: dict) -> Optional[dict]:
+    async def _request(self, method: str, params: dict, timeout: float = 10) -> Optional[dict]:
         """发送 JSON-RPC 请求并等待响应"""
         self._req_id += 1
         request = {
@@ -79,7 +79,7 @@ class MCPServer:
             await self._process.stdin.drain()
             
             line = await asyncio.wait_for(
-                self._process.stdout.readline(), timeout=10
+                self._process.stdout.readline(), timeout=timeout
             )
             if line:
                 response = json.loads(line.decode("utf-8").strip())

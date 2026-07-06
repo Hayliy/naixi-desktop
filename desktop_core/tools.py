@@ -1522,8 +1522,31 @@ def get_mcp_manager():
 
 async def connect_mcp_servers():
     """连接所有 MCP 服务器并注册其工具"""
+    # 先重新加载配置（用户可能在 UI 中修改了）
+    reload_mcp_servers()
     mgr = get_mcp_manager()
     count = await mgr.connect_all()
     if count > 0:
         load_mcp_tools(mgr)
     return count
+
+def reload_mcp_servers():
+    """从配置重新加载 MCP 服务器列表（用于 UI 编辑后刷新）"""
+    global _mcp_manager
+    from desktop_core.mcp_client import MCPManager
+    from desktop_core.storage import meta_get
+    import json
+    try:
+        new_mgr = MCPManager()
+        raw = meta_get("desktop_config")
+        if raw:
+            cfg = json.loads(raw)
+            for name, srv in cfg.get("mcp_servers", {}).items():
+                cmd = srv.get("command", "")
+                args = srv.get("args", [])
+                env = srv.get("env", {})
+                if cmd:
+                    new_mgr.add_server(name, cmd, args, env)
+        _mcp_manager = new_mgr
+    except:
+        pass

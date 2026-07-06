@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Plus, Trash2, Check, X, Loader2, Settings, ChevronDown, ChevronUp, Pencil, Save, Eye, EyeOff } from "lucide-react";
+import { Plus, Trash2, Check, X, Loader2, Settings, ChevronDown, ChevronUp, Pencil, Save, Eye, EyeOff, Zap } from "lucide-react";
 import { useAppConfig } from "@/contexts/AppContext";
 import { apiGet, apiPost } from "@/lib/api";
 
@@ -504,6 +504,19 @@ function MCPSection() {
     } catch {}
   };
 
+  const handleTestSingle = async (key: string) => {
+    try {
+      const res = await apiPost<{ ok: boolean; error?: string; tools?: string[] }>("/api/mcp/test", { name: key });
+      if (res.ok) {
+        alert(`✅ ${key} 连接成功！工具: ${(res.tools || []).join(", ")}`);
+      } else {
+        alert(`❌ ${key} 连接失败: ${res.error || "未知错误"}`);
+      }
+    } catch (e) {
+      alert(`❌ ${key} 测试异常: ${String(e)}`);
+    }
+  };
+
   if (loading) return null;
 
   return (
@@ -532,6 +545,11 @@ function MCPSection() {
                 <p className="text-[11px] font-medium text-sakura-600 truncate">{key}</p>
                 <p className="text-[10px] text-sakura-400 truncate font-mono">{srv.command} {srv.args?.join(" ")}</p>
               </div>
+              <button onClick={() => handleTestSingle(key)}
+                className="p-1 rounded hover:bg-teal-50 text-sakura-300 hover:text-teal-500 transition-colors shrink-0"
+                title="测试连接">
+                <Zap size={11} />
+              </button>
               <button onClick={() => handleEdit(key)}
                 className="p-1 rounded hover:bg-sakura-100 text-sakura-300 hover:text-sakura-500 transition-colors shrink-0"
                 title="编辑">

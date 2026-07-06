@@ -1426,6 +1426,7 @@ def setup_routes(app):
     app.router.add_post("/api/mcp/servers", api_mcp_save)
     app.router.add_post("/api/mcp/connect", api_mcp_connect)
     app.router.add_post("/api/mcp/disconnect", api_mcp_disconnect)
+    app.router.add_post("/api/mcp/test", api_mcp_test)
 
     # 启动时连接 MCP 服务器
     app.on_startup.append(_on_startup_mcp)
@@ -1539,6 +1540,34 @@ async def api_mcp_disconnect(request):
         return web.json_response({"ok": True})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_mcp_test(request):
+    """测试单个 MCP 服务器连接"""
+    try:
+        body = await request.json()
+        name = body.get("name", "")
+        if not name:
+            return web.json_response({"ok": False, "error": "缺少服务器名称"})
+        from desktop_core.mcp_client import MCPServer
+        from desktop_core.storage import meta_get
+        import json
+        raw = meta_get("desktop_config")
+        srv_cfg = {}
+        if raw:
+            cfg = json.loads(raw)
+            srv_cfg = cfg.get("mcp_servers", {}).get(name, {})
+        if not srv_cfg.get("command"):
+            return web.json_response({"ok": False, "error": f"未找到服务器「{name}」的配置"})
+        server = MCPServer(name, srv_cfg["command"], srv_cfg.get("args", []), srv_cfg.get("env", {}))
+        ok = await server.connect()
+        tool_names = [t.get("name", "") for t in server._tools]
+        await server.disconnect()
+        if ok:
+            return web.json_response({"ok": True, "tools": tool_names})
+        return web.json_response({"ok": False, "error": "连接失败（初始化超时或无响应）"})
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)[:200]})
 
 
 async def api_tool_permit(request):
