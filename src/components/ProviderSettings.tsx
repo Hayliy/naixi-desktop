@@ -675,7 +675,7 @@ function ShortcutsSettings() {
 
   return (
     <div className="space-y-2 text-xs">
-      <p className="text-[10px] text-sakura-400 mb-1">快捷键列表（按 Tab 打开）</p>
+      <p className="text-[10px] text-sakura-400 mb-1">快捷键列表（按 Ctrl+, 打开设置面板）</p>
       <div className="space-y-1">
         {s.map((item, i) => ei === i ? (
           <div key={i} className="flex items-center gap-1">
