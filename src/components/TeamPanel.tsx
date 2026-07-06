@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
-import { Plus, Trash2, Check, X, ChevronDown, ChevronUp, Save, Users, ArrowUp, ArrowDown, Play } from "lucide-react";
+import { Plus, Trash2, Check, X, ChevronDown, ChevronUp, Save, Users, ArrowUp, ArrowDown, Play, Eye, Pencil } from "lucide-react";
 import { useToast } from "@/components/Toast";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
 
 interface ExpertInfo {
   name: string;
@@ -25,10 +25,10 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
 }) {
   const { notify } = useToast();
   const [experts, setExperts] = useState<ExpertInfo[]>([]);
+  const [gqlCats, setGqlCats] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
-  const [cats, setCats] = useState<string[]>([]);
 
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [teamName, setTeamName] = useState("");
@@ -38,18 +38,33 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
   });
   const [showPresets, setShowPresets] = useState(false);
 
+  // 自定义专家
+  const [customExperts, setCustomExperts] = useState<ExpertInfo[]>(() => {
+    try { return JSON.parse(localStorage.getItem("naixi_custom_experts") || "[]"); }
+    catch { return []; }
+  });
+  const [showForm, setShowForm] = useState(false);
+  const [editIdx, setEditIdx] = useState(-1);
+  const [fName, setFName] = useState("");
+  const [fPrompt, setFPrompt] = useState("");
+  const [fCat, setFCat] = useState("");
+  const [expandedExpert, setExpandedExpert] = useState<string | null>(null);
+
   useEffect(() => {
     apiGet<{ experts: ExpertInfo[]; total: number }>("/api/github/experts")
       .then(d => {
         setExperts(d.experts);
         const c = [...new Set(d.experts.map(e => e.category))].filter(Boolean) as string[];
-        setCats(c);
+        setGqlCats(c);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
-  const filtered = experts.filter(e => {
+  const allExperts = [...customExperts, ...experts];
+  const cats = [...new Set([...customExperts.map(e => e.category), ...gqlCats])].filter(Boolean);
+
+  const filtered = allExperts.filter(e => {
     if (category && e.category !== category) return false;
     if (search && !e.name.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
@@ -100,6 +115,44 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
     onApplyTeam(team, name);
   };
 
+  const openForm = (expert?: ExpertInfo, idx?: number) => {
+    if (expert) {
+      setFName(expert.name);
+      setFPrompt(expert.prompt);
+      setFCat(expert.category);
+      setEditIdx(idx ?? -1);
+    } else {
+      setFName(""); setFPrompt(""); setFCat(category || "");
+      setEditIdx(-1);
+    }
+    setShowForm(true);
+  };
+
+  const saveCustom = () => {
+    if (!fName.trim() || !fPrompt.trim()) { notify("名称和内容不能为空", "warning"); return; }
+    let updated: ExpertInfo[];
+    if (editIdx >= 0) {
+      updated = [...customExperts];
+      updated[editIdx] = { name: fName.trim(), prompt: fPrompt.trim(), category: fCat.trim() || "自定义" };
+    } else {
+      updated = [...customExperts, { name: fName.trim(), prompt: fPrompt.trim(), category: fCat.trim() || "自定义" }];
+    }
+    setCustomExperts(updated);
+    localStorage.setItem("naixi_custom_experts", JSON.stringify(updated));
+    setShowForm(false);
+    notify(editIdx >= 0 ? "已更新" : "已添加自定义专家", "success");
+  };
+
+  const deleteCustom = (idx: number) => {
+    const updated = customExperts.filter((_, i) => i !== idx);
+    setCustomExperts(updated);
+    localStorage.setItem("naixi_custom_experts", JSON.stringify(updated));
+  };
+
+  const toggleExpand = (name: string) => {
+    setExpandedExpert(prev => prev === name ? null : name);
+  };
+
   return (
     <div className="flex-1 w-full border-l border-sakura-100 bg-white flex flex-col h-full">
       {/* 头部 */}
@@ -108,7 +161,7 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
         <button onClick={onClose} className="p-0.5 hover:bg-sakura-50 rounded text-sakura-300"><X size={13} /></button>
       </div>
 
-      {/* 当前组队（固定顶部） */}
+      {/* 当前组队 */}
       <div className="px-3 py-2 border-b border-sakura-100 shrink-0">
         <p className="text-[10px] text-sakura-400 mb-1.5">当前组队 ({team.length}人)</p>
         {team.length === 0 ? (
@@ -144,7 +197,7 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
         </div>
       </div>
 
-      {/* 已保存团队（固定顶部） */}
+      {/* 已保存团队 */}
       {presets.length > 0 && (
         <div className="px-3 py-2 border-b border-sakura-100 shrink-0">
           <button onClick={() => setShowPresets(!showPresets)}
@@ -168,49 +221,100 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
         </div>
       )}
 
-      {/* 专家筛选 + 列表（可滚动） */}
-      <div className="flex-1 overflow-y-auto min-h-0">
-        <div className="px-3 py-2 border-b border-sakura-100">
-          <div className="flex items-center gap-1 mb-1.5">
-            <input value={search} onChange={e => setSearch(e.target.value)}
-              className="flex-1 px-2 py-1 rounded border border-sakura-100 bg-sakura-50 text-[10px] text-sakura-600 placeholder:text-sakura-300"
-              placeholder="搜索专家..." />
-          </div>
-          <div className="flex flex-wrap gap-1">
-            <button onClick={() => setCategory("")}
-              className={`px-1.5 py-0.5 rounded text-[9px] ${!category ? "bg-sakura-200 text-sakura-600" : "bg-sakura-50 text-sakura-400 hover:bg-sakura-100"}`}>全部</button>
-            {cats.map(c => (
-              <button key={c} onClick={() => setCategory(c)}
-                className={`px-1.5 py-0.5 rounded text-[9px] ${category === c ? "bg-sakura-200 text-sakura-600" : "bg-sakura-50 text-sakura-400 hover:bg-sakura-100"}`}>{c}</button>
-            ))}
+      {/* 搜索 + 分类 */}
+      <div className="px-3 py-2 border-b border-sakura-100 shrink-0">
+        <div className="flex items-center gap-1 mb-1.5">
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            className="flex-1 px-2 py-1 rounded border border-sakura-100 bg-sakura-50 text-[10px] text-sakura-600 placeholder:text-sakura-300"
+            placeholder="搜索专家..." />
+        </div>
+        <div className="flex flex-wrap gap-1">
+          <button onClick={() => setCategory("")}
+            className={`px-1.5 py-0.5 rounded text-[9px] ${!category ? "bg-sakura-200 text-sakura-600" : "bg-sakura-50 text-sakura-400 hover:bg-sakura-100"}`}>全部</button>
+          {cats.map(c => (
+            <button key={c} onClick={() => setCategory(c)}
+              className={`px-1.5 py-0.5 rounded text-[9px] ${category === c ? "bg-sakura-200 text-sakura-600" : "bg-sakura-50 text-sakura-400 hover:bg-sakura-100"}`}>{c}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* 添加/编辑表单 */}
+      {showForm && (
+        <div className="px-3 py-2 border-b border-sakura-100 shrink-0 bg-sakura-50/50">
+          <p className="text-[10px] font-medium text-sakura-500 mb-1.5">{editIdx >= 0 ? "编辑专家" : "添加自定义专家"}</p>
+          <div className="space-y-1.5">
+            <input value={fName} onChange={e => setFName(e.target.value)}
+              className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[10px] text-sakura-600" placeholder="专家名称" />
+            <input value={fCat} onChange={e => setFCat(e.target.value)}
+              className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[10px] text-sakura-600" placeholder="分类（如：代码开发）" />
+            <textarea value={fPrompt} onChange={e => setFPrompt(e.target.value)}
+              className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[10px] text-sakura-600 resize-none" rows={3} placeholder="专家提示词..." />
+            <div className="flex justify-end gap-1.5">
+              <button onClick={() => setShowForm(false)}
+                className="px-2 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
+              <button onClick={saveCustom}
+                className="px-3 py-1 rounded text-[10px] bg-sakura-400 text-white">{editIdx >= 0 ? "保存" : "添加"}</button>
+            </div>
           </div>
         </div>
+      )}
 
-        <div className="px-2 py-2 space-y-1">
-          {loading ? (
-            <p className="text-[10px] text-sakura-300 text-center py-4">加载中...</p>
-          ) : filtered.length === 0 ? (
-            <p className="text-[10px] text-sakura-300 text-center py-4">无匹配专家</p>
-          ) : (
-            filtered.slice(0, 50).map((expert, i) => {
-              const inTeam = team.some(t => t.name === expert.name);
-              return (
-                <div key={expert.name + i}
-                  className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-sakura-50 transition-colors">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[10px] text-sakura-600 truncate">{expert.name}</p>
-                    <p className="text-[9px] text-sakura-400 truncate">{expert.category}</p>
-                  </div>
+      {/* 添加专家按钮 */}
+      <div className="px-2 pt-1.5 pb-0.5 shrink-0">
+        <button onClick={() => openForm()}
+          className="flex items-center gap-1 text-[10px] text-sakura-400 hover:text-sakura-500 w-full px-2 py-1 rounded hover:bg-sakura-50">
+          <Plus size={10} /> 添加自定义专家
+        </button>
+      </div>
+
+      {/* 专家列表 */}
+      <div className="flex-1 overflow-y-auto min-h-0 px-2 py-1 space-y-0.5">
+        {loading ? (
+          <p className="text-[10px] text-sakura-300 text-center py-4">加载中...</p>
+        ) : filtered.length === 0 ? (
+          <p className="text-[10px] text-sakura-300 text-center py-4">无匹配专家</p>
+        ) : (
+          filtered.slice(0, 60).map((expert, i) => {
+            const isCustom = i < customExperts.length;
+            const inTeam = team.some(t => t.name === expert.name);
+            const isExpanded = expandedExpert === expert.name;
+            return (
+              <div key={expert.name + (isCustom ? "_c" : "") + i}>
+                <div className={`flex items-center gap-1 px-2 py-1.5 rounded-lg transition-colors ${isExpanded ? "bg-sakura-100" : "hover:bg-sakura-50"}`}>
+                  <button onClick={() => toggleExpand(expert.name)}
+                    className="flex-1 flex items-center gap-2 min-w-0 text-left">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[10px] text-sakura-600 truncate flex items-center gap-1">
+                        {expert.name}
+                        {isCustom && <span className="text-[8px] text-purple-400 font-medium shrink-0">[自定义]</span>}
+                      </p>
+                      <p className="text-[9px] text-sakura-400">{expert.category}</p>
+                    </div>
+                  </button>
+                  {isCustom && (
+                    <>
+                      <button onClick={() => openForm(expert, i)}
+                        className="p-0.5 text-sakura-300 hover:text-sakura-500"><Pencil size={9} /></button>
+                      <button onClick={() => deleteCustom(i)}
+                        className="p-0.5 text-sakura-300 hover:text-red-500"><Trash2 size={9} /></button>
+                    </>
+                  )}
                   <button onClick={() => addMember(expert)} disabled={inTeam}
                     className="p-0.5 text-sakura-300 hover:text-sakura-500 disabled:opacity-20 disabled:cursor-not-allowed"
                     title={inTeam ? "已在团队中" : "添加到团队"}>
                     <Plus size={10} />
                   </button>
                 </div>
-              );
-            })
-          )}
-        </div>
+                {isExpanded && (
+                  <div className="mx-2 mb-1 px-2.5 py-2 rounded bg-sakura-50 border border-sakura-100 text-[9px] text-sakura-500 leading-relaxed whitespace-pre-wrap">
+                    {expert.prompt.length > 500 ? expert.prompt.slice(0, 500) + "..." : expert.prompt}
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+        <div className="h-2" />
       </div>
     </div>
   );
