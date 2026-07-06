@@ -24,7 +24,7 @@ import type { ConvItem, MsgItem, ProviderModel } from "@/components/ChatTypes";
 import { convName, QUICK_ACTIONS } from "@/components/ChatTypes";
 import {
   Bot, Trash2, Check, X, ChevronLeft, Sparkles, Settings, FileText, Cpu, MessageCircle,
-  CheckCircle2, Shield, Volume2,
+  CheckCircle2, Shield, Volume2, Library,
 } from "lucide-react";
 
 const MODELS: ProviderModel[] = [{ key: "auto", label: "自动路由（默认）", provider_id: 0 }];
@@ -66,6 +66,10 @@ export default function ChatPage() {
   const [capabilityAction, setCapabilityAction] = useState<typeof QUICK_ACTIONS[number] | null>(null);
   const [permissionReq, setPermissionReq] = useState<{ id: string; name: string; args: Record<string, unknown> } | null>(null);
   const [fullTrust, setFullTrust] = useState(false);
+  const [showResource, setShowResource] = useState(false);
+  const [currentExpert, setCurrentExpert] = useState<{ name: string; prompt: string } | null>(() => {
+    try { const r = localStorage.getItem("naixi_expert"); return r ? JSON.parse(r) : null; } catch { return null; }
+  });
   const msgEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [streaming, setStreaming] = useState(false);
@@ -250,6 +254,10 @@ export default function ChatPage() {
                     <Shield size={12} />
                   </button>
                   <TtsToggle />
+                  <button onClick={() => setShowResource(!showResource)} title="资源库"
+                    className={`p-1.5 rounded transition-colors ${showResource ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}>
+                    <Library size={12} />
+                  </button>
                   {activeKey && <button onClick={() => handleDelete(activeKey)} title="删除会话" className="p-1.5 hover:bg-red-50 rounded text-sakura-300 hover:text-red-500 transition-colors"><Trash2 size={12} /></button>}
                 </div>
               </div>
@@ -278,6 +286,13 @@ export default function ChatPage() {
                   <Cpu size={9} /><span>Agent</span>
                   {agentMode && <span className="w-1.5 h-1.5 rounded-full bg-teal-500" />}
                 </button>
+                {currentExpert && (
+                  <button onClick={() => { setCurrentExpert(null); localStorage.removeItem("naixi_expert"); }}
+                    className="flex items-center gap-1 px-1.5 py-1 rounded text-[10px] bg-gradient-to-r from-purple-100 to-pink-100 text-purple-600 font-medium">
+                    <User size={9} /><span className="max-w-[80px] truncate">{currentExpert.name}</span>
+                    <X size={9} className="ml-0.5" />
+                  </button>
+                )}
                 {fullTrust && <span className="text-[10px] text-red-400 flex items-center gap-0.5"><Shield size={9} />完全信任</span>}
               </div>
             </div>
@@ -311,6 +326,24 @@ export default function ChatPage() {
       </div>
 
       {showDetail && activeKey && <DetailPanel activeKey={activeKey} messageCount={msgs.length} tokenEstimate={realTokens ? (realTokens.input! + realTokens.output!) : 0} modelKey={modelKey} onClose={() => setShowDetail(false)} />}
+
+      {showResource && (
+        <ResourcePanel onClose={() => setShowResource(false)} onApply={(text, label, type) => {
+          if (type === "experts") {
+            // 切换专家
+            setCurrentExpert({ name: label, prompt: text });
+            localStorage.setItem("naixi_expert", JSON.stringify({ name: label, prompt: text }));
+            handleSend(label + " 请以该身份回复");
+          } else if (type === "skills") {
+            // 执行 Skill
+            handleSend("执行 Skill「" + label + "」: " + text);
+          } else {
+            // 应用提示词
+            handleSend("请根据以下提示词回复: " + text);
+          }
+          setShowResource(false);
+        }} />
+      )}
 
       {showPrompt && (
         <div className="w-60 min-w-[15rem] border-l border-sakura-100 bg-white flex flex-col">
