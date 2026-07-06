@@ -1,18 +1,81 @@
-import { useState } from "react";
-import { Bot, User, Copy, Check, RotateCcw, Edit3, X } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Bot, User, Copy, Check, RotateCcw, Edit3, X, Volume2, VolumeX } from "lucide-react";
 import ContentRenderer from "@/components/ContentRenderer";
 import type { MsgItem } from "@/components/ChatTypes";
 import { fmtTime } from "@/components/ChatTypes";
+import { apiGet } from "@/lib/api";
 
 export default function MsgBubble({ msg, onEdit, onRegenerate, onDelete }: {
   msg: MsgItem; onEdit?: (id: number, text: string) => void; onRegenerate?: (id: number) => void; onDelete?: (id: number) => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const [ttsMode, setTtsMode] = useState<"browser" | "api">("browser");
+  const [audioEl, setAudioEl] = useState<HTMLAudioElement | null>(null);
+
+  // 加载 TTS 配置
+  useEffect(() => {
+    apiGet<{ mode: string }>("/api/config/tts")
+      .then(d => setTtsMode(d.mode as "browser" | "api"))
+      .catch(() => {});
+  }, []);
 
   const copyText = () => {
     navigator.clipboard.writeText(msg.content);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
+  };
+
+  const toggleSpeak = async () => {
+    if (speaking) {
+      if (ttsMode === "browser") window.speechSynthesis.cancel();
+      else if (audioEl) { audioEl.pause(); audioEl.currentTime = 0; }
+      setSpeaking(false);
+      return;
+    }
+    const text = msg.content;
+    if (!text) return;
+
+    if (ttsMode === "browser") {
+      // 浏览器 TTS
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = "zh-CN";
+      utterance.rate = 1.0;
+      utterance.onend = () => setSpeaking(false);
+      utterance.onerror = () => setSpeaking(false);
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
+      setSpeaking(true);
+    } else {
+      // AI 语音（走后端 generate_voice）
+      try {
+        const { apiPost } = await import("@/lib/api");
+        const res = await apiPost<{ ok: boolean; audio?: string; error?: string }>("/api/generate_voice", { text: text.slice(0, 500) });
+        if (res.ok && res.audio) {
+          const audio = new Audio("data:audio/mp3;base64," + res.audio);
+          audio.onended = () => setSpeaking(false);
+          audio.onerror = () => setSpeaking(false);
+          audio.play();
+          setAudioEl(audio);
+          setSpeaking(true);
+        } else {
+          // fallback: use browser TTS
+          const utterance = new SpeechSynthesisUtterance(text);
+          utterance.lang = "zh-CN";
+          utterance.onend = () => setSpeaking(false);
+          utterance.onerror = () => setSpeaking(false);
+          window.speechSynthesis.speak(utterance);
+          setSpeaking(true);
+        }
+      } catch {
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = "zh-CN";
+        utterance.onend = () => setSpeaking(false);
+        utterance.onerror = () => setSpeaking(false);
+        window.speechSynthesis.speak(utterance);
+        setSpeaking(true);
+      }
+    }
   };
 
   const isUser = msg.role === "user";
@@ -48,6 +111,12 @@ export default function MsgBubble({ msg, onEdit, onRegenerate, onDelete }: {
         </div>
         <div className="flex items-center gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
           <span className="text-[10px] text-sakura-300">{fmtTime(msg.time)}</span>
+          {/* 朗读按钮：所有消息都可用 */}
+          {displayContent && (
+            <button onClick={toggleSpeak} className="p-0.5 rounded hover:bg-sakura-50 text-sakura-300 hover:text-sakura-500" title={speaking ? "停止朗读" : "朗读"}>
+              {speaking ? <VolumeX size={10} /> : <Volume2 size={10} />}
+            </button>
+          )}
           {!isUser && (
             <>
               <button onClick={copyText} className="p-0.5 rounded hover:bg-sakura-50 text-sakura-300 hover:text-sakura-500" title="复制">

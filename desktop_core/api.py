@@ -663,6 +663,35 @@ async def api_generate_video(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
+async def api_config_tts_get(request):
+    """获取 TTS 朗读模式配置"""
+    raw = meta_get("desktop_config")
+    mode = "browser"
+    voice = "zh-CN-XiaoxiaoNeural"
+    if raw:
+        try:
+            cfg = json.loads(raw)
+            mode = cfg.get("tts_mode", "browser")
+            voice = cfg.get("tts_voice", "zh-CN-XiaoxiaoNeural")
+        except: pass
+    return web.json_response({"mode": mode, "voice": voice})
+
+async def api_config_tts_set(request):
+    """设置 TTS 朗读模式"""
+    try:
+        body = await request.json()
+        raw = meta_get("desktop_config")
+        cfg = json.loads(raw) if raw else {}
+        if "mode" in body:
+            cfg["tts_mode"] = body["mode"]
+        if "voice" in body:
+            cfg["tts_voice"] = body["voice"]
+        meta_set("desktop_config", json.dumps(cfg, ensure_ascii=False))
+        return web.json_response({"ok": True})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+
 async def api_generate_voice(request):
     """调用配置的语音模型合成语音（支持百炼 CosyVoice 和 OpenAI TTS）"""
     try:
@@ -1398,6 +1427,8 @@ def setup_routes(app):
     app.router.add_post("/api/generate_image", api_generate_image)
     app.router.add_post("/api/generate_video", api_generate_video)
     app.router.add_post("/api/generate_voice", api_generate_voice)
+    app.router.add_get("/api/config/tts", api_config_tts_get)
+    app.router.add_post("/api/config/tts", api_config_tts_set)
     app.router.add_post("/api/generate_code", api_generate_code)
     app.router.add_post("/api/search", api_search)
 

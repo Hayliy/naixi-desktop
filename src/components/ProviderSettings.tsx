@@ -576,7 +576,7 @@ function MCPSection() {
           )}
 
           {/* 服务器列表（固定高度滚动） */}
-          <div className="max-h-[200px] overflow-y-auto space-y-1.5 pr-0.5">
+          <div className="max-h-[300px] overflow-y-auto space-y-1.5 pr-0.5">
           {Object.entries(servers).map(([key, srv]) => (
             <div key={key}>
               {/* 服务器卡片 */}

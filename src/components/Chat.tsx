@@ -23,7 +23,7 @@ import type { ConvItem, MsgItem, ProviderModel } from "@/components/ChatTypes";
 import { convName, QUICK_ACTIONS } from "@/components/ChatTypes";
 import {
   Bot, Trash2, Check, X, ChevronLeft, Sparkles, Settings, FileText, Cpu, MessageCircle,
-  CheckCircle2, Shield,
+  CheckCircle2, Shield, Volume2,
 } from "lucide-react";
 
 const MODELS: ProviderModel[] = [{ key: "auto", label: "自动路由（默认）", provider_id: 0 }];
@@ -248,6 +248,7 @@ export default function ChatPage() {
                     className={`p-1.5 rounded transition-colors ${fullTrust ? "text-red-500 bg-red-50" : "text-sakura-300 hover:text-red-400 hover:bg-red-50"}`}>
                     <Shield size={12} />
                   </button>
+                  <TtsToggle />
                   {activeKey && <button onClick={() => handleDelete(activeKey)} title="删除会话" className="p-1.5 hover:bg-red-50 rounded text-sakura-300 hover:text-red-500 transition-colors"><Trash2 size={12} /></button>}
                 </div>
               </div>
@@ -340,5 +341,33 @@ export default function ChatPage() {
         </div>
       )}
     </div>
+  );
+}
+
+/* ─── TTS 模式切换按钮 ─── */
+function TtsToggle() {
+  const [mode, setMode] = useState<"browser" | "api">("browser");
+
+  useEffect(() => {
+    apiGet<{ mode: string }>("/api/config/tts")
+      .then(d => setMode(d.mode as "browser" | "api"))
+      .catch(() => {});
+  }, []);
+
+  const toggle = async () => {
+    const next = mode === "browser" ? "api" : "browser";
+    try {
+      await apiPost("/api/config/tts", { mode: next });
+      setMode(next);
+      alert(next === "api" ? "已切换为 AI 语音朗读（需配置语音供应商）" : "已切换为浏览器合成朗读");
+    } catch {}
+  };
+
+  return (
+    <button onClick={toggle}
+      title={mode === "api" ? "AI 语音朗读（点击切换为浏览器合成）" : "浏览器合成朗读（点击切换为 AI 语音）"}
+      className={`p-1.5 rounded transition-colors ${mode === "api" ? "text-purple-500 bg-purple-50" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}>
+      <Volume2 size={12} />
+    </button>
   );
 }
