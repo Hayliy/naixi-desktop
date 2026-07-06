@@ -700,6 +700,11 @@ function ShortcutsSettings() {
         className="flex items-center gap-1 text-[10px] text-sakura-400 hover:text-sakura-500">
         <Plus size={10} /> 添加快捷键
       </button>
+      <button onClick={() => save(DEFAULT_SHORTCUTS)}
+        className="w-full mt-1 px-2.5 py-1 rounded-lg text-[10px] border border-sakura-100 text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 transition-colors">
+        恢复默认
+      </button>
+      <p className="text-[9px] text-sakura-300 mt-1">部分快捷键（如 Ctrl+L 清空对话）需要页面刷新后生效。</p>
     </div>
   );
 }

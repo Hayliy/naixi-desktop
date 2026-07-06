@@ -141,13 +141,31 @@ export default function ChatPage() {
     }
   }, [activeKey]);
 
-  // 快捷键：Tab 打开设置面板（快捷键列表）
+  // 注册自定义快捷键（从 localStorage 读取 naixi_shortcuts）
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Tab" && !(e.target as HTMLElement)?.closest("input,textarea")) {
-        e.preventDefault();
-        setShowSettings(s => !s);
-      }
+      if ((e.target as HTMLElement)?.closest("input,textarea,button,a")) return;
+      try {
+        const raw = localStorage.getItem("naixi_shortcuts");
+        if (!raw) return;
+        const shortcuts: { key: string; desc: string }[] = JSON.parse(raw);
+        for (const s of shortcuts) {
+          const parts = s.key.toLowerCase().split("+");
+          const key = parts.pop() || "";
+          const ctrl = parts.includes("ctrl");
+          const shift = parts.includes("shift");
+          const alt = parts.includes("alt");
+          if (e.key.toLowerCase() === key && e.ctrlKey === ctrl && e.shiftKey === shift && e.altKey === alt) {
+            if (s.desc === "清空对话") {
+              e.preventDefault();
+              handleNew();
+            } else if (s.desc === "发送消息" || s.desc === "换行" || s.desc === "取消/关闭当前弹窗") {
+              // 这些由浏览器/输入框原生处理，不需要拦截
+              return;
+            }
+          }
+        }
+      } catch {}
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);

@@ -44,6 +44,11 @@ export default function ThemeSettings() {
           <span className="text-[10px] text-sakura-300 ml-auto">{theme === "light" ? "浅色" : "暗色"}</span>
         </div>
       </div>
+
+      <button onClick={() => { setTheme("light"); setHue(350); }}
+        className="w-full px-2.5 py-1 rounded-lg text-[10px] border border-sakura-100 text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 transition-colors">
+        恢复默认主题
+      </button>
     </div>
   );
 }
