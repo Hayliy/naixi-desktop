@@ -10,6 +10,7 @@ import { sendChatStream } from "@/lib/stream";
 import ContentRenderer, { type ContentBlock } from "@/components/ContentRenderer";
 import DetailPanel from "@/components/DetailPanel";
 import ProviderSettings from "@/components/ProviderSettings";
+import AutomationPanel from "@/components/AutomationPanel";
 import ConnectionPanel from "@/components/ConnectionPanel";
 import PreferencesPanel from "@/components/PreferencesPanel";
 import ResourcePanel from "@/components/ResourcePanel";
@@ -31,7 +32,7 @@ import type { ConvItem, MsgItem, ProviderModel } from "@/components/ChatTypes";
 import { convName, QUICK_ACTIONS } from "@/components/ChatTypes";
 import {
   Bot, Trash2, Check, X, ChevronLeft, Sparkles, Settings, FileText, Cpu, MessageCircle,
-  CheckCircle2, Shield, Volume2, Library, User, Palette, Search, Download, Star, Reply, Users, BookOpen, Zap,
+  CheckCircle2, Shield, Volume2, Library, User, Palette, Search, Download, Star, Reply, Users, BookOpen, Zap, Clock,
 } from "lucide-react";
 
 const MODELS: ProviderModel[] = [{ key: "auto", label: "自动路由（默认）", provider_id: 0 }];
@@ -55,7 +56,7 @@ export default function ChatPage() {
     try { return localStorage.getItem("naixi_model_key") || MODELS[0].key; } catch { return MODELS[0].key; }
   });
   const [agentActive, setAgentActive] = useState(false);
-  type SideTab = "settings" | "resource" | "prompt" | "detail" | "task" | "knowledge" | "team" | "preferences" | "connection" | null;
+  type SideTab = "settings" | "resource" | "prompt" | "detail" | "task" | "knowledge" | "team" | "preferences" | "connection" | "automation" | null;
   const [sideTab, setSideTab] = useState<SideTab>(null);
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [teamName, setTeamName] = useState("");
@@ -377,6 +378,7 @@ export default function ChatPage() {
                   <button onClick={() => setSideTab(t => t === "settings" ? null : "settings")} title="模型设置" className={`p-1.5 rounded transition-colors ${sideTab === "settings" ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><Settings size={12} /></button>
                   <button onClick={() => setSideTab(t => t === "connection" ? null : "connection")} title="外部连接" className={`p-1.5 rounded transition-colors ${sideTab === "connection" ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><Zap size={12} /></button>
                   <button onClick={() => setSideTab(t => t === "preferences" ? null : "preferences")} title="外观与偏好" className={`p-1.5 rounded transition-colors ${sideTab === "preferences" ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><Palette size={12} /></button>
+                  <button onClick={() => setSideTab(t => t === "automation" ? null : "automation")} title="自动化" className={`p-1.5 rounded transition-colors ${sideTab === "automation" ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><Clock size={12} /></button>
                   <button onClick={() => setSideTab(t => t === "prompt" ? null : "prompt")} title="提示词" className={`p-1.5 rounded transition-colors ${sideTab === "prompt" ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><FileText size={12} /></button>
                   {activeKey && <button onClick={() => setSideTab(t => t === "detail" ? null : "detail")} title="会话详情" className={`p-1.5 rounded transition-colors ${sideTab === "detail" ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><Sparkles size={12} /></button>}
                   <button onClick={() => setSideTab(t => t === "task" ? null : "task")} className={`p-1.5 rounded transition-colors ${sideTab === "task" ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`} title="任务进度"><CheckCircle2 size={12} /></button>
@@ -548,6 +550,7 @@ export default function ChatPage() {
               }} />
             )}
             {sideTab === "connection" && <ConnectionPanel onClose={() => setSideTab(null)} />}
+            {sideTab === "automation" && <AutomationPanel onClose={() => setSideTab(null)} />}
             {sideTab === "preferences" && <PreferencesPanel onClose={() => setSideTab(null)} />}
             {sideTab === "settings" && (
               <div className="flex-1 overflow-y-auto"><ErrorBoundary name="供应商设置"><ProviderSettings onClose={() => setSideTab(null)} /></ErrorBoundary></div>
@@ -558,6 +561,7 @@ export default function ChatPage() {
             {([
               ["settings", "模型供应商", Settings],
               ["connection", "外部连接", Zap],
+              ["automation", "自动化", Clock],
               ["preferences", "外观与偏好", Palette],
               ["resource", "资源库", Library],
               ["prompt", "提示词", FileText],

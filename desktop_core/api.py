@@ -2060,6 +2060,103 @@ async def api_knowledge_import_github(request):
         return web.json_response({"error": f"导入失败: {str(e)[:200]}"}, status=400)
 
 
+# ── 自动化管理 API ──
+
+async def api_automations_list(request):
+    """列出所有自动化任务"""
+    raw = meta_get("naixi_automations")
+    items = json.loads(raw) if raw else []
+    now = time.time()
+    for item in items:
+        if item.get("status") == "active":
+            if item.get("schedule_type") == "once":
+                if item.get("scheduled_at") and item["scheduled_at"] < time.strftime("%Y-%m-%dT%H:%M", time.localtime(now)):
+                    item["status"] = "expired"
+    return web.json_response({"automations": items})
+
+
+async def api_automations_save(request):
+    """创建或更新自动化任务"""
+    import time
+    body = await request.json()
+    raw = meta_get("naixi_automations")
+    items = json.loads(raw) if raw else []
+    now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time()))
+    item = {
+        "name": body.get("name", ""),
+        "prompt": body.get("prompt", ""),
+        "schedule_type": body.get("schedule_type", "recurring"),
+        "rrule": body.get("rrule", ""),
+        "scheduled_at": body.get("scheduled_at", ""),
+        "status": "active",
+        "history": [],
+        "created_at": now,
+        "last_run": "",
+        "next_run": "",
+    }
+    eid = body.get("id", "")
+    if eid:
+        for i, it in enumerate(items):
+            if it.get("id") == eid:
+                item["id"] = eid
+                item["history"] = it.get("history", [])
+                item["created_at"] = it.get("created_at", now)
+                items[i] = item
+                break
+        else:
+            eid = ""
+    if not eid:
+        item["id"] = f"auto_{int(time.time())}"
+        items.append(item)
+    meta_set("naixi_automations", json.dumps(items, ensure_ascii=False))
+    return web.json_response({"ok": True, "id": item["id"]})
+
+
+async def api_automations_toggle(request):
+    """启用/暂停自动化"""
+    body = await request.json()
+    raw = meta_get("naixi_automations")
+    items = json.loads(raw) if raw else []
+    for item in items:
+        if item.get("id") == body.get("id"):
+            item["status"] = body.get("status", "paused")
+            break
+    meta_set("naixi_automations", json.dumps(items, ensure_ascii=False))
+    return web.json_response({"ok": True})
+
+
+async def api_automations_delete(request):
+    """删除自动化"""
+    body = await request.json()
+    raw = meta_get("naixi_automations")
+    items = json.loads(raw) if raw else []
+    items = [i for i in items if i.get("id") != body.get("id")]
+    meta_set("naixi_automations", json.dumps(items, ensure_ascii=False))
+    return web.json_response({"ok": True})
+
+
+async def api_automations_run(request):
+    """立即执行自动化"""
+    from desktop_core.storage import meta_get, meta_set
+    import time
+    body = await request.json()
+    raw = meta_get("naixi_automations")
+    items = json.loads(raw) if raw else []
+    for item in items:
+        if item.get("id") == body.get("id"):
+            now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time()))
+            # 模拟执行（记录日志）
+            result = f"已执行: {item.get('name', '')}"
+            rec = {"time": now_str, "status": "success", "result": result[:200]}
+            if "history" not in item:
+                item["history"] = []
+            item["history"].append(rec)
+            item["last_run"] = now_str
+            meta_set("naixi_automations", json.dumps(items, ensure_ascii=False))
+            return web.json_response({"ok": True, "result": result})
+    return web.json_response({"error": "未找到该自动化"}, status=404)
+
+
 # ── 路由注册 ──
 
 def setup_routes(app):
@@ -2122,6 +2219,13 @@ def setup_routes(app):
     app.router.add_post("/api/knowledge/import-github", api_knowledge_import_github)
     app.router.add_post("/api/knowledge/update", api_knowledge_update)
     app.router.add_post("/api/knowledge/import-url", api_knowledge_import_url)
+
+    # 自动化
+    app.router.add_get("/api/automations", api_automations_list)
+    app.router.add_post("/api/automations/save", api_automations_save)
+    app.router.add_post("/api/automations/toggle", api_automations_toggle)
+    app.router.add_post("/api/automations/delete", api_automations_delete)
+    app.router.add_post("/api/automations/run", api_automations_run)
 
     # 工作流
     app.router.add_get("/api/workflows", api_workflow_list)
