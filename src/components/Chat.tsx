@@ -24,11 +24,12 @@ import PermissionDialog from "@/components/PermissionDialog";
 import TaskPanel from "@/components/TaskPanel";
 import TeamPanel from "@/components/TeamPanel";
 import type { TeamMember } from "@/components/TeamPanel";
+import KnowledgePanel from "@/components/KnowledgePanel";
 import type { ConvItem, MsgItem, ProviderModel } from "@/components/ChatTypes";
 import { convName, QUICK_ACTIONS } from "@/components/ChatTypes";
 import {
   Bot, Trash2, Check, X, ChevronLeft, Sparkles, Settings, FileText, Cpu, MessageCircle,
-  CheckCircle2, Shield, Volume2, Library, User, Palette, Search, Download, Star, Reply, Users,
+  CheckCircle2, Shield, Volume2, Library, User, Palette, Search, Download, Star, Reply, Users, BookOpen,
 } from "lucide-react";
 
 const MODELS: ProviderModel[] = [{ key: "auto", label: "自动路由（默认）", provider_id: 0 }];
@@ -52,7 +53,7 @@ export default function ChatPage() {
     try { return localStorage.getItem("naixi_model_key") || MODELS[0].key; } catch { return MODELS[0].key; }
   });
   const [agentActive, setAgentActive] = useState(false);
-  type SideTab = "settings" | "resource" | "prompt" | "detail" | "task" | "team" | null;
+  type SideTab = "settings" | "resource" | "prompt" | "detail" | "task" | "knowledge" | "team" | null;
   const [sideTab, setSideTab] = useState<SideTab>(null);
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [teamName, setTeamName] = useState("");
@@ -376,6 +377,7 @@ export default function ChatPage() {
                   {activeKey && <button onClick={() => setSideTab(t => t === "detail" ? null : "detail")} title="会话详情" className={`p-1.5 rounded transition-colors ${sideTab === "detail" ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><Sparkles size={12} /></button>}
                   <button onClick={() => setSideTab(t => t === "task" ? null : "task")} className={`p-1.5 rounded transition-colors ${sideTab === "task" ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`} title="任务进度"><CheckCircle2 size={12} /></button>
                   <button onClick={() => setSideTab(t => t === "team" ? null : "team")} title="专家团队" className={`p-1.5 rounded transition-colors ${sideTab === "team" ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><Users size={12} /></button>
+                  <button onClick={() => setSideTab(t => t === "knowledge" ? null : "knowledge")} title="知识库" className={`p-1.5 rounded transition-colors ${sideTab === "knowledge" ? "bg-sakura-100 text-sakura-500" : "text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50"}`}><BookOpen size={12} /></button>
                   <button onClick={async () => {
                     const next = !fullTrust;
                     try { await apiPost("/api/config/trust", { full_trust: next }); setFullTrust(next); } catch {}
@@ -533,6 +535,7 @@ export default function ChatPage() {
               <div className="flex-1 overflow-y-auto"><ErrorBoundary name="提示词面板"><PromptPanel activeScene={scene} onSceneChange={setScene} /></ErrorBoundary></div>
             )}
             {sideTab === "task" && <TaskPanel onClose={() => setSideTab(null)} />}
+            {sideTab === "knowledge" && <KnowledgePanel onClose={() => setSideTab(null)} />}
             {sideTab === "team" && (
               <TeamPanel onClose={() => setSideTab(null)} onApplyTeam={(members, name) => {
                 setTeam(members);
@@ -552,6 +555,7 @@ export default function ChatPage() {
               ["prompt", "提示词", FileText],
               ["detail", "会话详情", Sparkles],
               ["task", "任务进度", CheckCircle2],
+              ["knowledge", "知识库", BookOpen],
               ["team", "专家团队", Users],
             ] as [SideTab, string, any][]).filter(([k]) => k !== "detail" || activeKey).map(([k, label, Icon]) => (
               <button key={k} onClick={() => setSideTab(t => t === k ? null : k)}

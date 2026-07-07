@@ -1828,6 +1828,83 @@ async def api_custom_delete(request):
         return web.json_response({"error": str(e)}, status=400)
 
 
+# ── 知识库 API ──
+
+async def api_knowledge_list(request):
+    """列出所有知识条目"""
+    from desktop_core.storage import meta_get
+    try:
+        raw = meta_get("knowledge_base")
+        items = json.loads(raw) if raw else []
+        cat = request.query.get("category", "")
+        if cat:
+            items = [i for i in items if i.get("category", "") == cat]
+        # 统计分类
+        from collections import Counter
+        cats = Counter(i.get("category", "未分类") for i in items)
+        categories = [{"name": k, "count": v} for k, v in cats.most_common()]
+        return web.json_response({"items": items, "categories": categories, "total": len(items)})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+
+async def api_knowledge_add(request):
+    """添加知识条目"""
+    from desktop_core.storage import meta_get, meta_set
+    try:
+        body = await request.json()
+        title = body.get("title", "").strip()
+        content = body.get("content", "").strip()
+        category = body.get("category", "默认").strip()
+        if not title:
+            return web.json_response({"error": "标题不能为空"}, status=400)
+        raw = meta_get("knowledge_base")
+        items = json.loads(raw) if raw else []
+        import time
+        items.append({
+            "id": f"k_{int(time.time())}_{len(items)}",
+            "title": title,
+            "content": content,
+            "category": category,
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S")
+        })
+        meta_set("knowledge_base", json.dumps(items, ensure_ascii=False))
+        return web.json_response({"ok": True, "total": len(items)})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+
+async def api_knowledge_delete(request):
+    """删除知识条目"""
+    from desktop_core.storage import meta_get, meta_set
+    try:
+        body = await request.json()
+        kid = body.get("id", "")
+        raw = meta_get("knowledge_base")
+        items = json.loads(raw) if raw else []
+        items = [i for i in items if i.get("id") != kid]
+        meta_set("knowledge_base", json.dumps(items, ensure_ascii=False))
+        return web.json_response({"ok": True, "total": len(items)})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+
+async def api_knowledge_search(request):
+    """搜索知识条目"""
+    from desktop_core.storage import meta_get
+    try:
+        body = await request.json()
+        query = body.get("query", "").strip().lower()
+        if not query:
+            return web.json_response({"items": [], "total": 0})
+        raw = meta_get("knowledge_base")
+        items = json.loads(raw) if raw else []
+        results = [i for i in items if query in i.get("title", "").lower() or query in i.get("content", "").lower()]
+        return web.json_response({"items": results[:10], "total": len(results)})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+
 # ── 路由注册 ──
 
 def setup_routes(app):
@@ -1881,6 +1958,12 @@ def setup_routes(app):
     app.router.add_post("/api/custom/delete", api_custom_delete)
     app.router.add_post("/api/desktop/prompts", api_desktop_prompts_set)
     app.router.add_post("/api/desktop/prompts/reset", api_desktop_prompts_reset)
+
+    # 知识库
+    app.router.add_get("/api/knowledge/list", api_knowledge_list)
+    app.router.add_post("/api/knowledge/add", api_knowledge_add)
+    app.router.add_post("/api/knowledge/delete", api_knowledge_delete)
+    app.router.add_post("/api/knowledge/search", api_knowledge_search)
 
     # 工作流
     app.router.add_get("/api/workflows", api_workflow_list)
