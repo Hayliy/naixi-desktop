@@ -1911,7 +1911,7 @@ async def _add_workflow_node(args: dict, context: dict = None) -> str:
         wid = args.get("workflow_id", "")
         wf = await api_get_workflow(wid)
         if not wf:
-            return json.dumps({"success": False, "error": "工作流不存在"})
+            return json.dumps({"success": False, "error": f"工作流不存在（ID: {wid}），请先调用 list_workflows 确认正确的 ID"})
         nodes_raw = wf.get("nodes", "[]")
         nodes = json.loads(nodes_raw) if isinstance(nodes_raw, str) else list(nodes_raw)
         edges_raw = wf.get("edges", "[]")
