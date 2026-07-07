@@ -209,7 +209,7 @@ export default function ProviderSettings({ onClose }: { onClose?: () => void }) 
       </div>
 
       {/* Provider 列表 - 固定高度，超出滚动 */}
-      <div className="px-3 space-y-1 max-h-[280px] overflow-y-auto overflow-x-hidden">
+      <div className="space-y-1 max-h-[320px] overflow-y-auto overflow-x-hidden pr-0.5">
         {providers.length === 0 ? (
           <div className="text-center py-10 text-sakura-300 text-xs">还没有供应商，点击上方添加</div>
         ) : providers.map(p => (
