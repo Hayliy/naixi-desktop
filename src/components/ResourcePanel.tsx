@@ -78,14 +78,15 @@ export default function ResourcePanel({ onClose, onApply }: {
 
   // 编辑现有自定义
   const handleEdit = (idx: number) => {
-    // idx 是 items 中的位置，需要找到它在自定义列表中的索引
-    const customItem = items[idx];
-    if (!customItem?._custom) return;
-    setFName(customItem.act || customItem.name || "");
-    setFPrompt(customItem.prompt || "");
-    setFDesc(customItem.description || "");
-    setFCat(customItem.category || "通用");
-    setEditIdx(idx);
+    const item = items[idx];
+    if (!item?._custom) return;
+    // 计算自定义条目在 items 中的序号
+    const customIdx = items.slice(0, idx + 1).filter(i => i._custom).length - 1;
+    setFName(item.act || item.name || "");
+    setFPrompt(item.prompt || "");
+    setFDesc(item.description || "");
+    setFCat(item.category || "通用");
+    setEditIdx(customIdx);
     setShowForm(true);
     setExpanded(null);
   };
@@ -94,8 +95,9 @@ export default function ResourcePanel({ onClose, onApply }: {
   const handleDelete = async (idx: number) => {
     const item = items[idx];
     if (!item?._custom) return;
+    const customIdx = items.slice(0, idx + 1).filter(i => i._custom).length - 1;
     try {
-      await apiPost("/api/custom/delete", { type: metaKey, index: idx });
+      await apiPost("/api/custom/delete", { type: metaKey, index: customIdx });
       notify("已删除", "success");
     } catch {}
     setExpanded(null);
@@ -196,6 +198,14 @@ export default function ResourcePanel({ onClose, onApply }: {
                     <p className="text-[11px] font-medium text-sakura-600 truncate">{name}</p>
                     <p className="text-[9px] text-sakura-400">{item.category}{item._custom ? " · 自定义" : ""}</p>
                   </div>
+                  {item._custom && (
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      <button onClick={(e) => { e.stopPropagation(); handleEdit(i); }}
+                        className="p-0.5 rounded text-sakura-300 hover:text-sakura-500 hover:bg-sakura-100" title="编辑"><Pencil size={9} /></button>
+                      <button onClick={(e) => { e.stopPropagation(); handleDelete(i); }}
+                        className="p-0.5 rounded text-sakura-300 hover:text-red-500 hover:bg-red-50" title="删除"><Trash2 size={9} /></button>
+                    </div>
+                  )}
                   {isExpanded ? <ChevronUp size={11} className="text-sakura-300" /> : <ChevronDown size={11} className="text-sakura-300" />}
                 </button>
                 {isExpanded && (
