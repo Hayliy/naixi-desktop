@@ -192,14 +192,20 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        {/* 新建表单（在非空列表顶部） */}
-        {showForm && !editId && items.length > 0 && (
+        {/* 新建表单 */}
+        {showForm && !editId && (
           <div className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs">
             <p className="text-[10px] font-semibold text-sakura-500">新建条目</p>
             <input value={fTitle} onChange={e => setFTitle(e.target.value)}
               placeholder="标题" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
             <textarea value={fContent} onChange={e => setFContent(e.target.value)}
               placeholder="内容" rows={3} className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] resize-none outline-none" />
+            <input value={fCat} onChange={e => setFCat(e.target.value)}
+              placeholder="分类" list="kb-cats-new"
+              className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
+            <datalist id="kb-cats-new">
+              {allCats.map((c, i) => <option key={i} value={c.name} />)}
+            </datalist>
             <div className="flex items-center gap-1">
               <button onClick={closeForm}
                 className="px-3 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
@@ -219,6 +225,12 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
               placeholder="标题" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
             <textarea value={fContent} onChange={e => setFContent(e.target.value)}
               placeholder="内容" rows={3} className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] resize-none outline-none" />
+            <input value={fCat} onChange={e => setFCat(e.target.value)}
+              placeholder="分类" list="kb-cats-edit"
+              className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
+            <datalist id="kb-cats-edit">
+              {allCats.map((c, i) => <option key={i} value={c.name} />)}
+            </datalist>
             <div className="flex items-center gap-1">
               <button onClick={closeForm}
                 className="px-3 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
