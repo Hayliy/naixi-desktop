@@ -107,14 +107,6 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
           <span className="text-sakura-300 font-normal">({data?.total ?? 0})</span>
         </span>
         <div className="flex items-center gap-0.5">
-          <button onClick={() => { setShowImport(!showImport); setShowAdd(false); }} title="从网页导入"
-            className="p-1 rounded text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50">
-            <Globe size={12} />
-          </button>
-          <button onClick={() => { setShowAdd(!showAdd); setShowImport(false); setEditId(null); setNewTitle(""); setNewContent(""); }}
-            className="p-1 rounded text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50">
-            <Plus size={13} />
-          </button>
           <button onClick={onClose} className="p-0.5 hover:bg-sakura-50 rounded text-sakura-300">
             <X size={13} />
           </button>
@@ -187,11 +179,27 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
+      {/* 操作按钮（参考 ResourcePanel 的虚线添加按钮） */}
+      <div className="px-3 py-1.5 border-b border-sakura-100 shrink-0 space-y-1.5">
+        {!showAdd && !showImport && (
+          <div className="flex gap-1.5">
+            <button onClick={() => { setShowAdd(true); setShowImport(false); setEditId(null); setNewTitle(""); setNewContent(""); }}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+              <Plus size={10} /> 添加条目
+            </button>
+            <button onClick={() => { setShowImport(true); setShowAdd(false); }}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+              <Globe size={10} /> 网页导入
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* 列表 */}
       <div className="flex-1 overflow-y-auto min-h-0 px-3 py-3 space-y-2 text-xs">
         {items.length === 0 ? (
           <div className="flex items-center justify-center py-8 text-sakura-300">
-            {search ? "未找到匹配的知识" : "知识库为空，点击右上角 + 添加"}
+            {search ? "未找到匹配的知识" : "知识库为空，点击上方按钮添加"}
           </div>
         ) : items.map(item => (
           <div key={item.id} className="bg-sakura-50 rounded-lg p-3 border border-sakura-100 group">
