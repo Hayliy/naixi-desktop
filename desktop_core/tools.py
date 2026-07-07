@@ -1873,7 +1873,7 @@ async def _create_workflow(args: dict, context: dict = None) -> str:
         # 全工作流校验修复
         nodes, edges, fixes = _validate_and_fix_workflow(nodes, edges)
         result = await api_save_workflow(wid, name, description, nodes, edges)
-        rep = {"success": True, "id": wid, "name": name, "version": result.get("version", 1)}
+        rep = {"success": True, "id": wid, "workflow_id": wid, "name": name, "version": result.get("version", 1)}
         if fixes:
             rep["fixes"] = fixes
         return json.dumps(rep, ensure_ascii=False)
@@ -1895,7 +1895,7 @@ async def _build_workflow(args: dict, context: dict = None) -> str:
         nodes, edges, fixes = _validate_and_fix_workflow(nodes, edges)
         result = await api_save_workflow(wid, name, description, nodes, edges)
         return json.dumps({
-            "success": True, "id": wid, "name": name,
+            "success": True, "id": wid, "workflow_id": wid, "name": name,
             "version": result.get("version", 1),
             "node_count": len(nodes),
             "edge_count": len(edges),
@@ -1927,7 +1927,7 @@ async def _add_workflow_node(args: dict, context: dict = None) -> str:
         edges = json.loads(edges_raw) if isinstance(edges_raw, str) else list(edges_raw)
         
         new_node_raw = args.get("node", {})
-        result_summary = {"success": True, "id": wid, "added": None}
+        result_summary = {"success": True, "id": wid, "workflow_id": wid, "added": None}
         
         if new_node_raw.get("id"):
             existing_ids = {n["id"] for n in nodes}
