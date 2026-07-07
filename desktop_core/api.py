@@ -1343,7 +1343,7 @@ async def api_chat_stream(request):
 
         full_response = ""
         usage_info = None
-        MAX_ROUNDS = 10
+        MAX_ROUNDS = 25
         errors_in_round = 0
 
         # ── 创建任务（存到 SSE 对象上，每次请求独立） ──
@@ -1582,6 +1582,28 @@ async def api_chat_stream(request):
             if conv_key and full_response:
                 try: conv_save_message(conv_key, "assistant", full_response, msg_time=time.time())
                 except: pass
+
+            # ── 所有工具调用完成后汇总（如果没有自动生成回复） ──
+            if not content and tool_calls and not cancel_event.is_set():
+                try:
+                    summary_prompt = "请用中文总结你刚才完成的所有操作和结果，用自然语言告诉用户"
+                    messages.append({"role": "user", "content": summary_prompt})
+                    pay = {"model": model, "messages": messages, "stream": True}
+                    async with aiohttp.ClientSession(headers=headers) as session:
+                        async with session.post(api_url, json=pay, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                            if resp.status == 200:
+                                async for line in resp.content:
+                                    line = line.decode("utf-8", errors="replace").strip()
+                                    if line.startswith("data: ") and line != "data: [DONE]":
+                                        try:
+                                            d = json.loads(line[6:])
+                                            txt = (d.get("choices", [{}])[0].get("delta", {}) or {}).get("content", "")
+                                            if txt:
+                                                full_response = (full_response or "") + txt
+                                                await sse.write(f"event: text-delta\ndata: {json.dumps({'text': txt})}\n\n".encode())
+                                        except: pass
+                except Exception:
+                    pass
 
         except Exception as e:
             await sse.write(f"event: status\ndata: {json.dumps({'state': 'error', 'text': str(e)})}\n\n".encode())
