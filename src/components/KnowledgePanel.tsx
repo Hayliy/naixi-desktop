@@ -37,7 +37,7 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
       const url = `/api/knowledge/list${filterCat ? `?category=${encodeURIComponent(filterCat)}` : ""}`;
       const r = await apiGet<KbData>(url);
       if (r) {
-        if (!keepCats && r.categories) setAllCats(r.categories);
+        if (!keepCats && r.categories && !filterCat) setAllCats(r.categories);
         setData(r);
       }
     } catch {}
