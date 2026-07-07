@@ -1757,27 +1757,50 @@ def _validate_and_fix_workflow(nodes: list, edges: list) -> tuple:
                     edges.append({"id": f"auto_{cid}_false", "source": cid, "target": false_target, "sourceHandle": "false"})
                     fixes.append(f"{cid}: False 分支自动连到 {false_target}")
 
-    # 7. 图连通性检查：start 必须有出边，end 必须有入边
+    # 7. 图连通性检查：确保所有节点都在图中有连接
     source_set = {e["source"] for e in edges}
     target_set = {e["target"] for e in edges}
-    # 已有边的集合（去重用）
     existing_edge_pairs = {(e["source"], e["target"]) for e in edges}
-    # 获取非 start/end 的中间节点列表
-    middle_nodes = [n["id"] for n in nodes
-                    if n.get("data", {}).get("type") not in ("start", "end")]
+    # 按节点出现顺序作为拓扑参考
+    node_order = {n["id"]: i for i, n in enumerate(nodes)}
+
+    # 先修 start 和 end（必须有出/入边到中间节点）
+    middle_ids = [n["id"] for n in nodes if n.get("data", {}).get("type") not in ("start", "end")]
     for n in nodes:
         nid = n["id"]
         ntype = n.get("data", {}).get("type", "")
-        if ntype == "start" and nid not in source_set and middle_nodes:
-            pair = (nid, middle_nodes[0])
+        if ntype == "start" and middle_ids:
+            has_out_to_mid = any(e["source"] == nid and e["target"] in middle_ids for e in edges)
+            if not has_out_to_mid:
+                pair = (nid, middle_ids[0])
+                if pair not in existing_edge_pairs:
+                    edges.append({"id": f"auto_{nid}_to_{middle_ids[0]}", "source": nid, "target": middle_ids[0]})
+                    fixes.append(f"{nid}: start 无出边到中间节点，自动连到 {middle_ids[0]}")
+        if ntype == "end" and middle_ids:
+            has_in_from_mid = any(e["target"] == nid and e["source"] in middle_ids for e in edges)
+            if not has_in_from_mid:
+                pair = (middle_ids[-1], nid)
+                if pair not in existing_edge_pairs:
+                    edges.append({"id": f"auto_{middle_ids[-1]}_to_{nid}", "source": middle_ids[-1], "target": nid})
+                    fixes.append(f"{nid}: end 无中间节点入边，自动从 {middle_ids[-1]} 连入")
+
+    # 再修中间孤立节点：按顺序连成线性链
+    source_set2 = {e["source"] for e in edges}
+    target_set2 = {e["target"] for e in edges}
+    sorted_mids = sorted(middle_ids, key=lambda x: node_order.get(x, 0))
+    # 找到 start 节点和它真正指向中间节点的边
+    start_id = next((n["id"] for n in nodes if n.get("data", {}).get("type") == "start"), None)
+    start_to_mid = start_id and any(e["source"] == start_id and e["target"] in middle_ids for e in edges)
+    prev = start_id if (start_id and not start_to_mid) else None
+    for nid in sorted_mids:
+        has_in = nid in target_set2
+        if not has_in and prev is not None:
+            pair = (prev, nid)
             if pair not in existing_edge_pairs:
-                edges.append({"id": f"auto_{nid}_to_{middle_nodes[0]}", "source": nid, "target": middle_nodes[0]})
-                fixes.append(f"{nid}: start 无出边，自动连到 {middle_nodes[0]}")
-        if ntype == "end" and nid not in target_set and middle_nodes:
-            pair = (middle_nodes[-1], nid)
-            if pair not in existing_edge_pairs:
-                edges.append({"id": f"auto_{middle_nodes[-1]}_to_{nid}", "source": middle_nodes[-1], "target": nid})
-                fixes.append(f"{nid}: end 无入边，自动从 {middle_nodes[-1]} 连入")
+                edges.append({"id": f"auto_{prev}_to_{nid}", "source": prev, "target": nid})
+                fixes.append(f"{nid}: 无入边，自动从 {prev} 连入")
+        if nid in source_set2 or True:
+            prev = nid
 
     return nodes, edges, fixes
 
@@ -1836,10 +1859,6 @@ async def _add_workflow_node(args: dict, context: dict = None) -> str:
         edges_raw = wf.get("edges", "[]")
         edges = json.loads(edges_raw) if isinstance(edges_raw, str) else list(edges_raw)
         
-        # 删除默认 start→end 连线
-        if any(n.get("id") != "start" for n in nodes if n.get("data",{}).get("type") not in ("start", "end")):
-            edges = [e for e in edges if not (e.get("source") == "start" and e.get("target") == "end")]
-        
         new_node_raw = args.get("node", {})
         result_summary = {"success": True, "id": wid, "added": None}
         
@@ -1867,6 +1886,25 @@ async def _add_workflow_node(args: dict, context: dict = None) -> str:
                 edge["sourceHandle"] = new_edge["sourceHandle"]
             edges.append(edge)
             result_summary["edge"] = f"{new_edge['source']}→{new_edge['target']}"
+            # 有新边替代 → 安全删除默认 start→end
+            edges = [e for e in edges if not (e.get("source") == "start" and e.get("target") == "end")]
+
+        # 没传 edge 时自动推断：新节点追加到线性链末尾
+        if not new_edge and new_node_raw.get("id"):
+            has_in = any(e["target"] == new_node["id"] for e in edges)
+            if not has_in:
+                # 找最后一个非 end 非新节点的节点
+                prev_candidates = [n for n in nodes if n["id"] != new_node["id"]
+                                   and n.get("data", {}).get("type") != "end"]
+                if prev_candidates:
+                    prev = prev_candidates[-1]
+                    # 查重
+                    dup = any(e["source"] == prev["id"] and e["target"] == new_node["id"] for e in edges)
+                    if not dup:
+                        edges.append({"id": f'e{len(edges)+1}', "source": prev["id"], "target": new_node["id"]})
+                        result_summary["edge"] = f"{prev['id']}→{new_node['id']} (自动)"
+                        # 安全删除默认 start→end
+                        edges = [e for e in edges if not (e.get("source") == "start" and e.get("target") == "end")]
         
         # 全工作流校验修复
         nodes, edges, fixes = _validate_and_fix_workflow(nodes, edges)
@@ -1922,8 +1960,8 @@ register("add_workflow_node", "向已有工作流添加节点。传入 node.type
     {"type": "object", "properties": {
         "workflow_id": {"type": "string"},
         "node": {"type": "object", "description": "节点: {id, type, config:{...}}" },
-        "edge": {"type": "object", "description": "连线: {source, target, sourceHandle(可选,条件分支必填: \"true\" 或 \"false\")}"}
-    }, "required": ["workflow_id", "node"]}, _add_workflow_node, "workflow")
+        "edge": {"type": "object", "description": "连线: {source, target, sourceHandle(可选,条件分支必填: \"true\" 或 \"false\")}。每个新增节点必须指定连线，否则工作流断连"}
+    }, "required": ["workflow_id", "node", "edge"]}, _add_workflow_node, "workflow")
 
 register("run_workflow", "运行指定工作流并返回执行结果",
     {"type": "object", "properties": {
