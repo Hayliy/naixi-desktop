@@ -1658,6 +1658,85 @@ def _normalize_node(n: dict) -> dict:
     data["config"] = clean_cfg
     return {"id": n.get("id"), "type": "base", "position": n.get("position", {"x":80,"y":200}), "data": data}
 
+
+def _validate_and_fix_workflow(nodes: list, edges: list) -> tuple:
+    """校验并修复工作流节点/边的常见问题（save 前调用）"""
+    fixes = []
+
+    # 获取 condition 节点列表
+    node_map = {n["id"]: n for n in nodes}
+
+    for n in nodes:
+        nid = n.get("id", "?")
+        data = n.get("data", {})
+        ntype = data.get("type", "")
+        cfg = data.get("config", {})
+
+        # 1. start 节点：确保有 input_data
+        if ntype == "start":
+            if not cfg.get("input_data"):
+                cfg["input_data"] = {"query": "", "items": []}
+                fixes.append(f"{nid}: start 节点 input_data 为空，补默认值")
+
+        # 2. 引用字段检查：instruction / content / output / items
+        ref_fields = {
+            "agent": ["instruction"],
+            "knowledge-index": ["content"],
+            "answer": ["output"],
+            "iteration": ["items"],
+        }
+        for field in ref_fields.get(ntype, []):
+            val = cfg.get(field)
+            if isinstance(val, dict) and "source" in val and "field" in val:
+                src, fld = val["source"], val["field"]
+                cfg[field] = f"{{{{{src}.{fld}}}}}"
+                fixes.append(f"{nid}.{field}: 引用对象→模板字符串 {src}.{fld}")
+
+        # 3. code 节点：缺代码就补默认
+        if ntype == "code" and not cfg.get("code"):
+            cfg["code"] = "output = {'status': 'ok', 'message': '默认输出'}"
+            fixes.append(f"{nid}: code 节点无代码，补默认值")
+
+        # 4. condition 节点：缺表达式就补 True
+        if ntype == "condition" and not cfg.get("expression"):
+            cfg["expression"] = "True"
+            fixes.append(f"{nid}: condition 缺表达式，补 True")
+
+        # 5. datasource：配了 inline_data 但没 source_type
+        if ntype == "datasource" and cfg.get("inline_data") and not cfg.get("source_type"):
+            cfg["source_type"] = "inline"
+            fixes.append(f"{nid}: datasource 补 source_type=inline")
+
+        data["config"] = cfg
+
+    # 6. 边检查：condition 节点缺 True/False 分支
+    condition_ids = {n["id"] for n in nodes if n.get("data", {}).get("type") == "condition"}
+    for cid in condition_ids:
+        out_edges = [e for e in edges if e["source"] == cid]
+        has_true = any(e.get("sourceHandle") == "true" for e in out_edges)
+        has_false = any(e.get("sourceHandle") == "false" for e in out_edges)
+
+        # 完全没有 sourceHandle → 视为旧式连线，自动补 handle
+        if out_edges and not any(e.get("sourceHandle") for e in out_edges):
+            for e in out_edges:
+                e["sourceHandle"] = "true"
+            fixes.append(f"{cid}: 无条件 handle 的边全部设为 True 分支")
+
+        # 缺 False 分支且节点存在 → 自动创建 end 节点
+        if not has_false:
+            cid_node = node_map.get(cid)
+            if cid_node:
+                end_id = f"auto_end_{cid}"
+            if end_id not in node_map:
+                nodes.append({
+                    "id": end_id, "type": "base",
+                    "position": {"x": cid_node.get("position", {}).get("x", 1000) + 100, "y": cid_node.get("position", {}).get("y", 200) + 150},
+                    "data": {"label": "自动结束", "type": "end", "status": "", "config": {}}
+                })
+                fixes.append(f"{cid}: False 分支缺目标，自动创建 end 节点 {end_id}")
+
+    return nodes, edges, fixes
+
 async def _list_workflows(args: dict, context: dict = None) -> str:
     """列出所有已保存的工作流"""
     try:
@@ -1690,8 +1769,13 @@ async def _create_workflow(args: dict, context: dict = None) -> str:
             edges = [{"id":"e1","source":"start","target":"end"}]
         # 标准化节点
         nodes = [_normalize_node(n) for n in nodes]
+        # 全工作流校验修复
+        nodes, edges, fixes = _validate_and_fix_workflow(nodes, edges)
         result = await api_save_workflow(wid, name, description, nodes, edges)
-        return json.dumps({"success": True, "id": wid, "name": name, "version": result.get("version", 1)}, ensure_ascii=False)
+        rep = {"success": True, "id": wid, "name": name, "version": result.get("version", 1)}
+        if fixes:
+            rep["fixes"] = fixes
+        return json.dumps(rep, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"success": False, "error": f"创建工作流失败: {e}"}, ensure_ascii=False)
 
@@ -1739,6 +1823,11 @@ async def _add_workflow_node(args: dict, context: dict = None) -> str:
                 edge["sourceHandle"] = new_edge["sourceHandle"]
             edges.append(edge)
             result_summary["edge"] = f"{new_edge['source']}→{new_edge['target']}"
+        
+        # 全工作流校验修复
+        nodes, edges, fixes = _validate_and_fix_workflow(nodes, edges)
+        if fixes:
+            result_summary["fixes"] = fixes
         
         await api_save_workflow(wid, wf.get("name",""), wf.get("description",""), nodes, edges)
         result_summary["node_count"] = len(nodes)
@@ -1797,3 +1886,177 @@ register("run_workflow", "运行指定工作流并返回执行结果",
         "workflow_id": {"type": "string", "description": "工作流 ID"},
         "input": {"type": "object", "description": "输入数据"}
     }, "required": ["workflow_id"]}, _run_workflow, "workflow")
+
+
+def _query_node_schema(args: dict, context: dict = None) -> str:
+    """查询所有节点类型的配置 schema（供 Agent 搭工作流前参考）"""
+    schema = {
+        "start": {
+            "label": "开始节点", "description": "工作流起点，定义输入数据",
+            "config": {
+                "input_data": {"type": "object", "required": True, "desc": "输入数据，包含 query/items/score 等"}
+            }
+        },
+        "end": {
+            "label": "结束节点", "description": "工作流终点",
+            "config": {}
+        },
+        "datasource": {
+            "label": "数据源", "description": "提供静态数据或外部数据源",
+            "config": {
+                "source_type": {"type": "string", "required": True, "desc": "数据源类型: inline/file"},
+                "inline_data": {"type": "object", "desc": "内联数据（source_type=inline 时必填）"},
+                "source_path": {"type": "string", "desc": "外部文件路径"}
+            }
+        },
+        "code": {
+            "label": "代码生成", "description": "用 Python 代码处理数据",
+            "config": {
+                "code": {"type": "string", "required": True, "desc": "Python 代码，变量 input_data 为上游输入，结果存 output"},
+                "language": {"type": "string", "desc": "语言: python(默认)", "default": "python"}
+            }
+        },
+        "http": {
+            "label": "HTTP请求", "description": "发起 HTTP 请求",
+            "config": {
+                "url": {"type": "string", "required": True, "desc": "请求 URL"},
+                "method": {"type": "string", "desc": "GET/POST", "default": "GET"},
+                "headers": {"type": "object", "desc": "请求头"},
+                "timeout": {"type": "number", "desc": "超时(秒)", "default": 10}
+            }
+        },
+        "knowledge": {
+            "label": "知识库", "description": "查询知识库",
+            "config": {
+                "query": {"type": "string", "required": True, "desc": "查询语句"},
+                "top_k": {"type": "number", "desc": "返回条数", "default": 3}
+            }
+        },
+        "document-extractor": {
+            "label": "文档提取", "description": "从文件提取文本",
+            "config": {
+                "file_path": {"type": "string", "required": True, "desc": "文件路径"},
+                "extract_mode": {"type": "string", "desc": "提取模式: text/markdown", "default": "text"}
+            }
+        },
+        "condition": {
+            "label": "条件分支", "description": "条件判断，分流 True/False 分支",
+            "config": {
+                "expression": {"type": "string", "required": True, "desc": "判断表达式，如 1>0"},
+                "comparisons": {"type": "array", "desc": "比较条件列表"},
+                "logic": {"type": "string", "desc": "逻辑: and/or", "default": "and"}
+            },
+            "note": "添加边时必须传 sourceHandle: 'true' 或 'false' 区分分支"
+        },
+        "parameter-extractor": {
+            "label": "参数提取", "description": "从文本提取结构化参数",
+            "config": {
+                "query": {"type": "string", "desc": "提取说明"},
+                "parameters": {"type": "array", "desc": "参数定义列表"}
+            }
+        },
+        "llm": {
+            "label": "LLM", "description": "调用大语言模型",
+            "config": {
+                "prompt": {"type": "string", "required": True, "desc": "用户提示词"},
+                "system_prompt": {"type": "string", "desc": "系统提示词"},
+                "model": {"type": "string", "desc": "模型名"},
+                "temperature": {"type": "number", "desc": "温度 0-2", "default": 0.7},
+                "max_tokens": {"type": "number", "desc": "最大 token 数", "default": 1024}
+            }
+        },
+        "tool": {
+            "label": "工具", "description": "调用内置工具",
+            "config": {
+                "tool_name": {"type": "string", "required": True, "desc": "工具名: search_web/calculate/current_datetime"},
+                "tool_args": {"type": "object", "required": True, "desc": "工具参数"}
+            }
+        },
+        "template-transform": {
+            "label": "模板转换", "description": "用模板格式化输出",
+            "config": {
+                "template": {"type": "string", "required": True, "desc": "模板内容，用 {{node.field}} 引用上游输出"},
+                "variables": {"type": "array", "desc": "变量列表"}
+            }
+        },
+        "question-classifier": {
+            "label": "问题分类", "description": "将输入分类到预定义类别",
+            "config": {
+                "query": {"type": "string", "desc": "待分类文本"},
+                "categories": {"type": "array", "desc": "分类列表 [{name,label}]"}
+            }
+        },
+        "assigner": {
+            "label": "变量赋值", "description": "修改变量值",
+            "config": {
+                "operation": {"type": "string", "desc": "操作: multiply/set/increment"},
+                "assignments": {"type": "array", "desc": "赋值操作列表 [{variable,operation,expression}]"}
+            }
+        },
+        "variable-aggregator": {
+            "label": "变量聚合", "description": "合并多条分支的变量",
+            "config": {
+                "merge_strategy": {"type": "string", "desc": "合并策略: overwrite/merge", "default": "overwrite"}
+            }
+        },
+        "list-operator": {
+            "label": "列表操作", "description": "对列表进行筛选/排序/映射",
+            "config": {
+                "operation": {"type": "string", "desc": "操作: filter/sort/map"},
+                "expression": {"type": "string", "desc": "操作表达式"}
+            }
+        },
+        "iteration": {
+            "label": "迭代", "description": "遍历列表元素执行子流程",
+            "config": {
+                "items": {"type": "ref", "required": True, "desc": "列表数据源，用 {{node.field}} 模板引用"},
+                "mode": {"type": "string", "desc": "模式: sequential/parallel", "default": "sequential"},
+                "parallel_nums": {"type": "number", "desc": "并行数", "default": 3}
+            }
+        },
+        "agent": {
+            "label": "智能体", "description": "AI Agent，可调用工具",
+            "config": {
+                "system_prompt": {"type": "string", "desc": "系统提示词"},
+                "instruction": {"type": "ref", "required": True, "desc": "指令，用 {{node.field}} 模板引用上游输出"},
+                "max_iterations": {"type": "number", "desc": "最大迭代次数", "default": 3},
+                "tools": {"type": "array", "desc": "可用工具列表 [\"search_web\"]"}
+            }
+        },
+        "loop": {
+            "label": "条件循环", "description": "按条件循环执行",
+            "config": {
+                "condition": {"type": "string", "desc": "循环条件表达式"},
+                "variable_name": {"type": "string", "desc": "循环变量名"},
+                "max_iterations": {"type": "number", "desc": "最大次数", "default": 3}
+            }
+        },
+        "knowledge-index": {
+            "label": "知识库索引", "description": "将内容写入知识库",
+            "config": {
+                "content": {"type": "ref", "required": True, "desc": "写入内容，用 {{node.field}} 模板引用"},
+                "title": {"type": "string", "desc": "标题"},
+                "category": {"type": "string", "desc": "分类"}
+            }
+        },
+        "answer": {
+            "label": "中间输出", "description": "输出中间结果",
+            "config": {
+                "output": {"type": "ref", "required": True, "desc": "输出数据，用 {{node.field}} 模板引用"}
+            }
+        },
+        "human-input": {
+            "label": "人工输入", "description": "等待人工输入",
+            "config": {
+                "prompt": {"type": "string", "desc": "提示信息"},
+                "input_type": {"type": "string", "desc": "输入类型: text/confirm", "default": "text"},
+                "auto_confirm": {"type": "boolean", "desc": "是否自动确认"},
+                "auto_value": {"type": "string", "desc": "自动确认时的默认值"}
+            }
+        }
+    }
+    return json.dumps({"success": True, "schema": schema, "count": len(schema)}, ensure_ascii=False)
+
+
+register("query_node_schema", "查询所有工作流节点类型的配置 schema，包括 config key、类型、是否必填、格式要求（如 {{}} 模板引用）。搭工作流前应当先查这个工具了解节点配置规则。",
+    {"type": "object", "properties": {}, "required": []}, _query_node_schema, "workflow")
