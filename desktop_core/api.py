@@ -2139,12 +2139,34 @@ async def api_automations_run(request):
     items = json.loads(raw) if raw else []
     for item in items:
         if item.get("id") == body.get("id"):
+            import aiohttp
             now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time()))
-            # 模拟执行（记录日志）
+            prompt = item.get("prompt", "")
             result = f"已执行: {item.get('name', '')}"
+            # 尝试调 LLM
+            if prompt:
+                try:
+                    raw_cfg = meta_get("desktop_config")
+                    cfg = json.loads(raw_cfg) if raw_cfg else {}
+                    from desktop_core.storage import decrypt_config
+                    decrypt_config(cfg)
+                    providers = cfg.get("api_providers", {})
+                    for pid, pcfg in providers.items():
+                        if pcfg.get("type", "chat") == "chat" and pcfg.get("api_key") and pcfg.get("api_url"):
+                            headers = {"Authorization": f"Bearer {pcfg['api_key']}", "Content-Type": "application/json"}
+                            payload = {"model": pcfg.get("model", "default"), "messages": [{"role": "user", "content": prompt}], "max_tokens": 1024}
+                            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as sess:
+                                async with sess.post(pcfg["api_url"].rstrip("/") + "/chat/completions", headers=headers, json=payload) as resp:
+                                    if resp.status == 200:
+                                        data = await resp.json()
+                                        reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                                        if reply:
+                                            result = f"手动执行: {reply[:200]}"
+                            break
+                except Exception as e:
+                    log.warning(f"手动执行 LLM 失败: {e}")
             rec = {"time": now_str, "status": "success", "result": result[:200]}
-            if "history" not in item:
-                item["history"] = []
+            if "history" not in item: item["history"] = []
             item["history"].append(rec)
             item["last_run"] = now_str
             meta_set("naixi_automations", json.dumps(items, ensure_ascii=False))

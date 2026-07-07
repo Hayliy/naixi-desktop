@@ -146,12 +146,28 @@ async def main():
     # ── 自动化调度器 ──
     async def automation_scheduler():
         """每分钟检查并执行到期的自动化任务"""
-        from desktop_core.storage import meta_get, meta_set
-        import json
+        from desktop_core.storage import meta_get, meta_set, decrypt_config
+        import json, aiohttp
         while True:
             try:
                 raw = meta_get("naixi_automations")
                 items = json.loads(raw) if raw else []
+                cfg_raw = meta_get("desktop_config")
+                cfg = json.loads(cfg_raw) if cfg_raw else {}
+                decrypt_config(cfg)
+                providers = cfg.get("api_providers", {})
+                # 取第一个 chat 类型的 provider
+                api_key = ""
+                api_url = ""
+                model = ""
+                for pid, pcfg in providers.items():
+                    if pcfg.get("type", "chat") == "chat":
+                        api_key = pcfg.get("api_key", "")
+                        api_url = pcfg.get("api_url", "")
+                        model = pcfg.get("model", "")
+                        if api_key and api_url:
+                            break
+
                 now = time.strftime("%Y-%m-%d %H:%M", time.localtime(time.time()))
                 changed = False
                 for item in items:
@@ -159,11 +175,29 @@ async def main():
                         continue
                     if item.get("schedule_type") == "once":
                         scheduled = item.get("scheduled_at", "").replace("T", " ")
-                        # 检查是否已为当前 scheduled_at 执行过
                         last_result = item.get("history", [{}])[-1].get("result", "") if item.get("history") else ""
                         already_done = f"已执行({scheduled.replace(' ', 'T')})" in last_result or f"已执行({scheduled})" in last_result
                         if scheduled and scheduled <= now and not already_done:
-                            rec = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "status": "success", "result": f"已执行({scheduled})"}
+                            prompt = item.get("prompt", "")
+                            result_text = f"已执行({scheduled})"
+                            if prompt and api_key and api_url:
+                                try:
+                                    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+                                    payload = {
+                                        "model": model or "default",
+                                        "messages": [{"role": "user", "content": prompt}],
+                                        "max_tokens": 1024,
+                                    }
+                                    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as sess:
+                                        async with sess.post(api_url.rstrip("/") + "/chat/completions", headers=headers, json=payload) as resp:
+                                            if resp.status == 200:
+                                                data = await resp.json()
+                                                reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                                                if reply:
+                                                    result_text = f"已执行({scheduled}): {reply[:200]}"
+                                except Exception as e:
+                                    log.warning(f"自动化 LLM 调用失败: {e}")
+                            rec = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "status": "success", "result": result_text}
                             if "history" not in item: item["history"] = []
                             item["history"].append(rec)
                             item["last_run"] = rec["time"]
