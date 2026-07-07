@@ -19,6 +19,7 @@ interface KbData {
 
 export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
   const [data, setData] = useState<KbData | null>(null);
+  const [allCats, setAllCats] = useState<{ name: string; count: number }[]>([]);
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState("");
   const [showAdd, setShowAdd] = useState(false);
@@ -31,11 +32,14 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
   const [importCat, setImportCat] = useState("网页导入");
   const [loading, setLoading] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (keepCats = false) => {
     try {
       const url = `/api/knowledge/list${filterCat ? `?category=${encodeURIComponent(filterCat)}` : ""}`;
       const r = await apiGet<KbData>(url);
-      if (r) setData(r);
+      if (r) {
+        if (!keepCats && r.categories) setAllCats(r.categories);
+        setData(r);
+      }
     } catch {}
   }, [filterCat]);
 
@@ -45,7 +49,7 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
     if (!search.trim()) { load(); return; }
     try {
       const r = await apiPost<KbData>("/api/knowledge/search", { query: search });
-      if (r) setData({ items: r.items || [], categories: data?.categories || [], total: r.total || 0 });
+      if (r) setData({ items: r.items || [], categories: allCats, total: r.total || 0 });
     } catch {}
   };
 
@@ -126,14 +130,14 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
       </div>
 
       {/* 分类过滤 */}
-      {cats.length > 0 && (
+      {allCats.length > 0 && (
         <div className="px-3 py-2 border-b border-sakura-100 shrink-0">
           <div className="flex flex-wrap gap-1">
             <button onClick={() => setFilterCat("")}
               className={`text-[10px] px-2 py-0.5 rounded ${!filterCat ? 'bg-sakura-100 text-sakura-600' : 'text-sakura-400 hover:text-sakura-500'}`}>
               全部
             </button>
-            {cats.map((c, i) => (
+            {allCats.map((c, i) => (
               <button key={i} onClick={() => setFilterCat(c.name)}
                 className={`text-[10px] px-2 py-0.5 rounded ${filterCat === c.name ? 'bg-sakura-100 text-sakura-600' : 'text-sakura-400 hover:text-sakura-500'}`}>
                 {c.name}
