@@ -1982,6 +1982,84 @@ async def api_knowledge_import_url(request):
         return web.json_response({"error": f"导入失败: {str(e)[:100]}"}, status=400)
 
 
+async def api_knowledge_import_github(request):
+    """从 GitHub 仓库导入 markdown 文件作为知识条目"""
+    import aiohttp, time, os
+    try:
+        body = await request.json()
+        repo = body.get("repo", "").strip()
+        branch = body.get("branch", "main").strip()
+        path = body.get("path", "").strip()
+        if not repo:
+            return web.json_response({"error": "请填写仓库地址（如 owner/repo）"}, status=400)
+
+        token = ""
+        encrypted = meta_get("github_token") or ""
+        if encrypted:
+            from desktop_core.storage import decrypt_api_key
+            try: token = decrypt_api_key(encrypted)
+            except: pass
+        if not token:
+            token = os.environ.get("GITHUB_TOKEN", "")
+
+        headers = {"Accept": "application/vnd.github.v3+json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        api_url = f"https://api.github.com/repos/{repo}/contents/{path}"
+        if branch:
+            api_url += f"?ref={branch}"
+
+        async with aiohttp.ClientSession(headers=headers) as sess:
+            async with sess.get(api_url) as resp:
+                if resp.status == 403:
+                    return web.json_response({"error": "GitHub API 频率限制，请设置 Token"}, status=429)
+                if resp.status == 404:
+                    return web.json_response({"error": "仓库或路径不存在"}, status=404)
+                if resp.status != 200:
+                    return web.json_response({"error": f"GitHub API 返回 {resp.status}"}, status=resp.status)
+                items = await resp.json()
+
+        if not isinstance(items, list):
+            items = [items]
+
+        md_files = [f for f in items if f.get("type") == "file" and f["name"].endswith((".md", ".mdx"))]
+        if not md_files:
+            return web.json_response({"error": "该路径下没有找到 markdown 文件"}, status=404)
+
+        raw = meta_get("knowledge_base")
+        kb = json.loads(raw) if raw else []
+        imported = 0
+        errors = []
+
+        async with aiohttp.ClientSession(headers=headers) as sess:
+            for f in md_files:
+                try:
+                    async with sess.get(f["download_url"]) as resp:
+                        if resp.status != 200:
+                            errors.append(f["name"]); continue
+                        content = await resp.text()
+                    kb.append({
+                        "id": f"k_{int(time.time())}_{len(kb)}",
+                        "title": f["name"].replace(".md", "").replace(".mdx", ""),
+                        "content": content[:5000],
+                        "category": "github",
+                        "source_url": f["html_url"],
+                        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    })
+                    imported += 1
+                except:
+                    errors.append(f["name"])
+
+        meta_set("knowledge_base", json.dumps(kb, ensure_ascii=False))
+        msg = f"成功导入 {imported} 个文件"
+        if errors:
+            msg += f"，{len(errors)} 个失败"
+        return web.json_response({"ok": True, "imported": imported, "total": len(kb), "message": msg})
+    except Exception as e:
+        return web.json_response({"error": f"导入失败: {str(e)[:200]}"}, status=400)
+
+
 # ── 路由注册 ──
 
 def setup_routes(app):
@@ -2041,6 +2119,7 @@ def setup_routes(app):
     app.router.add_post("/api/knowledge/add", api_knowledge_add)
     app.router.add_post("/api/knowledge/delete", api_knowledge_delete)
     app.router.add_post("/api/knowledge/search", api_knowledge_search)
+    app.router.add_post("/api/knowledge/import-github", api_knowledge_import_github)
     app.router.add_post("/api/knowledge/update", api_knowledge_update)
     app.router.add_post("/api/knowledge/import-url", api_knowledge_import_url)
 

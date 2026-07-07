@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { apiGet, apiPost } from "@/lib/api";
-import { BookOpen, Plus, Search, X, Trash2, Edit3, Globe, Check, Zap, ChevronDown, ChevronUp, Link, Loader2 } from "lucide-react";
+import { BookOpen, Plus, Search, X, Trash2, Edit3, Globe, Check, Zap, ChevronDown, ChevronUp, Link, Loader2, Folder } from "lucide-react";
 import { useToast } from "@/components/Toast";
 
 interface KnowledgeItem {
@@ -32,9 +32,13 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
   const [fCat, setFCat] = useState("默认");
   const [importUrl, setImportUrl] = useState("");
   const [importCat, setImportCat] = useState("网页导入");
+  const [showGitImport, setShowGitImport] = useState(false);
+  const [ghRepo, setGhRepo] = useState("");
+  const [ghBranch, setGhBranch] = useState("main");
+  const [ghPath, setGhPath] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const closeForm = () => { setShowForm(false); setEditId(null); setShowImport(false); setFTitle(""); setFContent(""); setFCat("默认"); };
+  const closeForm = () => { setShowForm(false); setEditId(null); setShowImport(false); setShowGitImport(false); setFTitle(""); setFContent(""); setFCat("默认"); };
 
   const load = useCallback(async (keepCats = false) => {
     try {
@@ -103,15 +107,29 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
     setLoading(false);
   };
 
+  const handleGitImport = async () => {
+    if (!ghRepo.trim()) return;
+    setLoading(true);
+    try {
+      const r = await apiPost<{ ok: boolean; imported: number; message: string }>("/api/knowledge/import-github", {
+        repo: ghRepo.trim(), branch: ghBranch.trim() || "main", path: ghPath.trim(),
+      });
+      if (r?.ok) notify(r.message || "导入成功", "success");
+      else notify(r?.message || "导入失败", "error");
+      setShowGitImport(false);
+      await load();
+    } catch { notify("导入失败", "error"); }
+    setLoading(false);
+  };
+
   const items = data?.items ?? [];
 
   return (
     <div className="flex-1 w-full border-l border-sakura-100 bg-white flex flex-col h-full">
       {/* 头部 */}
       <div className="bg-white flex items-center justify-between px-3 py-2 border-b border-sakura-100 shrink-0">
-        <span className="text-xs font-semibold text-sakura-500 flex items-center gap-1">
-          <BookOpen size={13} /> 知识库
-          <span className="text-sakura-300 font-normal">({data?.total ?? 0})</span>
+        <span className="text-xs font-semibold text-sakura-500">知识库
+          <span className="text-sakura-300 font-normal ml-1">({data?.total ?? 0})</span>
         </span>
         <button onClick={onClose} className="p-0.5 hover:bg-sakura-50 rounded text-sakura-300">
           <X size={13} />
@@ -159,6 +177,10 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
               <Globe size={10} /> 网页导入
             </button>
+            <button onClick={() => { closeForm(); setShowGitImport(true); }}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+              <Folder size={10} /> GitHub 导入
+            </button>
           </div>
         )}
 
@@ -179,8 +201,31 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
+        {/* GitHub 导入卡片 */}
+        {showGitImport && (
+          <div className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs">
+            <p className="text-[10px] font-semibold text-sakura-500">从 GitHub 导入</p>
+            <input value={ghRepo} onChange={e => setGhRepo(e.target.value)}
+              placeholder="仓库（如: owner/repo）" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
+            <div className="flex gap-1">
+              <input value={ghBranch} onChange={e => setGhBranch(e.target.value)}
+                placeholder="分支（默认 main）" className="flex-1 px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
+              <input value={ghPath} onChange={e => setGhPath(e.target.value)}
+                placeholder="路径（如: docs）" className="flex-1 px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
+            </div>
+            <div className="flex items-center gap-1">
+              <button onClick={() => setShowGitImport(false)}
+                className="px-3 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
+              <button onClick={handleGitImport} disabled={loading || !ghRepo.trim()}
+                className="flex items-center gap-1 px-3 py-1 rounded text-[10px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
+                <Folder size={10} /> 导入
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* 空状态 */}
-        {items.length === 0 && !showForm && !showImport && (
+        {items.length === 0 && !showForm && !showImport && !showGitImport && (
           <div className="flex flex-col items-center justify-center py-12 text-sakura-300 space-y-2">
             <p className="text-[10px]">{search ? "未找到匹配的知识" : "知识库为空"}</p>
             {!search && (
@@ -192,6 +237,10 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
                 <button onClick={() => { setShowImport(true); }}
                   className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
                   <Globe size={10} /> 网页导入
+                </button>
+                <button onClick={() => { setShowGitImport(true); }}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+                  <Folder size={10} /> GitHub 导入
                 </button>
               </div>
             )}
