@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { apiGet, apiPost } from "@/lib/api";
-import { BookOpen, Plus, Search, X, Trash2, Edit3, Globe, Check, FileText } from "lucide-react";
+import { BookOpen, Plus, Search, X, Trash2, Edit3, Globe, Check } from "lucide-react";
+import { useToast } from "@/components/Toast";
 
 interface KnowledgeItem {
   id: string;
@@ -18,19 +19,22 @@ interface KbData {
 }
 
 export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
+  const { notify } = useToast();
   const [data, setData] = useState<KbData | null>(null);
   const [allCats, setAllCats] = useState<{ name: string; count: number }[]>([]);
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState("");
-  const [showAdd, setShowAdd] = useState(false);
+  const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [showImport, setShowImport] = useState(false);
-  const [newTitle, setNewTitle] = useState("");
-  const [newContent, setNewContent] = useState("");
-  const [newCat, setNewCat] = useState("默认");
+  const [fTitle, setFTitle] = useState("");
+  const [fContent, setFContent] = useState("");
+  const [fCat, setFCat] = useState("默认");
   const [importUrl, setImportUrl] = useState("");
   const [importCat, setImportCat] = useState("网页导入");
   const [loading, setLoading] = useState(false);
+
+  const closeForm = () => { setShowForm(false); setEditId(null); setShowImport(false); setFTitle(""); setFContent(""); setFCat("默认"); };
 
   const load = useCallback(async (keepCats = false) => {
     try {
@@ -53,39 +57,38 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
     } catch {}
   };
 
-  const resetAddForm = () => {
-    setNewTitle(""); setNewContent(""); setNewCat("默认"); setEditId(null); setShowAdd(false);
-  };
-
   const handleSave = async () => {
-    if (!newTitle.trim()) return;
+    if (!fTitle.trim()) { notify("标题不能为空", "warning"); return; }
     setLoading(true);
     try {
       if (editId) {
-        await apiPost("/api/knowledge/update", { id: editId, title: newTitle, content: newContent, category: newCat || "默认" });
+        await apiPost("/api/knowledge/update", { id: editId, title: fTitle, content: fContent, category: fCat || "默认" });
+        notify("已保存", "success");
       } else {
-        await apiPost("/api/knowledge/add", { title: newTitle, content: newContent, category: newCat || "默认" });
+        await apiPost("/api/knowledge/add", { title: fTitle, content: fContent, category: fCat || "默认" });
+        notify("已添加", "success");
       }
-      resetAddForm();
+      closeForm();
       await load();
-    } catch {}
+    } catch { notify("保存失败", "error"); }
     setLoading(false);
+  };
+
+  const handleEdit = (item: KnowledgeItem) => {
+    setEditId(item.id);
+    setFTitle(item.title);
+    setFContent(item.content);
+    setFCat(item.category);
+    setShowForm(true);
+    setShowImport(false);
   };
 
   const handleDelete = async (id: string) => {
     try {
       await apiPost("/api/knowledge/delete", { id });
+      notify("已删除", "success");
       await load();
-    } catch {}
-  };
-
-  const handleEdit = (item: KnowledgeItem) => {
-    setEditId(item.id);
-    setNewTitle(item.title);
-    setNewContent(item.content);
-    setNewCat(item.category);
-    setShowAdd(true);
-    setShowImport(false);
+    } catch { notify("删除失败", "error"); }
   };
 
   const handleImportUrl = async () => {
@@ -93,14 +96,14 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
     setLoading(true);
     try {
       await apiPost("/api/knowledge/import-url", { url: importUrl, category: importCat || "网页导入" });
+      notify("导入成功", "success");
       setImportUrl(""); setShowImport(false);
       await load();
-    } catch (e: any) { alert("导入失败: " + (e?.message || "未知错误")); }
+    } catch { notify("导入失败", "error"); }
     setLoading(false);
   };
 
   const items = data?.items ?? [];
-  const cats = data?.categories ?? [];
 
   return (
     <div className="flex-1 w-full border-l border-sakura-100 bg-white flex flex-col h-full">
@@ -110,22 +113,18 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
           <BookOpen size={13} /> 知识库
           <span className="text-sakura-300 font-normal">({data?.total ?? 0})</span>
         </span>
-        <div className="flex items-center gap-0.5">
-          <button onClick={onClose} className="p-0.5 hover:bg-sakura-50 rounded text-sakura-300">
-            <X size={13} />
-          </button>
-        </div>
+        <button onClick={onClose} className="p-0.5 hover:bg-sakura-50 rounded text-sakura-300">
+          <X size={13} />
+        </button>
       </div>
 
       {/* 搜索 */}
       <div className="px-3 py-2 border-b border-sakura-100 shrink-0">
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-sakura-50 border border-sakura-100">
+          <Search size={11} className="text-sakura-300 shrink-0" />
           <input value={search} onChange={e => setSearch(e.target.value)}
             onKeyDown={e => e.key === "Enter" && handleSearch()}
-            placeholder="搜索知识库..." className="flex-1 px-2 py-1 rounded border border-sakura-100 bg-sakura-50 text-[10px] text-sakura-600 placeholder:text-sakura-300 outline-none focus:border-sakura-300" />
-          <button onClick={handleSearch} className="p-1.5 rounded text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50">
-            <Search size={12} />
-          </button>
+            placeholder="搜索知识库..." className="flex-1 bg-transparent text-[11px] text-sakura-600 outline-none placeholder:text-sakura-300" />
         </div>
       </div>
 
@@ -134,12 +133,12 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
         <div className="px-3 py-2 border-b border-sakura-100 shrink-0">
           <div className="flex flex-wrap gap-1">
             <button onClick={() => setFilterCat("")}
-              className={`text-[10px] px-2 py-0.5 rounded ${!filterCat ? 'bg-sakura-100 text-sakura-600' : 'text-sakura-400 hover:text-sakura-500'}`}>
+              className={`px-2 py-0.5 rounded text-[10px] transition-colors ${!filterCat ? 'bg-sakura-200 text-sakura-600' : 'text-sakura-400 hover:bg-sakura-50'}`}>
               全部
             </button>
             {allCats.map((c, i) => (
               <button key={i} onClick={() => setFilterCat(c.name)}
-                className={`text-[10px] px-2 py-0.5 rounded ${filterCat === c.name ? 'bg-sakura-100 text-sakura-600' : 'text-sakura-400 hover:text-sakura-500'}`}>
+                className={`px-2 py-0.5 rounded text-[10px] transition-colors ${filterCat === c.name ? 'bg-sakura-200 text-sakura-600' : 'text-sakura-400 hover:bg-sakura-50'}`}>
                 {c.name}
               </button>
             ))}
@@ -147,63 +146,68 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
-      {/* 网页导入 */}
-      {showImport && (
-        <div className="px-3 py-2 border-b border-sakura-100 shrink-0 bg-sakura-50/50 space-y-1.5">
-          <div className="text-[10px] text-sakura-500 font-medium">从网页导入</div>
-          <input value={importUrl} onChange={e => setImportUrl(e.target.value)}
-            placeholder="https://..." className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[10px] text-sakura-600 placeholder:text-sakura-300 outline-none focus:border-sakura-300" />
-          <div className="flex items-center gap-1">
-            <input value={importCat} onChange={e => setImportCat(e.target.value)}
-              placeholder="分类" className="flex-1 px-2 py-1 rounded border border-sakura-100 bg-white text-[10px] text-sakura-600 placeholder:text-sakura-300 outline-none focus:border-sakura-300" />
-            <button onClick={handleImportUrl} disabled={loading}
-              className="px-2.5 py-1 rounded-lg text-[10px] bg-sakura-100 text-sakura-600 hover:bg-sakura-200 disabled:opacity-50">
-              <Globe size={10} className="inline mr-0.5" />导入
-            </button>
-          </div>
-        </div>
-      )}
+      {/* 列表（含操作按钮和表单卡片） */}
+      <div className="flex-1 overflow-y-auto min-h-0 px-3 py-3 space-y-3">
+        {/* 添加/导入按钮 */}
+        {!showForm && !showImport && items.length > 0 && (
+          <button onClick={() => { closeForm(); setShowForm(true); }}
+            className="flex items-center gap-1 w-full px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+            <Plus size={10} /> 添加条目
+          </button>
+        )}
 
-      {/* 添加/编辑表单 */}
-      {showAdd && (
-        <div className="px-3 py-2 border-b border-sakura-100 shrink-0 bg-sakura-50/50 space-y-1.5">
-          <div className="text-[10px] text-sakura-500 font-medium">{editId ? "编辑条目" : "新建条目"}</div>
-          <input value={newTitle} onChange={e => setNewTitle(e.target.value)}
-            placeholder="标题" className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[10px] text-sakura-600 placeholder:text-sakura-300 outline-none focus:border-sakura-300" />
-          <textarea value={newContent} onChange={e => setNewContent(e.target.value)}
-            placeholder="内容" rows={3} className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[10px] text-sakura-600 placeholder:text-sakura-300 resize-none outline-none focus:border-sakura-300" />
-          <div className="flex items-center gap-1">
-            <input value={newCat} onChange={e => setNewCat(e.target.value)}
-              placeholder="分类" className="flex-1 px-2 py-1 rounded border border-sakura-100 bg-white text-[10px] text-sakura-600 placeholder:text-sakura-300 outline-none focus:border-sakura-300" />
-            <button onClick={handleSave} disabled={loading}
-              className="px-2.5 py-1 rounded-lg text-[10px] bg-sakura-100 text-sakura-600 hover:bg-sakura-200 disabled:opacity-50">
-              <Check size={10} className="inline mr-0.5" />{editId ? "更新" : "添加"}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* 操作按钮（参考 ResourcePanel 的虚线添加按钮） */}
-      <div className="px-3 py-1.5 border-b border-sakura-100 shrink-0 space-y-1.5">
-        {!showAdd && !showImport && (
-          <div className="flex gap-1.5">
-            <button onClick={() => { setShowAdd(true); setShowImport(false); setEditId(null); setNewTitle(""); setNewContent(""); }}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
-              <Plus size={10} /> 添加条目
-            </button>
-            <button onClick={() => { setShowImport(true); setShowAdd(false); }}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
-              <Globe size={10} /> 网页导入
-            </button>
+        {/* 编辑表单卡片 */}
+        {showForm && (
+          <div className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs">
+            <p className="text-[10px] font-semibold text-sakura-500">{editId ? "编辑条目" : "新建条目"}</p>
+            <input value={fTitle} onChange={e => setFTitle(e.target.value)}
+              placeholder="标题" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
+            <textarea value={fContent} onChange={e => setFContent(e.target.value)}
+              placeholder="内容" rows={3} className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] resize-none outline-none" />
+            <div className="flex items-center gap-1">
+              <button onClick={closeForm}
+                className="px-3 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
+              <button onClick={handleSave} disabled={loading}
+                className="flex items-center gap-1 px-3 py-1 rounded text-[10px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
+                <Check size={10} /> {editId ? "保存" : "添加"}
+              </button>
+            </div>
           </div>
         )}
-      </div>
 
-      {/* 列表 */}
-      <div className="flex-1 overflow-y-auto min-h-0 px-3 py-3 space-y-2 text-xs">
-        {items.length === 0 ? (
-          <div className="flex items-center justify-center py-8 text-sakura-300">
-            {search ? "未找到匹配的知识" : "知识库为空，点击上方按钮添加"}
+        {/* 导入卡片 */}
+        {showImport && (
+          <div className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs">
+            <p className="text-[10px] font-semibold text-sakura-500">从网页导入</p>
+            <input value={importUrl} onChange={e => setImportUrl(e.target.value)}
+              placeholder="https://..." className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
+            <div className="flex items-center gap-1">
+              <button onClick={() => setShowImport(false)}
+                className="px-3 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
+              <button onClick={handleImportUrl} disabled={loading}
+                className="flex items-center gap-1 px-3 py-1 rounded text-[10px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
+                <Globe size={10} /> 导入
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 空状态或条目列表 */}
+        {items.length === 0 && !showForm && !showImport ? (
+          <div className="flex flex-col items-center justify-center py-12 text-sakura-300 space-y-2">
+            <p className="text-[10px]">{search ? "未找到匹配的知识" : "知识库为空"}</p>
+            {!search && (
+              <div className="flex gap-1.5">
+                <button onClick={() => { closeForm(); setShowForm(true); }}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+                  <Plus size={10} /> 添加条目
+                </button>
+                <button onClick={() => { setShowImport(true); }}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+                  <Globe size={10} /> 网页导入
+                </button>
+              </div>
+            )}
           </div>
         ) : items.map(item => (
           <div key={item.id} className="bg-sakura-50 rounded-lg p-3 border border-sakura-100 group">
