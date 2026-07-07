@@ -536,7 +536,7 @@ export default function ChatPage() {
               }} />
             )}
             {sideTab === "prompt" && (
-              <div className="flex-1 overflow-y-auto"><ErrorBoundary name="提示词面板"><PromptPanel activeScene={scene} onSceneChange={setScene} /></ErrorBoundary></div>
+              <div className="flex-1 overflow-y-auto"><ErrorBoundary name="提示词面板"><PromptPanel activeScene={scene} onSceneChange={setScene} onClose={() => setSideTab(null)} /></ErrorBoundary></div>
             )}
             {sideTab === "task" && <TaskPanel onClose={() => setSideTab(null)} />}
             {sideTab === "knowledge" && <KnowledgePanel onClose={() => setSideTab(null)} />}
