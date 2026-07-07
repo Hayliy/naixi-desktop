@@ -1343,7 +1343,6 @@ async def api_chat_stream(request):
 
         full_response = ""
         usage_info = None
-        MAX_ROUNDS = 25
         errors_in_round = 0
 
         # ── 创建任务（存到 SSE 对象上，每次请求独立） ──
@@ -1369,7 +1368,13 @@ async def api_chat_stream(request):
 
         try:
             # ── Agent 循环 ──
-            for round_num in range(MAX_ROUNDS):
+            round_num = 0
+            while True:
+                round_num += 1
+                # 安全上限：防止意外无限循环
+                if round_num > 200:
+                    log.warning(f"[Agent] 达到安全上限 200 轮，强制结束")
+                    break
                 # 取消检查
                 if cancel_event.is_set():
                     await sse.write(f"event: status\ndata: {json.dumps({'state': 'done', 'text': '已取消'})}\n\n".encode())
