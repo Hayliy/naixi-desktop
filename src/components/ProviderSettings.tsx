@@ -200,17 +200,17 @@ export default function ProviderSettings({ onClose }: { onClose?: () => void }) 
         <button onClick={onClose} className="p-0.5 hover:bg-sakura-50 rounded text-sakura-300"><X size={13} /></button>
       </div>
 
-      {/* 添加按钮 */}
-      <div className="px-3 pt-2 pb-1">
-        <button onClick={openForm}
-          className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] bg-sakura-100 text-sakura-600 hover:bg-sakura-200 transition-colors">
-          <Plus size={10} /> 添加供应商
-        </button>
-      </div>
-
       {/* Provider 列表 - 固定高度，超出滚动 */}
       <div className="space-y-1 max-h-[320px] overflow-y-auto overflow-x-hidden pr-0.5">
-        {providers.length === 0 ? (
+        {/* 添加按钮 */}
+        {!showForm && (
+          <button onClick={openForm}
+            className="flex items-center gap-1 w-full px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+            <Plus size={10} /> 添加供应商
+          </button>
+        )}
+
+        {providers.length === 0 && !showForm ? (
           <div className="text-center py-10 text-sakura-300 text-xs">还没有供应商，点击上方添加</div>
         ) : providers.map(p => (
           editingId === p.id ? (
@@ -265,9 +265,70 @@ export default function ProviderSettings({ onClose }: { onClose?: () => void }) 
             </div>
           )
         ))}
+        {/* 新增表单 — 内联在列表区 */}
+        {showForm && (
+          <div className="bg-white border border-sakura-200 rounded-xl p-3 space-y-2.5 text-xs">
+            <p className="text-xs font-semibold text-sakura-500">添加供应商</p>
+            <select value={formType} onChange={e => selectType(e.target.value)}
+              className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px]">
+              {PROVIDER_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+            <div>
+              <p className="text-[9px] text-sakura-400 mb-0.5">服务类型</p>
+              <div className="flex flex-wrap gap-1">
+                {CAPABILITY_TYPES.map(ct => (
+                  <button key={ct.value} type="button" onClick={() => { setFormCapability(ct.value); setTestResult(null); }}
+                    className={`px-2 py-0.5 rounded text-[10px] border transition-colors ${
+                      formCapability === ct.value
+                        ? "bg-sakura-100 border-sakura-300 text-sakura-600 font-medium"
+                        : "bg-white border-sakura-100 text-sakura-400 hover:border-sakura-200"
+                    }`}>
+                    {ct.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px]"
+              placeholder="显示名称" value={formName} onChange={e => setFormName(e.target.value)} />
+            <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-white text-sakura-600 text-[10px] font-mono"
+              placeholder="API 地址" value={formHost} onChange={e => setFormHost(e.target.value)} />
+            <div className="relative">
+              <input type={showFormKey ? "text" : "password"}
+                className="w-full px-2.5 py-1.5 pr-9 rounded-lg border border-sakura-100 bg-white text-sakura-600 text-[10px] font-mono"
+                placeholder="API Key" value={formKey} onChange={e => setFormKey(e.target.value)} />
+              <button type="button" onClick={() => setShowFormKey(!showFormKey)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-sakura-300 hover:text-sakura-500">
+                {showFormKey ? <EyeOff size={12} /> : <Eye size={12} />}
+              </button>
+            </div>
+            <div>
+              <p className="text-[9px] text-sakura-400 mb-0.5">模型名</p>
+              <input className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-white text-sakura-600 text-[10px] font-mono"
+                placeholder="gpt-4 / qwen-plus" value={formModels} onChange={e => setFormModels(e.target.value)} />
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={handleTest} disabled={testing || !formHost}
+                className="px-2.5 py-1 rounded-lg text-[10px] bg-sakura-100 text-sakura-500 hover:bg-sakura-200 disabled:opacity-50">
+                {testing ? <Loader2 size={10} className="animate-spin" /> : "测试"}
+              </button>
+              {testResult && (
+                <span className={`text-[10px] ${testResult.ok ? "text-green-600" : "text-red-500"}`}>
+                  {testResult.ok ? <Check size={10} className="inline" /> : <X size={10} className="inline" />}
+                  {testResult.msg}
+                </span>
+              )}
+            </div>
+            <div className="flex justify-end gap-1.5 pt-1 border-t border-sakura-100">
+              <button onClick={() => { setShowForm(false); resetForm(); }}
+                className="px-2.5 py-1 rounded-lg text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
+              <button onClick={handleAddSave} disabled={!formName || !formHost}
+                className="flex items-center gap-1 px-3 py-1 rounded-lg text-[10px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-40">
+                <Check size={10} /> 保存
+              </button>
+            </div>
+          </div>
+        )}
       </div>
-
-      {/* 头像与昵称设置 */}
       <div className="mt-4 border-t border-sakura-100 pt-3">
         <button onClick={() => setAvatarOpen(!avatarOpen)}
           className="flex items-center gap-1.5 text-xs font-semibold text-sakura-500 hover:text-sakura-600 transition-colors mb-2">
@@ -347,86 +408,6 @@ export default function ProviderSettings({ onClose }: { onClose?: () => void }) 
           </div>
         )}
       </div>
-
-      {/* 新增表单 */}
-      {showForm && (
-        <div className="mt-3 bg-white border border-sakura-100 rounded-xl p-4 space-y-3 text-xs">
-          <p className="text-xs font-semibold text-sakura-500">添加供应商</p>
-
-          {/* 能力类型 */}
-          <select value={formType} onChange={e => selectType(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg border border-sakura-100 bg-sakura-50 text-sakura-600 text-xs">
-            {PROVIDER_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-          </select>
-
-          {/* 服务类型 */}
-          <div>
-            <p className="text-[10px] text-sakura-400 mb-1">服务类型</p>
-            <div className="flex flex-wrap gap-1.5">
-              {CAPABILITY_TYPES.map(ct => (
-                <button key={ct.value} type="button"
-                  onClick={() => {
-                    setFormCapability(ct.value);
-                    setTestResult(null);
-                  }}
-                  className={`px-2 py-1 rounded text-[10px] border transition-colors ${
-                    formCapability === ct.value
-                      ? "bg-sakura-100 border-sakura-300 text-sakura-600 font-medium"
-                      : "bg-white border-sakura-100 text-sakura-400 hover:border-sakura-200"
-                  }`}
-                  title={ct.desc}
-                >
-                  {ct.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <input className="w-full px-3 py-2 rounded-lg border border-sakura-100 bg-white text-sakura-600 placeholder:text-sakura-300"
-            placeholder="显示名称" value={formName} onChange={e => setFormName(e.target.value)} />
-
-          <input className="w-full px-3 py-2 rounded-lg border border-sakura-100 bg-white text-sakura-600 placeholder:text-sakura-300 font-mono text-[10px]"
-            placeholder="API 地址（如 https://api.openai.com/v1）" value={formHost} onChange={e => setFormHost(e.target.value)} />
-
-          <div className="relative">
-            <input type={showFormKey ? "text" : "password"}
-              className="w-full px-3 py-2 pr-9 rounded-lg border border-sakura-100 bg-white text-sakura-600 placeholder:text-sakura-300 font-mono text-[10px]"
-              placeholder="API Key（Ollama 不需要）" value={formKey} onChange={e => setFormKey(e.target.value)} />
-            <button type="button" onClick={() => setShowFormKey(!showFormKey)}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-sakura-300 hover:text-sakura-500 transition-colors">
-              {showFormKey ? <EyeOff size={13} /> : <Eye size={13} />}
-            </button>
-          </div>
-
-          <div>
-            <p className="text-[10px] text-sakura-400 mb-1">模型名（留空自动使用名称）</p>
-            <input className="w-full px-3 py-2 rounded-lg border border-sakura-100 bg-white text-sakura-600 placeholder:text-sakura-300 font-mono text-[10px]"
-              placeholder="gpt-4 / qwen-plus / glm-4-flash" value={formModels} onChange={e => setFormModels(e.target.value)} />
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button onClick={handleTest} disabled={testing || !formHost}
-              className="px-3 py-1.5 rounded-lg text-[11px] bg-sakura-100 text-sakura-500 hover:bg-sakura-200 disabled:opacity-50 transition-colors">
-              {testing ? <Loader2 size={11} className="animate-spin" /> : "测试"}
-            </button>
-            {testResult && (
-              <span className={`text-[10px] ${testResult.ok ? "text-green-600" : "text-red-500"}`}>
-                {testResult.ok ? <Check size={10} className="inline" /> : <X size={10} className="inline" />}
-                {testResult.msg}
-              </span>
-            )}
-          </div>
-
-          <div className="flex justify-end gap-2 pt-1 border-t border-sakura-100">
-            <button onClick={() => { setShowForm(false); resetForm(); }}
-              className="px-3 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:bg-sakura-50 transition-colors">取消</button>
-            <button onClick={handleAddSave} disabled={!formName || !formHost}
-              className="px-4 py-1.5 rounded-lg text-[11px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-40 transition-shadow">
-              保存
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
