@@ -132,12 +132,12 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
       {allCats.length > 0 && (
         <div className="px-3 py-2 border-b border-sakura-100 shrink-0">
           <div className="flex flex-wrap gap-1">
-            <button onClick={() => setFilterCat("")}
+            <button onClick={() => { setFilterCat(""); closeForm(); }}
               className={`px-2 py-0.5 rounded text-[10px] transition-colors ${!filterCat ? 'bg-sakura-200 text-sakura-600' : 'text-sakura-400 hover:bg-sakura-50'}`}>
               全部
             </button>
             {allCats.map((c, i) => (
-              <button key={i} onClick={() => setFilterCat(c.name)}
+              <button key={i} onClick={() => { setFilterCat(c.name); closeForm(); }}
                 className={`px-2 py-0.5 rounded text-[10px] transition-colors ${filterCat === c.name ? 'bg-sakura-200 text-sakura-600' : 'text-sakura-400 hover:bg-sakura-50'}`}>
                 {c.name}
               </button>
@@ -154,25 +154,6 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
             className="flex items-center gap-1 w-full px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
             <Plus size={10} /> 添加条目
           </button>
-        )}
-
-        {/* 编辑表单卡片 */}
-        {showForm && (
-          <div className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs">
-            <p className="text-[10px] font-semibold text-sakura-500">{editId ? "编辑条目" : "新建条目"}</p>
-            <input value={fTitle} onChange={e => setFTitle(e.target.value)}
-              placeholder="标题" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
-            <textarea value={fContent} onChange={e => setFContent(e.target.value)}
-              placeholder="内容" rows={3} className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] resize-none outline-none" />
-            <div className="flex items-center gap-1">
-              <button onClick={closeForm}
-                className="px-3 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
-              <button onClick={handleSave} disabled={loading}
-                className="flex items-center gap-1 px-3 py-1 rounded text-[10px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
-                <Check size={10} /> {editId ? "保存" : "添加"}
-              </button>
-            </div>
-          </div>
         )}
 
         {/* 导入卡片 */}
@@ -192,8 +173,8 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        {/* 空状态或条目列表 */}
-        {items.length === 0 && !showForm && !showImport ? (
+        {/* 空状态 */}
+        {items.length === 0 && !showForm && !showImport && (
           <div className="flex flex-col items-center justify-center py-12 text-sakura-300 space-y-2">
             <p className="text-[10px]">{search ? "未找到匹配的知识" : "知识库为空"}</p>
             {!search && (
@@ -209,7 +190,45 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
               </div>
             )}
           </div>
-        ) : items.map(item => (
+        )}
+
+        {/* 新建表单（在非空列表顶部） */}
+        {showForm && !editId && items.length > 0 && (
+          <div className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs">
+            <p className="text-[10px] font-semibold text-sakura-500">新建条目</p>
+            <input value={fTitle} onChange={e => setFTitle(e.target.value)}
+              placeholder="标题" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
+            <textarea value={fContent} onChange={e => setFContent(e.target.value)}
+              placeholder="内容" rows={3} className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] resize-none outline-none" />
+            <div className="flex items-center gap-1">
+              <button onClick={closeForm}
+                className="px-3 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
+              <button onClick={handleSave} disabled={loading}
+                className="flex items-center gap-1 px-3 py-1 rounded text-[10px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
+                <Check size={10} /> 添加
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 条目列表 */}
+        {items.map(item => item.id === editId && showForm ? (
+          <div key={item.id} className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs">
+            <p className="text-[10px] font-semibold text-sakura-500">编辑条目</p>
+            <input value={fTitle} onChange={e => setFTitle(e.target.value)}
+              placeholder="标题" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
+            <textarea value={fContent} onChange={e => setFContent(e.target.value)}
+              placeholder="内容" rows={3} className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] resize-none outline-none" />
+            <div className="flex items-center gap-1">
+              <button onClick={closeForm}
+                className="px-3 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
+              <button onClick={handleSave} disabled={loading}
+                className="flex items-center gap-1 px-3 py-1 rounded text-[10px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
+                <Check size={10} /> 保存
+              </button>
+            </div>
+          </div>
+        ) : (
           <div key={item.id} className="bg-sakura-50 rounded-lg p-3 border border-sakura-100 group">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1 space-y-0.5">
