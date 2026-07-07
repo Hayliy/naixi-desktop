@@ -1737,13 +1737,34 @@ def _validate_and_fix_workflow(nodes: list, edges: list) -> tuple:
             cid_node = node_map.get(cid)
             if cid_node:
                 end_id = f"auto_end_{cid}"
-            if end_id not in node_map:
-                nodes.append({
-                    "id": end_id, "type": "base",
-                    "position": {"x": cid_node.get("position", {}).get("x", 1000) + 100, "y": cid_node.get("position", {}).get("y", 200) + 150},
-                    "data": {"label": "自动结束", "type": "end", "status": "", "config": {}}
-                })
-                fixes.append(f"{cid}: False 分支缺目标，自动创建 end 节点 {end_id}")
+                if end_id not in node_map:
+                    nodes.append({
+                        "id": end_id, "type": "base",
+                        "position": {"x": cid_node.get("position", {}).get("x", 1000) + 100, "y": cid_node.get("position", {}).get("y", 200) + 150},
+                        "data": {"label": "自动结束", "type": "end", "status": "", "config": {}}
+                    })
+                    fixes.append(f"{cid}: False 分支缺目标，自动创建 end 节点 {end_id}")
+
+    # 7. 图连通性检查：start 必须有出边，end 必须有入边
+    source_set = {e["source"] for e in edges}
+    target_set = {e["target"] for e in edges}
+    # 按执行顺序排列节点（从 start 出发 BFS）
+    for n in nodes:
+        nid = n["id"]
+        ntype = n.get("data", {}).get("type", "")
+        if ntype == "start" and nid not in source_set:
+            # start 没有出边 → 连接到第一个非 start 非 end 节点
+            candidates = [x["id"] for x in nodes if x["id"] != nid and x.get("data", {}).get("type") != "end"]
+            if candidates:
+                edges.append({"id": f"auto_{nid}_to_{candidates[0]}", "source": nid, "target": candidates[0]})
+                fixes.append(f"{nid}: start 无出边，自动连到 {candidates[0]}")
+        if ntype == "end" and nid not in target_set:
+            # end 没有入边 → 从最后一个非 end 节点连过来
+            candidates = [x["id"] for x in nodes if x["id"] != nid and x.get("data", {}).get("type") != "start"]
+            if candidates:
+                src = candidates[-1]
+                edges.append({"id": f"auto_{src}_to_{nid}", "source": src, "target": nid})
+                fixes.append(f"{nid}: end 无入边，自动从 {src} 连入")
 
     return nodes, edges, fixes
 
