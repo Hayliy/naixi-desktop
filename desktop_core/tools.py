@@ -1911,6 +1911,15 @@ async def _add_workflow_node(args: dict, context: dict = None) -> str:
         wid = args.get("workflow_id", "")
         wf = await api_get_workflow(wid)
         if not wf:
+            # 容错：尝试用最新创建的工作流
+            from desktop_core.workflow_engine import api_list_workflows
+            all_wfs = await api_list_workflows()
+            if all_wfs:
+                latest = all_wfs[-1]
+                wid = latest["id"]
+                wf = await api_get_workflow(wid)
+                args["workflow_id"] = wid  # 修正后续使用的 ID
+        if not wf:
             return json.dumps({"success": False, "error": f"工作流不存在（ID: {wid}），请先调用 list_workflows 确认正确的 ID"})
         nodes_raw = wf.get("nodes", "[]")
         nodes = json.loads(nodes_raw) if isinstance(nodes_raw, str) else list(nodes_raw)
