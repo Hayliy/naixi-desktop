@@ -148,15 +148,15 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
 
       {/* 网页导入 */}
       {showImport && (
-        <div className="px-3 py-2 border-b border-sakura-50 space-y-1.5 bg-blue-50/30">
-          <div className="text-[9px] text-sakura-500 font-medium">从网页导入</div>
+        <div className="bg-white border-b border-sakura-100 p-2.5 space-y-1.5">
+          <div className="text-[10px] text-sakura-500 font-medium">从网页导入</div>
           <input value={importUrl} onChange={e => setImportUrl(e.target.value)}
-            placeholder="https://..." className="w-full text-[10px] px-2 py-1 border border-sakura-100 rounded outline-none focus:border-sakura-300" />
+            placeholder="https://..." className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none focus:border-sakura-300" />
           <div className="flex gap-1">
             <input value={importCat} onChange={e => setImportCat(e.target.value)}
-              placeholder="分类" className="flex-1 text-[10px] px-2 py-1 border border-sakura-100 rounded outline-none focus:border-sakura-300" />
+              placeholder="分类" className="flex-1 px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none focus:border-sakura-300" />
             <button onClick={handleImportUrl} disabled={loading}
-              className="px-3 py-1 text-[10px] rounded bg-blue-100 text-blue-600 hover:bg-blue-200 disabled:opacity-50">
+              className="px-3 py-1.5 rounded-lg text-[10px] bg-blue-100 text-blue-600 hover:bg-blue-200 disabled:opacity-50 border border-blue-200">
               <Globe size={10} className="inline mr-0.5" />导入
             </button>
           </div>
@@ -165,17 +165,17 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
 
       {/* 添加/编辑表单 */}
       {showAdd && (
-        <div className="px-3 py-2 border-b border-sakura-50 space-y-1.5">
-          <div className="text-[9px] text-sakura-500 font-medium">{editId ? "编辑条目" : "新建条目"}</div>
+        <div className="bg-white border-b border-sakura-100 p-2.5 space-y-1.5">
+          <div className="text-[10px] text-sakura-500 font-medium">{editId ? "编辑条目" : "新建条目"}</div>
           <input value={newTitle} onChange={e => setNewTitle(e.target.value)}
-            placeholder="标题" className="w-full text-[10px] px-2 py-1 border border-sakura-100 rounded outline-none focus:border-sakura-300" />
+            placeholder="标题" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none focus:border-sakura-300" />
           <textarea value={newContent} onChange={e => setNewContent(e.target.value)}
-            placeholder="内容" rows={3} className="w-full text-[10px] px-2 py-1 border border-sakura-100 rounded outline-none focus:border-sakura-300 resize-none" />
+            placeholder="内容" rows={3} className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] resize-none outline-none focus:border-sakura-300" />
           <div className="flex gap-1">
             <input value={newCat} onChange={e => setNewCat(e.target.value)}
-              placeholder="分类" className="flex-1 text-[10px] px-2 py-1 border border-sakura-100 rounded outline-none focus:border-sakura-300" />
+              placeholder="分类" className="flex-1 px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none focus:border-sakura-300" />
             <button onClick={handleSave} disabled={loading}
-              className="px-3 py-1 text-[10px] rounded bg-sakura-200 text-sakura-600 hover:bg-sakura-300 disabled:opacity-50">
+              className="px-3 py-1.5 rounded-lg text-[10px] bg-sakura-200 text-sakura-600 hover:bg-sakura-300 disabled:opacity-50 border border-sakura-200">
               <Check size={10} className="inline mr-0.5" />{editId ? "更新" : "添加"}
             </button>
           </div>
@@ -183,32 +183,32 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
       )}
 
       {/* 列表 */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
         {items.length === 0 ? (
           <div className="flex items-center justify-center h-32 text-[10px] text-sakura-300">
             {search ? "未找到匹配的知识" : "知识库为空，点 + 添加"}
           </div>
         ) : items.map(item => (
-          <div key={item.id} className="px-3 py-2 border-b border-sakura-50 hover:bg-sakura-50/30 group">
+          <div key={item.id} className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1 group">
             <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0 flex-1">
+              <div className="min-w-0 flex-1 space-y-0.5">
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] font-medium text-sakura-700 truncate">{item.title}</span>
-                  <span className="text-[8px] px-1 py-0.5 rounded bg-sakura-50 text-sakura-400 shrink-0">{item.category}</span>
-                  {item.source_url && <span title={item.source_url}><Globe size={8} className="text-sakura-300 shrink-0" /></span>}
+                  <span className="text-[11px] font-medium text-sakura-700 truncate">{item.title}</span>
+                  <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-sakura-50 text-sakura-400 border border-sakura-100 shrink-0">{item.category}</span>
+                  {item.source_url && <span title={item.source_url}><Globe size={9} className="text-sakura-300 shrink-0" /></span>}
                 </div>
                 {item.content && (
-                  <p className="text-[9px] text-sakura-400 mt-0.5 line-clamp-2">{item.content}</p>
+                  <p className="text-[10px] text-sakura-400 leading-relaxed line-clamp-2">{item.content}</p>
                 )}
               </div>
               <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button onClick={() => handleEdit(item)}
-                  className="p-0.5 rounded text-sakura-200 hover:text-sakura-500 hover:bg-sakura-50">
-                  <Edit3 size={10} />
+                  className="p-1 rounded text-sakura-300 hover:text-sakura-500 hover:bg-sakura-50">
+                  <Edit3 size={11} />
                 </button>
                 <button onClick={() => handleDelete(item.id)}
-                  className="p-0.5 rounded text-sakura-200 hover:text-red-400 hover:bg-red-50">
-                  <Trash2 size={10} />
+                  className="p-1 rounded text-sakura-300 hover:text-red-400 hover:bg-red-50">
+                  <Trash2 size={11} />
                 </button>
               </div>
             </div>
