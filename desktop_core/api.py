@@ -1832,10 +1832,19 @@ async def api_custom_delete(request):
 
 async def api_knowledge_list(request):
     """列出所有知识条目"""
-    from desktop_core.storage import meta_get
+    from desktop_core.storage import meta_get, meta_set
     try:
         raw = meta_get("knowledge_base")
         items = json.loads(raw) if raw else []
+        import time
+        # 确保每个条目有 id（兼容旧数据）
+        changed = False
+        for i, item in enumerate(items):
+            if not item.get("id"):
+                items[i]["id"] = f"k_{int(time.time())}_{i}"
+                changed = True
+        if changed:
+            meta_set("knowledge_base", json.dumps(items, ensure_ascii=False))
         cat = request.query.get("category", "")
         if cat:
             items = [i for i in items if i.get("category", "") == cat]
@@ -1859,7 +1868,8 @@ async def api_knowledge_add(request):
         if not title:
             return web.json_response({"error": "标题不能为空"}, status=400)
         raw = meta_get("knowledge_base")
-        items = json.loads(raw) if raw else []
+        try: items = json.loads(raw) if raw else []
+        except: items = []
         import time
         items.append({
             "id": f"k_{int(time.time())}_{len(items)}",
@@ -1881,7 +1891,8 @@ async def api_knowledge_delete(request):
         body = await request.json()
         kid = body.get("id", "")
         raw = meta_get("knowledge_base")
-        items = json.loads(raw) if raw else []
+        try: items = json.loads(raw) if raw else []
+        except: items = []
         items = [i for i in items if i.get("id") != kid]
         meta_set("knowledge_base", json.dumps(items, ensure_ascii=False))
         return web.json_response({"ok": True, "total": len(items)})
@@ -1898,11 +1909,77 @@ async def api_knowledge_search(request):
         if not query:
             return web.json_response({"items": [], "total": 0})
         raw = meta_get("knowledge_base")
-        items = json.loads(raw) if raw else []
+        try: items = json.loads(raw) if raw else []
+        except: items = []
         results = [i for i in items if query in i.get("title", "").lower() or query in i.get("content", "").lower()]
         return web.json_response({"items": results[:10], "total": len(results)})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
+
+
+async def api_knowledge_update(request):
+    """更新知识条目"""
+    from desktop_core.storage import meta_get, meta_set
+    try:
+        body = await request.json()
+        kid = body.get("id", "")
+        raw = meta_get("knowledge_base")
+        try: items = json.loads(raw) if raw else []
+        except: items = []
+        for i, item in enumerate(items):
+            if item.get("id") == kid:
+                if body.get("title"): items[i]["title"] = body["title"].strip()
+                if "content" in body: items[i]["content"] = body.get("content", "").strip()
+                if body.get("category"): items[i]["category"] = body["category"].strip()
+                import time
+                items[i]["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                meta_set("knowledge_base", json.dumps(items, ensure_ascii=False))
+                return web.json_response({"ok": True})
+        return web.json_response({"error": "条目不存在"}, status=404)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+
+async def api_knowledge_import_url(request):
+    """从 URL 导入内容到知识库"""
+    from desktop_core.storage import meta_get, meta_set
+    import aiohttp
+    try:
+        body = await request.json()
+        url = body.get("url", "").strip()
+        category = body.get("category", "网页导入").strip()
+        if not url:
+            return web.json_response({"error": "URL 不能为空"}, status=400)
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status != 200:
+                    return web.json_response({"error": f"请求失败: HTTP {resp.status}"}, status=400)
+                html = await resp.text()
+        import re
+        title = url.split("/")[-1][:60] or "网页导入"
+        m = re.search(r'<title>(.*?)</title>', html, re.IGNORECASE | re.DOTALL)
+        if m:
+            title = m.group(1).strip()[:60]
+        # 去标签取纯文本
+        text = re.sub(r'<[^>]+>', ' ', html)
+        text = re.sub(r'\s+', ' ', text).strip()[:2000]
+        if not text:
+            text = "(无法提取内容)"
+        raw = meta_get("knowledge_base")
+        items = json.loads(raw) if raw else []
+        import time
+        items.append({
+            "id": f"k_{int(time.time())}_{len(items)}",
+            "title": title,
+            "content": text,
+            "category": category,
+            "source_url": url,
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S")
+        })
+        meta_set("knowledge_base", json.dumps(items, ensure_ascii=False))
+        return web.json_response({"ok": True, "title": title, "total": len(items)})
+    except Exception as e:
+        return web.json_response({"error": f"导入失败: {str(e)[:100]}"}, status=400)
 
 
 # ── 路由注册 ──
@@ -1964,6 +2041,8 @@ def setup_routes(app):
     app.router.add_post("/api/knowledge/add", api_knowledge_add)
     app.router.add_post("/api/knowledge/delete", api_knowledge_delete)
     app.router.add_post("/api/knowledge/search", api_knowledge_search)
+    app.router.add_post("/api/knowledge/update", api_knowledge_update)
+    app.router.add_post("/api/knowledge/import-url", api_knowledge_import_url)
 
     # 工作流
     app.router.add_get("/api/workflows", api_workflow_list)
