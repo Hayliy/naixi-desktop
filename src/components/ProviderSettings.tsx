@@ -188,14 +188,14 @@ export default function ProviderSettings({ onClose }: { onClose?: () => void }) 
   if (loading) return <div className="flex items-center justify-center py-12"><Loader2 size={16} className="text-sakura-300 animate-spin" /></div>;
 
   return (
-    <div>
-      <div className="flex items-center justify-between px-3 py-2 border-b border-sakura-100 shrink-0">
+    <div className="flex-1 w-full border-l border-sakura-100 bg-white flex flex-col h-full">
+      <div className="bg-white flex items-center justify-between px-3 py-2 border-b border-sakura-100 shrink-0">
         <span className="text-xs font-semibold text-sakura-500">模型供应商</span>
         <button onClick={onClose} className="p-0.5 hover:bg-sakura-50 rounded text-sakura-300"><X size={13} /></button>
       </div>
 
-      {/* Provider 列表 - 固定高度，超出滚动 */}
-      <div className="space-y-1 max-h-[320px] overflow-y-auto overflow-x-hidden pr-0.5">
+      {/* Provider 列表 */}
+      <div className="flex-1 overflow-y-auto space-y-1 overflow-x-hidden pr-0.5">
         {/* 添加按钮 */}
         {!showForm && (
           <button onClick={openForm}

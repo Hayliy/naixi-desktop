@@ -108,7 +108,7 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
   return (
     <div className="flex-1 w-full border-l border-sakura-100 bg-white flex flex-col h-full">
       {/* 头部 */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-sakura-100 shrink-0">
+      <div className="bg-white flex items-center justify-between px-3 py-2 border-b border-sakura-100 shrink-0">
         <span className="text-xs font-semibold text-sakura-500 flex items-center gap-1">
           <BookOpen size={13} /> 知识库
           <span className="text-sakura-300 font-normal">({data?.total ?? 0})</span>
@@ -136,7 +136,7 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
               className={`px-2 py-0.5 rounded text-[10px] transition-colors ${!filterCat ? 'bg-sakura-200 text-sakura-600' : 'text-sakura-400 hover:bg-sakura-50'}`}>
               全部
             </button>
-            {allCats.map((c, i) => (
+            {allCats.filter(c => c.name && c.name !== "未分类").map((c, i) => (
               <button key={i} onClick={() => { setFilterCat(c.name); closeForm(); }}
                 className={`px-2 py-0.5 rounded text-[10px] transition-colors ${filterCat === c.name ? 'bg-sakura-200 text-sakura-600' : 'text-sakura-400 hover:bg-sakura-50'}`}>
                 {c.name}
@@ -150,10 +150,16 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
       <div className="flex-1 overflow-y-auto min-h-0 px-3 py-3 space-y-3">
         {/* 添加/导入按钮 */}
         {!showForm && !showImport && items.length > 0 && (
-          <button onClick={() => { closeForm(); setShowForm(true); }}
-            className="flex items-center gap-1 w-full px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
-            <Plus size={10} /> 添加条目
-          </button>
+          <div className="flex gap-1.5">
+            <button onClick={() => { closeForm(); setShowForm(true); }}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+              <Plus size={10} /> 添加条目
+            </button>
+            <button onClick={() => { closeForm(); setShowImport(true); }}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+              <Globe size={10} /> 网页导入
+            </button>
+          </div>
         )}
 
         {/* 导入卡片 */}
@@ -192,7 +198,7 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        {/* 新建表单 */}
+        {/* 新建表单 — 列表顶部 */}
         {showForm && !editId && (
           <div className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs">
             <p className="text-[10px] font-semibold text-sakura-500">新建条目</p>
@@ -201,11 +207,8 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
             <textarea value={fContent} onChange={e => setFContent(e.target.value)}
               placeholder="内容" rows={3} className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] resize-none outline-none" />
             <input value={fCat} onChange={e => setFCat(e.target.value)}
-              placeholder="分类" list="kb-cats-new"
+              placeholder="分类"
               className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
-            <datalist id="kb-cats-new">
-              {allCats.map((c, i) => <option key={i} value={c.name} />)}
-            </datalist>
             <div className="flex items-center gap-1">
               <button onClick={closeForm}
                 className="px-3 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
@@ -217,32 +220,11 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        {/* 条目列表 */}
-        {items.map(item => item.id === editId && showForm ? (
-          <div key={item.id} className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs">
-            <p className="text-[10px] font-semibold text-sakura-500">编辑条目</p>
-            <input value={fTitle} onChange={e => setFTitle(e.target.value)}
-              placeholder="标题" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
-            <textarea value={fContent} onChange={e => setFContent(e.target.value)}
-              placeholder="内容" rows={3} className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] resize-none outline-none" />
-            <input value={fCat} onChange={e => setFCat(e.target.value)}
-              placeholder="分类" list="kb-cats-edit"
-              className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
-            <datalist id="kb-cats-edit">
-              {allCats.map((c, i) => <option key={i} value={c.name} />)}
-            </datalist>
-            <div className="flex items-center gap-1">
-              <button onClick={closeForm}
-                className="px-3 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
-              <button onClick={handleSave} disabled={loading}
-                className="flex items-center gap-1 px-3 py-1 rounded text-[10px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
-                <Check size={10} /> 保存
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div key={item.id} className="bg-sakura-50 rounded-lg p-3 border border-sakura-100 group">
-            <div className="flex items-start justify-between gap-2">
+        {/* 条目列表（编辑表单放在对应卡片下方，同 MCP 模式） */}
+        {items.map(item => (
+          <div key={item.id}>
+            <div className="bg-sakura-50 rounded-lg p-3 border border-sakura-100 group">
+              <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1 space-y-0.5">
                 <div className="flex items-center gap-1.5">
                   <span className="text-[11px] font-medium text-sakura-600 truncate max-w-[10rem]">{item.title}</span>
@@ -265,10 +247,29 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
               </div>
             </div>
           </div>
+          {item.id === editId && showForm && (
+            <div className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs mt-1">
+              <p className="text-[10px] font-semibold text-sakura-500">编辑条目</p>
+              <input value={fTitle} onChange={e => setFTitle(e.target.value)}
+                placeholder="标题" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
+              <textarea value={fContent} onChange={e => setFContent(e.target.value)}
+                placeholder="内容" rows={3} className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] resize-none outline-none" />
+              <input value={fCat} onChange={e => setFCat(e.target.value)}
+                placeholder="分类"
+                className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
+              <div className="flex items-center gap-1">
+                <button onClick={closeForm}
+                  className="px-3 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
+                <button onClick={handleSave} disabled={loading}
+                  className="flex items-center gap-1 px-3 py-1 rounded text-[10px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
+                  <Check size={10} /> 保存
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
         ))}
       </div>
-
-      {/* ── 外部知识源（MCP 知识连接） ── */}
       <KbMcpSection />
     </div>
   );
@@ -386,8 +387,16 @@ function KbMcpSection() {
             </div>
           )}
 
+          {/* 添加按钮 */}
+          {!showForm && !editingKey && (
+            <button onClick={() => { setShowForm(true); }}
+              className="flex items-center gap-1 w-full px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+              <Plus size={10} /> 添加外部知识源
+            </button>
+          )}
+
           {/* 服务器列表 */}
-          <div className="space-y-1">
+          <div className="max-h-[200px] overflow-y-auto space-y-1 pr-0.5">
             {mcpKeys.map(key => (
               <div key={key} className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-sakura-50 border border-sakura-100">
                 <div className="flex-1 min-w-0">
@@ -409,14 +418,6 @@ function KbMcpSection() {
               </div>
             ))}
           </div>
-
-          {/* 添加按钮 */}
-          {!showForm && !editingKey && (
-            <button onClick={() => { setShowForm(true); }}
-              className="flex items-center gap-1 w-full px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
-              <Plus size={10} /> 添加外部知识源
-            </button>
-          )}
         </div>
       )}
     </div>
