@@ -2026,15 +2026,10 @@ async def _run_workflow(args: dict, context: dict = None) -> str:
 register("list_workflows", "列出所有已保存的工作流，返回工作流 ID、名称和描述。",
     {"type": "object", "properties": {}, "required": []}, _list_workflows, "workflow")
 
-register("create_workflow", "创建新工作流（简易版，自动补 start/end 节点）。如需构建多节点完整工作流，推荐使用 build_workflow 一次性传入全部节点和边。",
-    {"type": "object", "properties": {
-        "name": {"type": "string", "description": "工作流名称"},
-        "description": {"type": "string", "description": "描述"},
-        "nodes": {"type": "array", "description": "节点列表（可选）"},
-        "edges": {"type": "array", "description": "连线列表（可选）"}
-    }, "required": ["name"]}, _create_workflow, "workflow")
+# create_workflow 已合并到 build_workflow，不再单独注册
+# register("create_workflow", ...)
 
-register("build_workflow", "一次性构建完整工作流。传入全部节点和边，一次保存，不走逐个添加。搭工作流前应先调 query_node_schema 了解节点配置规则。节点格式: {id, type(节点类型), config:{...key:值...}}。边格式: {source, target, sourceHandle(可选)}。config合法key参见 add_workflow_node 描述。",
+register("build_workflow", "【唯一推荐】一次性构建完整工作流。传入全部节点和边，一次保存完成。搭工作流前应先调 query_node_schema 了解节点配置规则。节点格式: {id, type(支持中文如'参数提取'或英文), config:{key:值}}。边格式: {source, target, sourceHandle(可选,条件分支用'true'/'false')}。这是构建工作流的唯一方式，不再支持逐个添加节点。",
     {"type": "object", "properties": {
         "name": {"type": "string", "description": "工作流名称"},
         "description": {"type": "string", "description": "描述"},
@@ -2042,12 +2037,8 @@ register("build_workflow", "一次性构建完整工作流。传入全部节点�
         "edges": {"type": "array", "description": "全部连线列表，每项 {source, target, sourceHandle(可选)}"}
     }, "required": ["name", "nodes", "edges"]}, _build_workflow, "workflow")
 
-register("add_workflow_node", "向已有工作流添加一个节点。只需传入 node，系统会自动把节点追加到工作流末尾并连上线。如需特殊分支（如 HTTP 节点分叉到知识库和文档提取），可传 edge 指定连线。重要规则：引用上游节点输出时，必须用 {{节点ID.输出字段}} 模板字符串格式，不要用 JSON 对象！例如 instruction 应写为 \"{{code_1.code_output.summary}}\"。条件分支传 edge 时需加 sourceHandle: \"true\" 或 \"false\"。config合法key见 query_node_schema 工具返回的 schema。",
-    {"type": "object", "properties": {
-        "workflow_id": {"type": "string"},
-        "node": {"type": "object", "description": "节点: {id, type, config:{...}}。type 支持中文名（如'参数提取'）和英文名" },
-        "edge": {"type": "object", "description": "可选。不传则自动追加到工作流末尾。传则指定连线: {source, target, sourceHandle(可选)}"}
-    }, "required": ["workflow_id", "node"]}, _add_workflow_node, "workflow")
+# add_workflow_node 已合并到 build_workflow，不再单独注册
+# register("add_workflow_node", ...)
 
 register("run_workflow", "运行指定工作流并返回执行结果",
     {"type": "object", "properties": {
