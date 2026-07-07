@@ -271,6 +271,8 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
               <img src={fAvatar} alt="预览" className="w-8 h-8 rounded-full border border-sakura-100"
                 onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
             )}
+            <input value={fCat} onChange={e => setFCat(e.target.value)}
+              className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[10px] text-sakura-600" placeholder="分类（如：代码开发）" />
             <textarea value={fPrompt} onChange={e => setFPrompt(e.target.value)}
               className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[10px] text-sakura-600 resize-none" rows={3} placeholder="专家提示词..." />
             <div className="flex justify-end gap-1.5">
@@ -299,8 +301,7 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
           <p className="text-[10px] text-sakura-300 text-center py-4">无匹配专家</p>
         ) : (
           filtered.slice(0, 60).map((expert, i) => {
-            const isCustom = customExperts.some(ce => ce.name === expert.name && ce.prompt === expert.prompt);
-            const customIdx = customExperts.findIndex(ce => ce.name === expert.name && ce.prompt === expert.prompt);
+            const isCustom = i < customExperts.length;
             const inTeam = team.some(t => t.name === expert.name);
             const isExpanded = expandedExpert === expert.name;
             return (
@@ -318,11 +319,11 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
                       <p className="text-[9px] text-sakura-400">{expert.category}</p>
                     </div>
                   </button>
-                  {isCustom && customIdx >= 0 && (
+                  {isCustom && (
                     <>
-                      <button onClick={() => openForm(expert, customIdx)}
+                      <button onClick={() => openForm(expert, i)}
                         className="p-0.5 text-sakura-300 hover:text-sakura-500"><Pencil size={9} /></button>
-                      <button onClick={() => deleteCustom(customIdx)}
+                      <button onClick={() => deleteCustom(i)}
                         className="p-0.5 text-sakura-300 hover:text-red-500"><Trash2 size={9} /></button>
                     </>
                   )}
