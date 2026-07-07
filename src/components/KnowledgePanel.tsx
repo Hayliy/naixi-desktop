@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { apiGet, apiPost } from "@/lib/api";
-import { BookOpen, Plus, Search, X, Trash2, Edit3, Globe, Check } from "lucide-react";
+import { BookOpen, Plus, Search, X, Trash2, Edit3, Globe, Check, Zap, ChevronDown, ChevronUp, Link, Loader2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 
 interface KnowledgeItem {
@@ -255,6 +255,158 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
           </div>
         ))}
       </div>
+
+      {/* ── 外部知识源（MCP 知识连接） ── */}
+      <KbMcpSection />
+    </div>
+  );
+}
+
+/* ═══ 外部知识源 MCP 管理 ═══ */
+function KbMcpSection() {
+  const { notify } = useToast();
+  const [servers, setServers] = useState<Record<string, { command: string; args: string[]; env: Record<string, string> }>>({});
+  const [loading, setLoading] = useState(true);
+  const [collapsed, setCollapsed] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [mcpName, setMcpName] = useState("");
+  const [mcpCmd, setMcpCmd] = useState("");
+  const [mcpArgs, setMcpArgs] = useState("");
+
+  const loadServers = async () => {
+    try {
+      const res = await apiGet<{ servers: any }>("/api/mcp/servers");
+      setServers(res.servers || {});
+    } catch {}
+    setLoading(false);
+  };
+
+  useEffect(() => { loadServers(); }, []);
+
+  const resetForm = () => { setMcpName(""); setMcpCmd(""); setMcpArgs(""); setShowForm(false); setEditingKey(null); };
+
+  const handleSaveMcp = async () => {
+    if (!mcpName.trim() || !mcpCmd.trim()) return;
+    const updated = { ...servers };
+    if (editingKey && editingKey !== mcpName.trim()) delete updated[editingKey];
+    updated[mcpName.trim()] = { command: mcpCmd.trim(), args: mcpArgs.split(" ").filter(Boolean), env: {} };
+    try {
+      await apiPost("/api/mcp/servers", { servers: updated });
+      setServers(updated);
+      resetForm();
+      notify("已保存", "success");
+    } catch { notify("保存失败", "error"); }
+  };
+
+  const handleEditMcp = (key: string) => {
+    const srv = servers[key];
+    if (!srv) return;
+    setEditingKey(key); setMcpName(key); setMcpCmd(srv.command); setMcpArgs(srv.args?.join(" ") || ""); setShowForm(true);
+  };
+
+  const handleDeleteMcp = async (key: string) => {
+    const updated = { ...servers };
+    delete updated[key];
+    try {
+      await apiPost("/api/mcp/servers", { servers: updated });
+      setServers(updated);
+      notify("已删除", "success");
+    } catch {}
+  };
+
+  const handleTestMcp = async (key: string) => {
+    try {
+      const res = await apiPost<{ ok: boolean; error?: string; tools?: string[] }>("/api/mcp/test", { name: key });
+      if (res.ok) notify(`连接成功！工具: ${(res.tools || []).join(", ")}`, "success");
+      else notify(`连接失败: ${res.error || "未知错误"}`, "error");
+    } catch (e) { notify(`测试异常: ${String(e)}`, "error"); }
+  };
+
+  const handleConnectMcp = async () => {
+    try {
+      const res = await apiPost<{ ok: boolean; tool_count: number }>("/api/mcp/connect", {});
+      if (res.ok) notify(`已连接，共 ${res.tool_count} 个工具可用`, "success");
+    } catch {}
+  };
+
+  if (loading) return null;
+
+  const mcpKeys = Object.keys(servers);
+
+  return (
+    <div className="border-t border-sakura-100 shrink-0">
+      <button onClick={() => setCollapsed(!collapsed)}
+        className="flex items-center gap-1.5 w-full px-3 py-2 text-xs font-semibold text-sakura-500 hover:text-sakura-600 hover:bg-sakura-50 transition-colors">
+        {collapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
+        <Link size={12} /> 外部知识源
+        <span className="text-[10px] text-sakura-300 font-normal">({mcpKeys.length})</span>
+      </button>
+
+      {!collapsed && (
+        <div className="px-3 pb-3 space-y-2">
+          {/* 连接按钮 */}
+          {mcpKeys.length > 0 && (
+            <button onClick={handleConnectMcp}
+              className="w-full px-3 py-1.5 rounded-lg text-[11px] bg-gradient-to-br from-teal-400 to-teal-500 text-white hover:shadow-md transition-shadow">
+              连接 MCP 服务器
+            </button>
+          )}
+
+          {/* 添加/编辑表单 */}
+          {(showForm || editingKey) && (
+            <div className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs">
+              <p className="text-[10px] font-semibold text-sakura-500">{editingKey ? "编辑" : "添加"}外部知识源</p>
+              <input value={mcpName} onChange={e => setMcpName(e.target.value)}
+                placeholder="名称（如: fetch）" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
+              <input value={mcpCmd} onChange={e => setMcpCmd(e.target.value)}
+                placeholder="启动命令（如: uvx）" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] font-mono outline-none" />
+              <input value={mcpArgs} onChange={e => setMcpArgs(e.target.value)}
+                placeholder="参数如: mcp-server-fetch（空格分隔）" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] font-mono outline-none" />
+              <div className="flex items-center gap-1 pt-0.5">
+                <button onClick={resetForm}
+                  className="px-3 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
+                <button onClick={handleSaveMcp} disabled={!mcpName.trim() || !mcpCmd.trim()}
+                  className="flex items-center gap-1 px-3 py-1 rounded text-[10px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
+                  <Check size={10} /> {editingKey ? "保存" : "添加"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* 服务器列表 */}
+          <div className="space-y-1">
+            {mcpKeys.map(key => (
+              <div key={key} className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-sakura-50 border border-sakura-100">
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11px] font-medium text-sakura-600 truncate">{key}</p>
+                  <p className="text-[10px] text-sakura-400 truncate font-mono">{servers[key].command} {servers[key].args?.join(" ")}</p>
+                </div>
+                <button onClick={() => handleTestMcp(key)}
+                  className="p-1 rounded hover:bg-teal-50 text-sakura-300 hover:text-teal-500 transition-colors shrink-0" title="测试连接">
+                  <Zap size={11} />
+                </button>
+                <button onClick={() => handleEditMcp(key)}
+                  className="p-1 rounded hover:bg-sakura-100 text-sakura-300 hover:text-sakura-500 transition-colors shrink-0" title="编辑">
+                  <Edit3 size={11} />
+                </button>
+                <button onClick={() => handleDeleteMcp(key)}
+                  className="p-1 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500 transition-colors shrink-0">
+                  <Trash2 size={11} />
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {/* 添加按钮 */}
+          {!showForm && !editingKey && (
+            <button onClick={() => { setShowForm(true); }}
+              className="flex items-center gap-1 w-full px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+              <Plus size={10} /> 添加外部知识源
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
