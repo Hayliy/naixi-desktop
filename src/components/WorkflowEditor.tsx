@@ -271,7 +271,10 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
   const [rightTab, setRightTab] = useState<"config" | "vars" | "debug" | "runs" | null>(null);
   const [runsData, setRunsData] = useState<any[]>([]);
   const [publishResult, setPublishResult] = useState<any>(null);
+  const [keysList, setKeysList] = useState<any[]>([]);
+  const [usageStats, setUsageStats] = useState<any>(null);
   const [showKey, setShowKey] = useState(false);
+  const [showDeleteKeyConfirm, setShowDeleteKeyConfirm] = useState<number | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showRegenConfirm, setShowRegenConfirm] = useState(false);
   const [showWorkflowList, setShowWorkflowList] = useState(false);
@@ -586,6 +589,50 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
     await loadWorkflow(id);
   }, [loadWorkflow]);
 
+  // 加载密钥列表
+  const loadKeys = useCallback(async () => {
+    if (!workflowId) return;
+    try {
+      const r: any = await apiGet<any>(`/api/workflows/${workflowId}/keys`);
+      if (r?.keys) setKeysList(r.keys);
+    } catch {}
+  }, [workflowId]);
+
+  // 加载调用统计
+  const loadUsage = useCallback(async () => {
+    if (!workflowId) return;
+    try {
+      const r: any = await apiGet<any>(`/api/workflows/${workflowId}/usage?days=7`);
+      setUsageStats(r);
+    } catch {}
+  }, [workflowId]);
+
+  // 删除密钥
+  const handleDeleteKey = useCallback(async (keyId: number) => {
+    try {
+      const r: any = await apiPost("/api/workflows/keys/delete", { id: keyId });
+      if (r?.success) {
+        notify("密钥已删除", "success");
+        setShowDeleteKeyConfirm(null);
+        loadKeys();
+      }
+    } catch (e: any) {
+      notify("删除失败: " + (e?.message || "未知错误"), "error");
+    }
+  }, [loadKeys]);
+
+  // 切换密钥启用/停用
+  const handleToggleKey = useCallback(async (keyId: number, enabled: number) => {
+    try {
+      const r: any = await apiPost("/api/workflows/keys/update", { id: keyId, enabled: !enabled });
+      if (r?.success) {
+        loadKeys();
+      }
+    } catch (e: any) {
+      notify("操作失败", "error");
+    }
+  }, [loadKeys]);
+
   // 发布工作流为 API
   const handlePublish = useCallback(async () => {
     if (!workflowId) { notify("请先保存工作流", "warning"); return; }
@@ -594,32 +641,8 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
       setPublishResult(r);
       if (r?.success) {
         notify("工作流已发布，可通过 API 端点调用", "success");
-        // 加载密钥列表和使用统计
-        setTimeout(async () => {
-          try {
-            const keysR = await apiGet<any>(`/api/workflows/${workflowId}/keys`);
-            const keysDiv = document.getElementById("keys-container");
-            if (keysDiv && keysR?.keys) {
-              keysDiv.innerHTML = keysR.keys.map((k: any) =>
-                `<div class="flex items-center justify-between py-1 ${k.enabled ? '' : 'opacity-40'}">
-                  <span class="font-mono text-gray-600">${k.name || '未命名'}</span>
-                  <span class="flex items-center gap-1">
-                    <span class="text-[9px] ${k.enabled ? 'text-green-500' : 'text-red-400'}">${k.enabled ? '启用' : '禁用'}</span>
-                    <code class="text-[8px] font-mono text-gray-300">${(k.key || '').slice(0, 12)}...</code>
-                  </span>
-                </div>`
-              ).join("");
-            }
-          } catch {}
-          try {
-            const usageR = await apiGet<any>(`/api/workflows/${workflowId}/usage?days=7`);
-            const usageDiv = document.getElementById("usage-container");
-            if (usageDiv) {
-              const d = usageR?.daily || [];
-              usageDiv.innerHTML = `总调用: <b>${usageR?.total_calls || 0}</b> 次 | 近7天: ${d.length} 天数据`;
-            }
-          } catch {}
-        }, 100);
+        loadKeys();
+        loadUsage();
       }
     } catch (e: any) {
       notify("发布失败: " + (e?.message || "未知错误"), "error");
@@ -1776,12 +1799,15 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                 {publishResult?.api_key && (
                   <div className="bg-gray-50 rounded-lg p-3">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs text-gray-500">API 密钥管理</span>
+                      <span className="text-xs text-gray-500">API 密钥管理 {keysList.length > 0 && <span className="text-gray-300">({keysList.length})</span>}</span>
                       <button
                         onClick={async () => {
                           try {
                             const r: any = await apiPost(`/api/workflows/${workflowId}/keys/create`, { name: "新密钥" });
-                            if (r?.key) { notify("新密钥已创建", "success"); setPublishResult({ ...publishResult, refresh: Date.now() }); }
+                            if (r?.key) {
+                              notify(`新密钥已创建: ${r.key.substring(0, 16)}...`, "success");
+                              loadKeys();
+                            }
                           } catch (e: any) { notify("创建失败", "error"); }
                         }}
                         className="text-[10px] px-2 py-0.5 rounded bg-sakura-100 text-sakura-600 hover:bg-sakura-200"
@@ -1789,8 +1815,39 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                         新建密钥
                       </button>
                     </div>
-                    <div id="keys-container" className="space-y-1 max-h-[120px] overflow-y-auto text-[10px]">
-                      加载中...
+                    <div className="space-y-1 max-h-[160px] overflow-y-auto text-[10px]">
+                      {keysList.length === 0 ? (
+                        <span className="text-gray-400">暂无密钥</span>
+                      ) : keysList.map(k => (
+                        <div key={k.id} className={`flex items-center justify-between py-1.5 px-2 rounded ${k.enabled ? 'bg-white' : 'bg-gray-50 opacity-50'}`}>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-gray-700 truncate max-w-[60px]">{k.name || '未命名'}</span>
+                              <code className="text-[8px] font-mono text-gray-400 truncate">{k.key.substring(0, 20)}...</code>
+                            </div>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <button
+                                onClick={() => handleToggleKey(k.id, k.enabled)}
+                                className={`text-[9px] px-1.5 py-0.5 rounded ${k.enabled ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-400'}`}
+                              >
+                                {k.enabled ? '启用' : '禁用'}
+                              </button>
+                              <button
+                                onClick={() => { navigator.clipboard.writeText(k.key); notify("已复制", "success"); }}
+                                className="text-[9px] text-gray-400 hover:text-gray-600"
+                              >
+                                复制
+                              </button>
+                              <button
+                                onClick={() => setShowDeleteKeyConfirm(k.id)}
+                                className="text-[9px] text-red-400 hover:text-red-600"
+                              >
+                                删除
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -1799,7 +1856,18 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                 {publishResult?.api_key && (
                   <div className="bg-gray-50 rounded-lg p-3">
                     <div className="text-xs text-gray-500 mb-1">调用统计（近7天）</div>
-                    <div id="usage-container" className="text-[10px] text-gray-400">加载中...</div>
+                    <div className="text-[10px] text-gray-500">
+                      {usageStats ? (
+                        <>
+                          总调用: <b className="text-gray-700">{usageStats.total_calls || 0}</b> 次
+                          {usageStats.by_key && usageStats.by_key.length > 0 && (
+                            <> | 活跃密钥: {usageStats.by_key.length}</>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-gray-300">暂无数据</span>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1829,6 +1897,33 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
               <button onClick={confirmRegen}
                 className="px-3 py-1.5 rounded-lg text-xs text-white bg-amber-500 hover:bg-amber-600 transition-colors">
                 确认重新生成
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 删除密钥确认对话框 */}
+      {showDeleteKeyConfirm !== null && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setShowDeleteKeyConfirm(null)}>
+          <div className="bg-white rounded-xl shadow-xl w-[320px] p-5" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <span className="text-sm font-semibold text-gray-700">确认删除密钥</span>
+              <button onClick={() => setShowDeleteKeyConfirm(null)} className="text-gray-400 hover:text-gray-600">
+                <X size={16} />
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mb-5">
+              删除后该密钥将立即失效，无法恢复。确定删除？
+            </p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowDeleteKeyConfirm(null)}
+                className="px-3 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-gray-100 transition-colors">
+                取消
+              </button>
+              <button onClick={() => handleDeleteKey(showDeleteKeyConfirm)}
+                className="px-3 py-1.5 rounded-lg text-xs text-white bg-red-500 hover:bg-red-600 transition-colors">
+                确认删除
               </button>
             </div>
           </div>
