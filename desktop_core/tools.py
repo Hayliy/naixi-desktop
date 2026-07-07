@@ -1905,13 +1905,24 @@ async def _add_workflow_node(args: dict, context: dict = None) -> str:
         
         new_edge = args.get("edge")
         if new_edge and new_edge.get("source") and new_edge.get("target"):
-            edge = {"id": f'e{len(edges)+1}', "source": new_edge["source"], "target": new_edge["target"]}
-            if new_edge.get("sourceHandle"):
-                edge["sourceHandle"] = new_edge["sourceHandle"]
-            edges.append(edge)
-            result_summary["edge"] = f"{new_edge['source']}→{new_edge['target']}"
-            # 有新边替代 → 安全删除默认 start→end
-            edges = [e for e in edges if not (e.get("source") == "start" and e.get("target") == "end")]
+            existing_ids = {n["id"] for n in nodes}
+            src_ok = new_edge["source"] in existing_ids
+            tgt_ok = new_edge["target"] in existing_ids
+            if not src_ok or not tgt_ok:
+                # 边引用了不存在的节点（通常是 Agent 超前引用了后续才添加的节点）
+                # 跳过此边，让 validate 自动补连
+                missing = []
+                if not src_ok: missing.append(f"source={new_edge['source']}")
+                if not tgt_ok: missing.append(f"target={new_edge['target']}")
+                result_summary["edge_skipped"] = f"边 {new_edge['source']}→{new_edge['target']} 跳过：{'  '.join(missing)} 不存在"
+            else:
+                edge = {"id": f'e{len(edges)+1}', "source": new_edge["source"], "target": new_edge["target"]}
+                if new_edge.get("sourceHandle"):
+                    edge["sourceHandle"] = new_edge["sourceHandle"]
+                edges.append(edge)
+                result_summary["edge"] = f"{new_edge['source']}→{new_edge['target']}"
+                # 安全删除默认 start→end
+                edges = [e for e in edges if not (e.get("source") == "start" and e.get("target") == "end")]
 
         # 没传 edge 时自动推断：新节点追加到线性链末尾
         if not new_edge and new_node_raw.get("id"):
