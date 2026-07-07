@@ -2064,14 +2064,18 @@ async def api_knowledge_import_github(request):
 
 async def api_automations_list(request):
     """列出所有自动化任务"""
+    import time
     raw = meta_get("naixi_automations")
     items = json.loads(raw) if raw else []
-    now = time.time()
     for item in items:
         if item.get("status") == "active":
-            if item.get("schedule_type") == "once":
-                if item.get("scheduled_at") and item["scheduled_at"] < time.strftime("%Y-%m-%dT%H:%M", time.localtime(now)):
-                    item["status"] = "expired"
+            if item.get("schedule_type") == "once" and item.get("scheduled_at"):
+                try:
+                    t = time.mktime(time.strptime(item["scheduled_at"], "%Y-%m-%dT%H:%M"))
+                    if t < time.time():
+                        item["status"] = "expired"
+                except:
+                    pass
     return web.json_response({"automations": items})
 
 

@@ -37,12 +37,18 @@ function computeNextRun(rrule: string): string {
   const freq = parts.FREQ || "DAILY";
   const interval = parseInt(parts.INTERVAL || "1");
   const now = new Date();
+  // 取整到下一个整点/零点
   const next = new Date(now);
-  if (freq === "HOURLY") next.setHours(next.getHours() + interval);
-  else if (freq === "DAILY") next.setDate(next.getDate() + interval);
-  else if (freq === "WEEKLY") next.setDate(next.getDate() + 7 * interval);
-  else next.setDate(next.getDate() + 1);
-  return next.toISOString().slice(0, 16).replace("T", " ");
+  if (freq === "HOURLY") { next.setHours(next.getHours() + 1, 0, 0, 0); }
+  else if (freq === "DAILY") { next.setDate(next.getDate() + 1); next.setHours(9, 0, 0, 0); }
+  else if (freq === "WEEKLY") { next.setDate(next.getDate() + (7 - next.getDay() + 1) % 7 || 7); next.setHours(9, 0, 0, 0); }
+  else { next.setDate(next.getDate() + 1); next.setHours(9, 0, 0, 0); }
+  // 如果计算出的时间在现在之前，再推一个周期
+  if (next.getTime() <= now.getTime()) {
+    if (freq === "HOURLY") next.setHours(next.getHours() + interval);
+    else next.setDate(next.getDate() + interval);
+  }
+  return `${next.getMonth() + 1}月${next.getDate()}日 ${String(next.getHours()).padStart(2, "0")}:${String(next.getMinutes()).padStart(2, "0")}`;
 }
 
 export default function AutomationPanel({ onClose }: { onClose: () => void }) {
@@ -132,7 +138,10 @@ export default function AutomationPanel({ onClose }: { onClose: () => void }) {
 
   const nextRun = (a: Automation): string => {
     if (a.status !== "active") return "已暂停";
-    if (a.schedule_type === "once") return a.scheduled_at || "—";
+    if (a.schedule_type === "once" && a.scheduled_at) {
+      const t = new Date(a.scheduled_at);
+      return t < new Date() ? "已过期" : `${t.getMonth()+1}月${t.getDate()}日 ${String(t.getHours()).padStart(2,"0")}:${String(t.getMinutes()).padStart(2,"0")}`;
+    }
     return computeNextRun(a.rrule || "FREQ=DAILY");
   };
 
