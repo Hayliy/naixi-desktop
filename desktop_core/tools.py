@@ -97,7 +97,8 @@ def get_fast_definitions():
                    "git", "web_fetch", "clipboard", "mkdir",
                    "visualize", "read_image", "read_file", "write_file",
                    "screenshot", "get_system_info", "list_files", "grep_search",
-                   "search_tools"}
+                   "search_tools",
+                   "list_workflows", "create_workflow", "add_workflow_node", "run_workflow"}
     result = [
         {
             "type": "function",
@@ -1550,3 +1551,240 @@ def reload_mcp_servers():
         _mcp_manager = new_mgr
     except:
         pass
+
+
+# ══════════════════════════════════════════════
+# 工作流工具 — Agent 自动搭建工作流
+# 设计原则：LLM 只传类型 + 配置键值对，服务端拼结构
+# ══════════════════════════════════════════════
+
+# 每种节点类型允许的配置 key（LLM 传的无关字段自动丢弃）
+NODE_CONFIG_SCHEMA = {
+    "start": {"input_data"},
+    "end": set(),
+    "datasource": {"source_type", "inline_data", "source_path"},
+    "code": {"code", "language"},
+    "http": {"url", "method", "headers", "body", "timeout"},
+    "knowledge": {"query", "top_k"},
+    "document-extractor": {"file_path", "extract_mode"},
+    "condition": {"expression", "comparisons", "logic"},
+    "parameter-extractor": {"query", "parameters"},
+    "llm": {"prompt", "system_prompt", "model", "temperature", "max_tokens", "top_p", "stop", "structured_output", "vision", "memory_enabled", "session_id"},
+    "tool": {"tool_name", "tool_args"},
+    "template-transform": {"template", "variables"},
+    "question-classifier": {"query", "categories"},
+    "assigner": {"operation", "assignments"},
+    "variable-aggregator": {"merge_strategy"},
+    "list-operator": {"operation", "expression"},
+    "iteration": {"items", "mode", "parallel_nums", "on_error"},
+    "agent": {"system_prompt", "instruction", "max_iterations", "tools"},
+    "loop": {"condition", "max_iterations", "variable_name"},
+    "knowledge-index": {"content", "title", "category"},
+    "answer": {"output"},
+    "human-input": {"prompt", "input_type", "auto_confirm", "auto_value"},
+}
+
+# 常见同义词映射（少量，只处理 LLM 最常搞混的几个）
+CONFIG_SYNONYMS = {
+    "path": "file_path", "document_path": "file_path",
+    "code_content": "code", "output_code": "code",
+    "tool_params": "tool_args", "tool_arguments": "tool_args",
+    "merge_type": "merge_strategy", "strategy": "merge_strategy",
+}
+
+def _normalize_node(n: dict) -> dict:
+    """标准化节点：只保留引擎认识的关键字段"""
+    data = n.get("data", {})
+    raw_type = data.get("type", n.get("type", "llm"))
+    
+    # 类型名模糊匹配：去分隔符、去常见后缀
+    type_clean = raw_type.lower().replace("-","").replace("_","")
+    # 去掉常见后缀
+    for suffix in ["node", "block", "step"]:
+        if type_clean.endswith(suffix):
+            type_clean = type_clean[:-len(suffix)]
+    # 已知映射（硬编码，因为类型名是有限的）
+    type_map = {
+        "start":"start", "end":"end", "finish":"end",
+        "datasource":"datasource", "data_source":"datasource",
+        "code":"code", "python":"code",
+        "http":"http", "httprequest":"http",
+        "knowledge":"knowledge", "knowledgebase":"knowledge",
+        "documentextractor":"document-extractor", "docextractor":"document-extractor",
+        "condition":"condition", "ifelse":"condition",
+        "parameterextractor":"parameter-extractor", "param_extractor":"parameter-extractor",
+        "llm":"llm", "chat":"llm", "gpt":"llm",
+        "tool":"tool",
+        "template":"template-transform", "templateconverter":"template-transform",
+        "questionclassifier":"question-classifier", "classifier":"question-classifier",
+        "assigner":"assigner", "variableassigner":"assigner",
+        "variableaggregator":"variable-aggregator", "varaggregator":"variable-aggregator",
+        "listoperator":"list-operator", "listoperation":"list-operator",
+        "iteration":"iteration", "iterator":"iteration",
+        "agent":"agent",
+        "loop":"loop", "conditionloop":"loop", "conditionalloop":"loop",
+        "knowledgeindex":"knowledge-index", "knowledgeindexer":"knowledge-index",
+        "answer":"answer", "intermediateoutput":"answer",
+        "humaninput":"human-input", "humanin":"human-input",
+    }
+    engine_type = type_map.get(type_clean, raw_type)
+    data["type"] = engine_type
+    if not data.get("label"):
+        data["label"] = engine_type
+    
+    # 处理 config：只保留 schema 中允许的 key
+    cfg = data.get("config", {})
+    allowed = NODE_CONFIG_SCHEMA.get(engine_type, set())
+    clean_cfg = {}
+    for k, v in cfg.items():
+        # 同义词映射
+        mapped = CONFIG_SYNONYMS.get(k, k)
+        if mapped in allowed:
+            clean_cfg[mapped] = v
+    
+    # 数据源特殊处理
+    if engine_type == "datasource" and clean_cfg.get("inline_data") and "source_type" not in clean_cfg:
+        clean_cfg["source_type"] = "inline"
+    
+    data["config"] = clean_cfg
+    return {"id": n.get("id"), "type": "base", "position": n.get("position", {"x":80,"y":200}), "data": data}
+
+async def _list_workflows(args: dict, context: dict = None) -> str:
+    """列出所有已保存的工作流"""
+    try:
+        from desktop_core.workflow_engine import api_list_workflows
+        wfs = await api_list_workflows()
+        if not wfs:
+            return json.dumps({"success": True, "workflows": [], "message": "暂无工作流，可以新建一个"})
+        result = []
+        for w in wfs:
+            result.append({"id": w.get("id",""), "name": w.get("name",""), "description": w.get("description","")[:50]})
+        return json.dumps({"success": True, "workflows": result, "count": len(result)}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
+
+async def _create_workflow(args: dict, context: dict = None) -> str:
+    """创建新工作流（可指定节点和连线）"""
+    try:
+        from desktop_core.workflow_engine import api_save_workflow
+        wid = args.get("id", f"wf_agent_{int(time.time())}")
+        name = args.get("name", "Agent 创建的工作流")
+        description = args.get("description", "")
+        nodes = args.get("nodes", [])
+        edges = args.get("edges", [])
+        if not nodes:
+            nodes = [
+                {"id":"start","type":"base","position":{"x":80,"y":200},"data":{"label":"开始","type":"start","config":{"input_data":{}}}},
+                {"id":"end","type":"base","position":{"x":330,"y":200},"data":{"label":"结束","type":"end","config":{}}}
+            ]
+        if not edges and len(nodes) == 2:
+            edges = [{"id":"e1","source":"start","target":"end"}]
+        # 标准化节点
+        nodes = [_normalize_node(n) for n in nodes]
+        result = await api_save_workflow(wid, name, description, nodes, edges)
+        return json.dumps({"success": True, "id": wid, "name": name, "version": result.get("version", 1)}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"success": False, "error": f"创建工作流失败: {e}"}, ensure_ascii=False)
+
+async def _add_workflow_node(args: dict, context: dict = None) -> str:
+    """向已有工作流添加节点（返回精简结果供 LLM 使用）"""
+    try:
+        from desktop_core.workflow_engine import api_get_workflow, api_save_workflow
+        wid = args.get("workflow_id", "")
+        wf = await api_get_workflow(wid)
+        if not wf:
+            return json.dumps({"success": False, "error": "工作流不存在"})
+        nodes_raw = wf.get("nodes", "[]")
+        nodes = json.loads(nodes_raw) if isinstance(nodes_raw, str) else list(nodes_raw)
+        edges_raw = wf.get("edges", "[]")
+        edges = json.loads(edges_raw) if isinstance(edges_raw, str) else list(edges_raw)
+        
+        # 删除默认 start→end 连线
+        if any(n.get("id") != "start" for n in nodes if n.get("data",{}).get("type") not in ("start", "end")):
+            edges = [e for e in edges if not (e.get("source") == "start" and e.get("target") == "end")]
+        
+        new_node_raw = args.get("node", {})
+        result_summary = {"success": True, "id": wid, "added": None}
+        
+        if new_node_raw.get("id"):
+            existing_ids = {n["id"] for n in nodes}
+            if new_node_raw["id"] in existing_ids:
+                return json.dumps({"success": False, "error": f"节点ID '{new_node_raw['id']}' 已存在"})
+            
+            new_node = _normalize_node(new_node_raw)
+            # 自动分配位置
+            if new_node.get("position",{}).get("x",0) == 0 and new_node.get("position",{}).get("y",0) == 0:
+                last_node = max(nodes, key=lambda n: n.get("position",{}).get("x",0)) if nodes else None
+                new_x = (last_node.get("position",{}).get("x",80) + 250) if last_node else 80
+                max_y = max((n.get("position",{}).get("y",200) for n in nodes), default=200)
+                new_node["position"] = {"x": new_x, "y": max_y}
+            
+            nodes.append(new_node)
+            result_summary["added"] = new_node["id"]
+            result_summary["node_type"] = new_node.get("data",{}).get("type","")
+        
+        new_edge = args.get("edge")
+        if new_edge and new_edge.get("source") and new_edge.get("target"):
+            edge = {"id": f'e{len(edges)+1}', "source": new_edge["source"], "target": new_edge["target"]}
+            if new_edge.get("sourceHandle"):
+                edge["sourceHandle"] = new_edge["sourceHandle"]
+            edges.append(edge)
+            result_summary["edge"] = f"{new_edge['source']}→{new_edge['target']}"
+        
+        await api_save_workflow(wid, wf.get("name",""), wf.get("description",""), nodes, edges)
+        result_summary["node_count"] = len(nodes)
+        result_summary["edge_count"] = len(edges)
+        return json.dumps(result_summary, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)[:100]}, ensure_ascii=False)
+
+async def _run_workflow(args: dict, context: dict = None) -> str:
+    """运行指定工作流（返回精简结果供 LLM 使用）"""
+    try:
+        from desktop_core.workflow_engine import api_run_workflow
+        wid = args.get("workflow_id", "")
+        input_data = args.get("input", {})
+        result = await api_run_workflow(wid, input_data)
+        nr = result.get("node_results", [])
+        suc = sum(1 for n in nr if n["status"] == "success")
+        err = sum(1 for n in nr if n["status"] == "error")
+        errors = [n for n in nr if n.get("error")]
+        
+        summary = {
+            "status": result.get("status", "unknown"),
+            "total_nodes": len(nr),
+            "success": suc,
+            "errors": err,
+            "final_output": str(result.get("final_output", {}))[:200],
+        }
+        if errors:
+            summary["error_details"] = [{"node": e["label"], "msg": e["error"][:80]} for e in errors[:3]]
+        return json.dumps(summary, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)[:100]}, ensure_ascii=False)
+
+
+# 注册工作流工具
+register("list_workflows", "列出所有已保存的工作流，返回工作流 ID、名称和描述。",
+    {"type": "object", "properties": {}, "required": []}, _list_workflows, "workflow")
+
+register("create_workflow", "创建新工作流。自动生成开始/结束节点，或传入自定义节点。",
+    {"type": "object", "properties": {
+        "name": {"type": "string", "description": "工作流名称"},
+        "description": {"type": "string", "description": "描述"},
+        "nodes": {"type": "array", "description": "节点列表（可选）"},
+        "edges": {"type": "array", "description": "连线列表（可选）"}
+    }, "required": ["name"]}, _create_workflow, "workflow")
+
+register("add_workflow_node", "向已有工作流添加节点。传入 node.type（节点类型）和 node.config（配置键值对，合法的key见工具描述底部）。config合法key: llm={prompt,system_prompt,model,temperature,max_tokens}, code={code,language}, http={url,method,headers}, condition={expression}, tool={tool_name,tool_args}, knowledge={query,top_k}, template-transform={template}, assigner={operation,assignments}, datasource={source_type,inline_data}, document-extractor={file_path}, iteration={items,mode,parallel_nums}, agent={system_prompt,instruction,max_iterations,tools}, loop={condition,max_iterations}, human-input={prompt,input_type,auto_confirm}",
+    {"type": "object", "properties": {
+        "workflow_id": {"type": "string"},
+        "node": {"type": "object", "description": "节点: {id, type, config:{...}}" },
+        "edge": {"type": "object", "description": "连线: {source, target}"}
+    }, "required": ["workflow_id", "node"]}, _add_workflow_node, "workflow")
+
+register("run_workflow", "运行指定工作流并返回执行结果",
+    {"type": "object", "properties": {
+        "workflow_id": {"type": "string", "description": "工作流 ID"},
+        "input": {"type": "object", "description": "输入数据"}
+    }, "required": ["workflow_id"]}, _run_workflow, "workflow")

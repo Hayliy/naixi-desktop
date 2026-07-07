@@ -26,7 +26,7 @@ import {
   Play, Save, Trash2, Plus, X, ChevronRight, ChevronDown, RefreshCw, Variable,
   Bot, Code, Globe, BookOpen, GitBranch, Wrench,
   Square, PlayCircle, FileText, List, Filter, Equal,
-  Combine, MessageSquare, RotateCcw, File, FileType, Clock,
+  Combine, MessageSquare, RotateCcw, File, FileType, Clock, LayoutGrid, Check, Eye, EyeOff,
 } from "lucide-react";
 
 // 节点图标映射
@@ -271,6 +271,9 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
   const [rightTab, setRightTab] = useState<"config" | "vars" | "debug" | "runs" | null>(null);
   const [runsData, setRunsData] = useState<any[]>([]);
   const [publishResult, setPublishResult] = useState<any>(null);
+  const [showKey, setShowKey] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showRegenConfirm, setShowRegenConfirm] = useState(false);
   const [showWorkflowList, setShowWorkflowList] = useState(false);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -313,19 +316,41 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
             const loadedNodes = typeof d.nodes === "string" ? JSON.parse(d.nodes) : d.nodes;
             const loadedEdges = typeof d.edges === "string" ? JSON.parse(d.edges) : d.edges;
             if (loadedNodes?.length) {
-              const laidOut = autoLayout(loadedNodes.map((n: any) => ({
+              // 使用已有位置，不覆盖手动拖动
+              setNodes(loadedNodes.map((n: any) => ({
                 ...n, type: "base",
                 data: n.data || { label: n.id || "节点", type: "llm", config: {} },
-              })), loadedEdges || []);
-              setNodes(laidOut);
+              })));
             }
             if (loadedEdges?.length) setEdges(loadedEdges);
-            setTimeout(() => fitView({ duration: 300 }), 150);
           } catch (e) { console.warn("解析工作流数据出错", e); }
         }
       }).catch(e => console.warn("加载工作流失败", e));
     }
-  }, [initialId, autoLayout, fitView]);
+  }, [initialId]);
+
+  // 侧边栏快捷键：与对话页面共用"打开/关闭设置面板"快捷键
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const raw = localStorage.getItem("naixi_shortcuts");
+      let shortcuts: { key: string; desc: string }[] = [];
+      try { shortcuts = JSON.parse(raw) || []; } catch { shortcuts = []; }
+      for (const s of shortcuts) {
+        if (s.desc !== "打开/关闭设置面板") continue;
+        const parts = s.key.toLowerCase().split("+");
+        const key = parts.pop() || "";
+        if (e.key.toLowerCase() !== key) continue;
+        if (parts.includes("ctrl") !== e.ctrlKey) continue;
+        if (parts.includes("shift") !== e.shiftKey) continue;
+        if (parts.includes("alt") !== e.altKey) continue;
+        e.preventDefault();
+        setRightTab(prev => prev ? null : "config");
+        return;
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   const onConnect = useCallback(
     (params: Connection) => setEdges(eds => addEdge(params, eds)),
@@ -334,6 +359,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
 
   const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
     setSelectedNode(node);
+    setRightTab("config"); // 点击节点自动打开配置面板
   }, []);
 
   const onPaneClick = useCallback(() => {
@@ -361,6 +387,10 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
       if (r?.success) {
         setWorkflowId(id);
         notify("工作流已保存", "success");
+        // 刷新工作流列表
+        apiGet<any>("/api/workflows").then(d => {
+          if (d?.workflows) setWorkflows(d.workflows);
+        }).catch(e => console.warn("刷新工作流列表失败", e));
       }
     } catch (e: any) {
       notify("保存失败: " + (e?.message || "未知错误"), "error");
@@ -439,13 +469,15 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
       }
 
       if (parsedNodes.length > 0) {
-        const laidOut = autoLayout(parsedNodes.map((n: any) => ({
+        // 使用已有位置（保存时的布局），不覆盖手动拖动
+        const finalNodes = parsedNodes.map((n: any) => ({
           ...n,
           type: "base",
           data: n.data || { label: n.id || "节点", type: "llm", config: {} },
-        })), parsedEdges);
-        setNodes(laidOut);
-        setTimeout(() => fitView({ duration: 300 }), 100);
+        }));
+        setNodes(finalNodes);
+        // 首次加载时居中视野（仅限无 id 的新建工作流）
+        if (!workflowId) setTimeout(() => fitView({ duration: 300 }), 100);
       } else {
         setNodes(DEFAULT_NODES.map(n => ({ ...n })));
       }
@@ -454,36 +486,92 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
       console.error("加载工作流失败", e);
       notify("加载工作流失败: " + (e?.message || "未知错误"), "error");
     }
-  }, [setNodes, setEdges, autoLayout, fitView]);
+  }, [setNodes, setEdges, fitView]);
 
   // 新建工作流
   const handleNew = useCallback(() => {
-    setWorkflowId("");
-    setWorkflowName("新建工作流");
+    const id = `wf_${Date.now()}`;
+    const defaultName = "新建工作流";
+    setWorkflowId(id);
+    setWorkflowName(defaultName);
     setWorkflowDesc("");
     setNodes((DEFAULT_NODES as Node[]).map(n => ({ ...n })));
     setEdges([]);
     setSelectedNode(null);
     setRunResult(null);
     setNodeStatuses({});
-  }, [setNodes, setEdges, autoLayout, fitView]);
+    // 立即保存到后端，让工作流出现在列表中
+    apiPost("/api/workflows/save", {
+      id, name: defaultName, description: "",
+      nodes: DEFAULT_NODES.map(n => ({ ...n })),
+      edges: [],
+    }).then(r => {
+      if (r?.success) {
+        apiGet<any>("/api/workflows").then(d => {
+          if (d?.workflows) setWorkflows(d.workflows);
+        });
+      }
+    }).catch(e => console.warn("创建新工作流失败", e));
+    setTimeout(() => fitView({ duration: 300 }), 100);
+  }, [setNodes, setEdges, fitView, setWorkflows]);
+
+  // 自动整理节点布局
+  const handleAutoArrange = useCallback(() => {
+    setNodes(prev => autoLayout(prev, edges));
+    setTimeout(() => fitView({ duration: 300 }), 50);
+  }, [edges, autoLayout, fitView]);
 
   // 删除工作流
   const handleDelete = useCallback(async () => {
     if (!workflowId) return;
-    if (!confirm(`确认删除工作流「${workflowName}」？`)) return;
+    setShowDeleteConfirm(true);
+  }, [workflowId]);
+
+  // 确认删除
+  const confirmDelete = useCallback(async () => {
+    if (!workflowId) return;
+    setShowDeleteConfirm(false);
     try {
       const r: any = await apiPost("/api/workflows/delete", { id: workflowId });
       if (r?.success) {
-        handleNew();
+        // 本地重置（不创建新工作流）
+        setWorkflowId("");
+        setWorkflowName("新建工作流");
+        setWorkflowDesc("");
+        setNodes((DEFAULT_NODES as Node[]).map(n => ({ ...n })));
+        setEdges([]);
+        setSelectedNode(null);
+        setRunResult(null);
+        setNodeStatuses({});
+        setTimeout(() => fitView({ duration: 300 }), 100);
+        // 刷新列表
         apiGet<any>("/api/workflows").then(d => {
           if (d?.workflows) setWorkflows(d.workflows);
         }).catch(e => console.warn("加载工作流列表失败", e));
+      } else {
+        notify("删除失败", "error");
       }
     } catch (e: any) {
       notify("删除失败: " + (e?.message || "未知错误"), "error");
     }
-  }, [workflowId, workflowName, handleNew, setWorkflows]);
+  }, [workflowId, setWorkflows, setNodes, setEdges, fitView]);
+
+  // 重新生成 API Key
+  const confirmRegen = useCallback(async () => {
+    if (!workflowId) return;
+    setShowRegenConfirm(false);
+    try {
+      const r: any = await apiPost("/api/workflows/regenerate-key", { id: workflowId });
+      if (r?.success) {
+        setPublishResult({ ...publishResult, api_key: r.api_key });
+        const input = document.getElementById("api-key-display") as HTMLInputElement;
+        if (input) input.value = r.api_key;
+        notify("API Key 已重新生成", "success");
+      }
+    } catch (e: any) {
+      notify("重新生成失败: " + (e?.message || "未知错误"), "error");
+    }
+  }, [workflowId, publishResult]);
 
   // 刷新工作流列表
   const handleRefresh = useCallback(() => {
@@ -506,6 +594,32 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
       setPublishResult(r);
       if (r?.success) {
         notify("工作流已发布，可通过 API 端点调用", "success");
+        // 加载密钥列表和使用统计
+        setTimeout(async () => {
+          try {
+            const keysR = await apiGet<any>(`/api/workflows/${workflowId}/keys`);
+            const keysDiv = document.getElementById("keys-container");
+            if (keysDiv && keysR?.keys) {
+              keysDiv.innerHTML = keysR.keys.map((k: any) =>
+                `<div class="flex items-center justify-between py-1 ${k.enabled ? '' : 'opacity-40'}">
+                  <span class="font-mono text-gray-600">${k.name || '未命名'}</span>
+                  <span class="flex items-center gap-1">
+                    <span class="text-[9px] ${k.enabled ? 'text-green-500' : 'text-red-400'}">${k.enabled ? '启用' : '禁用'}</span>
+                    <code class="text-[8px] font-mono text-gray-300">${(k.key || '').slice(0, 12)}...</code>
+                  </span>
+                </div>`
+              ).join("");
+            }
+          } catch {}
+          try {
+            const usageR = await apiGet<any>(`/api/workflows/${workflowId}/usage?days=7`);
+            const usageDiv = document.getElementById("usage-container");
+            if (usageDiv) {
+              const d = usageR?.daily || [];
+              usageDiv.innerHTML = `总调用: <b>${usageR?.total_calls || 0}</b> 次 | 近7天: ${d.length} 天数据`;
+            }
+          } catch {}
+        }, 100);
       }
     } catch (e: any) {
       notify("发布失败: " + (e?.message || "未知错误"), "error");
@@ -575,10 +689,14 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
         mode: "cors",
       });
       clearTimeout(timer);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const r = await res.json();
-      setOnlineTemplates(Array.isArray(r) ? r : []);
-      if (!Array.isArray(r) || r.length === 0) setOnlineError("服务器返回空结果");
+      if (r?.error) {
+        setOnlineTemplates([]);
+        setOnlineError(r.error);
+      } else {
+        setOnlineTemplates(Array.isArray(r) ? r : []);
+        if (!Array.isArray(r) || r.length === 0) setOnlineError("未找到相关模板，试试其他关键词");
+      }
     } catch (e: any) {
       console.error("在线模板搜索失败", e);
       setOnlineTemplates([]);
@@ -730,43 +848,34 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
     []
   );
 
-  // 自动适配视图：处理 display:none → block 切换后视图偏移的问题
-  function FitOnShow() {
-    const { fitView } = useReactFlow();
-    const fitted = useRef(false);
+  // 首次挂载时适配视图（仅一次，不随 re-render 重复触发）
+  const fittedRef = useRef(false);
+  useEffect(() => {
+    if (fittedRef.current) return;
+    fittedRef.current = true;
 
-    useEffect(() => {
-      fitted.current = false;
-
-      const tryFit = () => {
-        const el = document.querySelector('.react-flow');
-        const parent = el?.parentElement;
-        if (parent && parent.clientWidth > 0 && parent.clientHeight > 0) {
-          fitView({ duration: 300 });
-          fitted.current = true;
-          return true;
-        }
-        return false;
-      };
-
-      // 首次尝试（如果已经可见）
-      if (tryFit()) return;
-
-      // 通过 ResizeObserver 等待容器出现实际尺寸
-      const el = document.querySelector('.react-flow');
+    const tryFit = () => {
+      const el: any = document.querySelector('.react-flow');
       const parent = el?.parentElement;
-      if (!parent) return;
+      if (parent && parent.clientWidth > 0 && parent.clientHeight > 0) {
+        fitView({ duration: 300 });
+        return true;
+      }
+      return false;
+    };
 
-      const observer = new ResizeObserver(() => {
-        if (!fitted.current && parent.clientWidth > 0) tryFit();
-      });
-      observer.observe(parent);
+    if (tryFit()) return;
 
-      return () => observer.disconnect();
-    }, [fitView]);
+    const el: any = document.querySelector('.react-flow');
+    const parent = el?.parentElement;
+    if (!parent) return;
 
-    return null;
-  }
+    const observer = new ResizeObserver(() => {
+      if (!fittedRef.current) tryFit();
+    });
+    observer.observe(parent);
+    return () => observer.disconnect();
+  }, [fitView]);
 
   return (
     <div className="flex h-full">
@@ -850,6 +959,9 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
           <button onClick={handleRefresh} className="flex items-center gap-1 px-2 py-1 rounded text-xs text-gray-500 hover:bg-gray-100" title="刷新列表">
             <RefreshCw size={12} /> 刷新
           </button>
+          <button onClick={handleAutoArrange} className="flex items-center gap-1 px-2 py-1 rounded text-xs text-gray-500 hover:bg-gray-100" title="自动整理节点布局">
+            <LayoutGrid size={12} /> 整理
+          </button>
           {workflowId ? (
             <button onClick={handleDelete} className="flex items-center gap-1 px-2 py-1 rounded text-xs text-red-400 hover:bg-red-50" title="删除工作流">
               <Trash2 size={12} /> 删除
@@ -903,7 +1015,6 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
             onDrop={onDrop}
             onDragOver={onDragOver}
             nodeTypes={nodeTypes}
-            fitView
             deleteKeyCode="Delete"
             className="bg-white"
           >
@@ -922,7 +1033,6 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                 <span className="font-medium">{edges.length}</span> 连线
               </div>
             </Panel>
-            <FitOnShow />
           </ReactFlow>
         </div>
 
@@ -952,36 +1062,20 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
       </div>
 
       {/* 右侧统一面板 */}
-      {$rightTab && (
-        <div className="w-64 bg-white border-l border-gray-200 flex flex-col shrink-0">
-          {/* 标签栏 */}
-          <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 shrink-0">
-            <div className="flex items-center gap-1">
-              {([
-                ["config", "配置", Wrench],
-                ["vars", "变量", Variable],
-                ["debug", "调试", Code],
-                ["runs", "日志", Clock],
-              ] as const).filter(([k]) => k !== "config" || selectedNode).map(([k, label, Icon]) => (
-                <button key={k} onClick={() => {
-                  setRightTab(k);
-                  if (k === "runs" && workflowId) loadRuns();
-                }}
-                  className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] ${
-                    rightTab === k ? "bg-sakura-100 text-sakura-600" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
-                  }`}>
-                  <Icon size={11} />
-                  {label}
-                </button>
-              ))}
-            </div>
-            <button onClick={() => setRightTab(null)} className="p-0.5 text-gray-300 hover:text-red-400 transition-colors" title="关闭面板">
-              <X size={13} />
-            </button>
-          </div>
-
+      {rightTab && (
+        <div className="flex w-80 min-w-[20rem] bg-white border-l border-gray-200 shrink-0">
           {/* 内容区 */}
-          <div className="flex-1 overflow-y-auto p-3 text-xs">
+          <div className="flex-1 flex flex-col min-w-0">
+            {/* 头部标题栏 */}
+            <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 shrink-0">
+              <span className="text-xs font-medium text-gray-600">
+                {rightTab === "config" ? "节点配置" : rightTab === "vars" ? "变量参考" : rightTab === "debug" ? "调试面板" : "运行日志"}
+              </span>
+              <button onClick={() => setRightTab(null)} className="p-0.5 text-gray-300 hover:text-red-400 transition-colors" title="关闭面板">
+                <X size={13} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-3 text-xs">
 
             {/* 节点配置 */}
             {rightTab === "config" && selectedNode && (
@@ -993,8 +1087,11 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                 </div>
                 {selectedNode.data?.type === "llm" && (
                   <>
+                    <div><label className="block text-gray-500 mb-1">提示词</label>
+                      <textarea rows={4} value={(selectedNode.data as any)?.config?.prompt || ""} onChange={e => updateNodeConfig("prompt", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" placeholder="支持 {{node_id.key}} 变量" /></div>
                     <div><label className="block text-gray-500 mb-1">系统提示词</label>
-                      <textarea rows={4} value={(selectedNode.data as any)?.config?.system_prompt || ""} onChange={e => updateNodeConfig("system_prompt", e.target.value)}
+                      <textarea rows={3} value={(selectedNode.data as any)?.config?.system_prompt || ""} onChange={e => updateNodeConfig("system_prompt", e.target.value)}
                         className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" /></div>
                     <div><label className="block text-gray-500 mb-1">模型</label>
                       <input value={(selectedNode.data as any)?.config?.model || ""} onChange={e => updateNodeConfig("model", e.target.value)}
@@ -1003,17 +1100,84 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                       <input type="number" step="0.1" min="0" max="2" value={(selectedNode.data as any)?.config?.temperature ?? ""}
                         onChange={e => updateNodeConfig("temperature", e.target.value)}
                         className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" /></div>
+                    <div><label className="block text-gray-500 mb-1">最大 Token</label>
+                      <input type="number" min="1" step="1" value={(selectedNode.data as any)?.config?.max_tokens || ""}
+                        onChange={e => updateNodeConfig("max_tokens", parseInt(e.target.value) || 1024)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" /></div>
+                    <div><label className="block text-gray-500 mb-1">Top P</label>
+                      <input type="number" step="0.05" min="0" max="1" value={(selectedNode.data as any)?.config?.top_p ?? ""}
+                        onChange={e => updateNodeConfig("top_p", parseFloat(e.target.value) || "")}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" /></div>
+                    <div><label className="block text-gray-500 mb-1">停止序列 (JSON 数组)</label>
+                      <input value={JSON.stringify((selectedNode.data as any)?.config?.stop || [])} onChange={e => { try { updateNodeConfig("stop", JSON.parse(e.target.value)); } catch {} }}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" placeholder='["\\n", "stop"]' /></div>
+                    <div><label className="block text-gray-500 mb-1">结构化输出 (JSON Schema)</label>
+                      <textarea rows={3} value={JSON.stringify((selectedNode.data as any)?.config?.structured_output || {enabled: false, schema: {}}, null, 2)}
+                        onChange={e => { try { updateNodeConfig("structured_output", JSON.parse(e.target.value)); } catch {} }}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" placeholder='{"enabled": true, "schema": {"type": "object", "properties": {...}}}' /></div>
+                    <label className="flex items-center gap-2 text-xs text-gray-500 cursor-pointer">
+                      <input type="checkbox" checked={(selectedNode.data as any)?.config?.memory_enabled || false}
+                        onChange={e => updateNodeConfig("memory_enabled", e.target.checked)}
+                        className="rounded border-gray-300 text-sakura-400 focus:ring-sakura-300" />
+                      启用对话记忆
+                    </label>
+                    {(selectedNode.data as any)?.config?.memory_enabled && (
+                      <div><label className="block text-gray-500 mb-1">会话 ID</label>
+                        <input value={(selectedNode.data as any)?.config?.session_id || ""} onChange={e => updateNodeConfig("session_id", e.target.value)}
+                          className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" placeholder="default" /></div>
+                    )}
+                    <div><label className="block text-gray-500 mb-1">视觉 (JSON)</label>
+                      <textarea rows={2} value={JSON.stringify((selectedNode.data as any)?.config?.vision || {enabled: false, images: [], detail: "auto"}, null, 2)}
+                        onChange={e => { try { updateNodeConfig("vision", JSON.parse(e.target.value)); } catch {} }}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" /></div>
                   </>
                 )}
                 {selectedNode.data?.type === "code" && (
-                  <div><label className="block text-gray-500 mb-1">代码</label>
-                    <textarea rows={6} value={(selectedNode.data as any)?.config?.code || ""} onChange={e => updateNodeConfig("code", e.target.value)}
-                      className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" /></div>
+                  <>
+                    <div><label className="block text-gray-500 mb-1">代码</label>
+                      <textarea rows={6} value={(selectedNode.data as any)?.config?.code || ""} onChange={e => updateNodeConfig("code", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" /></div>
+                    <div><label className="block text-gray-500 mb-1">语言</label>
+                      <select value={(selectedNode.data as any)?.config?.language || "python"} onChange={e => updateNodeConfig("language", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300">
+                        <option value="python">Python</option>
+                        <option value="javascript">JavaScript</option>
+                        <option value="typescript">TypeScript</option>
+                        <option value="go">Go</option>
+                        <option value="rust">Rust</option>
+                        <option value="java">Java</option>
+                        <option value="cpp">C++</option>
+                        <option value="shell">Shell / Bash</option>
+                        <option value="sql">SQL</option>
+                        <option value="php">PHP</option>
+                        <option value="ruby">Ruby</option>
+                      </select></div>
+                  </>
                 )}
                 {selectedNode.data?.type === "condition" && (
-                  <div><label className="block text-gray-500 mb-1">条件表达式</label>
-                    <textarea rows={3} value={(selectedNode.data as any)?.config?.condition || ""} onChange={e => updateNodeConfig("condition", e.target.value)}
-                      className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" placeholder="例如: {{result.score > 0.5}}" /></div>
+                  <>
+                    <div><label className="block text-gray-500 mb-1">条件表达式</label>
+                      <textarea rows={3} value={(selectedNode.data as any)?.config?.expression || ""} onChange={e => updateNodeConfig("expression", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" placeholder="例如: input.get('score', 0) > 0.5" /></div>
+                    <div><label className="block text-gray-500 mb-1">比较规则 (JSON)</label>
+                      <textarea rows={4} value={JSON.stringify((selectedNode.data as any)?.config?.comparisons || [], null, 2)}
+                        onChange={e => { try { updateNodeConfig("comparisons", JSON.parse(e.target.value)); } catch {} }}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" placeholder='[{"variable":"code_output.count","operator":"gt","value":5}]' /></div>
+                    <div><label className="block text-gray-500 mb-1">逻辑组合</label>
+                      <select value={(selectedNode.data as any)?.config?.logic || "and"} onChange={e => updateNodeConfig("logic", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300">
+                        <option value="and">全部满足 (AND)</option>
+                        <option value="or">满足任一 (OR)</option>
+                      </select></div>
+                    <details className="text-xs mt-2">
+                      <summary className="text-gray-400 cursor-pointer hover:text-gray-600 select-none">可用运算符</summary>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {["contains","not_contains","start_with","end_with","is","is_not","empty","not_empty","eq","neq","gt","lt","gte","lte","in","not_in"].map(op =>
+                          <span key={op} className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{op}</span>
+                        )}
+                      </div>
+                    </details>
+                  </>
                 )}
                 {selectedNode.data?.type === "http" && (
                   <>
@@ -1023,7 +1187,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                     <div><label className="block text-gray-500 mb-1">方法</label>
                       <select value={(selectedNode.data as any)?.config?.method || "GET"} onChange={e => updateNodeConfig("method", e.target.value)}
                         className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300">
-                        <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option></select></div>
+                        <option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>HEAD</option><option>OPTIONS</option></select></div>
                     <div><label className="block text-gray-500 mb-1">Headers (JSON)</label>
                       <textarea rows={3} value={JSON.stringify((selectedNode.data as any)?.config?.headers || {}, null, 2)}
                         onChange={e => { try { updateNodeConfig("headers", JSON.parse(e.target.value)); } catch {} }}
@@ -1031,18 +1195,308 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                     <div><label className="block text-gray-500 mb-1">Body</label>
                       <textarea rows={3} value={(selectedNode.data as any)?.config?.body || ""} onChange={e => updateNodeConfig("body", e.target.value)}
                         className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" /></div>
+                    <div><label className="block text-gray-500 mb-1">超时 (秒)</label>
+                      <input type="number" min="1" value={(selectedNode.data as any)?.config?.timeout ?? 30} onChange={e => updateNodeConfig("timeout", parseInt(e.target.value) || 30)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" /></div>
                   </>
                 )}
                 {selectedNode.data?.type === "knowledge" && (
-                  <div><label className="block text-gray-500 mb-1">知识库查询</label>
-                    <textarea rows={3} value={(selectedNode.data as any)?.config?.query || ""} onChange={e => updateNodeConfig("query", e.target.value)}
-                      className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" placeholder="搜索关键词或 {{变量}}" /></div>
+                  <>
+                    <div><label className="block text-gray-500 mb-1">查询</label>
+                      <textarea rows={3} value={(selectedNode.data as any)?.config?.query || ""} onChange={e => updateNodeConfig("query", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" placeholder="搜索关键词" /></div>
+                    <div><label className="block text-gray-500 mb-1">返回条数</label>
+                      <input type="number" min="1" max="50" value={(selectedNode.data as any)?.config?.top_k ?? 3} onChange={e => updateNodeConfig("top_k", parseInt(e.target.value) || 3)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" /></div>
+                  </>
                 )}
                 {selectedNode.data?.type === "tool" && (
-                  <div><label className="block text-gray-500 mb-1">工具名称</label>
-                    <input value={(selectedNode.data as any)?.config?.tool_name || ""} onChange={e => updateNodeConfig("tool_name", e.target.value)}
-                      className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" placeholder="例如: web_search" /></div>
+                  <>
+                    <div><label className="block text-gray-500 mb-1">工具名称</label>
+                      <input value={(selectedNode.data as any)?.config?.tool_name || ""} onChange={e => updateNodeConfig("tool_name", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" placeholder="search_web" /></div>
+                    <div><label className="block text-gray-500 mb-1">参数 (JSON)</label>
+                      <textarea rows={3} value={JSON.stringify((selectedNode.data as any)?.config?.tool_args || {}, null, 2)}
+                        onChange={e => { try { updateNodeConfig("tool_args", JSON.parse(e.target.value)); } catch {} }}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" /></div>
+                  </>
                 )}
+                {selectedNode.data?.type === "template-transform" && (
+                  <>
+                    <div><label className="block text-gray-500 mb-1">模板内容</label>
+                      <textarea rows={6} value={(selectedNode.data as any)?.config?.template || ""} onChange={e => updateNodeConfig("template", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" placeholder="支持 {{node_id.key}} 变量引用" /></div>
+                    <div><label className="block text-gray-500 mb-1">变量默认值 (JSON)</label>
+                      <textarea rows={3} value={JSON.stringify((selectedNode.data as any)?.config?.variables || {}, null, 2)}
+                        onChange={e => { try { updateNodeConfig("variables", JSON.parse(e.target.value)); } catch {} }}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" /></div>
+                  </>
+                )}
+                {selectedNode.data?.type === "parameter-extractor" && (
+                  <>
+                    <div><label className="block text-gray-500 mb-1">查询文本</label>
+                      <textarea rows={3} value={(selectedNode.data as any)?.config?.query || ""} onChange={e => updateNodeConfig("query", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" /></div>
+                    <div><label className="block text-gray-500 mb-1">参数定义 (JSON)</label>
+                      <textarea rows={4} value={JSON.stringify((selectedNode.data as any)?.config?.parameters || [], null, 2)}
+                        onChange={e => { try { updateNodeConfig("parameters", JSON.parse(e.target.value)); } catch {} }}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" placeholder='[{"name": "field", "type": "string", "description": ""}]' /></div>
+                  </>
+                )}
+                {selectedNode.data?.type === "question-classifier" && (
+                  <>
+                    <div><label className="block text-gray-500 mb-1">分类查询</label>
+                      <textarea rows={3} value={(selectedNode.data as any)?.config?.query || ""} onChange={e => updateNodeConfig("query", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" /></div>
+                    <div><label className="block text-gray-500 mb-1">分类定义 (JSON)</label>
+                      <textarea rows={4} value={JSON.stringify((selectedNode.data as any)?.config?.categories || [], null, 2)}
+                        onChange={e => { try { updateNodeConfig("categories", JSON.parse(e.target.value)); } catch {} }}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" placeholder='[{"name": "A", "description": ""}]' /></div>
+                  </>
+                )}
+                {selectedNode.data?.type === "document-extractor" && (
+                  <>
+                    <div><label className="block text-gray-500 mb-1">文件路径</label>
+                      <input value={(selectedNode.data as any)?.config?.file_path || ""} onChange={e => updateNodeConfig("file_path", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" placeholder="例如: C:/path/to/file.txt" /></div>
+                    <div><label className="block text-gray-500 mb-1">提取模式</label>
+                      <select value={(selectedNode.data as any)?.config?.extract_mode || "text"} onChange={e => updateNodeConfig("extract_mode", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300">
+                        <option value="text">纯文本</option>
+                        <option value="markdown">Markdown</option>
+                      </select></div>
+                  </>
+                )}
+                {selectedNode.data?.type === "assigner" && (
+                  <>
+                    <div><label className="block text-gray-500 mb-1">操作类型</label>
+                      <select value={(selectedNode.data as any)?.config?.operation || "overwrite"} onChange={e => updateNodeConfig("operation", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300">
+                        <option value="overwrite">覆盖 (overwrite)</option>
+                        <option value="clear">清空 (clear)</option>
+                        <option value="append">追加 (append)</option>
+                        <option value="extend">扩展 (extend)</option>
+                        <option value="set">设置属性 (set)</option>
+                        <option value="add">加法 (add)</option>
+                        <option value="subtract">减法 (subtract)</option>
+                        <option value="multiply">乘法 (multiply)</option>
+                        <option value="divide">除法 (divide)</option>
+                      </select></div>
+                    <div><label className="block text-gray-500 mb-1">赋值内容 (JSON)</label>
+                      <textarea rows={4} value={JSON.stringify((selectedNode.data as any)?.config?.assignments || [], null, 2)}
+                        onChange={e => { try { const v = JSON.parse(e.target.value); updateNodeConfig("assignments", v); } catch {} }}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" /></div>
+                  </>
+                )}
+                {selectedNode.data?.type === "variable-aggregator" && (
+                  <div>
+                    <label className="block text-gray-500 mb-1">合并策略</label>
+                    <select value={(selectedNode.data as any)?.config?.merge_strategy || "overwrite"} onChange={e => updateNodeConfig("merge_strategy", e.target.value)}
+                      className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300">
+                      <option value="overwrite">覆盖 (overwrite)</option>
+                      <option value="merge">合并 (merge)</option>
+                    </select>
+                  </div>
+                )}
+                {selectedNode.data?.type === "list-operator" && (
+                  <>
+                    <div><label className="block text-gray-500 mb-1">操作类型</label>
+                      <select value={(selectedNode.data as any)?.config?.operation || "filter"} onChange={e => updateNodeConfig("operation", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300">
+                        <option value="filter">过滤 (filter)</option>
+                        <option value="map">映射 (map)</option>
+                        <option value="sort">排序 (sort)</option>
+                      </select></div>
+                    <div><label className="block text-gray-500 mb-1">表达式</label>
+                      <textarea rows={3} value={(selectedNode.data as any)?.config?.expression || ""} onChange={e => updateNodeConfig("expression", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" placeholder="item > 0" /></div>
+                  </>
+                )}
+                {selectedNode.data?.type === "iteration" && (
+                  <>
+                    <div><label className="block text-gray-500 mb-1">数据项</label>
+                      <input value={(selectedNode.data as any)?.config?.items || ""} onChange={e => updateNodeConfig("items", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" placeholder="{{node_id.key}}" /></div>
+                    <div><label className="block text-gray-500 mb-1">模式</label>
+                      <select value={(selectedNode.data as any)?.config?.mode || "sequential"} onChange={e => updateNodeConfig("mode", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300">
+                        <option value="sequential">顺序 (sequential)</option>
+                        <option value="parallel">并行 (parallel)</option>
+                      </select></div>
+                    {(selectedNode.data as any)?.config?.mode === "parallel" && (
+                      <>
+                        <div><label className="block text-gray-500 mb-1">并发数</label>
+                          <input type="number" min="1" max="50" value={(selectedNode.data as any)?.config?.parallel_nums ?? 5}
+                            onChange={e => updateNodeConfig("parallel_nums", parseInt(e.target.value) || 5)}
+                            className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" /></div>
+                        <div><label className="block text-gray-500 mb-1">错误处理</label>
+                          <select value={(selectedNode.data as any)?.config?.on_error || "terminate"} onChange={e => updateNodeConfig("on_error", e.target.value)}
+                            className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300">
+                            <option value="terminate">终止</option>
+                            <option value="ignore">忽略错误继续</option>
+                          </select></div>
+                      </>
+                    )}
+                  </>
+                )}
+                {selectedNode.data?.type === "loop" && (
+                  <>
+                    <div><label className="block text-gray-500 mb-1">循环条件</label>
+                      <input value={(selectedNode.data as any)?.config?.condition || ""} onChange={e => updateNodeConfig("condition", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" placeholder="iteration < 5" /></div>
+                    <div><label className="block text-gray-500 mb-1">变量名</label>
+                      <input value={(selectedNode.data as any)?.config?.variable_name || "iteration"} onChange={e => updateNodeConfig("variable_name", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" placeholder="iteration" /></div>
+                    <div><label className="block text-gray-500 mb-1">最大次数</label>
+                      <input type="number" min="1" value={(selectedNode.data as any)?.config?.max_iterations || 10} onChange={e => updateNodeConfig("max_iterations", parseInt(e.target.value) || 10)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" /></div>
+                  </>
+                )}
+                {selectedNode.data?.type === "agent" && (
+                  <>
+                    <div><label className="block text-gray-500 mb-1">系统提示词</label>
+                      <textarea rows={4} value={(selectedNode.data as any)?.config?.system_prompt || ""} onChange={e => updateNodeConfig("system_prompt", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" /></div>
+                    <div><label className="block text-gray-500 mb-1">指令</label>
+                      <textarea rows={3} value={(selectedNode.data as any)?.config?.instruction || ""} onChange={e => updateNodeConfig("instruction", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" /></div>
+                    <div><label className="block text-gray-500 mb-1">最大迭代次数</label>
+                      <input type="number" min="1" value={(selectedNode.data as any)?.config?.max_iterations ?? 3} onChange={e => updateNodeConfig("max_iterations", parseInt(e.target.value) || 3)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" /></div>
+                    <div><label className="block text-gray-500 mb-1">工具列表 (JSON)</label>
+                      <textarea rows={3} value={JSON.stringify((selectedNode.data as any)?.config?.tools || [], null, 2)}
+                        onChange={e => { try { updateNodeConfig("tools", JSON.parse(e.target.value)); } catch {} }}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" placeholder='["search_web"]' /></div>
+                  </>
+                )}
+                {selectedNode.data?.type === "human-input" && (
+                  <>
+                    <div><label className="block text-gray-500 mb-1">提示文本</label>
+                      <textarea rows={3} value={(selectedNode.data as any)?.config?.prompt || ""} onChange={e => updateNodeConfig("prompt", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" /></div>
+                    <div><label className="block text-gray-500 mb-1">输入类型</label>
+                      <select value={(selectedNode.data as any)?.config?.input_type || "text"} onChange={e => updateNodeConfig("input_type", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300">
+                        <option value="text">文本</option>
+                        <option value="number">数字</option>
+                        <option value="confirm">确认</option>
+                      </select></div>
+                    <label className="flex items-center gap-2 text-xs text-gray-500 cursor-pointer">
+                      <input type="checkbox" checked={(selectedNode.data as any)?.config?.auto_confirm || false}
+                        onChange={e => updateNodeConfig("auto_confirm", e.target.checked)}
+                        className="rounded border-gray-300 text-sakura-400 focus:ring-sakura-300" />
+                      自动确认
+                    </label>
+                    {(selectedNode.data as any)?.config?.auto_confirm && (
+                      <div><label className="block text-gray-500 mb-1">自动值</label>
+                        <input value={(selectedNode.data as any)?.config?.auto_value || "自动确认"} onChange={e => updateNodeConfig("auto_value", e.target.value)}
+                          className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" /></div>
+                    )}
+                  </>
+                )}
+                {selectedNode.data?.type === "start" && (
+                  <div><label className="block text-gray-500 mb-1">初始输入 (JSON)</label>
+                    <textarea rows={4} value={JSON.stringify((selectedNode.data as any)?.config?.input_data || {}, null, 2)}
+                      onChange={e => { try { const v = JSON.parse(e.target.value); updateNodeConfig("input_data", v); } catch {} }}
+                      className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" placeholder='{"key": "value"}' /></div>
+                )}
+                {selectedNode.data?.type === "answer" && (
+                  <div><label className="block text-gray-500 mb-1">输出内容</label>
+                    <textarea rows={3} value={(selectedNode.data as any)?.config?.output || ""} onChange={e => updateNodeConfig("output", e.target.value)}
+                      className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" placeholder="支持 {{node_id.key}} 变量" /></div>
+                )}
+                {selectedNode.data?.type === "datasource" && (
+                  <>
+                    <div><label className="block text-gray-500 mb-1">数据源类型</label>
+                      <select value={(selectedNode.data as any)?.config?.source_type || "inline"} onChange={e => updateNodeConfig("source_type", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300">
+                        <option value="inline">内联数据</option>
+                        <option value="file">文件</option>
+                      </select></div>
+                    {((selectedNode.data as any)?.config?.source_type || "inline") === "inline" ? (
+                      <div><label className="block text-gray-500 mb-1">内联数据 (JSON)</label>
+                        <textarea rows={4} value={(selectedNode.data as any)?.config?.inline_data || ""} onChange={e => updateNodeConfig("inline_data", e.target.value)}
+                          className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" placeholder='{"name": "test", "count": 10}' /></div>
+                    ) : (
+                      <div><label className="block text-gray-500 mb-1">文件路径</label>
+                        <input value={(selectedNode.data as any)?.config?.source_path || ""} onChange={e => updateNodeConfig("source_path", e.target.value)}
+                          className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" /></div>
+                    )}
+                  </>
+                )}
+                {selectedNode.data?.type === "trigger-webhook" && (
+                  <>
+                    <div><label className="block text-gray-500 mb-1">端点路径</label>
+                      <input value={(selectedNode.data as any)?.config?.endpoint || ""} onChange={e => updateNodeConfig("endpoint", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" placeholder="/webhook/test" /></div>
+                    <div><label className="block text-gray-500 mb-1">方法</label>
+                      <select value={(selectedNode.data as any)?.config?.method || "POST"} onChange={e => updateNodeConfig("method", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300">
+                        <option>GET</option><option>POST</option><option>PUT</option>
+                      </select></div>
+                  </>
+                )}
+                {selectedNode.data?.type === "trigger-schedule" && (
+                  <div><label className="block text-gray-500 mb-1">Cron 表达式</label>
+                    <input value={(selectedNode.data as any)?.config?.cron || ""} onChange={e => updateNodeConfig("cron", e.target.value)}
+                      className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" placeholder="0 0 * * *" /></div>
+                )}
+                {selectedNode.data?.type === "trigger-plugin" && (
+                  <div><label className="block text-gray-500 mb-1">插件名称</label>
+                    <input value={(selectedNode.data as any)?.config?.plugin_name || ""} onChange={e => updateNodeConfig("plugin_name", e.target.value)}
+                      className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" placeholder="demo_plugin" /></div>
+                )}
+                {selectedNode.data?.type === "knowledge-index" && (
+                  <>
+                    <div><label className="block text-gray-500 mb-1">内容</label>
+                      <textarea rows={3} value={(selectedNode.data as any)?.config?.content || ""} onChange={e => updateNodeConfig("content", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" /></div>
+                    <div><label className="block text-gray-500 mb-1">标题</label>
+                      <input value={(selectedNode.data as any)?.config?.title || ""} onChange={e => updateNodeConfig("title", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" /></div>
+                    <div><label className="block text-gray-500 mb-1">分类</label>
+                      <input value={(selectedNode.data as any)?.config?.category || ""} onChange={e => updateNodeConfig("category", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" /></div>
+                  </>
+                )}
+                {/* ── 企业级：重试与错误策略（所有节点通用） ── */}
+                <div className="pt-3 border-t border-gray-100 space-y-2">
+                  <details className="text-xs group">
+                    <summary className="text-gray-400 cursor-pointer hover:text-gray-600 select-none">重试与错误策略</summary>
+                    <div className="mt-2 space-y-2">
+                      <label className="flex items-center gap-2 text-gray-500 cursor-pointer">
+                        <input type="checkbox" checked={(selectedNode.data as any)?.config?.retry_config?.retry_enabled || false}
+                          onChange={e => updateNodeConfig("retry_config", { ...((selectedNode.data as any)?.config?.retry_config || {}), retry_enabled: e.target.checked })}
+                          className="rounded border-gray-300 text-sakura-400 focus:ring-sakura-300" />
+                        启用重试
+                      </label>
+                      {(selectedNode.data as any)?.config?.retry_config?.retry_enabled && (
+                        <>
+                          <div><label className="block text-gray-500 mb-1">最大重试次数</label>
+                            <input type="number" min="1" max="10" value={(selectedNode.data as any)?.config?.retry_config?.max_retries ?? 3}
+                              onChange={e => updateNodeConfig("retry_config", { ...((selectedNode.data as any)?.config?.retry_config || {}), max_retries: parseInt(e.target.value) || 3 })}
+                              className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" /></div>
+                          <div><label className="block text-gray-500 mb-1">重试间隔 (秒)</label>
+                            <input type="number" step="0.5" min="0.5" value={(selectedNode.data as any)?.config?.retry_config?.retry_interval ?? 1.0}
+                              onChange={e => updateNodeConfig("retry_config", { ...((selectedNode.data as any)?.config?.retry_config || {}), retry_interval: parseFloat(e.target.value) || 1.0 })}
+                              className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" /></div>
+                        </>
+                      )}
+                      <div><label className="block text-gray-500 mb-1">失败策略</label>
+                        <select value={(selectedNode.data as any)?.config?.on_error || "fail"} onChange={e => updateNodeConfig("on_error", e.target.value)}
+                          className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300">
+                          <option value="fail">终止工作流 (fail)</option>
+                          <option value="default-value">使用默认值 (default-value)</option>
+                        </select></div>
+                      {(selectedNode.data as any)?.config?.on_error === "default-value" && (
+                        <div><label className="block text-gray-500 mb-1">默认输出 (JSON)</label>
+                          <textarea rows={2} value={JSON.stringify((selectedNode.data as any)?.config?.default_output || {}, null, 2)}
+                            onChange={e => { try { updateNodeConfig("default_output", JSON.parse(e.target.value)); } catch {} }}
+                            className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" /></div>
+                      )}
+                    </div>
+                  </details>
+                </div>
                 <div className="pt-2 border-t border-gray-100">
                   <button onClick={deleteSelectedNode} className="flex items-center gap-1 px-3 py-1.5 rounded text-xs bg-red-50 text-red-500 hover:bg-red-100">
                     <Trash2 size={11} /> 删除节点
@@ -1071,9 +1525,9 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                     {(runResult.nodes_snapshot || runResult.node_results || []).map((ns: any, i: number) => (
                       <div key={i} className="p-2 rounded border border-gray-100 bg-gray-50">
                         <div className="flex items-center justify-between mb-1">
-                          <span className="text-gray-600 font-medium text-xs">{ns.id || ns.name || 节点 }</span>
-                          <span className={	ext-[10px] }>
-                            {ns.status === "success" ? "✓" : ns.status === "error" ? "✗" : ns.status || "?"}
+                          <span className="text-gray-600 font-medium text-xs">{ns.id || ns.name || `节点 ${i}`}</span>
+                          <span className={`text-[10px] ${ns.status === "success" ? "text-green-500" : ns.status === "error" ? "text-red-500" : "text-gray-400"}`}>
+                            {ns.status === "success" ? "成功" : ns.status === "error" ? "错误" : ns.status || "?"}
                           </span>
                         </div>
                         <div className="text-gray-400 text-[10px] break-all font-mono">
@@ -1088,21 +1542,64 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
 
             {/* 变量 */}
             {rightTab === "vars" && (
-              <div className="space-y-1">
-                <p className="text-gray-500 mb-2">可用变量（点击复制）</p>
-                {[
-                  { key: "{{input}}", desc: "工作流输入" },
-                  { key: "{{result.节点ID}}", desc: "指定节点的输出", example: "{{result.llm_1}}" },
-                  { key: "{{env.变量名}}", desc: "环境变量" },
-                  { key: "{{now}}", desc: "当前时间" },
-                ].map(v => (
-                  <div key={v.key} onClick={() => navigator.clipboard.writeText(v.key).catch(() => {})}
-                    className="p-2 rounded border border-gray-100 hover:border-sakura-200 hover:bg-sakura-50 cursor-pointer transition-colors">
-                    <code className="text-[10px] font-mono text-sakura-600 bg-sakura-50 px-1 py-0.5 rounded">{v.key}</code>
-                    <p className="text-[10px] text-gray-400 mt-0.5">{v.desc}</p>
-                    {v.example && <p className="text-[9px] text-gray-300 font-mono">{v.example}</p>}
-                  </div>
-                ))}
+              <div className="space-y-2">
+                <p className="text-gray-500 text-[10px]">通用变量（点击复制）</p>
+                <div className="grid grid-cols-2 gap-1">
+                  {[
+                    { key: "{{input}}", desc: "工作流输入" },
+                    { key: "{{now}}", desc: "当前时间" },
+                  ].map(v => (
+                    <div key={v.key} onClick={() => navigator.clipboard.writeText(v.key).catch(() => {})}
+                      className="p-1.5 rounded border border-gray-100 hover:border-sakura-200 hover:bg-sakura-50 cursor-pointer transition-colors">
+                      <code className="text-[9px] font-mono text-sakura-600 bg-sakura-50 px-1 py-0.5 rounded">{v.key}</code>
+                      <p className="text-[9px] text-gray-400 mt-0.5">{v.desc}</p>
+                    </div>
+                  ))}
+                </div>
+                {nodes.length > 0 && (
+                  <>
+                    <p className="text-gray-500 text-[10px] pt-1 border-t border-gray-100">节点变量（点击复制）</p>
+                    <div className="space-y-1">
+                      {nodes.map(n => {
+                        const ntype = (n.data as any)?.type || "";
+                        const label = (n.data as any)?.label || n.id;
+                        const config = (n.data as any)?.config || {};
+                        const outputKeys = Object.keys(config).filter(k => k !== "input_data");
+                        const nodeVar = `{{${n.id}}}`;
+                        return (
+                          <details key={n.id} className="text-xs group">
+                            <summary className="flex items-center gap-1.5 cursor-pointer text-gray-500 hover:text-gray-700 py-0.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-sakura-300 shrink-0" />
+                              <span className="font-medium text-gray-700">{label}</span>
+                              <span className="text-[9px] text-gray-400">({ntype})</span>
+                              <code className="text-[9px] font-mono text-sakura-500 ml-auto">{nodeVar}</code>
+                            </summary>
+                            <div className="ml-3 mt-0.5 space-y-0.5">
+                              <div onClick={() => navigator.clipboard.writeText(nodeVar).catch(() => {})}
+                                className="flex items-center justify-between px-1.5 py-0.5 rounded hover:bg-sakura-50 cursor-pointer">
+                                <code className="text-[9px] font-mono text-sakura-400">{nodeVar}</code>
+                                <span className="text-[8px] text-gray-300">节点全部输出</span>
+                              </div>
+                              {outputKeys.slice(0, 6).map(k => {
+                                const fullVar = `{{${n.id}.${k}}}`;
+                                return (
+                                  <div key={k} onClick={() => navigator.clipboard.writeText(fullVar).catch(() => {})}
+                                    className="flex items-center justify-between px-1.5 py-0.5 rounded hover:bg-sakura-50 cursor-pointer">
+                                    <code className="text-[9px] font-mono text-gray-500">{fullVar}</code>
+                                    <span className="text-[8px] text-gray-300 truncate max-w-[60px]">{typeof config[k] === 'string' ? config[k].slice(0, 12) : typeof config[k]}</span>
+                                  </div>
+                                );
+                              })}
+                              {outputKeys.length > 6 && (
+                                <p className="text-[8px] text-gray-300 px-1">+{outputKeys.length - 6} 更多字段</p>
+                              )}
+                            </div>
+                          </details>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
@@ -1126,8 +1623,12 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                           <span className="text-gray-300 text-[9px]">{r.started_at ? new Date(r.started_at).toLocaleString() : ""}</span>
                         </div>
                         {r.error && <p className="text-red-400 text-[9px] mt-0.5 truncate">{r.error}</p>}
-                        <p className="text-gray-400 text-[9px] mt-0.5 truncate">{r.final_output ? JSON.stringify(r.final_output).slice(0, 80) : ""}</p>
-                        <div className="text-gray-300 text-[9px] mt-0.5">耗时: {r.timing?.total || "?"}ms</div>
+                        {(() => {
+                          let outText = r.output || r.final_output || "";
+                          if (typeof outText === "string") { try { const p = JSON.parse(outText); outText = p; } catch {} }
+                          return <p className="text-gray-400 text-[9px] mt-0.5 truncate">{typeof outText === "object" ? JSON.stringify(outText).slice(0, 80) : String(outText).slice(0, 80)}</p>;
+                        })()}
+                        <div className="text-gray-300 text-[9px] mt-0.5">耗时: {r.timing?.total ? `${r.timing.total}ms` : "?"}</div>
                       </div>
                     ))}
                   </div>
@@ -1135,6 +1636,53 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
               </>
             )}
 
+          </div>
+        </div>
+        {/* 侧边栏标签 */}
+        <div className="w-9 flex flex-col items-center pt-2 gap-1 border-l border-gray-100 bg-gray-50/50 shrink-0">
+          {([
+            ["config", "配置", Wrench],
+            ["vars", "变量", Variable],
+            ["debug", "调试", Code],
+            ["runs", "日志", Clock],
+          ] as const).filter(([k]) => k !== "config" || selectedNode).map(([k, label, Icon]) => (
+            <button key={k} onClick={() => {
+              setRightTab(k);
+              if (k === "runs" && workflowId) loadRuns();
+            }}
+              className={`flex items-center justify-center w-7 h-7 rounded text-[11px] ${
+                rightTab === k ? "bg-sakura-100 text-sakura-600" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+              }`} title={label}>
+              <Icon size={14} />
+            </button>
+          ))}
+          <div className="flex-1" />
+        </div>
+        </div>
+      )}
+      {/* 删除确认对话框 */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setShowDeleteConfirm(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-[360px] p-5" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <span className="text-sm font-semibold text-gray-700">确认删除</span>
+              <button onClick={() => setShowDeleteConfirm(false)} className="text-gray-400 hover:text-gray-600">
+                <X size={16} />
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mb-5">
+              确认删除工作流「<span className="text-gray-700 font-medium">{workflowName}</span>」？此操作不可撤销。
+            </p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowDeleteConfirm(false)}
+                className="px-3 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-gray-100 transition-colors">
+                取消
+              </button>
+              <button onClick={confirmDelete}
+                className="px-3 py-1.5 rounded-lg text-xs text-white bg-red-400 hover:bg-red-500 transition-colors">
+                确认删除
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1189,14 +1737,100 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                   onClick={handlePublish}
                   className="w-full px-4 py-2 rounded-lg text-xs font-medium bg-emerald-500 text-white hover:bg-emerald-600 transition-colors"
                 >
-                  {publishResult?.success ? "✅ 已发布" : "确认发布"}
+                  {publishResult?.success ? <><Check size={13} className="inline" /> 已发布</> : "确认发布"}
                 </button>
 
                 {publishResult?.error && (
                   <div className="text-xs text-red-500 bg-red-50 p-2 rounded">{publishResult.error}</div>
                 )}
+
+                {publishResult?.api_key && (
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <div className="text-xs text-gray-500 mb-1">API Key（调用时需传入）</div>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 relative">
+                        <input id="api-key-display" readOnly value={publishResult.api_key}
+                          type={showKey ? "text" : "password"}
+                          className="w-full text-[10px] font-mono bg-white px-2 py-1.5 pr-8 border border-gray-200 rounded-md outline-none" />
+                        <button onClick={() => setShowKey(!showKey)}
+                          className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 text-gray-300 hover:text-sakura-500 transition-colors">
+                          {showKey ? <EyeOff size={13} /> : <Eye size={13} />}
+                        </button>
+                      </div>
+                      <button onClick={() => navigator.clipboard.writeText(publishResult.api_key).catch(() => {})}
+                        className="shrink-0 px-3 py-1.5 rounded text-xs bg-sakura-100 text-sakura-600 hover:bg-sakura-200">复制</button>
+                    </div>
+                    <div className="flex items-center gap-2 mt-2">
+                      <button onClick={() => setShowRegenConfirm(true)} className="text-[10px] px-2 py-1 rounded bg-amber-100 text-amber-600 hover:bg-amber-200 transition-colors">
+                        重新生成
+                      </button>
+                      <span className="text-[9px] text-gray-300">重新生成后旧 Key 立即失效</span>
+                    </div>
+                    <p className="text-[9px] text-gray-400 mt-2">
+                      调用方式: curl -H {'"Authorization: Bearer <Key>"'} {window.location.origin}/api/webhook/{workflowId}
+                    </p>
+                  </div>
+                )}
+
+                {/* 多 Key 管理 */}
+                {publishResult?.api_key && (
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs text-gray-500">API 密钥管理</span>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const r: any = await apiPost(`/api/workflows/${workflowId}/keys/create`, { name: "新密钥" });
+                            if (r?.key) { notify("新密钥已创建", "success"); setPublishResult({ ...publishResult, refresh: Date.now() }); }
+                          } catch (e: any) { notify("创建失败", "error"); }
+                        }}
+                        className="text-[10px] px-2 py-0.5 rounded bg-sakura-100 text-sakura-600 hover:bg-sakura-200"
+                      >
+                        新建密钥
+                      </button>
+                    </div>
+                    <div id="keys-container" className="space-y-1 max-h-[120px] overflow-y-auto text-[10px]">
+                      加载中...
+                    </div>
+                  </div>
+                )}
+
+                {/* 调用统计 */}
+                {publishResult?.api_key && (
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <div className="text-xs text-gray-500 mb-1">调用统计（近7天）</div>
+                    <div id="usage-container" className="text-[10px] text-gray-400">加载中...</div>
+                  </div>
+                )}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* 重新生成 Key 确认对话框 */}
+      {showRegenConfirm && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setShowRegenConfirm(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-[360px] p-5" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <span className="text-sm font-semibold text-gray-700">确认重新生成</span>
+              <button onClick={() => setShowRegenConfirm(false)} className="text-gray-400 hover:text-gray-600">
+                <X size={16} />
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mb-5">
+              重新生成 API Key 后，旧的 Key 将立即失效。确定继续？
+            </p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowRegenConfirm(false)}
+                className="px-3 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-gray-100 transition-colors">
+                取消
+              </button>
+              <button onClick={confirmRegen}
+                className="px-3 py-1.5 rounded-lg text-xs text-white bg-amber-500 hover:bg-amber-600 transition-colors">
+                确认重新生成
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1274,6 +1908,76 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                     {loadingOnline ? "搜索中..." : "搜索"}
                   </button>
                 </div>
+
+                {/* GitHub Token 配置 */}
+                <details className="mb-4 text-xs group" onToggle={async (e) => {
+                  if ((e.target as HTMLDetailsElement).open) {
+                    try {
+                      const r = await apiGet<any>("/api/workflow/templates/get-token");
+                      const input = document.getElementById("gh-token-input") as HTMLInputElement;
+                      if (input && r?.token) input.value = r.token;
+                    } catch {}
+                  }
+                }}>
+                  <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-gray-600 select-none">
+                    GitHub Token 设置（可选，提高 API 限流）
+                  </summary>
+                  <div className="mt-2 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <input id="gh-token-input"
+                        className="flex-1 px-2 py-1.5 border border-gray-200 rounded-md text-[10px] font-mono outline-none focus:border-sakura-300"
+                        placeholder="已加密存储，展开时自动加载"
+                        type="password"
+                      />
+                      <button onClick={async () => {
+                        const val = (document.getElementById("gh-token-input") as HTMLInputElement)?.value || "";
+                        if (!val) { notify("请先输入 Token", "warning"); return; }
+                        try {
+                          const r = await apiPost("/api/workflow/templates/test-token", { token: val });
+                          if (r?.ok) {
+                            notify(`连接成功！剩余配额: ${r.remaining}/${r.limit} 次/小时`, "success");
+                            await apiPost("/api/workflow/templates/save-token", { token: val });
+                          } else {
+                            notify(`${r?.error || "Token 无效"}`, "error");
+                          }
+                        } catch (e: any) {
+                          notify(`连接失败: ${e?.message || "网络错误"}`, "error");
+                        }
+                      }} className="shrink-0 px-2 py-1.5 rounded text-[10px] bg-emerald-100 text-emerald-600 hover:bg-emerald-200">
+                        测试连接
+                      </button>
+                      <button onClick={async () => {
+                        const val = (document.getElementById("gh-token-input") as HTMLInputElement)?.value || "";
+                        try {
+                          const r = await apiPost("/api/workflow/templates/save-token", { token: val });
+                          if (r?.ok) {
+                            notify(val ? "Token 已加密保存到数据库" : "Token 已清除", val ? "success" : "info");
+                            setOnlineError("");
+                            setOnlineSearched(s => s);
+                          }
+                        } catch (e: any) {
+                          notify("保存失败: " + (e?.message || "未知错误"), "error");
+                        }
+                      }} className="shrink-0 px-2 py-1.5 rounded text-[10px] bg-sakura-100 text-sakura-600 hover:bg-sakura-200">
+                        保存
+                      </button>
+                      <button onClick={async () => {
+                        try {
+                          await apiPost("/api/workflow/templates/save-token", { token: "" });
+                          notify("Token 已清除", "info");
+                          (document.getElementById("gh-token-input") as HTMLInputElement).value = "";
+                          setOnlineError("");
+                          setOnlineSearched(s => s);
+                        } catch (e: any) {
+                          notify("清除失败: " + (e?.message || "未知错误"), "error");
+                        }
+                      }} className="shrink-0 px-2 py-1.5 rounded text-[10px] bg-red-50 text-red-400 hover:bg-red-100">
+                        清除
+                      </button>
+                    </div>
+                    <p className="text-[9px] text-gray-300">去 <a href="https://github.com/settings/tokens" target="_blank" className="text-sakura-400 hover:text-sakura-500" rel="noreferrer">github.com/settings/tokens</a> 生成 Classic Token，只需勾选 public_repo</p>
+                  </div>
+                </details>
 
                 {onlineTemplates.length > 0 ? (
                   <div className="space-y-3">

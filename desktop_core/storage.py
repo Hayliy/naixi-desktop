@@ -179,6 +179,31 @@ def init_tables():
                 url TEXT NOT NULL,
                 created_at TEXT DEFAULT (datetime('now'))
             );
+            CREATE TABLE IF NOT EXISTS workflow_api_keys (
+                workflow_id TEXT PRIMARY KEY,
+                api_key TEXT NOT NULL UNIQUE,
+                created_at TEXT DEFAULT (datetime('now')),
+                enabled INTEGER DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS workflow_call_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workflow_id TEXT NOT NULL,
+                api_key_id TEXT DEFAULT '',
+                status TEXT DEFAULT 'pending',
+                input TEXT DEFAULT '{}',
+                output TEXT DEFAULT '{}',
+                duration_ms INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS workflow_published (
+                workflow_id TEXT PRIMARY KEY,
+                name TEXT DEFAULT '',
+                description TEXT DEFAULT '',
+                nodes TEXT DEFAULT '[]',
+                edges TEXT DEFAULT '[]',
+                dsl TEXT DEFAULT '',
+                published_at TEXT DEFAULT (datetime('now'))
+            );
         """)
         conn.commit()
     finally:

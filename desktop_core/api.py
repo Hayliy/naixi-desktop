@@ -57,7 +57,9 @@ def _get_workflow_api():
             api_get_node_types, api_export_dsl, api_import_dsl,
             api_publish_workflow, api_list_versions, api_register_webhook,
             api_submit_human_input, api_list_templates, api_use_template,
-            api_template_categories,
+            api_template_categories, api_get_api_key, api_log_call,
+            api_regenerate_api_key, api_list_keys, api_create_key,
+            api_update_key, api_delete_key, api_get_usage_stats,
         )
         init_workflow_tables()
         _workflow_api = {
@@ -71,12 +73,20 @@ def _get_workflow_api():
             "export": api_export_dsl,
             "import": api_import_dsl,
             "publish": api_publish_workflow,
+            "regenerate_key": api_regenerate_api_key,
+            "list_keys": api_list_keys,
+            "create_key": api_create_key,
+            "update_key": api_update_key,
+            "delete_key": api_delete_key,
+            "usage_stats": api_get_usage_stats,
             "versions": api_list_versions,
             "webhook": api_register_webhook,
             "human_input": api_submit_human_input,
             "templates": api_list_templates,
             "use_template": api_use_template,
             "template_categories": api_template_categories,
+            "get_api_key": api_get_api_key,
+            "log_call": api_log_call,
         }
     return _workflow_api
 
@@ -102,7 +112,14 @@ async def api_workflow_save(request):
     except Exception:
         return web.json_response({"error": "无效的 JSON"}, status=400)
     wf = _get_workflow_api()
-    result = await wf["save"](body)
+    result = await wf["save"](
+        body.get("id", f"wf_{int(time.time())}"),
+        body.get("name", ""),
+        body.get("description", ""),
+        body.get("nodes", []),
+        body.get("edges", []),
+        body.get("dsl", ""),
+    )
     return web.json_response(result)
 
 async def api_workflow_delete(request):
@@ -170,6 +187,56 @@ async def api_workflow_publish(request):
     result = await wf["publish"](body.get("id", ""))
     return web.json_response(result)
 
+async def api_workflow_regenerate_key(request):
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "无效的 JSON"}, status=400)
+    wf = _get_workflow_api()
+    result = await wf["regenerate_key"](body.get("id", ""))
+    return web.json_response(result)
+
+async def api_workflow_list_keys(request):
+    wid = request.match_info.get("id", "")
+    wf = _get_workflow_api()
+    data = await wf["list_keys"](wid)
+    return web.json_response({"keys": data})
+
+async def api_workflow_create_key(request):
+    wid = request.match_info.get("id", "")
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "无效的 JSON"}, status=400)
+    wf = _get_workflow_api()
+    result = await wf["create_key"](wid, body.get("name", "新密钥"))
+    return web.json_response(result)
+
+async def api_workflow_update_key(request):
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "无效的 JSON"}, status=400)
+    wf = _get_workflow_api()
+    result = await wf["update_key"](body.get("id"), body.get("enabled"), body.get("name"), body.get("rate_limit"))
+    return web.json_response(result)
+
+async def api_workflow_delete_key(request):
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "无效的 JSON"}, status=400)
+    wf = _get_workflow_api()
+    result = await wf["delete_key"](body.get("id"))
+    return web.json_response(result)
+
+async def api_workflow_usage_stats(request):
+    wid = request.match_info.get("id", "")
+    days = int(request.query.get("days", "7"))
+    wf = _get_workflow_api()
+    data = await wf["usage_stats"](wid, days)
+    return web.json_response(data)
+
 async def api_workflow_versions(request):
     wid = request.match_info.get("id", "")
     wf = _get_workflow_api()
@@ -192,6 +259,49 @@ async def api_workflow_human_input(request):
         return web.json_response({"error": "无效的 JSON"}, status=400)
     wf = _get_workflow_api()
     result = await wf["human_input"](body.get("pending_key", ""), body.get("value", ""))
+    return web.json_response(result)
+
+
+async def api_webhook_execute(request):
+    """通过 webhook 远程触发工作流执行（需 API Key 认证）"""
+    wid = request.match_info.get("endpoint", "")
+    if not wid:
+        return web.json_response({"error": "缺少工作流 ID"}, status=400)
+    
+    # API Key 认证
+    auth_header = request.headers.get("Authorization", "")
+    api_key = auth_header.replace("Bearer ", "").strip() if auth_header else request.query.get("api_key", "")
+    if not api_key:
+        return web.json_response({"error": "缺少 API Key（请通过 Authorization: Bearer xxx 或 ?api_key=xxx 传递）"}, status=401)
+    
+    wf_api = _get_workflow_api()
+    
+    # 验证 API Key
+    stored_key = await wf_api["get_api_key"](wid)
+    if not stored_key or stored_key != api_key:
+        return web.json_response({"error": "API Key 无效"}, status=403)
+    
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    input_data = body.get("input", {}) if isinstance(body, dict) else {}
+    
+    import time
+    start = time.time()
+    result = await wf_api["run"](wid, input_data)
+    elapsed = int((time.time() - start) * 1000)
+    
+    # 记录调用日志
+    try:
+        await wf_api["log_call"](wid, api_key[:8], result.get("status", "unknown"),
+                                 json.dumps(input_data, ensure_ascii=False)[:500],
+                                 json.dumps(result.get("final_output", {}), ensure_ascii=False)[:500],
+                                 elapsed)
+    except Exception:
+        pass
+    
     return web.json_response(result)
 
 
@@ -223,8 +333,61 @@ async def api_templates_use(request):
 
 async def api_templates_online(request):
     from desktop_core.workflow_engine import api_search_online_templates
-    data = await api_search_online_templates(request)
-    return web.json_response(data)
+    try:
+        data = await api_search_online_templates(request)
+        return web.json_response(data)
+    except Exception as e:
+        err_msg = str(e)
+        if "rate limit" in err_msg.lower():
+            return web.json_response({"error": "GitHub API 频率限制，请稍后重试，或设置 GITHUB_TOKEN 环境变量提高限制"}, status=429)
+        return web.json_response({"error": f"搜索失败: {err_msg}"}, status=500)
+
+
+async def api_test_github_token(request):
+    """测试 GitHub Token 是否有效"""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "无效的请求"}, status=400)
+    token = body.get("token", "")
+    if not token:
+        return web.json_response({"error": "请提供 Token"}, status=400)
+    import aiohttp
+    async with aiohttp.ClientSession() as s:
+        async with s.get("https://api.github.com/rate_limit", headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "NaixiBot/1.0",
+        }) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                remaining = data.get("rate", {}).get("remaining", 0)
+                limit = data.get("rate", {}).get("limit", 5000)
+                return web.json_response({"ok": True, "remaining": remaining, "limit": limit})
+            else:
+                body = await resp.text()
+                return web.json_response({"ok": False, "error": f"Token 无效 (HTTP {resp.status})"}, status=400)
+
+
+async def api_save_github_token(request):
+    """加密存储 GitHub Token 到数据库"""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "无效的请求"}, status=400)
+    from desktop_core.storage import encrypt_api_key, meta_set
+    token = body.get("token", "")
+    encrypted = encrypt_api_key(token) if token else ""
+    meta_set("github_token", encrypted)
+    return web.json_response({"ok": True})
+
+
+async def api_get_github_token(request):
+    """从数据库读取解密后的 GitHub Token"""
+    from desktop_core.storage import decrypt_api_key, meta_get
+    encrypted = meta_get("github_token") or ""
+    decrypted = decrypt_api_key(encrypted) if encrypted else ""
+    return web.json_response({"token": decrypted})
 
 
 # ── 桌面端状态 ──
@@ -1179,7 +1342,7 @@ async def api_chat_stream(request):
 
         full_response = ""
         usage_info = None
-        MAX_ROUNDS = 25
+        MAX_ROUNDS = 10
         errors_in_round = 0
 
         # ── 创建任务（存到 SSE 对象上，每次请求独立） ──
@@ -1391,15 +1554,16 @@ async def api_chat_stream(request):
                         if call_id:
                             parallel_results[call_id] = result_text
 
-                    # 将结果添加到 messages
+                    # 将结果添加到 messages（截断到 800 字符控制 token 消耗）
                     errors_in_round = 0
                     for tc in tool_calls:
                         call_id = tc.get("id", "")
                         tr = parallel_results.get(call_id, "（工具执行失败）")
-                        if "失败" in tr[:20] or "❌" in tr[:10] or "出错" in tr[:20]:
+                        if "失败" in tr[:20] or "出错" in tr[:20]:
                             errors_in_round += 1
+                        truncated = tr[:800] + ("" if len(tr) <= 800 else "\n...（结果过长已截断）")
                         await sse.write(f"event: tool_result\ndata: {json.dumps({'tool_call_id': call_id, 'name': tc.get('function', {}).get('name', ''), 'content': tr[:200]})}\n\n".encode())
-                        messages.append({"role": "tool", "tool_call_id": call_id, "name": tc.get("function", {}).get("name", ""), "content": tr})
+                        messages.append({"role": "tool", "tool_call_id": call_id, "name": tc.get("function", {}).get("name", ""), "content": truncated})
                     continue
 
                 # ── 文字回复：流式输出 ──
@@ -1701,16 +1865,25 @@ def setup_routes(app):
     app.router.add_get("/api/workflows/{id}/export", api_workflow_export)
     app.router.add_post("/api/workflows/import", api_workflow_import)
     app.router.add_post("/api/workflows/publish", api_workflow_publish)
+    app.router.add_post("/api/workflows/regenerate-key", api_workflow_regenerate_key)
+    app.router.add_get("/api/workflows/{id}/keys", api_workflow_list_keys)
+    app.router.add_post("/api/workflows/{id}/keys/create", api_workflow_create_key)
+    app.router.add_post("/api/workflows/keys/update", api_workflow_update_key)
+    app.router.add_post("/api/workflows/keys/delete", api_workflow_delete_key)
+    app.router.add_get("/api/workflows/{id}/usage", api_workflow_usage_stats)
     app.router.add_get("/api/workflows/{id}/versions", api_workflow_versions)
     app.router.add_post("/api/workflows/webhook", api_workflow_register_webhook)
     app.router.add_post("/api/workflows/human-input", api_workflow_human_input)
-    app.router.add_post("/api/webhook/{endpoint}", api_workflow_human_input)
+    app.router.add_post("/api/webhook/{endpoint}", api_webhook_execute)
 
     # 模板
     app.router.add_get("/api/workflow/templates", api_templates_list)
     app.router.add_get("/api/workflow/templates/categories", api_templates_categories)
     app.router.add_post("/api/workflow/templates/use", api_templates_use)
     app.router.add_get("/api/workflow/templates/online", api_templates_online)
+    app.router.add_post("/api/workflow/templates/test-token", api_test_github_token)
+    app.router.add_post("/api/workflow/templates/save-token", api_save_github_token)
+    app.router.add_get("/api/workflow/templates/get-token", api_get_github_token)
 
     # MCP 管理
     app.router.add_get("/api/mcp/servers", api_mcp_list)

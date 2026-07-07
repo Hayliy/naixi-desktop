@@ -7,6 +7,7 @@ import { Card } from "@/components/ui";
 import { loadAvatarCache } from "@/lib/avatar";
 import ChatPage from "@/components/Chat";
 import WorkflowEditor from "@/components/WorkflowEditor";
+import { ReactFlowProvider } from "@xyflow/react";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import SetupGuide from "@/components/SetupGuide";
 import {
@@ -209,7 +210,7 @@ export default function Dashboard() {
               <ErrorBoundary name="对话"><ChatPage /></ErrorBoundary>
             )}
           </div>
-          <div style={{ display: activeNav === "workflow" ? "block" : "none", height: "100%" }}><ErrorBoundary name="工作流"><WorkflowEditor /></ErrorBoundary></div>
+          <div style={{ display: activeNav === "workflow" ? "block" : "none", height: "100%" }}><ErrorBoundary name="工作流"><ReactFlowProvider><WorkflowEditor /></ReactFlowProvider></ErrorBoundary></div>
           <div style={{ display: activeNav === "knowledge" ? "block" : "none", height: "100%" }}><ErrorBoundary name="知识库"><KbPage kb={kb} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "tools" ? "block" : "none", height: "100%" }}><ErrorBoundary name="工具"><ToolsPage toolsData={toolsData} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "memory" ? "block" : "none", height: "100%" }}><ErrorBoundary name="记忆"><MemPage memLayers={memLayers} /></ErrorBoundary></div>
