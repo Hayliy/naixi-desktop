@@ -104,6 +104,14 @@ export default function ConnectionPanel({ onClose }: { onClose: () => void }) {
           </button>
         )}
 
+        {/* 添加按钮 */}
+        {!showForm && !editingKey && (
+          <button onClick={() => setShowForm(true)}
+            className="flex items-center gap-1 w-full px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+            <Plus size={10} /> 添加外部连接
+          </button>
+        )}
+
         {/* 添加/编辑表单 */}
         {(showForm || editingKey) && (
           <div className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs">
@@ -178,14 +186,6 @@ export default function ConnectionPanel({ onClose }: { onClose: () => void }) {
             </div>
           ))}
         </div>
-
-        {/* 添加按钮 */}
-        {!showForm && !editingKey && (
-          <button onClick={() => setShowForm(true)}
-            className="flex items-center gap-1 w-full px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
-            <Plus size={10} /> 添加外部连接
-          </button>
-        )}
       </div>
     </div>
   );
