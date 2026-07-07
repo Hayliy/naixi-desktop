@@ -158,17 +158,18 @@ async def main():
                     if item.get("status") != "active":
                         continue
                     if item.get("schedule_type") == "once":
-                        scheduled = item.get("scheduled_at", "")
-                        # 只执行还没执行过的（没有历史记录）
-                        has_run = len(item.get("history", [])) > 0
-                        if scheduled and scheduled <= now and not has_run:
-                            rec = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "status": "success", "result": f"自动执行: {item.get('name', '')}"}
+                        scheduled = item.get("scheduled_at", "").replace("T", " ")
+                        # 检查是否已为当前 scheduled_at 执行过
+                        last_result = item.get("history", [{}])[-1].get("result", "") if item.get("history") else ""
+                        already_done = f"已执行({scheduled.replace(' ', 'T')})" in last_result or f"已执行({scheduled})" in last_result
+                        if scheduled and scheduled <= now and not already_done:
+                            rec = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "status": "success", "result": f"已执行({scheduled})"}
                             if "history" not in item: item["history"] = []
                             item["history"].append(rec)
                             item["last_run"] = rec["time"]
                             item["status"] = "expired"
                             changed = True
-                            log.info(f"自动化执行: {item.get('name', '')} (一次性)")
+                            log.info(f"自动化执行: {item.get('name', '')} (一次性, 计划: {scheduled})")
                 if changed:
                     meta_set("naixi_automations", json.dumps(items, ensure_ascii=False))
             except Exception as e:
