@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { apiGet, apiPost } from "@/lib/api";
-import { BookOpen, Plus, Search, X, Trash2, Edit3, Globe, Check, Zap, ChevronDown, ChevronUp, Link, Loader2, Folder } from "lucide-react";
+import { Plus, Search, X, Trash2, Edit3, Globe, Check, Zap, ChevronDown, ChevronUp, Link, Loader2, Folder } from "lucide-react";
 import { useToast } from "@/components/Toast";
 
 interface KnowledgeItem {

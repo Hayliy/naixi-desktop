@@ -87,10 +87,9 @@ export default function ConnectionPanel({ onClose }: { onClose: () => void }) {
   return (
     <div className="flex-1 w-full border-l border-sakura-100 bg-white flex flex-col h-full">
       {/* 头部 */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-sakura-100 shrink-0">
-        <span className="text-xs font-semibold text-sakura-500 flex items-center gap-1">
-          <Zap size={13} /> 外部连接
-          <span className="text-sakura-300 font-normal">({mcpKeys.length})</span>
+      <div className="bg-white flex items-center justify-between px-3 py-2 border-b border-sakura-100 shrink-0">
+        <span className="text-xs font-semibold text-sakura-500">外部连接
+          <span className="text-sakura-300 font-normal ml-1">({mcpKeys.length})</span>
         </span>
         <button onClick={onClose} className="p-0.5 hover:bg-sakura-50 rounded text-sakura-300"><X size={13} /></button>
       </div>

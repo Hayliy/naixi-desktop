@@ -73,14 +73,14 @@ export default function PromptPanel({
         file: fname,
         content: editContent,
       });
-      if (res.ok) {
+      if (res?.ok) {
         setSavedMsg("已保存");
         setEditingFile(null);
         setIsCreating(false);
         load();
         setTimeout(() => setSavedMsg(""), 2000);
       } else {
-        setSavedMsg(res.error || "保存失败");
+        setSavedMsg(res?.error || "保存失败");
       }
     } catch { setSavedMsg("保存失败"); }
     setSaving(false);
@@ -95,7 +95,7 @@ export default function PromptPanel({
         file: fname,
         content: editContent,
       });
-      if (res.ok) {
+      if (res?.ok) {
         setSavedMsg("已创建");
         setIsCreating(false);
         setEditingFile(null);
@@ -109,10 +109,9 @@ export default function PromptPanel({
   };
 
   const handleDelete = async (fname: string) => {
-    if (!confirm(`确定删除 ${fname} 吗？`)) return;
     try {
       const res = await apiPost<{ ok: boolean; error?: string }>("/api/prompts/delete", { file: fname });
-      if (res.ok) {
+      if (res?.ok) {
         setSavedMsg("已删除");
         if (activeScene === fname) onSceneChange("owner");
         load();
@@ -150,16 +149,14 @@ export default function PromptPanel({
     <div className="flex-1 w-full border-l border-sakura-100 bg-white flex flex-col h-full">
       <div className="bg-white flex items-center justify-between px-3 py-2 border-b border-sakura-100 shrink-0">
         <span className="text-xs font-semibold text-sakura-500">提示词文件</span>
-        <div className="flex items-center gap-1">
-          <button onClick={startCreate}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] bg-sakura-100 text-sakura-600 hover:bg-sakura-200 transition-colors">
-            <Plus size={10} /> 新建
-          </button>
-          <button onClick={onClose} className="p-0.5 hover:bg-sakura-50 rounded text-sakura-300"><X size={13} /></button>
-        </div>
+        <button onClick={onClose} className="p-0.5 hover:bg-sakura-50 rounded text-sakura-300"><X size={13} /></button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 text-xs">
+        <button onClick={startCreate}
+          className="flex items-center gap-1 w-full px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+          <Plus size={10} /> 新建
+        </button>
         {savedMsg && (
           <div className={`text-[10px] ${savedMsg.includes("失败") ? "text-red-500" : "text-green-500"}`}>{savedMsg}</div>
         )}

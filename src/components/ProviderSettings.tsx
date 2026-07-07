@@ -204,62 +204,7 @@ export default function ProviderSettings({ onClose }: { onClose?: () => void }) 
           </button>
         )}
 
-        {providers.length === 0 && !showForm ? (
-          <div className="text-center py-10 text-sakura-300 text-xs">还没有供应商，点击上方添加</div>
-        ) : providers.map(p => (
-          editingId === p.id ? (
-            /* ═══ 编辑模式 ═══ */
-            <EditProviderCard
-              key={p.id}
-              provider={getEditingProvider(p.id)!}
-              onSave={saveProviderEdit}
-              onCancel={() => setEditingId(null)}
-            />
-          ) : (
-            /* ═══ 展示模式 ═══ */
-            <div key={p.id} className="bg-white border border-sakura-100 rounded-lg text-xs">
-              <div className="flex items-center justify-between px-3 py-2.5">
-                <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                  <span className="w-6 h-6 rounded flex items-center justify-center text-[9px] font-bold bg-sakura-100 text-sakura-500 shrink-0">
-                    {(p.name || "??").slice(0, 2).toUpperCase()}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sakura-600 font-medium truncate">{p.name}</p>
-                    {/* 能力类型标签 */}
-                    <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
-                      <span className="inline-block px-1.5 py-0.5 rounded text-[9px] bg-sakura-200 text-sakura-600 font-medium">
-                        {p.type || "chat"}
-                      </span>
-                      {p.models.length > 0 ? p.models.map((m, i) => (
-                        <span key={i} className="inline-block px-1.5 py-0.5 rounded text-[10px] bg-sakura-50 text-sakura-500 font-mono">
-                          {m}
-                        </span>
-                      )) : (
-                        <span className="text-[10px] text-sakura-300">无模型</span>
-                      )}
-                      <span className={`text-[10px] ${p.has_key ? "text-green-500" : "text-sakura-300"}`}>
-                        · {p.has_key ? "有 Key" : "无 Key"}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-1 shrink-0 ml-2">
-                  <button onClick={() => setEditingId(p.id)}
-                    className="p-1 rounded hover:bg-sakura-100 text-sakura-300 hover:text-sakura-500 transition-colors"
-                    title="编辑">
-                    <Pencil size={11} />
-                  </button>
-                  <button onClick={() => handleDelete(p.name)}
-                    className="p-1 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500 transition-colors"
-                    title="删除">
-                    <Trash2 size={11} />
-                  </button>
-                </div>
-              </div>
-            </div>
-          )
-        ))}
-        {/* 新增表单 — 内联在列表区 */}
+        {/* 新增表单 — 在列表上方 */}
         {showForm && (
           <div className="bg-white border border-sakura-200 rounded-xl p-3 space-y-2.5 text-xs">
             <p className="text-xs font-semibold text-sakura-500">添加供应商</p>
@@ -322,6 +267,62 @@ export default function ProviderSettings({ onClose }: { onClose?: () => void }) 
             </div>
           </div>
         )}
+
+        {providers.length === 0 && !showForm ? (
+          <div className="text-center py-10 text-sakura-300 text-xs">还没有供应商，点击上方添加</div>
+        ) : providers.map(p => (
+          editingId === p.id ? (
+            /* ═══ 编辑模式 ═══ */
+            <EditProviderCard
+              key={p.id}
+              provider={getEditingProvider(p.id)!}
+              onSave={saveProviderEdit}
+              onCancel={() => setEditingId(null)}
+            />
+          ) : (
+            /* ═══ 展示模式 ═══ */
+            <div key={p.id} className="bg-white border border-sakura-100 rounded-lg text-xs">
+              <div className="flex items-center justify-between px-3 py-2.5">
+                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                  <span className="w-6 h-6 rounded flex items-center justify-center text-[9px] font-bold bg-sakura-100 text-sakura-500 shrink-0">
+                    {(p.name || "??").slice(0, 2).toUpperCase()}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sakura-600 font-medium truncate">{p.name}</p>
+                    {/* 能力类型标签 */}
+                    <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                      <span className="inline-block px-1.5 py-0.5 rounded text-[9px] bg-sakura-200 text-sakura-600 font-medium">
+                        {p.type || "chat"}
+                      </span>
+                      {p.models.length > 0 ? p.models.map((m, i) => (
+                        <span key={i} className="inline-block px-1.5 py-0.5 rounded text-[10px] bg-sakura-50 text-sakura-500 font-mono">
+                          {m}
+                        </span>
+                      )) : (
+                        <span className="text-[10px] text-sakura-300">无模型</span>
+                      )}
+                      <span className={`text-[10px] ${p.has_key ? "text-green-500" : "text-sakura-300"}`}>
+                        · {p.has_key ? "有 Key" : "无 Key"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0 ml-2">
+                  <button onClick={() => setEditingId(p.id)}
+                    className="p-1 rounded hover:bg-sakura-100 text-sakura-300 hover:text-sakura-500 transition-colors"
+                    title="编辑">
+                    <Pencil size={11} />
+                  </button>
+                  <button onClick={() => handleDelete(p.name)}
+                    className="p-1 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500 transition-colors"
+                    title="删除">
+                    <Trash2 size={11} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )
+        ))}
       </div>
     </div>
   );
