@@ -544,7 +544,7 @@ export default function ChatPage() {
               }} />
             )}
             {sideTab === "settings" && (
-              <div className="flex-1 overflow-y-auto p-3"><ErrorBoundary name="供应商设置"><ProviderSettings /></ErrorBoundary></div>
+              <div className="flex-1 overflow-y-auto p-3"><ErrorBoundary name="供应商设置"><ProviderSettings onClose={() => setSideTab(null)} /></ErrorBoundary></div>
             )}
           </div>
           {/* 右侧图标条 */}

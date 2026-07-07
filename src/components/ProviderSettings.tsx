@@ -58,7 +58,7 @@ interface EditableProvider {
   model: string;
 }
 
-export default function ProviderSettings() {
+export default function ProviderSettings({ onClose }: { onClose?: () => void }) {
   const { config, loaded, refreshConfig } = useAppConfig();
   const [providers, setProviders] = useState<Provider[]>([]);
   const [loading, setLoading] = useState(true);
@@ -195,19 +195,21 @@ export default function ProviderSettings() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-3">
-        <div>
-          <p className="text-sm font-semibold text-sakura-500">模型供应商</p>
-          <p className="text-[11px] text-sakura-300">{providers.length} 个供应商</p>
-        </div>
+      <div className="flex items-center justify-between px-3 py-2 border-b border-sakura-100">
+        <span className="text-xs font-semibold text-sakura-500">模型供应商</span>
+        <button onClick={onClose} className="p-0.5 hover:bg-sakura-50 rounded text-sakura-300"><X size={13} /></button>
+      </div>
+
+      {/* 添加按钮 */}
+      <div className="px-3 pt-2 pb-1">
         <button onClick={openForm}
-          className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-sakura-100 text-sakura-600 hover:bg-sakura-200 transition-colors">
-          <Plus size={12} /> 添加
+          className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] bg-sakura-100 text-sakura-600 hover:bg-sakura-200 transition-colors">
+          <Plus size={10} /> 添加供应商
         </button>
       </div>
 
       {/* Provider 列表 - 固定高度，超出滚动 */}
-      <div className="space-y-1 max-h-[320px] overflow-y-auto overflow-x-hidden pr-0.5">
+      <div className="px-3 space-y-1 max-h-[280px] overflow-y-auto overflow-x-hidden">
         {providers.length === 0 ? (
           <div className="text-center py-10 text-sakura-300 text-xs">还没有供应商，点击上方添加</div>
         ) : providers.map(p => (
