@@ -15,6 +15,8 @@ export default function MsgBubble({ msg, onEdit, onRegenerate, onDelete, onStar,
   const [speaking, setSpeaking] = useState(false);
   const [ttsMode, setTtsMode] = useState<"browser" | "api">("browser");
   const [audioEl, setAudioEl] = useState<HTMLAudioElement | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState("");
 
   // 加载 TTS 配置
   useEffect(() => {
@@ -118,6 +120,10 @@ export default function MsgBubble({ msg, onEdit, onRegenerate, onDelete, onStar,
         }`}>
           {isEmpty && !isUser ? (
             <span className="text-sakura-300 italic">等待响应...</span>
+          ) : editing ? (
+            <textarea value={editText} onChange={e => setEditText(e.target.value)}
+              className="w-full bg-white text-sakura-700 text-xs rounded border border-sakura-200 p-2 resize-none outline-none"
+              rows={4} autoFocus />
           ) : msg.content_blocks && msg.content_blocks.length > 0 ? (
             <ContentRenderer blocks={msg.content_blocks} />
           ) : (
@@ -156,10 +162,20 @@ export default function MsgBubble({ msg, onEdit, onRegenerate, onDelete, onStar,
               )}
             </>
           )}
-          {isUser && onEdit && (
-            <button onClick={() => onEdit(msg.id, msg.content)} className="p-0.5 rounded hover:bg-sakura-50 text-sakura-300 hover:text-sakura-500" title="编辑">
+          {isUser && onEdit && !editing && (
+            <button onClick={() => { setEditText(msg.content); setEditing(true); }} className="p-0.5 rounded hover:bg-sakura-50 text-sakura-300 hover:text-sakura-500" title="编辑">
               <Edit3 size={10} />
             </button>
+          )}
+          {editing && (
+            <>
+              <button onClick={() => { setEditing(false); }} className="p-0.5 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500" title="取消">
+                <X size={10} />
+              </button>
+              <button onClick={() => { onEdit?.(msg.id, editText); setEditing(false); }} className="p-0.5 rounded hover:bg-green-50 text-green-500" title="保存">
+                <Check size={10} />
+              </button>
+            </>
           )}
         </div>
       </div>
