@@ -1846,6 +1846,30 @@ async def _create_workflow(args: dict, context: dict = None) -> str:
     except Exception as e:
         return json.dumps({"success": False, "error": f"创建工作流失败: {e}"}, ensure_ascii=False)
 
+async def _build_workflow(args: dict, context: dict = None) -> str:
+    """一次性构建完整工作流（传入全部节点和边，不逐个添加）"""
+    try:
+        from desktop_core.workflow_engine import api_save_workflow
+        wid = args.get("id", f"wf_build_{int(time.time())}")
+        name = args.get("name", "构建的工作流")
+        description = args.get("description", "")
+        nodes = args.get("nodes", [])
+        edges = args.get("edges", [])
+        if not nodes:
+            return json.dumps({"success": False, "error": "请传入 nodes 列表，至少包含 start 和 end 节点"})
+        nodes = [_normalize_node(n) for n in nodes]
+        nodes, edges, fixes = _validate_and_fix_workflow(nodes, edges)
+        result = await api_save_workflow(wid, name, description, nodes, edges)
+        return json.dumps({
+            "success": True, "id": wid, "name": name,
+            "version": result.get("version", 1),
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+            "fixes": fixes
+        }, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"success": False, "error": f"构建工作流失败: {e}"}, ensure_ascii=False)
+
 async def _add_workflow_node(args: dict, context: dict = None) -> str:
     """向已有工作流添加节点（返回精简结果供 LLM 使用）"""
     try:
@@ -1948,13 +1972,21 @@ async def _run_workflow(args: dict, context: dict = None) -> str:
 register("list_workflows", "列出所有已保存的工作流，返回工作流 ID、名称和描述。",
     {"type": "object", "properties": {}, "required": []}, _list_workflows, "workflow")
 
-register("create_workflow", "创建新工作流。自动生成开始/结束节点，或传入自定义节点。",
+register("create_workflow", "创建新工作流（简易版，自动补 start/end 节点）。如需构建多节点完整工作流，推荐使用 build_workflow 一次性传入全部节点和边。",
     {"type": "object", "properties": {
         "name": {"type": "string", "description": "工作流名称"},
         "description": {"type": "string", "description": "描述"},
         "nodes": {"type": "array", "description": "节点列表（可选）"},
         "edges": {"type": "array", "description": "连线列表（可选）"}
     }, "required": ["name"]}, _create_workflow, "workflow")
+
+register("build_workflow", "一次性构建完整工作流。传入全部节点和边，一次保存，不走逐个添加。搭工作流前应先调 query_node_schema 了解节点配置规则。节点格式: {id, type(节点类型), config:{...key:值...}}。边格式: {source, target, sourceHandle(可选)}。config合法key参见 add_workflow_node 描述。",
+    {"type": "object", "properties": {
+        "name": {"type": "string", "description": "工作流名称"},
+        "description": {"type": "string", "description": "描述"},
+        "nodes": {"type": "array", "description": "全部节点列表，每项 {id, type, config:{key:值}}"},
+        "edges": {"type": "array", "description": "全部连线列表，每项 {source, target, sourceHandle(可选)}"}
+    }, "required": ["name", "nodes", "edges"]}, _build_workflow, "workflow")
 
 register("add_workflow_node", "向已有工作流添加节点。传入 node.type（节点类型）和 node.config（配置键值对）。重要规则：引用上游节点输出时，必须用 {{节点ID.输出字段}} 模板字符串格式，不要用 JSON 对象！例如 instruction 应写为 \"{{code_1.code_output.summary}}\"，不要写成 {\"source\":\"code_1\",\"field\":\"summary\"}。条件分支的连线必须传 edge.sourceHandle 区分 True/False 分支：\"true\" 或 \"false\"。config合法key: llm={prompt,system_prompt,model,temperature,max_tokens}, code={code,language}, http={url,method,headers}, condition={expression}, tool={tool_name,tool_args}, knowledge={query,top_k}, template-transform={template}, assigner={operation,assignments}, datasource={source_type,inline_data}, document-extractor={file_path}, iteration={items(用{{}}引用),mode,parallel_nums}, agent={system_prompt,instruction(用{{}}引用),max_iterations,tools}, loop={condition,max_iterations}, human-input={prompt,input_type,auto_confirm}, knowledge-index={content(用{{}}引用),title,category}, answer={output(用{{}}引用)}",
     {"type": "object", "properties": {
