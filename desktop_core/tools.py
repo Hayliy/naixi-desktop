@@ -1597,6 +1597,40 @@ def _normalize_node(n: dict) -> dict:
     data = n.get("data", {})
     raw_type = data.get("type", n.get("type", "llm"))
     
+    # 中文类型名映射（Agent 用自然语言传类型也能正确解析）
+    cn_type_map = {
+        "开始": "start", "结束": "end", "数据源": "datasource",
+        "代码": "code", "代码生成": "code",
+        "http请求": "http", "http": "http", "请求": "http",
+        "知识库": "knowledge",
+        "文档提取": "document-extractor", "文档": "document-extractor",
+        "条件分支": "condition", "条件": "condition",
+        "参数提取": "parameter-extractor", "参数": "parameter-extractor",
+        "llm": "llm", "大模型": "llm", "对话": "llm",
+        "工具": "tool",
+        "模板转换": "template-transform", "模板": "template-transform",
+        "问题分类": "question-classifier", "分类": "question-classifier",
+        "变量赋值": "assigner", "赋值": "assigner",
+        "变量聚合": "variable-aggregator", "聚合": "variable-aggregator",
+        "列表操作": "list-operator", "列表": "list-operator",
+        "迭代": "iteration",
+        "智能体": "agent", "agent": "agent",
+        "条件循环": "loop", "循环": "loop",
+        "知识库索引": "knowledge-index", "索引": "knowledge-index",
+        "中间输出": "answer", "输出": "answer",
+        "人工输入": "human-input", "人工": "human-input",
+    }
+    # 先精确匹配中文名
+    mapped = cn_type_map.get(raw_type)
+    if not mapped:
+        # 再模糊匹配：如果 raw_type 包含某个中文 key，取对应的类型
+        for cn_name, en_type in cn_type_map.items():
+            if cn_name in raw_type:
+                mapped = en_type
+                break
+    if mapped:
+        raw_type = mapped
+    
     # 类型名模糊匹配：去分隔符、去常见后缀
     type_clean = raw_type.lower().replace("-","").replace("_","")
     # 去掉常见后缀
