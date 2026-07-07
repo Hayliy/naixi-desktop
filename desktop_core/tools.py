@@ -2042,12 +2042,12 @@ register("build_workflow", "一次性构建完整工作流。传入全部节点�
         "edges": {"type": "array", "description": "全部连线列表，每项 {source, target, sourceHandle(可选)}"}
     }, "required": ["name", "nodes", "edges"]}, _build_workflow, "workflow")
 
-register("add_workflow_node", "向已有工作流添加节点。传入 node.type（节点类型）和 node.config（配置键值对）。重要规则：引用上游节点输出时，必须用 {{节点ID.输出字段}} 模板字符串格式，不要用 JSON 对象！例如 instruction 应写为 \"{{code_1.code_output.summary}}\"，不要写成 {\"source\":\"code_1\",\"field\":\"summary\"}。条件分支的连线必须传 edge.sourceHandle 区分 True/False 分支：\"true\" 或 \"false\"。config合法key: llm={prompt,system_prompt,model,temperature,max_tokens}, code={code,language}, http={url,method,headers}, condition={expression}, tool={tool_name,tool_args}, knowledge={query,top_k}, template-transform={template}, assigner={operation,assignments}, datasource={source_type,inline_data}, document-extractor={file_path}, iteration={items(用{{}}引用),mode,parallel_nums}, agent={system_prompt,instruction(用{{}}引用),max_iterations,tools}, loop={condition,max_iterations}, human-input={prompt,input_type,auto_confirm}, knowledge-index={content(用{{}}引用),title,category}, answer={output(用{{}}引用)}",
+register("add_workflow_node", "向已有工作流添加一个节点。只需传入 node，系统会自动把节点追加到工作流末尾并连上线。如需特殊分支（如 HTTP 节点分叉到知识库和文档提取），可传 edge 指定连线。重要规则：引用上游节点输出时，必须用 {{节点ID.输出字段}} 模板字符串格式，不要用 JSON 对象！例如 instruction 应写为 \"{{code_1.code_output.summary}}\"。条件分支传 edge 时需加 sourceHandle: \"true\" 或 \"false\"。config合法key见 query_node_schema 工具返回的 schema。",
     {"type": "object", "properties": {
         "workflow_id": {"type": "string"},
-        "node": {"type": "object", "description": "节点: {id, type, config:{...}}" },
-        "edge": {"type": "object", "description": "连线: {source, target, sourceHandle(可选,条件分支必填: \"true\" 或 \"false\")}。每个新增节点必须指定连线，否则工作流断连"}
-    }, "required": ["workflow_id", "node", "edge"]}, _add_workflow_node, "workflow")
+        "node": {"type": "object", "description": "节点: {id, type, config:{...}}。type 支持中文名（如'参数提取'）和英文名" },
+        "edge": {"type": "object", "description": "可选。不传则自动追加到工作流末尾。传则指定连线: {source, target, sourceHandle(可选)}"}
+    }, "required": ["workflow_id", "node"]}, _add_workflow_node, "workflow")
 
 register("run_workflow", "运行指定工作流并返回执行结果",
     {"type": "object", "properties": {
