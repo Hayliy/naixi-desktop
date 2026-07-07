@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+﻿import { useState, useCallback, useRef, useEffect } from "react";
 import {
   ReactFlow,
   MiniMap,
@@ -268,6 +268,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
   const [showVarPanel, setShowVarPanel] = useState(false);
   const [showPublishDialog, setShowPublishDialog] = useState(false);
   const [showRunsPanel, setShowRunsPanel] = useState(false);
+  const [rightTab, setRightTab] = useState<"config" | "vars" | "debug" | "runs" | null>(null);
   const [runsData, setRunsData] = useState<any[]>([]);
   const [publishResult, setPublishResult] = useState<any>(null);
   const [showWorkflowList, setShowWorkflowList] = useState(false);
@@ -871,16 +872,16 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
           <button onClick={() => setShowTemplates(true)} className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-sakura-100 text-sakura-600 hover:bg-sakura-200">
             <BookOpen size={12} /> 模板市场
           </button>
-          <button onClick={() => setShowDebugPanel(!showDebugPanel)} className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${showDebugPanel ? 'bg-sakura-100 text-sakura-600' : 'bg-gray-100 text-gray-500'} hover:bg-gray-200`}>
+          <button onClick={() => setRightTab(rightTab === "debug" ? null : "debug")} className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${rightTab === "debug" ? 'bg-sakura-100 text-sakura-600' : 'bg-gray-100 text-gray-500'} hover:bg-gray-200`} title="调试面板">
             <Code size={12} /> 调试
           </button>
-          <button onClick={() => setShowVarPanel(!showVarPanel)} className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${showVarPanel ? 'bg-sakura-100 text-sakura-600' : 'bg-gray-100 text-gray-500'} hover:bg-gray-200`}>
+          <button onClick={() => setRightTab(rightTab === "vars" ? null : "vars")} className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${rightTab === "vars" ? 'bg-sakura-100 text-sakura-600' : 'bg-gray-100 text-gray-500'} hover:bg-gray-200`} title="变量参考">
             <Variable size={12} /> 变量
           </button>
           <button onClick={() => setShowPublishDialog(true)} className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-emerald-100 text-emerald-600 hover:bg-emerald-200">
             <Globe size={12} /> 发布
           </button>
-          <button onClick={handleToggleRuns} className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${showRunsPanel ? 'bg-sakura-100 text-sakura-600' : 'bg-gray-100 text-gray-500'} hover:bg-gray-200`}>
+          <button onClick={() => { setRightTab(rightTab === "runs" ? null : "runs"); if (rightTab !== "runs" && workflowId) loadRuns(); }} className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${rightTab === "runs" ? 'bg-sakura-100 text-sakura-600' : 'bg-gray-100 text-gray-500'} hover:bg-gray-200`} title="运行日志">
             <Clock size={12} /> 日志
           </button>
           <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-indigo-100 text-indigo-600 hover:bg-indigo-200">
@@ -950,563 +951,193 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
         )}
       </div>
 
-      {/* 右侧配置面板 */}
-      {selectedNode && (
-        <div className="w-64 bg-white border-l border-gray-200 p-4 overflow-y-auto">
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-sm font-semibold text-gray-700">节点配置</span>
-            <button onClick={deleteSelectedNode} className="text-red-400 hover:text-red-500">
-              <Trash2 size={14} />
-            </button>
-          </div>
-
-          <div className="space-y-3 text-xs">
-            <div>
-              <label className="block text-gray-500 mb-1">名称</label>
-              <input
-                value={(selectedNode.data as any)?.label || ""}
-                onChange={e => updateNodeLabel(e.target.value)}
-                className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300"
-              />
-            </div>
-
-            {selectedNode.data?.type === "llm" && (
-              <>
-                <div>
-                  <label className="block text-gray-500 mb-1">提示词</label>
-                  <textarea
-                    value={(selectedNode.data as any)?.config?.prompt || ""}
-                    onChange={e => updateNodeConfig("prompt", e.target.value)}
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 h-20 resize-none"
-                    placeholder='使用 {input} 引用输入'
-                  />
-                </div>
-                <div>
-                  <label className="block text-gray-500 mb-1">系统提示词</label>
-                  <textarea
-                    value={(selectedNode.data as any)?.config?.system_prompt || ""}
-                    onChange={e => updateNodeConfig("system_prompt", e.target.value)}
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 h-16 resize-none"
-                    placeholder="设定 AI 的角色和行为"
-                  />
-                </div>
-                <div>
-                  <label className="block text-gray-500 mb-1">模型</label>
-                  <input
-                    value={(selectedNode.data as any)?.config?.model || "qwen3-32b"}
-                    onChange={e => updateNodeConfig("model", e.target.value)}
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300"
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <div className="flex-1">
-                    <label className="block text-gray-500 mb-1">温度</label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      min="0"
-                      max="2"
-                      value={(selectedNode.data as any)?.config?.temperature ?? 0.7}
-                      onChange={e => updateNodeConfig("temperature", parseFloat(e.target.value) || 0.7)}
-                      className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300"
-                    />
-                  </div>
-                  <div className="flex-1">
-                    <label className="block text-gray-500 mb-1">最大 Token</label>
-                    <input
-                      type="number"
-                      step="1"
-                      min="1"
-                      max="32768"
-                      value={(selectedNode.data as any)?.config?.max_tokens ?? 4096}
-                      onChange={e => updateNodeConfig("max_tokens", parseInt(e.target.value) || 4096)}
-                      className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300"
-                    />
-                  </div>
-                  <div className="flex-1">
-                    <label className="block text-gray-500 mb-1">Top-P</label>
-                    <input
-                      type="number"
-                      step="0.05"
-                      min="0"
-                      max="1"
-                      value={(selectedNode.data as any)?.config?.top_p ?? 0.9}
-                      onChange={e => updateNodeConfig("top_p", parseFloat(e.target.value) || 0.9)}
-                      className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300"
-                    />
-                  </div>
-                </div>
-              </>
-            )}
-
-            {selectedNode.data?.type === "code" && (
-              <>
-                <div>
-                  <label className="block text-gray-500 mb-1">语言</label>
-                  <select
-                    value={(selectedNode.data as any)?.config?.language || "python"}
-                    onChange={e => updateNodeConfig("language", e.target.value)}
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300"
-                  >
-                    <option value="python">Python</option>
-                    <option value="javascript">JavaScript</option>
-                    <option value="typescript">TypeScript</option>
-                    <option value="go">Go</option>
-                    <option value="bash">Bash</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-gray-500 mb-1">代码</label>
-                  <textarea
-                    value={(selectedNode.data as any)?.config?.code || ""}
-                    onChange={e => updateNodeConfig("code", e.target.value)}
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs font-mono outline-none focus:border-sakura-300 h-24 resize-none"
-                    placeholder='result = input_data.get("input", "") + " 处理完成"'
-                  />
-                </div>
-              </>
-            )}
-
-            {selectedNode.data?.type === "condition" && (
-              <div>
-                <label className="block text-gray-500 mb-1">条件表达式</label>
-                <input
-                  value={(selectedNode.data as any)?.config?.expression || ""}
-                  onChange={e => updateNodeConfig("expression", e.target.value)}
-                  className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs font-mono outline-none focus:border-sakura-300"
-                  placeholder='input.get("value", 0) > 10'
-                />
-              </div>
-            )}
-
-            {selectedNode.data?.type === "http" && (
-              <>
-                <div>
-                  <label className="block text-gray-500 mb-1">URL</label>
-                  <input
-                    value={(selectedNode.data as any)?.config?.url || ""}
-                    onChange={e => updateNodeConfig("url", e.target.value)}
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300"
-                    placeholder="https://api.example.com"
-                  />
-                </div>
-                <div>
-                  <label className="block text-gray-500 mb-1">方法</label>
-                  <select
-                    value={(selectedNode.data as any)?.config?.method || "GET"}
-                    onChange={e => updateNodeConfig("method", e.target.value)}
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300"
-                  >
-                    <option>GET</option>
-                    <option>POST</option>
-                    <option>PUT</option>
-                    <option>DELETE</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-gray-500 mb-1">请求体 (JSON)</label>
-                  <textarea
-                    value={(selectedNode.data as any)?.config?.body || ""}
-                    onChange={e => updateNodeConfig("body", e.target.value)}
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs font-mono outline-none focus:border-sakura-300 h-20 resize-none"
-                    placeholder='{"key": "value"}'
-                  />
-                </div>
-                <div>
-                  <label className="block text-gray-500 mb-1">请求头 (JSON)</label>
-                  <textarea
-                    value={JSON.stringify((selectedNode.data as any)?.config?.headers || {}, null, 2)}
-                    onChange={e => { try { updateNodeConfig("headers", JSON.parse(e.target.value)); } catch {} }}
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs font-mono outline-none focus:border-sakura-300 h-16 resize-none"
-                    placeholder='{"Authorization": "Bearer xxx"}'
-                  />
-                </div>
-              </>
-            )}
-
-            {selectedNode.data?.type === "tool" && (
-              <>
-                <div>
-                  <label className="block text-gray-500 mb-1">工具名称</label>
-                  <input
-                    value={(selectedNode.data as any)?.config?.tool_name || ""}
-                    onChange={e => updateNodeConfig("tool_name", e.target.value)}
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300"
-                    placeholder="search_web"
-                  />
-                </div>
-                <div>
-                  <label className="block text-gray-500 mb-1">参数 (JSON)</label>
-                  <textarea
-                    value={JSON.stringify((selectedNode.data as any)?.config?.tool_args || {}, null, 2)}
-                    onChange={e => { try { updateNodeConfig("tool_args", JSON.parse(e.target.value)); } catch {} }}
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs font-mono outline-none focus:border-sakura-300 h-20 resize-none"
-                    placeholder='{"query": "{input}"}'
-                  />
-                </div>
-              </>
-            )}
-
-            {selectedNode.data?.type === "knowledge" && (
-              <>
-                <div>
-                  <label className="block text-gray-500 mb-1">查询模板</label>
-                  <input
-                    value={(selectedNode.data as any)?.config?.query || ""}
-                    onChange={e => updateNodeConfig("query", e.target.value)}
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300"
-                    placeholder='{input}'
-                  />
-                </div>
-                <div>
-                  <label className="block text-gray-500 mb-1">返回条数 (Top-K)</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="50"
-                    value={(selectedNode.data as any)?.config?.top_k ?? 3}
-                    onChange={e => updateNodeConfig("top_k", parseInt(e.target.value) || 3)}
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300"
-                  />
-                </div>
-              </>
-            )}
-
-            {selectedNode.data?.type === "template-transform" && (
-              <div>
-                <label className="block text-gray-500 mb-1">Jinja2 模板</label>
-                <textarea
-                  value={(selectedNode.data as any)?.config?.template || ""}
-                  onChange={e => updateNodeConfig("template", e.target.value)}
-                  className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs font-mono outline-none focus:border-sakura-300 h-20 resize-none"
-                  placeholder='使用 {{ variable }} 语法引用变量'
-                />
-              </div>
-            )}
-
-            {selectedNode.data?.type === "parameter-extractor" && (
-              <div>
-                <label className="block text-gray-500 mb-1">查询文本</label>
-                <input
-                  value={(selectedNode.data as any)?.config?.query || ""}
-                  onChange={e => updateNodeConfig("query", e.target.value)}
-                  className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300"
-                  placeholder='{input}'
-                />
-                <label className="block text-gray-500 mb-1 mt-2">提取字段 (JSON)</label>
-                <textarea
-                  value={JSON.stringify((selectedNode.data as any)?.config?.parameters || [], null, 2)}
-                  onChange={e => { try { updateNodeConfig("parameters", JSON.parse(e.target.value)); } catch {} }}
-                  className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs font-mono outline-none focus:border-sakura-300 h-20 resize-none"
-                  placeholder='[{"name":"field","type":"string","description":""}]'
-                />
-              </div>
-            )}
-
-            {selectedNode.data?.type === "question-classifier" && (
-              <div>
-                <label className="block text-gray-500 mb-1">查询文本</label>
-                <input
-                  value={(selectedNode.data as any)?.config?.query || ""}
-                  onChange={e => updateNodeConfig("query", e.target.value)}
-                  className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300"
-                  placeholder='{input}'
-                />
-                <label className="block text-gray-500 mb-1 mt-2">分类列表 (JSON)</label>
-                <textarea
-                  value={JSON.stringify((selectedNode.data as any)?.config?.categories || [], null, 2)}
-                  onChange={e => { try { updateNodeConfig("categories", JSON.parse(e.target.value)); } catch {} }}
-                  className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs font-mono outline-none focus:border-sakura-300 h-20 resize-none"
-                  placeholder='[{"name":"类别A","description":""},{"name":"类别B","description":""}]'
-                />
-              </div>
-            )}
-
-            {selectedNode.data?.type === "document-extractor" && (
-              <div>
-                <label className="block text-gray-500 mb-1">文件路径</label>
-                <input
-                  value={(selectedNode.data as any)?.config?.file_path || ""}
-                  onChange={e => updateNodeConfig("file_path", e.target.value)}
-                  className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300"
-                  placeholder="D:/path/to/document.pdf"
-                />
-              </div>
-            )}
-
-            {selectedNode.data?.type === "assigner" && (
-              <div>
-                <label className="block text-gray-500 mb-1">赋值表达式 (JSON)</label>
-                <textarea
-                  value={JSON.stringify((selectedNode.data as any)?.config?.assignments || [], null, 2)}
-                  onChange={e => { try { updateNodeConfig("assignments", JSON.parse(e.target.value)); } catch {} }}
-                  className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs font-mono outline-none focus:border-sakura-300 h-20 resize-none"
-                  placeholder='[{"variable":"out","expression":"input.get(\"value\",0)*2"}]'
-                />
-              </div>
-            )}
-
-            {selectedNode.data?.type === "variable-aggregator" && (
-              <div>
-                <label className="block text-gray-500 mb-1">合并策略</label>
-                <select
-                  value={(selectedNode.data as any)?.config?.merge_strategy || "overwrite"}
-                  onChange={e => updateNodeConfig("merge_strategy", e.target.value)}
-                  className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300"
-                >
-                  <option value="overwrite">覆盖</option>
-                  <option value="keep_existing">保留原值</option>
-                </select>
-              </div>
-            )}
-
-            {selectedNode.data?.type === "list-operator" && (
-              <>
-                <div>
-                  <label className="block text-gray-500 mb-1">操作</label>
-                  <select
-                    value={(selectedNode.data as any)?.config?.operation || "filter"}
-                    onChange={e => updateNodeConfig("operation", e.target.value)}
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300"
-                  >
-                    <option value="filter">过滤 (filter)</option>
-                    <option value="map">映射 (map)</option>
-                    <option value="sort">排序 (sort)</option>
-                    <option value="first">取第一个</option>
-                    <option value="count">计数</option>
-                  </select>
-                </div>
-                <div className="mt-2">
-                  <label className="block text-gray-500 mb-1">表达式</label>
-                  <input
-                    value={(selectedNode.data as any)?.config?.expression || ""}
-                    onChange={e => updateNodeConfig("expression", e.target.value)}
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs font-mono outline-none focus:border-sakura-300"
-                    placeholder='item.get("value", 0) > 10'
-                  />
-                </div>
-              </>
-            )}
-
-            {selectedNode.data?.type === "answer" && (
-              <div>
-                <label className="block text-gray-500 mb-1">输出模板</label>
-                <textarea
-                  value={(selectedNode.data as any)?.config?.output || ""}
-                  onChange={e => updateNodeConfig("output", e.target.value)}
-                  className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 h-20 resize-none"
-                  placeholder='使用 {{ variable }} 语法'
-                />
-              </div>
-            )}
-
-            {selectedNode.data?.type === "iteration" && (
-              <>
-                <div>
-                  <label className="block text-gray-500 mb-1">数组 (JSON)</label>
-                  <input
-                    value={(selectedNode.data as any)?.config?.items || "[]"}
-                    onChange={e => updateNodeConfig("items", e.target.value)}
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs font-mono outline-none focus:border-sakura-300"
-                    placeholder='["A","B","C"]'
-                  />
-                </div>
-                <div className="mt-2">
-                  <label className="block text-gray-500 mb-1">模式</label>
-                  <select
-                    value={(selectedNode.data as any)?.config?.mode || "sequential"}
-                    onChange={e => updateNodeConfig("mode", e.target.value)}
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300"
-                  >
-                    <option value="sequential">顺序</option>
-                    <option value="parallel">并行</option>
-                  </select>
-                </div>
-              </>
-            )}
-
-            {selectedNode.data?.type === "loop" && (
-              <>
-                <div>
-                  <label className="block text-gray-500 mb-1">条件表达式</label>
-                  <input
-                    value={(selectedNode.data as any)?.config?.condition || ""}
-                    onChange={e => updateNodeConfig("condition", e.target.value)}
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs font-mono outline-none focus:border-sakura-300"
-                    placeholder='iteration < 10'
-                  />
-                </div>
-                <div className="mt-2">
-                  <label className="block text-gray-500 mb-1">最大迭代次数</label>
-                  <input
-                    type="number"
-                    value={(selectedNode.data as any)?.config?.max_iterations || 10}
-                    onChange={e => updateNodeConfig("max_iterations", parseInt(e.target.value) || 10)}
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300"
-                  />
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* 调试面板 */}
-      {showDebugPanel && (
-        <div className="w-64 bg-gray-50 border-l border-gray-200 p-3 overflow-y-auto">
-          <div className="text-xs font-semibold text-gray-500 mb-2">调试面板</div>
-          <div className="text-xs text-gray-500 mb-2">输入数据 (JSON)</div>
-          <textarea
-            value={inputData}
-            onChange={e => setInputData(e.target.value)}
-            className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs font-mono outline-none focus:border-sakura-300 h-16 resize-none mb-2"
-          />
-          <div className="text-xs text-gray-500 mb-1">节点状态</div>
-          <div className="space-y-1">
-            {nodes.map(n => (
-              <div key={n.id} className="flex items-center gap-2 text-[10px]">
-                <span className={`w-2 h-2 rounded-full ${nodeStatuses[n.id] === "success" ? "bg-emerald-400" : nodeStatuses[n.id] === "error" ? "bg-red-400" : nodeStatuses[n.id] === "running" ? "bg-amber-400" : "bg-gray-300"}`} />
-                <span className="text-gray-600 truncate flex-1">{(n.data as any)?.label || n.id}</span>
-                <span className="text-gray-400">{nodeStatuses[n.id] || "pending"}</span>
-              </div>
-            ))}
-          </div>
-          {runResult?.variables && (
-            <>
-              <div className="text-xs text-gray-500 mt-3 mb-1">变量快照</div>
-              <div className="space-y-1 max-h-40 overflow-y-auto">
-                {runResult.variables.map((v: any, i: number) => (
-                  <div key={i} className="text-[10px] text-gray-600 truncate">{v.path}: {v.type}</div>
-                ))}
-              </div>
-            </>
-          )}
-          {runResult?.timings && (
-            <>
-              <div className="text-xs text-gray-500 mt-3 mb-1">节点耗时 (ms)</div>
-              <div className="space-y-1">
-                {runResult.timings.map((t: any, i: number) => (
-                  <div key={i} className="flex items-center gap-1 text-[10px]">
-                    <span className="text-gray-600 truncate flex-1">{t.node_id}</span>
-                    <span className={t.elapsed_ms > 1000 ? "text-red-400" : "text-gray-400"}>{t.elapsed_ms}ms</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      )}
-
-      {/* 变量面板 */}
-      {showVarPanel && (
-        <div className="w-64 bg-gray-50 border-l border-gray-200 p-3 overflow-y-auto">
-          <div className="text-xs font-semibold text-gray-500 mb-3">变量参考</div>
-          {(() => {
-            const getNodeVars = (n: any) => {
-              const type = (n.data as any)?.type || "llm";
-              const label = (n.data as any)?.label || n.id;
-              const outputs: { key: string; desc: string }[] = [];
-              switch (type) {
-                case "start": outputs.push({ key: `{{${n.id}.output}}`, desc: "初始输入" }); break;
-                case "llm": outputs.push({ key: `{{${n.id}.text}}`, desc: "生成文本" }); break;
-                case "code": outputs.push({ key: `{{${n.id}.result}}`, desc: "执行结果" }); break;
-                case "http": outputs.push({ key: `{{${n.id}.body}}`, desc: "响应体" }); break;
-                case "condition":
-                  outputs.push({ key: `{{${n.id}.result}}`, desc: "条件结果" });
-                  outputs.push({ key: `{{${n.id}.branch}}`, desc: "分支 (true/false)" });
-                  break;
-                case "knowledge": outputs.push({ key: `{{${n.id}.result}}`, desc: "检索结果" }); break;
-                case "tool": outputs.push({ key: `{{${n.id}.result}}`, desc: "工具输出" }); break;
-                case "template-transform": outputs.push({ key: `{{${n.id}.output}}`, desc: "转换结果" }); break;
-                case "parameter-extractor": outputs.push({ key: `{{${n.id}.params}}`, desc: "提取参数" }); break;
-                case "question-classifier": outputs.push({ key: `{{${n.id}.category}}`, desc: "分类结果" }); break;
-                case "document-extractor": outputs.push({ key: `{{${n.id}.content}}`, desc: "文档内容" }); break;
-                case "assigner": outputs.push({ key: `{{${n.id}.output}}`, desc: "赋值结果" }); break;
-                case "variable-aggregator": outputs.push({ key: `{{${n.id}.output}}`, desc: "聚合结果" }); break;
-                case "list-operator": outputs.push({ key: `{{${n.id}.output}}`, desc: "列表结果" }); break;
-                case "iteration": outputs.push({ key: `{{${n.id}.output}}`, desc: "迭代输出" }); break;
-                case "loop": outputs.push({ key: `{{${n.id}.output}}`, desc: "循环输出" }); break;
-                case "answer": outputs.push({ key: `{{${n.id}.output}}`, desc: "输出内容" }); break;
-                default: outputs.push({ key: `{{${n.id}.output}}`, desc: "节点输出" });
-              }
-              return outputs;
-            };
-            return (
-              <div className="space-y-2">
-                {nodes.length === 0 && <div className="text-xs text-gray-400 text-center py-4">暂无节点</div>}
-                {nodes.map((n: any) => {
-                  const vars = getNodeVars(n);
-                  return (
-                    <div key={n.id} className="bg-white rounded-lg border border-gray-200 p-2">
-                      <div className="flex items-center gap-1 text-[10px] text-gray-500 mb-1">
-                        {(NODE_ICONS as any)[(n.data as any)?.type] || <Wrench size={10} />}
-                        <span className="font-medium truncate">{(n.data as any)?.label || n.id}</span>
-                        <span className="text-gray-300 ml-auto text-[9px]">{n.id}</span>
-                      </div>
-                      <div className="space-y-0.5">
-                        {vars.map((v: any) => (
-                          <button
-                            key={v.key}
-                            onClick={() => navigator.clipboard.writeText(v.key).catch(() => {})}
-                            className="flex items-center gap-1 w-full text-left px-2 py-1 rounded text-[10px] font-mono text-sakura-600 bg-sakura-50 hover:bg-sakura-100 transition-colors"
-                            title="点击复制"
-                          >
-                            <span className="truncate flex-1">{v.key}</span>
-                            <span className="text-gray-400 shrink-0">({v.desc})</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            );
-          })()}
-        </div>
-      )}
-
-      {/* 运行日志面板 */}
-      {showRunsPanel && (
-        <div className="w-64 bg-gray-50 border-l border-gray-200 p-3 overflow-y-auto">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-semibold text-gray-500">运行日志</span>
-            <button onClick={loadRuns} className="text-gray-400 hover:text-gray-600" title="刷新">
-              <RefreshCw size={12} />
-            </button>
-          </div>
-          {runsData.length === 0 ? (
-            <div className="text-xs text-gray-400 text-center py-6">暂无运行记录</div>
-          ) : (
-            <div className="space-y-2">
-              {runsData.map((run: any) => (
-                <div key={run.id} className="bg-white rounded-lg border border-gray-200 p-2">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                      run.status === "success" ? "bg-emerald-100 text-emerald-600" :
-                      run.status === "error" ? "bg-red-100 text-red-600" :
-                      run.status === "running" ? "bg-amber-100 text-amber-600" :
-                      "bg-gray-100 text-gray-500"
-                    }`}>
-                      {run.status === "success" ? "成功" : run.status === "error" ? "失败" :
-                       run.status === "running" ? "运行中" : run.status || "未知"}
-                    </span>
-                    <span className="text-[9px] text-gray-400">{run.trigger || "手动"}</span>
-                  </div>
-                  <div className="text-[9px] text-gray-400 truncate">
-                    {run.started_at?.slice(0, 19)?.replace("T", " ") || ""}
-                  </div>
-                  {(run.node_results?.length > 0) && (
-                    <div className="mt-1 text-[9px] text-gray-400">
-                      {run.node_results.length} 个节点
-                    </div>
-                  )}
-                </div>
+      {/* 右侧统一面板 */}
+      {$rightTab && (
+        <div className="w-64 bg-white border-l border-gray-200 flex flex-col shrink-0">
+          {/* 标签栏 */}
+          <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 shrink-0">
+            <div className="flex items-center gap-1">
+              {([
+                ["config", "配置", Wrench],
+                ["vars", "变量", Variable],
+                ["debug", "调试", Code],
+                ["runs", "日志", Clock],
+              ] as const).filter(([k]) => k !== "config" || selectedNode).map(([k, label, Icon]) => (
+                <button key={k} onClick={() => {
+                  setRightTab(k);
+                  if (k === "runs" && workflowId) loadRuns();
+                }}
+                  className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] ${
+                    rightTab === k ? "bg-sakura-100 text-sakura-600" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                  }`}>
+                  <Icon size={11} />
+                  {label}
+                </button>
               ))}
             </div>
-          )}
+            <button onClick={() => setRightTab(null)} className="p-0.5 text-gray-300 hover:text-red-400 transition-colors" title="关闭面板">
+              <X size={13} />
+            </button>
+          </div>
+
+          {/* 内容区 */}
+          <div className="flex-1 overflow-y-auto p-3 text-xs">
+
+            {/* 节点配置 */}
+            {rightTab === "config" && selectedNode && (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-gray-500 mb-1">名称</label>
+                  <input value={(selectedNode.data as any)?.label || ""} onChange={e => updateNodeLabel(e.target.value)}
+                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" />
+                </div>
+                {selectedNode.data?.type === "llm" && (
+                  <>
+                    <div><label className="block text-gray-500 mb-1">系统提示词</label>
+                      <textarea rows={4} value={(selectedNode.data as any)?.config?.system_prompt || ""} onChange={e => updateNodeConfig("system_prompt", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" /></div>
+                    <div><label className="block text-gray-500 mb-1">模型</label>
+                      <input value={(selectedNode.data as any)?.config?.model || ""} onChange={e => updateNodeConfig("model", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" placeholder="留空使用默认" /></div>
+                    <div><label className="block text-gray-500 mb-1">温度</label>
+                      <input type="number" step="0.1" min="0" max="2" value={(selectedNode.data as any)?.config?.temperature ?? ""}
+                        onChange={e => updateNodeConfig("temperature", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" /></div>
+                  </>
+                )}
+                {selectedNode.data?.type === "code" && (
+                  <div><label className="block text-gray-500 mb-1">代码</label>
+                    <textarea rows={6} value={(selectedNode.data as any)?.config?.code || ""} onChange={e => updateNodeConfig("code", e.target.value)}
+                      className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" /></div>
+                )}
+                {selectedNode.data?.type === "condition" && (
+                  <div><label className="block text-gray-500 mb-1">条件表达式</label>
+                    <textarea rows={3} value={(selectedNode.data as any)?.config?.condition || ""} onChange={e => updateNodeConfig("condition", e.target.value)}
+                      className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" placeholder="例如: {{result.score > 0.5}}" /></div>
+                )}
+                {selectedNode.data?.type === "http" && (
+                  <>
+                    <div><label className="block text-gray-500 mb-1">URL</label>
+                      <input value={(selectedNode.data as any)?.config?.url || ""} onChange={e => updateNodeConfig("url", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" /></div>
+                    <div><label className="block text-gray-500 mb-1">方法</label>
+                      <select value={(selectedNode.data as any)?.config?.method || "GET"} onChange={e => updateNodeConfig("method", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300">
+                        <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option></select></div>
+                    <div><label className="block text-gray-500 mb-1">Headers (JSON)</label>
+                      <textarea rows={3} value={JSON.stringify((selectedNode.data as any)?.config?.headers || {}, null, 2)}
+                        onChange={e => { try { updateNodeConfig("headers", JSON.parse(e.target.value)); } catch {} }}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" /></div>
+                    <div><label className="block text-gray-500 mb-1">Body</label>
+                      <textarea rows={3} value={(selectedNode.data as any)?.config?.body || ""} onChange={e => updateNodeConfig("body", e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" /></div>
+                  </>
+                )}
+                {selectedNode.data?.type === "knowledge" && (
+                  <div><label className="block text-gray-500 mb-1">知识库查询</label>
+                    <textarea rows={3} value={(selectedNode.data as any)?.config?.query || ""} onChange={e => updateNodeConfig("query", e.target.value)}
+                      className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300 resize-none font-mono" placeholder="搜索关键词或 {{变量}}" /></div>
+                )}
+                {selectedNode.data?.type === "tool" && (
+                  <div><label className="block text-gray-500 mb-1">工具名称</label>
+                    <input value={(selectedNode.data as any)?.config?.tool_name || ""} onChange={e => updateNodeConfig("tool_name", e.target.value)}
+                      className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs outline-none focus:border-sakura-300" placeholder="例如: web_search" /></div>
+                )}
+                <div className="pt-2 border-t border-gray-100">
+                  <button onClick={deleteSelectedNode} className="flex items-center gap-1 px-3 py-1.5 rounded text-xs bg-red-50 text-red-500 hover:bg-red-100">
+                    <Trash2 size={11} /> 删除节点
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 调试 */}
+            {rightTab === "debug" && (
+              <>
+                <div className="mb-3">
+                  <p className="text-gray-500 mb-1">输入数据 (JSON)</p>
+                  <textarea value={inputData} onChange={e => setInputData(e.target.value)}
+                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs font-mono outline-none focus:border-sakura-300 resize-none" rows={8} />
+                </div>
+                <button onClick={handleRun} disabled={running}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded text-xs bg-sakura-100 text-sakura-600 hover:bg-sakura-200 disabled:opacity-50">
+                  {running ? <RefreshCw size={11} className="animate-spin" /> : <Play size={11} />}
+                  {running ? "运行中..." : "运行"}
+                </button>
+                {runResult && (
+                  <div className="mt-3 space-y-2">
+                    <p className="text-green-600 text-[10px] font-medium">运行完成</p>
+                    <div className="text-gray-400 text-[10px]">耗时: {runResult.timing?.total || "?"}ms</div>
+                    {(runResult.nodes_snapshot || runResult.node_results || []).map((ns: any, i: number) => (
+                      <div key={i} className="p-2 rounded border border-gray-100 bg-gray-50">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-gray-600 font-medium text-xs">{ns.id || ns.name || 节点 }</span>
+                          <span className={	ext-[10px] }>
+                            {ns.status === "success" ? "✓" : ns.status === "error" ? "✗" : ns.status || "?"}
+                          </span>
+                        </div>
+                        <div className="text-gray-400 text-[10px] break-all font-mono">
+                          {ns.output ? JSON.stringify(ns.output).slice(0, 200) : ns.error || "无输出"}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* 变量 */}
+            {rightTab === "vars" && (
+              <div className="space-y-1">
+                <p className="text-gray-500 mb-2">可用变量（点击复制）</p>
+                {[
+                  { key: "{{input}}", desc: "工作流输入" },
+                  { key: "{{result.节点ID}}", desc: "指定节点的输出", example: "{{result.llm_1}}" },
+                  { key: "{{env.变量名}}", desc: "环境变量" },
+                  { key: "{{now}}", desc: "当前时间" },
+                ].map(v => (
+                  <div key={v.key} onClick={() => navigator.clipboard.writeText(v.key).catch(() => {})}
+                    className="p-2 rounded border border-gray-100 hover:border-sakura-200 hover:bg-sakura-50 cursor-pointer transition-colors">
+                    <code className="text-[10px] font-mono text-sakura-600 bg-sakura-50 px-1 py-0.5 rounded">{v.key}</code>
+                    <p className="text-[10px] text-gray-400 mt-0.5">{v.desc}</p>
+                    {v.example && <p className="text-[9px] text-gray-300 font-mono">{v.example}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* 日志 */}
+            {rightTab === "runs" && (
+              <>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-gray-500 text-[10px]">最近运行记录</span>
+                  <button onClick={() => { if (workflowId) loadRuns(); }} className="text-gray-400 hover:text-sakura-500" title="刷新">
+                    <RefreshCw size={11} />
+                  </button>
+                </div>
+                {runsData.length === 0 ? (
+                  <p className="text-gray-300 text-[10px] text-center py-4">暂无运行记录</p>
+                ) : (
+                  <div className="space-y-1">
+                    {runsData.map((r: any, i: number) => (
+                      <div key={r.id || i} className="p-2 rounded border border-gray-100 hover:border-sakura-200 cursor-pointer transition-colors">
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-600 text-[10px] font-medium">{r.status || "unknown"}</span>
+                          <span className="text-gray-300 text-[9px]">{r.started_at ? new Date(r.started_at).toLocaleString() : ""}</span>
+                        </div>
+                        {r.error && <p className="text-red-400 text-[9px] mt-0.5 truncate">{r.error}</p>}
+                        <p className="text-gray-400 text-[9px] mt-0.5 truncate">{r.final_output ? JSON.stringify(r.final_output).slice(0, 80) : ""}</p>
+                        <div className="text-gray-300 text-[9px] mt-0.5">耗时: {r.timing?.total || "?"}ms</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+          </div>
         </div>
       )}
-
       {/* 发布对话框 */}
       {showPublishDialog && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => { setShowPublishDialog(false); setPublishResult(null); }}>
