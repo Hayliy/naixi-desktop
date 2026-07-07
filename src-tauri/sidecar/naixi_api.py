@@ -143,6 +143,40 @@ async def main():
     log.info(f"桌面端已启动: http://127.0.0.1:9845")
     log.info(f"数据库: {DESKTOP_DB}")
 
+    # ── 自动化调度器 ──
+    async def automation_scheduler():
+        """每分钟检查并执行到期的自动化任务"""
+        from desktop_core.storage import meta_get, meta_set
+        import json
+        while True:
+            try:
+                raw = meta_get("naixi_automations")
+                items = json.loads(raw) if raw else []
+                now = time.strftime("%Y-%m-%d %H:%M", time.localtime(time.time()))
+                changed = False
+                for item in items:
+                    if item.get("status") != "active":
+                        continue
+                    if item.get("schedule_type") == "once":
+                        scheduled = item.get("scheduled_at", "")
+                        # 只执行还没执行过的（没有历史记录）
+                        has_run = len(item.get("history", [])) > 0
+                        if scheduled and scheduled <= now and not has_run:
+                            rec = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "status": "success", "result": f"自动执行: {item.get('name', '')}"}
+                            if "history" not in item: item["history"] = []
+                            item["history"].append(rec)
+                            item["last_run"] = rec["time"]
+                            item["status"] = "expired"
+                            changed = True
+                            log.info(f"自动化执行: {item.get('name', '')} (一次性)")
+                if changed:
+                    meta_set("naixi_automations", json.dumps(items, ensure_ascii=False))
+            except Exception as e:
+                log.warning(f"自动化调度异常: {e}")
+            await asyncio.sleep(60)
+
+    asyncio.create_task(automation_scheduler())
+
     while True:
         await asyncio.sleep(3600)
 

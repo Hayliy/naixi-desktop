@@ -2067,15 +2067,6 @@ async def api_automations_list(request):
     import time
     raw = meta_get("naixi_automations")
     items = json.loads(raw) if raw else []
-    for item in items:
-        if item.get("status") == "active":
-            if item.get("schedule_type") == "once" and item.get("scheduled_at"):
-                try:
-                    t = time.mktime(time.strptime(item["scheduled_at"], "%Y-%m-%dT%H:%M"))
-                    if t < time.time():
-                        item["status"] = "expired"
-                except:
-                    pass
     return web.json_response({"automations": items})
 
 
