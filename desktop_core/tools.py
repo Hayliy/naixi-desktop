@@ -1842,8 +1842,7 @@ async def _create_workflow(args: dict, context: dict = None) -> str:
         rep = {"success": True, "id": wid, "name": name, "version": result.get("version", 1)}
         if fixes:
             rep["fixes"] = fixes
-        s = f"✅ 工作流已创建：{name}"
-        return s + "\n" + json.dumps(rep, ensure_ascii=False)
+        return json.dumps(rep, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"success": False, "error": f"创建工作流失败: {e}"}, ensure_ascii=False)
 
@@ -1861,10 +1860,7 @@ async def _build_workflow(args: dict, context: dict = None) -> str:
         nodes = [_normalize_node(n) for n in nodes]
         nodes, edges, fixes = _validate_and_fix_workflow(nodes, edges)
         result = await api_save_workflow(wid, name, description, nodes, edges)
-        s = f"✅ 已搭建工作流：{name}（{len(nodes)} 个节点，{len(edges)} 条边）"
-        if fixes:
-            s += f"。自动修复 {len(fixes)} 个配置问题：{'；'.join(fixes[:3])}"
-        return s + "\n" + json.dumps({
+        return json.dumps({
             "success": True, "id": wid, "name": name,
             "version": result.get("version", 1),
             "node_count": len(nodes),
@@ -1953,16 +1949,7 @@ async def _add_workflow_node(args: dict, context: dict = None) -> str:
         await api_save_workflow(wid, wf.get("name",""), wf.get("description",""), nodes, edges)
         result_summary["node_count"] = len(nodes)
         result_summary["edge_count"] = len(edges)
-        added_id = result_summary.get("added", "?")
-        ntype = result_summary.get("node_type", "?")
-        edge_info = result_summary.get("edge", "") or result_summary.get("edge_skipped", "")
-        s = f"✅ 已添加节点：{added_id}（{ntype}）"
-        if edge_info:
-            s += f"，连接：{edge_info}"
-        s += f"。当前共 {len(nodes)} 个节点，{len(edges)} 条边"
-        if fixes:
-            s += f"。自动修复 {len(fixes)} 个问题"
-        return s + "\n" + json.dumps(result_summary, ensure_ascii=False)
+        return json.dumps(result_summary, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)[:100]}, ensure_ascii=False)
 
@@ -1987,22 +1974,7 @@ async def _run_workflow(args: dict, context: dict = None) -> str:
         }
         if errors:
             summary["error_details"] = [{"node": e["label"], "msg": e["error"][:80]} for e in errors[:3]]
-        s = f"⚙️ 工作流执行完毕：总共 {len(nr)} 个节点，{suc} 个成功"
-        if err:
-            s += f"，{err} 个异常"
-            if errors:
-                err_parts = []
-                for e in errors[:2]:
-                    lbl = e.get("label", "?")
-                    msg = e.get("error", "")[:30]
-                    err_parts.append(f"{lbl}: {msg}")
-                s += f"。异常节点：{'；'.join(err_parts)}"
-        else:
-            s += f"，全部成功"
-        fo = result.get("final_output", {})
-        if fo:
-            s += f"。最终输出：{str(fo)[:100]}"
-        return s + "\n" + json.dumps(summary, ensure_ascii=False)
+        return json.dumps(summary, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)[:100]}, ensure_ascii=False)
 
