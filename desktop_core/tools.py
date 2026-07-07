@@ -1694,7 +1694,7 @@ def _validate_and_fix_workflow(nodes: list, edges: list) -> tuple:
 
         # 3. code 节点：缺代码就补默认
         if ntype == "code" and not cfg.get("code"):
-            cfg["code"] = "output = {'status': 'ok', 'message': '默认输出'}"
+            cfg["code"] = "import json\noutput = {'status': 'ok', 'result': '默认执行', 'items': []}"
             fixes.append(f"{nid}: code 节点无代码，补默认值")
 
         # 4. condition 节点：缺表达式就补 True
@@ -1706,6 +1706,16 @@ def _validate_and_fix_workflow(nodes: list, edges: list) -> tuple:
         if ntype == "datasource" and cfg.get("inline_data") and not cfg.get("source_type"):
             cfg["source_type"] = "inline"
             fixes.append(f"{nid}: datasource 补 source_type=inline")
+
+        # 6. 单大括号语法兼容 {var} → {{var}}（引擎只认双大括号）
+        if ntype not in ("code", "end"):
+            import re as _re
+            for ck, cv in cfg.items():
+                if isinstance(cv, str) and _re.search(r'(?<!\{)\{(\w+)\}(?!\})', cv):
+                    new_v = _re.sub(r'(?<!\{)\{(\w+)\}(?!\})', r'{{\1}}', cv)
+                    if new_v != cv:
+                        cfg[ck] = new_v
+                        fixes.append(f"{nid}.{ck}: {{var}}→{{{{var}}}} 语法兼容")
 
         data["config"] = cfg
 
