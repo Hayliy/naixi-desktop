@@ -34,6 +34,7 @@ import {
   Bot, Trash2, Check, X, ChevronLeft, Sparkles, Settings, FileText, Cpu, MessageCircle,
   CheckCircle2, Shield, Volume2, Library, User, Palette, Search, Download, Star, Reply, Users, BookOpen, Zap, Clock,
 } from "lucide-react";
+import { loadAvatarCache } from "@/lib/avatar";
 
 const MODELS: ProviderModel[] = [{ key: "auto", label: "自动路由（默认）", provider_id: 0 }];
 
@@ -58,6 +59,9 @@ export default function ChatPage() {
   const [agentActive, setAgentActive] = useState(false);
   type SideTab = "settings" | "resource" | "prompt" | "detail" | "task" | "knowledge" | "team" | "preferences" | "connection" | "automation" | null;
   const [sideTab, setSideTab] = useState<SideTab>(null);
+
+  // 初始化头像缓存
+  useEffect(() => { loadAvatarCache(); }, []);
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [teamName, setTeamName] = useState("");
   const [scene, setScene] = useState("owner");
