@@ -116,7 +116,15 @@ export function resolveDisplayName(key: string, fallbackName: string): string {
 export function getAiAvatarUrl(name: string): string | null {
   if (_avatarTotal > 0) {
     const seed = `avatar-${hashCode(name) % _avatarTotal}`;
-    return _avatarMap?.[seed] ?? null;
+    const url = _avatarMap?.[seed] ?? null;
+    // 检查 OSS URL 是否过期（Expires 参数）
+    if (url) {
+      const m = url.match(/Expires=(\d+)/);
+      if (m && parseInt(m[1]) * 1000 < Date.now()) {
+        return null;  // 过期，走 DiceBear 回退
+      }
+    }
+    return url;
   }
   return null;
 }
