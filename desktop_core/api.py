@@ -823,19 +823,46 @@ async def api_avatar_prefill(request):
 
     async def _fill():
         global _generation_completed
+        import aiohttp, os, time, re
         from desktop_core.storage import avatar_count, avatar_get, avatar_set
+        # 头像本地存储目录
+        avatar_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "avatars")
+        os.makedirs(avatar_dir, exist_ok=True)
         start = avatar_count()
         for i in range(count):
             seed = f"avatar-{start + i}"
-            if avatar_get(seed):
+            existing = avatar_get(seed)
+            if existing:
+                # 检查是否过期（OSS URL），过期则重新生成
+                if "Expires=" in existing:
+                    m = re.search(r"Expires=(\d+)", existing)
+                    if m and int(m.group(1)) < time.time():
+                        existing = None  # 过期，重新生成
+            if existing:
                 _generation_completed += 1
                 continue
             try:
                 prompt = f"{prompt_prefix}，风格种子：{seed}"
                 url = await _generate_image_from_prompt(prompt)
-                avatar_set(seed, url)
+                # 下载图片到本地
+                try:
+                    async with aiohttp.ClientSession() as sess:
+                        async with sess.get(url, timeout=aiohttp.ClientTimeout(total=30)) as img_resp:
+                            if img_resp.status == 200:
+                                img_data = await img_resp.read()
+                                ext = "png"
+                                fpath = os.path.join(avatar_dir, f"{seed}.{ext}")
+                                with open(fpath, "wb") as f:
+                                    f.write(img_data)
+                                local_url = f"/api/avatar/file/{seed}.{ext}"
+                                avatar_set(seed, local_url)
+                                log.info(f"头像 [{_generation_completed + 1}/{count}] {seed} 已保存到本地")
+                            else:
+                                raise ValueError(f"下载图片失败: HTTP {img_resp.status}")
+                except Exception as dl_err:
+                    log.warning(f"下载头像失败，回退 OSS URL: {dl_err}")
+                    avatar_set(seed, url)
                 _generation_completed += 1
-                log.info(f"头像 [{_generation_completed}/{count}] {seed} 已生成")
             except Exception as e:
                 _generation_completed += 1
                 log.warning(f"头像 [{_generation_completed}/{count}] {seed} 生成失败: {e}")
@@ -866,6 +893,21 @@ async def api_avatar_stats(request):
     """头像缓存统计"""
     from desktop_core.storage import avatar_count
     return web.json_response({"ok": True, "total": avatar_count()})
+
+
+async def api_avatar_file(request):
+    """提供本地存储的头像文件"""
+    import os
+    filename = request.match_info.get("filename", "")
+    if not filename or ".." in filename or "/" in filename:
+        return web.json_response({"error": "无效文件名"}, status=400)
+    avatar_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "avatars")
+    fpath = os.path.join(avatar_dir, filename)
+    if not os.path.exists(fpath):
+        return web.json_response({"error": "文件不存在"}, status=404)
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "png"
+    mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}.get(ext, "application/octet-stream")
+    return web.FileResponse(fpath, headers={"Content-Type": mime})
 
 
 async def api_generate_video(request):
@@ -2211,6 +2253,7 @@ def setup_routes(app):
     app.router.add_get("/api/avatar/gen-status", api_avatar_gen_status)
     app.router.add_get("/api/avatar/list", api_avatar_list)
     app.router.add_get("/api/avatar/stats", api_avatar_stats)
+    app.router.add_get("/api/avatar/file/{filename}", api_avatar_file)
 
     # 提示词管理（新版，PromptPanel 使用）
     app.router.add_get("/api/prompts", api_prompts_get)
