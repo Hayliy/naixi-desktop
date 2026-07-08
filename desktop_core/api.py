@@ -818,19 +818,21 @@ async def api_avatar_prefill(request):
     count = min(int(body.get("count", 20)), 50)
     prompt_prefix = body.get("prompt", ANIME_AVATAR_PROMPT)
 
-    _generation_total = count
+    from desktop_core.storage import avatar_count, avatar_remove_expired
+    avatar_remove_expired()
+    need = max(avatar_count() + 10, count)
+    _generation_total = need
     _generation_completed = 0
 
     async def _fill():
         global _generation_completed
         import aiohttp, os, time, re
-        from desktop_core.storage import avatar_count, avatar_get, avatar_set
+        from desktop_core.storage import avatar_get, avatar_set
         # 头像本地存储目录
         avatar_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "avatars")
         os.makedirs(avatar_dir, exist_ok=True)
-        start = avatar_count()
-        for i in range(count):
-            seed = f"avatar-{start + i}"
+        for i in range(need):
+            seed = f"avatar-{i}"
             existing = avatar_get(seed)
             if existing:
                 # 检查是否过期（OSS URL），过期则重新生成

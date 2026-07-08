@@ -252,6 +252,22 @@ def avatar_list() -> list[dict]:
     finally:
         conn.close()
 
+
+def avatar_remove_expired():
+    """删除已过期的 OSS 头像记录（本地存储的永久有效）"""
+    import time, re
+    conn = _get_conn()
+    try:
+        rows = conn.execute("SELECT seed, url FROM avatars").fetchall()
+        for r in rows:
+            if "Expires=" in r["url"]:
+                m = re.search(r"Expires=(\d+)", r["url"])
+                if m and int(m.group(1)) < time.time():
+                    conn.execute("DELETE FROM avatars WHERE seed = ?", (r["seed"],))
+        conn.commit()
+    finally:
+        conn.close()
+
 def meta_get(key: str, default: str = "") -> str:
     conn = _get_conn()
     try:
