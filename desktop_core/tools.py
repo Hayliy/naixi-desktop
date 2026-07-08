@@ -249,11 +249,11 @@ async def _generate_image(args, ctx):
         async with aiohttp.ClientSession(headers=headers) as s:
             async with s.post(wanx_url, json=payload, timeout=aiohttp.ClientTimeout(total=120)) as r:
                 if r.status != 200:
-                    return f"画图失败: HTTP {r.status}"
+                    return f"{model or '画图'} 请求失败: HTTP {r.status}"
                 result = await r.json()
                 task_id = result.get("output", {}).get("task_id", "")
                 if not task_id:
-                    return f"画图返回异常: {str(result)[:200]}"
+                    return f"{model or '画图'} 返回异常: {str(result)[:200]}"
                 for _ in range(30):
                     await asyncio.sleep(4)
                     async with s.get(f"https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}", headers=headers, timeout=15) as qr:
@@ -265,15 +265,15 @@ async def _generate_image(args, ctx):
                                 if url:
                                     return f"图片已生成: {url}"
                             elif status in ("FAILED", "CANCELED"):
-                                return f"画图失败: {qd.get('output', {}).get('message', '任务失败')}"
-                return "画图超时"
+                                return f"{model or '画图'} 失败: {qd.get('output', {}).get('message', '任务失败')}"
+                return f"{model or '画图'} 超时"
     # OpenAI 兼容格式
     payload = {"model": model or "dall-e-3", "prompt": prompt, "n": 1, "size": "1024x1024"}
     async with aiohttp.ClientSession(headers=headers) as s:
         async with s.post(api_url, json=payload, timeout=aiohttp.ClientTimeout(total=120)) as r:
             if r.status != 200:
                 err = await r.text()
-                return f"画图失败: {err[:200]}"
+                return f"{model or '画图'} 失败: {err[:200]}"
             result = await r.json()
             if "data" in result and result["data"]:
                 return f"图片已生成: {result['data'][0].get('url', '')}"

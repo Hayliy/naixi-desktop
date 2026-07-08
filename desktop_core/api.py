@@ -696,11 +696,11 @@ async def _generate_image_from_prompt(prompt: str, size: str = "1024*1024") -> s
             async with session.post(wanx_url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 if resp.status != 200:
                     err_text = await resp.text()
-                    raise ValueError(f"Wanx 创建任务失败 {resp.status}: {err_text[:200]}")
+                    raise ValueError(f"{model or 'Wanx'} 创建任务失败 {resp.status}: {err_text[:200]}")
                 result = await resp.json()
                 task_id = result.get("output", {}).get("task_id", "")
                 if not task_id:
-                    raise ValueError(f"Wanx 未返回任务 ID: {str(result)[:200]}")
+                    raise ValueError(f"{model or 'Wanx'} 未返回任务 ID: {str(result)[:200]}")
 
             for attempt in range(30):
                 await asyncio.sleep(5)
@@ -713,12 +713,12 @@ async def _generate_image_from_prompt(prompt: str, size: str = "1024*1024") -> s
                         results = qd.get("output", {}).get("results", [])
                         if results:
                             return results[0].get("url", "")
-                        raise ValueError("Wanx 成功但无结果")
+                        raise ValueError(f"{model or 'Wanx'} 成功但无结果")
                     elif status in ("FAILED", "CANCELED"):
                         err = qd.get("output", {}).get("failure", "任务失败")
-                        raise ValueError(f"Wanx 生成失败: {err}")
+                        raise ValueError(f"{model or 'Wanx'} 生成失败: {err}")
 
-            raise ValueError("Wanx 生成超时")
+            raise ValueError(f"{model or 'Wanx'} 生成超时")
     else:
         payload = {
             "model": model or "dall-e-3",
@@ -758,7 +758,7 @@ async def api_generate_image(request):
 
 # ── 头像生成与缓存 ──
 
-ANIME_AVATAR_PROMPT = "二次元猫娘萝莉风格头像，半身肖像，猫耳，可爱萌系，精致插画风，柔和光影"
+ANIME_AVATAR_PROMPT = "二次元猫娘萝莉风格头像，半身肖像或者是头部肖像，猫耳，可爱萌系，精致插画风，柔和光影"
 
 # 后台生成进度追踪
 _generation_task: asyncio.Task | None = None
@@ -943,11 +943,11 @@ async def api_generate_video(request):
                 async with session.post(vurl, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as r:
                     if r.status != 200:
                         err = await r.text()
-                        return web.json_response({"error": f"视频创建失败 {r.status}: {err[:200]}"}, status=502)
+                        return web.json_response({"error": f"{model} 创建失败 {r.status}: {err[:200]}"}, status=502)
                     result = await r.json()
                     task_id = result.get("id", "")
                     if not task_id:
-                        return web.json_response({"error": "未获取到视频任务 ID"}, status=502)
+                        return web.json_response({"error": f"{model} 未返回任务 ID"}, status=502)
 
                 # 轮询结果（最多10分钟）
                 for _ in range(100):
@@ -967,8 +967,8 @@ async def api_generate_video(request):
                                     if vurl:
                                         return web.json_response({"ok": True, "url": vurl})
                                 elif st in ("FAILED", "CANCELED"):
-                                    return web.json_response({"error": f"视频生成失败: {qd.get('failure', '任务取消')}"}, status=502)
-                return web.json_response({"error": "视频生成超时"}, status=502)
+                                    return web.json_response({"error": f"{model} 生成失败: {qd.get('failure', '任务取消')}"}, status=502)
+                return web.json_response({"error": f"{model} 生成超时"}, status=502)
         else:
             # OpenAI 兼容格式
             api_url = provider.get("api_url", "").rstrip("/")
@@ -1053,7 +1053,7 @@ async def api_generate_voice(request):
                     result = await resp.json()
                     audio_url = result.get("output", {}).get("audio", {}).get("url", "")
                     if not audio_url:
-                        return web.json_response({"error": "语音合成未返回音频 URL"}, status=502)
+                        return web.json_response({"error": f"{model} 未返回音频 URL"}, status=502)
                     # 下载音频并返回 base64（OSS URL 不支持 Bearer auth）
                     async with aiohttp.ClientSession() as dl_session:
                         async with dl_session.get(audio_url, timeout=30) as ar:
