@@ -93,13 +93,11 @@ export default function MsgBubble({ msg, onEdit, onRegenerate, onDelete, onStar,
     <div className={`flex items-start gap-2 px-3 py-3 group ${isUser ? "flex-row-reverse" : ""}`}>
       <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 overflow-hidden ${isUser ? "bg-pink-100 text-pink-500" : "bg-sakura-100 text-sakura-500"}`}>
         {isUser ? (
-          <img src={resolveAvatarUrl(AVATAR_KEYS.USER_AVATAR, "用户")} alt="用户"
-            className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+          <AvatarImage src={resolveAvatarUrl(AVATAR_KEYS.USER_AVATAR, "用户")} alt="用户" />
         ) : expertName ? (
-          <img src={getAvatarUrl(expertName)} alt={expertName} className="w-full h-full object-cover" />
+          <AvatarImage src={getAvatarUrl(expertName)} alt={expertName} />
         ) : (
-          <img src={resolveAvatarUrl(AVATAR_KEYS.BOT_AVATAR, "奶昔")} alt="奶昔"
-            className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+          <AvatarImage src={resolveAvatarUrl(AVATAR_KEYS.BOT_AVATAR, "奶昔")} alt="奶昔" />
         )}
       </div>
       <div className={`max-w-[75%] min-w-0 ${isUser ? "items-end" : "items-start"} flex flex-col relative`}>
@@ -181,4 +179,14 @@ export default function MsgBubble({ msg, onEdit, onRegenerate, onDelete, onStar,
       </div>
     </div>
   );
+}
+
+/* 带文字回退的头像组件 */
+function AvatarImage({ src, alt }: { src: string; alt: string }) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) {
+    return <span className="text-[9px] font-medium">{alt[0] || "?"}</span>;
+  }
+  return <img src={src} alt={alt} className="w-full h-full object-cover"
+    onError={() => setFailed(true)} />;
 }
