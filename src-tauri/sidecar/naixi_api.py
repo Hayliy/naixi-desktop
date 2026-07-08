@@ -147,7 +147,55 @@ async def main():
     async def automation_scheduler():
         """每分钟检查并执行到期的自动化任务"""
         from desktop_core.storage import meta_get, meta_set, decrypt_config
-        import json, aiohttp
+        import json, aiohttp, re
+
+        async def _call_llm(prompt: str, api_key: str, api_url: str, model: str) -> str:
+            """调 LLM 并返回回复"""
+            if not all([prompt, api_key, api_url]):
+                return ""
+            try:
+                headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+                payload = {"model": model or "default", "messages": [{"role": "user", "content": prompt}], "max_tokens": 1024}
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as sess:
+                    async with sess.post(api_url.rstrip("/") + "/chat/completions", headers=headers, json=payload) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            return data.get("choices", [{}])[0].get("message", {}).get("content", "")[:200]
+            except: pass
+            return ""
+
+        def _is_recurring_due(item: dict, now_str: str) -> bool:
+            """检查重复任务是否到执行时间"""
+            rrule = item.get("rrule", "FREQ=DAILY")
+            last_run = item.get("last_run", "")
+            parts = {k: v for kv in rrule.split(";") for k, v in [kv.split("=")] if "=" in kv}
+            freq = parts.get("FREQ", "DAILY")
+            interval = int(parts.get("INTERVAL", "1"))
+            # 解析 last_run
+            if not last_run:
+                return True  # 从未执行过，立即执行
+            try:
+                last = time.mktime(time.strptime(last_run, "%Y-%m-%d %H:%M:%S"))
+                now = time.time()
+                diff_hours = (now - last) / 3600
+                if freq == "HOURLY":
+                    return diff_hours >= interval
+                elif freq == "DAILY":
+                    # 检查工作日逻辑
+                    byday = parts.get("BYDAY", "")
+                    if byday:
+                        wd = time.localtime(now).tm_wday
+                        wd_map = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
+                        allowed = [wd_map.get(d.strip(), -1) for d in byday.split(",")]
+                        if wd not in allowed:
+                            return False
+                    return diff_hours >= 24 * interval
+                elif freq == "WEEKLY":
+                    return diff_hours >= 168 * interval
+                return diff_hours >= 24
+            except:
+                return True
+
         while True:
             try:
                 raw = meta_get("naixi_automations")
@@ -156,54 +204,44 @@ async def main():
                 cfg = json.loads(cfg_raw) if cfg_raw else {}
                 decrypt_config(cfg)
                 providers = cfg.get("api_providers", {})
-                # 取第一个 chat 类型的 provider
-                api_key = ""
-                api_url = ""
-                model = ""
+                api_key = api_url = model = ""
                 for pid, pcfg in providers.items():
-                    if pcfg.get("type", "chat") == "chat":
-                        api_key = pcfg.get("api_key", "")
-                        api_url = pcfg.get("api_url", "")
-                        model = pcfg.get("model", "")
-                        if api_key and api_url:
-                            break
+                    if pcfg.get("type", "chat") == "chat" and pcfg.get("api_key") and pcfg.get("api_url"):
+                        api_key, api_url, model = pcfg["api_key"], pcfg["api_url"], pcfg.get("model", "")
+                        break
 
-                now = time.strftime("%Y-%m-%d %H:%M", time.localtime(time.time()))
+                now_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(time.time()))
+                now_sec = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time()))
                 changed = False
+
                 for item in items:
                     if item.get("status") != "active":
                         continue
+
                     if item.get("schedule_type") == "once":
                         scheduled = item.get("scheduled_at", "").replace("T", " ")
-                        last_result = item.get("history", [{}])[-1].get("result", "") if item.get("history") else ""
+                        last_result = (item.get("history") or [{}])[-1].get("result", "")
                         already_done = f"已执行({scheduled.replace(' ', 'T')})" in last_result or f"已执行({scheduled})" in last_result
-                        if scheduled and scheduled <= now and not already_done:
-                            prompt = item.get("prompt", "")
-                            result_text = f"已执行({scheduled})"
-                            if prompt and api_key and api_url:
-                                try:
-                                    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-                                    payload = {
-                                        "model": model or "default",
-                                        "messages": [{"role": "user", "content": prompt}],
-                                        "max_tokens": 1024,
-                                    }
-                                    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as sess:
-                                        async with sess.post(api_url.rstrip("/") + "/chat/completions", headers=headers, json=payload) as resp:
-                                            if resp.status == 200:
-                                                data = await resp.json()
-                                                reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                                                if reply:
-                                                    result_text = f"已执行({scheduled}): {reply[:200]}"
-                                except Exception as e:
-                                    log.warning(f"自动化 LLM 调用失败: {e}")
-                            rec = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "status": "success", "result": result_text}
-                            if "history" not in item: item["history"] = []
-                            item["history"].append(rec)
-                            item["last_run"] = rec["time"]
+                        if scheduled and scheduled <= now_str and not already_done:
+                            reply = await _call_llm(item.get("prompt", ""), api_key, api_url, model)
+                            result_text = f"已执行({scheduled})" + (f": {reply}" if reply else "")
+                            record = {"time": now_sec, "status": "success", "result": result_text}
+                            item.setdefault("history", []).append(record)
+                            item["last_run"] = now_sec
                             item["status"] = "expired"
                             changed = True
-                            log.info(f"自动化执行: {item.get('name', '')} (一次性, 计划: {scheduled})")
+                            log.info(f"自动化执行: {item['name']} (一次性)")
+
+                    elif item.get("schedule_type") == "recurring":
+                        if _is_recurring_due(item, now_str):
+                            reply = await _call_llm(item.get("prompt", ""), api_key, api_url, model)
+                            result_text = f"自动执行" + (f": {reply}" if reply else "")
+                            record = {"time": now_sec, "status": "success", "result": result_text}
+                            item.setdefault("history", []).append(record)
+                            item["last_run"] = now_sec
+                            changed = True
+                            log.info(f"自动化执行: {item['name']} (重复)")
+
                 if changed:
                     meta_set("naixi_automations", json.dumps(items, ensure_ascii=False))
             except Exception as e:

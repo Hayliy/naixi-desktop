@@ -138,9 +138,23 @@ export default function AutomationPanel({ onClose }: { onClose: () => void }) {
 
   const nextRun = (a: Automation): string => {
     if (a.status !== "active") return "已暂停";
-    if (a.schedule_type === "once" && a.scheduled_at) {
+    if (a.schedule_type === "once") {
+      if (!a.scheduled_at) return "—";
       const t = new Date(a.scheduled_at);
       return t < new Date() ? "已过期" : `${t.getMonth()+1}月${t.getDate()}日 ${String(t.getHours()).padStart(2,"0")}:${String(t.getMinutes()).padStart(2,"0")}`;
+    }
+    // 重复任务：基于 last_run 推算下次
+    if (a.last_run) {
+      const parts: Record<string, string> = {};
+      (a.rrule || "FREQ=DAILY").split(";").forEach(p => { const [k, v] = p.split("="); if (k && v) parts[k] = v; });
+      const freq = parts.FREQ || "DAILY";
+      const interval = parseInt(parts.INTERVAL || "1");
+      const last = new Date(a.last_run.replace(" ", "T"));
+      const next = new Date(last);
+      if (freq === "HOURLY") next.setHours(next.getHours() + interval);
+      else if (freq === "DAILY") next.setDate(next.getDate() + interval);
+      else if (freq === "WEEKLY") next.setDate(next.getDate() + 7 * interval);
+      return next > new Date() ? `${next.getMonth()+1}月${next.getDate()}日 ${String(next.getHours()).padStart(2,"0")}:${String(next.getMinutes()).padStart(2,"0")}` : "即将执行";
     }
     return computeNextRun(a.rrule || "FREQ=DAILY");
   };
