@@ -17,6 +17,9 @@ interface Automation {
   rrule?: string;
   scheduled_at?: string;
   status: "active" | "paused";
+  model?: string;
+  valid_from?: string;
+  valid_until?: string;
   last_run?: string;
   next_run?: string;
   created_at: string;
@@ -76,6 +79,9 @@ export default function AutomationPanel({ onClose }: { onClose: () => void }) {
   const [fSchedType, setFSchedType] = useState<"recurring" | "once">("recurring");
   const [fPreset, setFPreset] = useState("FREQ=DAILY");
   const [fOnceAt, setFOnceAt] = useState("");
+  const [fModel, setFModel] = useState("");
+  const [fValidFrom, setFValidFrom] = useState("");
+  const [fValidUntil, setFValidUntil] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -91,7 +97,7 @@ export default function AutomationPanel({ onClose }: { onClose: () => void }) {
   const closeForm = () => {
     setShowForm(false); setEditId(null);
     setFName(""); setFPrompt(""); setFSchedType("recurring");
-    setFPreset("FREQ=DAILY"); setFOnceAt("");
+    setFPreset("FREQ=DAILY"); setFOnceAt(""); setFModel(""); setFValidFrom(""); setFValidUntil("");
   };
 
   const handleSave = async () => {
@@ -105,6 +111,9 @@ export default function AutomationPanel({ onClose }: { onClose: () => void }) {
         schedule_type: fSchedType,
         rrule: fSchedType === "recurring" ? fPreset : "",
         scheduled_at: fSchedType === "once" ? fOnceAt : "",
+        model: fModel.trim() || undefined,
+        valid_from: fValidFrom || undefined,
+        valid_until: fValidUntil || undefined,
       });
       notify(editId ? "已保存" : "已创建", "success");
       closeForm();
@@ -144,6 +153,9 @@ export default function AutomationPanel({ onClose }: { onClose: () => void }) {
     setFSchedType(a.schedule_type);
     if (a.schedule_type === "recurring") setFPreset(a.rrule || "FREQ=DAILY");
     else setFOnceAt(a.scheduled_at || "");
+    setFModel(a.model || "");
+    setFValidFrom(a.valid_from || "");
+    setFValidUntil(a.valid_until || "");
     setShowForm(true);
   };
 
@@ -228,6 +240,20 @@ export default function AutomationPanel({ onClose }: { onClose: () => void }) {
                 <input type="datetime-local" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-white text-sakura-600 text-[10px]" value={fOnceAt} onChange={e => setFOnceAt(e.target.value)} />
               </div>
             )}
+            <div>
+              <p className="text-[9px] text-sakura-400 mb-0.5">模型（留空用默认）</p>
+              <input className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px]" value={fModel} onChange={e => setFModel(e.target.value)} placeholder="如：agnes-2.0-flash" />
+            </div>
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <p className="text-[9px] text-sakura-400 mb-0.5">有效起始（可选）</p>
+                <input type="date" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-white text-sakura-600 text-[10px]" value={fValidFrom} onChange={e => setFValidFrom(e.target.value)} />
+              </div>
+              <div className="flex-1">
+                <p className="text-[9px] text-sakura-400 mb-0.5">有效截止（可选）</p>
+                <input type="date" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-white text-sakura-600 text-[10px]" value={fValidUntil} onChange={e => setFValidUntil(e.target.value)} />
+              </div>
+            </div>
             <div className="flex items-center gap-1 pt-0.5">
               <button onClick={closeForm} className="px-2.5 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
               <button onClick={handleSave} disabled={loading || !fName.trim()}
@@ -257,6 +283,7 @@ export default function AutomationPanel({ onClose }: { onClose: () => void }) {
                   <div className="flex items-center gap-2 text-[9px] text-sakura-400">
                     <span className="flex items-center gap-0.5"><Clock size={8} /> 下次: {nextRun(a)}</span>
                     <span className="flex items-center gap-0.5"><History size={8} /> {a.history?.length || 0} 次</span>
+                    {a.model && <span className="text-[8px] text-indigo-400">{a.model}</span>}
                   </div>
                 </div>
                 <div className="flex items-center gap-0.5 shrink-0">
