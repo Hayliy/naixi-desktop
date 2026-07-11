@@ -2129,7 +2129,7 @@ async def api_automations_save(request):
     body = await request.json()
     now = time.strftime("%Y-%m-%d %H:%M:%S")
     item = {
-        "id": body.get("id", f"auto_{int(time.time())}"),
+        "id": body.get("id") or f"auto_{int(time.time())}",
         "name": body.get("name", ""),
         "prompt": body.get("prompt", ""),
         "schedule_type": body.get("schedule_type", "recurring"),
