@@ -2221,6 +2221,12 @@ async def api_automations_run(request):
 
     duration = int((time.time() - start_ts) * 1000)
     automation_add_run(auto["id"], "success" if reply else "failed", prompt=prompt, reply=reply, model_used=model_used, duration_ms=duration)
+    # 写入 auto 对话
+    if prompt:
+        from desktop_core.storage import conv_save_message_sync
+        conv_key = f"auto:{''.join(c if c.isalnum() or c in ' _-' else '_' for c in auto.get('name', '自动化'))[:30]}"
+        conv_save_message_sync(conv_key, "user", f"[自动化] {prompt}")
+        conv_save_message_sync(conv_key, "assistant", reply or "执行完成")
     result = f"手动执行: {reply[:200]}" if reply else f"执行失败"
     return web.json_response({"ok": True, "result": result})
 
@@ -2270,6 +2276,11 @@ async def api_automations_trigger(request):
 
     duration = int((time.time() - start_ts) * 1000)
     automation_add_run(auto_id, "success" if reply else "failed", prompt=prompt, reply=reply, model_used=model_used, duration_ms=duration)
+    if prompt:
+        from desktop_core.storage import conv_save_message_sync
+        conv_key = f"auto:{''.join(c if c.isalnum() or c in ' _-' else '_' for c in auto.get('name', '自动化'))[:30]}"
+        conv_save_message_sync(conv_key, "user", f"[自动化] {prompt}")
+        conv_save_message_sync(conv_key, "assistant", reply or "执行完成")
     return web.json_response({"ok": True, "result": f"已触发: {auto.get('name', '')}", "reply": reply[:200] if reply else ""})
 
 
