@@ -722,26 +722,18 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
   });
 
   const catIcon = (c: string) => {
-    const icons: Record<string, string> = { core: "🔧", extra: "🧩", system: "⚙️", mcp: "🔌", plugin: "📦" };
-    return icons[c] || "🔧";
+    switch(c) {
+      case "core": return <Zap size={11} />;
+      case "extra": return <Layers size={11} />;
+      case "system": return <CpuIcon size={11} />;
+      case "mcp": return <Wifi size={11} />;
+      case "plugin": return <HardDrive size={11} />;
+      default: return <Wrench size={11} />;
+    }
   };
 
-  const catColors: Record<string, string> = {
-    core: "bg-pink-100 text-pink-600 border-pink-200",
-    extra: "bg-purple-100 text-purple-600 border-purple-200",
-    system: "bg-blue-100 text-blue-600 border-blue-200",
-    mcp: "bg-green-100 text-green-600 border-green-200",
-    plugin: "bg-amber-100 text-amber-600 border-amber-200",
-  };
-  const catDot: Record<string, string> = {
-    core: "bg-pink-400", extra: "bg-purple-400", system: "bg-blue-400",
-    mcp: "bg-green-400", plugin: "bg-amber-400",
-  };
-  const catFill: Record<string, string> = {
-    core: "from-pink-400 to-pink-500", extra: "from-purple-400 to-purple-500",
-    system: "from-blue-400 to-blue-500", mcp: "from-green-400 to-green-500",
-    plugin: "from-amber-400 to-amber-500",
-  };
+  // 所有分类使用统一 sakura 配色，只通过图标区分
+  const catBadge = "bg-sakura-50 text-sakura-500 border-sakura-100";
 
   return (
     <div className="space-y-3">
@@ -757,7 +749,7 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
             <div key={i}
               className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5 flex items-center gap-2.5 cursor-pointer hover:shadow-sm transition-shadow"
               onClick={() => setActiveCat(activeCat === c.name ? "" : c.name)}>
-              <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-white text-[11px] bg-gradient-to-br ${catFill[c.name] || "from-sakura-400 to-sakura-500"}`}>
+              <div className="w-7 h-7 rounded-lg flex items-center justify-center text-white bg-gradient-to-br from-sakura-400 to-sakura-500">
                 {catIcon(c.name)}
               </div>
               <div>
@@ -803,13 +795,13 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
           {/* 工具列表 */}
           <div className="space-y-1">
             {filtered.map((t) => {
-              const catCls = catColors[t.category] || "bg-sakura-50 text-sakura-500 border-sakura-100";
+              const catCls = catBadge;
               const isExpanded = expandedTool === t.name;
               return (
               <div key={t.name} className="bg-white border border-sakura-100 rounded-lg overflow-hidden">
                 <div className="flex items-center gap-2 px-3 py-2.5 group hover:bg-sakura-50/30 transition-colors cursor-pointer"
                   onClick={() => setExpandedTool(isExpanded ? null : t.name)}>
-                  <div className={`w-6 h-6 rounded flex items-center justify-center text-[10px] bg-gradient-to-br ${catFill[t.category] || "from-sakura-400 to-sakura-500"} text-white`}>
+                  <div className="w-6 h-6 rounded flex items-center justify-center bg-gradient-to-br from-sakura-400 to-sakura-500 text-white">
                     {catIcon(t.category)}
                   </div>
                   <div className="flex-1 min-w-0">
