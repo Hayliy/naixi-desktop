@@ -24,6 +24,8 @@ export async function loadAvatarCache(): Promise<Record<string, string>> {
         _avatarMap[a.seed] = a.url;
       }
       _avatarTotal = Object.keys(_avatarMap).length;
+      // 通知 React 组件重新渲染（通过自定义事件）
+      window.dispatchEvent(new CustomEvent("avatar-cache-loaded", { detail: { total: _avatarTotal } }));
       return _avatarMap;
     }
   } catch {}

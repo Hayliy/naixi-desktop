@@ -181,12 +181,20 @@ export default function MsgBubble({ msg, onEdit, onRegenerate, onDelete, onStar,
   );
 }
 
-/* 带文字回退的头像组件 */
-function AvatarImage({ src, alt }: { src: string; alt: string }) {
+/* 带文字回退的头像组件，监听头像缓存加载完成后自动刷新 */
+function AvatarImage({ src: initialSrc, alt }: { src: string; alt: string }) {
   const [failed, setFailed] = useState(false);
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    const handler = () => { setFailed(false); setVersion(v => v + 1); };
+    window.addEventListener("avatar-cache-loaded", handler);
+    return () => window.removeEventListener("avatar-cache-loaded", handler);
+  }, []);
+  // 每次缓存更新时重新解析 URL（_avatarMap 可能已变化）
+  const src = version === 0 ? initialSrc : getAvatarUrl(alt);
   if (!src || failed) {
     return <span className="text-[9px] font-medium">{alt[0] || "?"}</span>;
   }
-  return <img src={src} alt={alt} className="w-full h-full object-cover"
+  return <img key={version} src={src} alt={alt} className="w-full h-full object-cover"
     onError={() => setFailed(true)} />;
 }
