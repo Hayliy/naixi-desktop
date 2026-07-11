@@ -688,9 +688,9 @@ function SchedulerPage() {
   }, []);
 
   // 删除单条执行记录
-  const handleDeleteRun = useCallback(async (runId: number) => {
+  const handleDeleteRun = useCallback(async (runId: string) => {
     try {
-      await apiPost("/api/automations/delete-run", { id: runId });
+      await apiPost("/api/workflows/delete-run", { id: runId });
       setExecRuns(prev => prev.filter(r => r.id !== runId));
       showToast("已删除");
     } catch { showToast("删除失败", "error"); }

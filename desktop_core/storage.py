@@ -564,6 +564,16 @@ def automation_delete_run(run_id: int):
         conn.close()
 
 
+def workflow_delete_run(run_id: str):
+    """删除单条工作流执行记录"""
+    conn = _get_conn()
+    try:
+        conn.execute("DELETE FROM workflow_runs WHERE id=?", (run_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def automation_add_run(auto_id: str, status: str, prompt: str = "", reply: str = "", error: str = "", model_used: str = "", duration_ms: int = 0):
     """记录自动化执行"""
     conn = _get_conn()

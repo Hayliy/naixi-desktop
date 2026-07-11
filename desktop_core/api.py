@@ -152,6 +152,15 @@ async def api_workflow_runs(request):
     data = await wf["runs"](wid, limit)
     return web.json_response({"runs": data, "count": len(data)})
 
+
+async def api_workflow_delete_run(request):
+    """删除单条工作流执行记录"""
+    from desktop_core.storage import workflow_delete_run
+    body = await request.json()
+    workflow_delete_run(body.get("id", ""))
+    return web.json_response({"ok": True})
+
+
 async def api_workflow_node_types(request):
     wf = _get_workflow_api()
     data = await wf["node_types"]()
@@ -2410,6 +2419,7 @@ def setup_routes(app):
     app.router.add_post("/api/workflows/delete", api_workflow_delete)
     app.router.add_post("/api/workflows/run", api_workflow_run)
     app.router.add_get("/api/workflows/{id}/runs", api_workflow_runs)
+    app.router.add_post("/api/workflows/delete-run", api_workflow_delete_run)
     app.router.add_get("/api/workflow/node-types", api_workflow_node_types)
     app.router.add_get("/api/workflows/{id}/export", api_workflow_export)
     app.router.add_post("/api/workflows/import", api_workflow_import)
