@@ -583,8 +583,9 @@ export default function ChatPage() {
               }} />
             )}
             {sideTab === "connection" && <ConnectionPanel onClose={() => setSideTab(null)} />}
-            {sideTab === "automation" && <AutomationPanel onClose={() => setSideTab(null)} onNavigate={async (key: string) => { 
+            {sideTab === "automation" && <AutomationPanel onClose={() => setSideTab(null)} onNavigate={async (key: string, msgs?: any[]) => { 
               await apiGet<{ conversations: ConvItem[] }>("/api/conversations").then(d => setConvs(d.conversations)).catch(() => {}); 
+              if (msgs) setMsgs(msgs);
               setActiveKey(key); setSideTab(null); 
             }} />}
             {sideTab === "preferences" && <PreferencesPanel onClose={() => setSideTab(null)} />}

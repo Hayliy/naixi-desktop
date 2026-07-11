@@ -65,7 +65,7 @@ function computeNextRun(rrule: string): string {
   return `${next.getMonth() + 1}月${next.getDate()}日 ${String(next.getHours()).padStart(2, "0")}:${String(next.getMinutes()).padStart(2, "0")}`;
 }
 
-export default function AutomationPanel({ onClose, onNavigate }: { onClose: () => void; onNavigate?: (key: string) => void }) {
+export default function AutomationPanel({ onClose, onNavigate }: { onClose: () => void; onNavigate?: (key: string, msgs?: any[]) => void }) {
   const { notify } = useToast();
   const [automations, setAutomations] = useState<Automation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -139,13 +139,14 @@ export default function AutomationPanel({ onClose, onNavigate }: { onClose: () =
 
   const handleRun = async (id: string, name?: string) => {
     try {
-      const res = await apiPost<{ ok: boolean; result?: string; error?: string; conv_key?: string }>("/api/automations/run", { id });
+      const res = await apiPost<{ ok: boolean; result?: string; error?: string; conv_key?: string; messages?: any[] }>("/api/automations/run", { id });
       if (res?.ok) {
         notify("执行成功", "success");
-        // 刷新自动化列表
         await load();
-        // 使用 onNavigate 跳转到 auto 对话
-        if (res.conv_key && onNavigate) onNavigate(res.conv_key);
+        // 携带最新消息跳转到 auto 对话（避免前端缓存/刷新问题）
+        if (res.conv_key && onNavigate) {
+          onNavigate(res.conv_key, res.messages);
+        }
       }
       else notify(res?.error || "执行失败", "error");
     } catch { notify("执行失败", "error"); }

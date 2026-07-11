@@ -2222,13 +2222,15 @@ async def api_automations_run(request):
     duration = int((time.time() - start_ts) * 1000)
     automation_add_run(auto["id"], "success" if reply else "failed", prompt=prompt, reply=reply, model_used=model_used, duration_ms=duration)
     conv_key = ""
+    conv_messages: list[dict] = []
     if prompt:
-        from desktop_core.storage import conv_save_message_sync
+        from desktop_core.storage import conv_save_message_sync, conv_get_messages
         conv_key = f"auto:{''.join(c if c.isalnum() or c in ' _-' else '_' for c in auto.get('name', '自动化'))[:30]}"
         conv_save_message_sync(conv_key, "user", f"[自动化] {prompt}")
         conv_save_message_sync(conv_key, "assistant", reply or "执行完成")
+        conv_messages = conv_get_messages(conv_key)
     result = f"手动执行: {reply[:200]}" if reply else f"执行失败"
-    return web.json_response({"ok": True, "result": result, "conv_key": conv_key})
+    return web.json_response({"ok": True, "result": result, "conv_key": conv_key, "messages": conv_messages})
 
 
 async def api_automations_trigger(request):
