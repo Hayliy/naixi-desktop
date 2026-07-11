@@ -564,7 +564,7 @@ export default function ChatPage() {
               }} />
             )}
             {sideTab === "connection" && <ConnectionPanel onClose={() => setSideTab(null)} />}
-            {sideTab === "automation" && <AutomationPanel onClose={() => setSideTab(null)} />}
+            {sideTab === "automation" && <AutomationPanel onClose={() => setSideTab(null)} onNavigate={(key: string) => { setActiveKey(key); setSideTab(null); }} />}
             {sideTab === "preferences" && <PreferencesPanel onClose={() => setSideTab(null)} />}
             {sideTab === "settings" && (
               <div className="flex-1 overflow-y-auto"><ErrorBoundary name="供应商设置"><ProviderSettings onClose={() => setSideTab(null)} /></ErrorBoundary></div>

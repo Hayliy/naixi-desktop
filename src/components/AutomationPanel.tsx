@@ -65,7 +65,7 @@ function computeNextRun(rrule: string): string {
   return `${next.getMonth() + 1}月${next.getDate()}日 ${String(next.getHours()).padStart(2, "0")}:${String(next.getMinutes()).padStart(2, "0")}`;
 }
 
-export default function AutomationPanel({ onClose }: { onClose: () => void }) {
+export default function AutomationPanel({ onClose, onNavigate }: { onClose: () => void; onNavigate?: (key: string) => void }) {
   const { notify } = useToast();
   const [automations, setAutomations] = useState<Automation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -137,10 +137,15 @@ export default function AutomationPanel({ onClose }: { onClose: () => void }) {
     } catch {}
   };
 
-  const handleRun = async (id: string) => {
+  const handleRun = async (id: string, name?: string) => {
     try {
       const res = await apiPost<{ ok: boolean; result?: string; error?: string }>("/api/automations/run", { id });
-      if (res?.ok) notify("执行成功", "success");
+      if (res?.ok) {
+        notify("执行成功", "success");
+        // 执行后跳转到对应的 auto 对话
+        const convKey = `auto:${(name || "自动化").replace(/[^a-zA-Z0-9 _-]/g, "_").slice(0, 30)}`;
+        if (onNavigate) onNavigate(convKey);
+      }
       else notify(res?.error || "执行失败", "error");
       await load();
     } catch { notify("执行失败", "error"); }
@@ -271,9 +276,35 @@ export default function AutomationPanel({ onClose }: { onClose: () => void }) {
           <div className="text-center py-8 text-sakura-300">还没有自动化任务</div>
         ) : automations.map(a => (
           <div key={a.id}>
-            {editId === a.id ? (
-              /* ═══ 编辑模式（内联卡片） ═══ */
-              <div className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs">
+            {/* ═══ 展示模式（卡片始终可见） ═══ */}
+            <div className="bg-sakura-50 border border-sakura-100 rounded-lg p-2.5 group">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0 space-y-0.5" onClick={() => setExpandedId(expandedId === a.id ? null : a.id)}>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-medium text-sakura-600 truncate">{a.name}</span>
+                    <span className={`text-[9px] px-1 py-0.5 rounded ${a.status === "active" ? "bg-green-100 text-green-600" : "bg-sakura-100 text-sakura-400"}`}>
+                      {a.status === "active" ? "运行中" : "已暂停"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[9px] text-sakura-400">
+                    <span className="flex items-center gap-0.5"><Clock size={8} /> 下次: {nextRun(a)}</span>
+                    <span className="flex items-center gap-0.5"><History size={8} /> {a.history?.length || 0} 次</span>
+                    {a.model && <span className="text-[8px] text-indigo-400">{a.model}</span>}
+                  </div>
+                </div>
+                <div className="flex items-center gap-0.5 shrink-0">
+                  <button onClick={() => handleRun(a.id, a.name)} className="p-1 rounded hover:bg-teal-50 text-sakura-300 hover:text-teal-500" title="立即执行"><Zap size={11} /></button>
+                  <button onClick={() => handleToggle(a.id, a.status)} className="p-1 rounded hover:bg-amber-50 text-sakura-300 hover:text-amber-500" title={a.status === "active" ? "暂停" : "启用"}>
+                    {a.status === "active" ? <Pause size={11} /> : <Play size={11} />}
+                  </button>
+                  <button onClick={() => openEdit(a)} className="p-1 rounded hover:bg-sakura-100 text-sakura-300 hover:text-sakura-500"><ChevronDown size={11} /></button>
+                  <button onClick={() => handleDelete(a.id)} className="p-1 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500"><Trash2 size={11} /></button>
+                </div>
+              </div>
+            </div>
+            {/* ═══ 编辑模式（卡片下方展开） ═══ */}
+            {editId === a.id && (
+              <div className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs mt-1">
                 <p className="text-[10px] font-semibold text-sakura-500">编辑自动化</p>
                 <div>
                   <p className="text-[9px] text-sakura-400 mb-0.5">名称</p>
@@ -334,33 +365,6 @@ export default function AutomationPanel({ onClose }: { onClose: () => void }) {
                     className="flex items-center gap-1 px-3 py-1 rounded text-[10px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
                     <Check size={10} /> 保存
                   </button>
-                </div>
-              </div>
-            ) : (
-              /* ═══ 查看模式（卡片） ═══ */
-              <div className="bg-sakura-50 border border-sakura-100 rounded-lg p-2.5 group">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1 min-w-0 space-y-0.5" onClick={() => setExpandedId(expandedId === a.id ? null : a.id)}>
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[11px] font-medium text-sakura-600 truncate">{a.name}</span>
-                      <span className={`text-[9px] px-1 py-0.5 rounded ${a.status === "active" ? "bg-green-100 text-green-600" : "bg-sakura-100 text-sakura-400"}`}>
-                        {a.status === "active" ? "运行中" : "已暂停"}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 text-[9px] text-sakura-400">
-                      <span className="flex items-center gap-0.5"><Clock size={8} /> 下次: {nextRun(a)}</span>
-                      <span className="flex items-center gap-0.5"><History size={8} /> {a.history?.length || 0} 次</span>
-                      {a.model && <span className="text-[8px] text-indigo-400">{a.model}</span>}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-0.5 shrink-0">
-                    <button onClick={() => handleRun(a.id)} className="p-1 rounded hover:bg-teal-50 text-sakura-300 hover:text-teal-500" title="立即执行"><Zap size={11} /></button>
-                    <button onClick={() => handleToggle(a.id, a.status)} className="p-1 rounded hover:bg-amber-50 text-sakura-300 hover:text-amber-500" title={a.status === "active" ? "暂停" : "启用"}>
-                      {a.status === "active" ? <Pause size={11} /> : <Play size={11} />}
-                    </button>
-                    <button onClick={() => openEdit(a)} className="p-1 rounded hover:bg-sakura-100 text-sakura-300 hover:text-sakura-500"><ChevronDown size={11} /></button>
-                    <button onClick={() => handleDelete(a.id)} className="p-1 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500"><Trash2 size={11} /></button>
-                  </div>
                 </div>
               </div>
             )}
