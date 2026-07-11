@@ -697,9 +697,9 @@ function SchedulerPage() {
     setExecTarget(auto);
     setExecFilter("");
     try {
-      // 先查 automation 自带的 history
-      let allRuns: any[] = (auto.history || []).map((h: any) => ({
-        id: h.time,
+      // 来自 automation_list 的 history（该自动化的专属执行记录）
+      let allRuns: any[] = (auto.history || []).map((h: any, idx: number) => ({
+        id: `h_${auto.id}_${idx}_${h.time}`,
         started_at: h.time,
         status: h.status,
         wf_name: auto.name,
@@ -707,16 +707,12 @@ function SchedulerPage() {
         trigger: "auto",
       }));
       
-      // 再查 workflow 执行记录（如果有 workflow_id）
+      // 如果是工作流型，追加该工作流的执行记录
       if (auto.workflow_id) {
-        const [wfRes] = await Promise.all([apiGet<any>("/api/workflows")]);
-        const batch = (wfRes?.workflows || []).slice(0, 3);
-        await Promise.all(batch.map(async (w: any) => {
-          try {
-            const r = await apiGet<any>(`/api/workflows/${w.id}/runs?limit=20`);
-            (r?.runs || []).forEach((run: any) => allRuns.push({ ...run, wf_name: w.name }));
-          } catch {}
-        }));
+        try {
+          const r = await apiGet<any>(`/api/workflows/${auto.workflow_id}/runs?limit=20`);
+          (r?.runs || []).forEach((run: any) => allRuns.push({ ...run, wf_name: auto.name }));
+        } catch {}
       }
       
       allRuns.sort((a, b) => ((b.started_at || b.created_at) || "").localeCompare((a.started_at || a.created_at) || ""));
