@@ -200,7 +200,7 @@ export default function AutomationPanel({ onClose, onNavigate }: { onClose: () =
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 text-xs">
         {/* 新建按钮 */}
         {!showForm && (
-          <button onClick={() => { setEditId(null); setShowForm(true); setFName(""); setFPrompt(""); setFSchedType("recurring"); setFPreset("FREQ=DAILY"); setFOnceAt(""); }}
+          <button onClick={() => { setEditId(null); setShowForm(true); setFName(""); setFPrompt(""); setFSchedType("recurring"); setFPreset("FREQ=DAILY"); setFOnceAt(""); setFModel(""); setFValidFrom(""); setFValidUntil(""); }}
             className="flex items-center gap-1 w-full px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
             <Plus size={10} /> 新建自动化
           </button>
@@ -208,7 +208,7 @@ export default function AutomationPanel({ onClose, onNavigate }: { onClose: () =
 
         {/* 新建表单（仅在创建模式显示在顶部） */}
         {showForm && !editId && (
-          <div className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs">
+          <div key="form" className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs">
             <p className="text-[10px] font-semibold text-sakura-500">新建自动化</p>
             <div>
               <p className="text-[9px] text-sakura-400 mb-0.5">名称</p>
