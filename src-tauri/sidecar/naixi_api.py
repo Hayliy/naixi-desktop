@@ -151,7 +151,7 @@ async def main():
         from desktop_core.storage import (
             automation_get_active, automation_add_run, automation_save, decrypt_config, meta_get
         )
-        import aiohttp, re
+        import aiohttp, re, json
 
         # 执行中任务保护（防止重复触发）
         _running: set[str] = set()
@@ -233,7 +233,8 @@ async def main():
             try:
                 prompt = auto.get("prompt", "")
                 model_name = auto.get("model", "")
-                provider = _find_provider_for_model(model_name) if model_name else None
+                # 没有指定模型时，用默认 chat provider
+                provider = _find_provider_for_model(model_name) if model_name else _find_provider_for_model("")
                 reply = await _call_llm_with_tools(prompt, provider)
                 duration = int((time.time() - start_ts) * 1000)
                 automation_add_run(aid, "success", prompt=prompt, reply=reply or "", model_used=model_name or "default", duration_ms=duration)
