@@ -19,7 +19,7 @@ import {
   HardDrive, Shield, Film, Layers, GitBranch,
   Cpu as CpuIcon, Zap, Network, Lock,
   Plus, Check, Repeat, Play, Pause, ChevronDown, ChevronUp, Edit3, Trash2, CircleAlert,
-  Search, X,
+  Search, X, Loader2,
 } from "lucide-react";
 
 const PAGE_TITLES: Record<string, string> = {
@@ -57,6 +57,7 @@ const NAV_ITEMS = [
   { key: "live",       icon: <Film size={16} />,           label: "直播" },
   { key: "logs",       icon: <FileText size={16} />,       label: "日志" },
   { key: "settings",   icon: <Settings size={16} />,       label: "设置" },
+  { key: "mcp",        icon: <Wifi size={16} />,            label: "MCP" },
 ];
 
 interface NapcatData { connected: boolean; groups: number; }
@@ -221,6 +222,7 @@ export default function Dashboard() {
           <div style={{ display: activeNav === "live" ? "block" : "none", height: "100%" }}><ErrorBoundary name="直播"><LivePage /></ErrorBoundary></div>
           <div style={{ display: activeNav === "scheduler" ? "block" : "none", height: "100%" }}><ErrorBoundary name="自动化"><SchedulerPage /></ErrorBoundary></div>
           <div style={{ display: activeNav === "logs" ? "block" : "none", height: "100%" }}><ErrorBoundary name="日志"><LogsPage /></ErrorBoundary></div>
+          <div style={{ display: activeNav === "mcp" ? "block" : "none", height: "100%" }}><ErrorBoundary name="MCP"><McpPage /></ErrorBoundary></div>
           <div style={{ display: activeNav === "dashboard" ? "block" : "none" }}>
             <div className="space-y-4">
 
@@ -1420,6 +1422,222 @@ function LogsPage() {
     <div className="space-y-4">
       <p className="text-sm font-semibold text-sakura-500">日志</p>
       <pre className="bg-[#1a1a2e] text-green-400 text-[11px] p-4 rounded-xl overflow-auto max-h-[70vh] font-mono leading-relaxed">{logs || "加载中..."}</pre>
+    </div>
+  );
+}
+
+function McpPage() {
+  const [servers, setServers] = useState<Record<string, { command: string; args: string[]; env: Record<string, string> }>>({});
+  const [loading, setLoading] = useState(true);
+  const [connecting, setConnecting] = useState(false);
+  const [testing, setTesting] = useState<string | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [editKey, setEditKey] = useState<string | null>(null);
+  const [fName, setFName] = useState("");
+  const [fCmd, setFCmd] = useState("");
+  const [fArgs, setFArgs] = useState("");
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const { notify } = useToast();
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await apiGet<{ servers: any }>("/api/mcp/servers");
+      setServers(res.servers || {});
+    } catch {}
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleSave = async () => {
+    if (!fName.trim() || !fCmd.trim()) { notify("名称和命令为必填", "warning"); return; }
+    const updated = { ...servers };
+    if (editKey && editKey !== fName.trim()) delete updated[editKey];
+    updated[fName.trim()] = { command: fCmd.trim(), args: fArgs.split(" ").filter(Boolean), env: {} };
+    try {
+      await apiPost("/api/mcp/servers", { servers: updated });
+      setServers(updated);
+      notify(editKey ? "已更新" : "已添加", "success");
+      closeForm();
+    } catch { notify("保存失败", "error"); }
+  };
+
+  const closeForm = () => {
+    setShowForm(false); setEditKey(null);
+    setFName(""); setFCmd(""); setFArgs("");
+  };
+
+  const startEdit = (key: string) => {
+    const s = servers[key];
+    if (!s) return;
+    setEditKey(key); setFName(key);
+    setFCmd(s.command); setFArgs((s.args || []).join(" "));
+    setShowForm(true);
+  };
+
+  const handleDelete = async (key: string) => {
+    const updated = { ...servers };
+    delete updated[key];
+    try {
+      await apiPost("/api/mcp/servers", { servers: updated });
+      setServers(updated);
+      notify("已删除", "success");
+      setDeleteConfirm(null);
+    } catch { notify("删除失败", "error"); }
+  };
+
+  const handleConnect = async () => {
+    setConnecting(true);
+    try {
+      const res = await apiPost<{ ok: boolean; tool_count: number }>("/api/mcp/connect", {});
+      notify(`连接完成，共 ${res.tool_count} 个工具`, "success");
+    } catch { notify("连接失败", "error"); }
+    setConnecting(false);
+  };
+
+  const handleTest = async (key: string) => {
+    setTesting(key);
+    try {
+      const res = await apiPost<{ ok: boolean; error?: string; tools?: string[] }>("/api/mcp/test", { name: key });
+      if (res.ok) notify(`连接成功，工具: ${(res.tools || []).join(", ") || "无"}`, "success");
+      else notify(res.error || "测试失败", "error");
+    } catch { notify("测试失败", "error"); }
+    setTesting(null);
+  };
+
+  const keys = Object.keys(servers);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-sakura-600">MCP 服务器 <span className="text-sakura-300 font-normal text-[11px]">({keys.length})</span></p>
+        <div className="flex items-center gap-1.5">
+          <button onClick={handleConnect} disabled={connecting || keys.length === 0}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-medium bg-teal-50 text-teal-600 hover:bg-teal-100 disabled:opacity-50 transition-colors">
+            {connecting ? <Loader2 size={10} className="animate-spin" /> : <Zap size={10} />}
+            连接全部
+          </button>
+          <button onClick={() => { setShowForm(true); setEditKey(null); setFName(""); setFCmd(""); setFArgs(""); }}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-medium bg-gradient-to-br from-sakura-400 to-sakura-500 text-white hover:shadow-md transition-shadow">
+            <Plus size={11} /> 添加
+          </button>
+        </div>
+      </div>
+
+      {!loading && keys.length > 0 && (
+        <div className="grid grid-cols-3 gap-2">
+          <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5">
+            <p className="text-[9px] text-sakura-400">服务器</p>
+            <p className="text-sm font-semibold text-sakura-600">{keys.length}</p>
+          </div>
+          <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5">
+            <p className="text-[9px] text-sakura-400">已配置</p>
+            <p className="text-sm font-semibold text-sakura-600">{keys.length}</p>
+          </div>
+          <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5">
+            <p className="text-[9px] text-sakura-400">工具</p>
+            <p className="text-sm font-semibold text-sakura-600">{keys.length > 0 ? "连接后查看" : "—"}</p>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="text-center py-8">
+          <div className="w-5 h-5 border-2 border-sakura-200 border-t-sakura-500 rounded-full animate-spin mx-auto" />
+          <p className="text-xs text-sakura-400 mt-2">加载中...</p>
+        </div>
+      ) : (
+        <>
+          {keys.length === 0 && !showForm && (
+            <div className="text-center py-10">
+              <div className="w-10 h-10 rounded-full bg-sakura-50 flex items-center justify-center mx-auto mb-2">
+                <Wifi size={16} className="text-sakura-300" />
+              </div>
+              <p className="text-xs text-sakura-400 mb-1">未配置 MCP 服务器</p>
+              <p className="text-[10px] text-sakura-300">点击右上角「添加」配置 MCP 服务器</p>
+            </div>
+          )}
+
+          {showForm && (
+            <div className="bg-white border border-sakura-200 rounded-xl p-3 space-y-2 shadow-sm">
+              <p className="text-[10px] font-semibold text-sakura-500">{editKey ? "编辑服务器" : "添加服务器"}</p>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <p className="text-[9px] text-sakura-400 mb-0.5">名称</p>
+                  <input value={fName} onChange={e => setFName(e.target.value)}
+                    className="w-full px-2 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-sakura-50" placeholder="如: fetch" />
+                </div>
+                <div>
+                  <p className="text-[9px] text-sakura-400 mb-0.5">命令</p>
+                  <input value={fCmd} onChange={e => setFCmd(e.target.value)}
+                    className="w-full px-2 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-sakura-50 font-mono" placeholder="如: npx" />
+                </div>
+              </div>
+              <div>
+                <p className="text-[9px] text-sakura-400 mb-0.5">参数（空格分隔）</p>
+                <input value={fArgs} onChange={e => setFArgs(e.target.value)}
+                  className="w-full px-2 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-sakura-50 font-mono" placeholder="如: @modelcontextprotocol/server-fetch" />
+              </div>
+              <div className="flex items-center gap-1.5 pt-0.5">
+                <button onClick={closeForm} className="px-3 py-1.5 rounded text-[10px] text-sakura-400 hover:bg-sakura-50 border border-sakura-100 transition-colors">取消</button>
+                <button onClick={handleSave} disabled={!fName.trim() || !fCmd.trim()}
+                  className="px-3 py-1.5 rounded text-[10px] font-medium bg-sakura-500 text-white disabled:opacity-50 hover:bg-sakura-600 transition-colors">
+                  <Check size={10} className="inline mr-0.5" />{editKey ? "保存" : "添加"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {keys.length > 0 && (
+            <div className="space-y-1">
+              {keys.map(key => {
+                const srv = servers[key];
+                return (
+                  <div key={key} className="bg-white border border-sakura-100 rounded-lg px-3 py-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <div className="w-6 h-6 rounded flex items-center justify-center bg-gradient-to-br from-sakura-400 to-sakura-500 text-white">
+                          <Wifi size={10} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[11px] font-medium text-sakura-600 truncate">{key}</p>
+                          <p className="text-[9px] text-sakura-400 truncate font-mono">{srv.command} {(srv.args || []).join(" ")}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        <button onClick={() => handleTest(key)} disabled={testing === key}
+                          className="p-1.5 rounded hover:bg-teal-50 text-sakura-300 hover:text-teal-500 transition-colors" title="测试连接">
+                          {testing === key ? <Loader2 size={10} className="animate-spin" /> : <Zap size={10} />}
+                        </button>
+                        <button onClick={() => startEdit(key)} className="p-1.5 rounded hover:bg-sakura-50 text-sakura-300 hover:text-sakura-500 transition-colors" title="编辑">
+                          <Edit3 size={10} />
+                        </button>
+                        {deleteConfirm === key ? (
+                          <div className="flex items-center gap-0.5">
+                            <button onClick={() => handleDelete(key)} className="px-1.5 py-0.5 rounded text-[9px] bg-red-500 text-white hover:bg-red-600 transition-colors">确认</button>
+                            <button onClick={() => setDeleteConfirm(null)} className="px-1.5 py-0.5 rounded text-[9px] text-sakura-400 hover:bg-sakura-100 transition-colors">取消</button>
+                          </div>
+                        ) : (
+                          <button onClick={() => setDeleteConfirm(key)} className="p-1.5 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500 transition-colors" title="删除">
+                            <Trash2 size={10} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {keys.length > 0 && (
+            <div className="text-[9px] text-sakura-300 text-center py-1">
+              共 {keys.length} 个服务器 · 配置后需「连接全部」生效
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
