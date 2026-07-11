@@ -2472,6 +2472,7 @@ def setup_routes(app):
     app.on_startup.append(_on_startup_mcp)
 
     # 工具权限确认
+    app.router.add_get("/api/tools", api_tools_list)
     app.router.add_post("/api/tool/permit", api_tool_permit)
     app.router.add_get("/api/config/trust", api_config_trust)
     app.router.add_post("/api/config/trust", api_config_trust)
@@ -2608,6 +2609,36 @@ async def api_mcp_test(request):
         return web.json_response({"ok": False, "error": "连接失败（初始化超时或无响应）"})
     except Exception as e:
         return web.json_response({"ok": False, "error": str(e)[:200]})
+
+
+async def api_tools_list(request):
+    """列出所有可用工具（含分类和参数信息）"""
+    from desktop_core import tools as _tools_mod
+    cat = request.query.get("category", "")
+    try:
+        registry = _tools_mod._registry
+        tools_list = []
+        cat_counts = {}
+        for name, t in registry.items():
+            if cat and t.get("category", "") != cat:
+                continue
+            tools_list.append({
+                "name": name,
+                "description": t.get("description", ""),
+                "category": t.get("category", "core"),
+                "has_params": bool(t.get("parameters", {}).get("properties", {})),
+                "param_count": len(t.get("parameters", {}).get("properties", {})),
+            })
+            c = t.get("category", "core")
+            cat_counts[c] = cat_counts.get(c, 0) + 1
+        tools_list.sort(key=lambda x: (x["category"], x["name"]))
+        return web.json_response({
+            "tools": tools_list,
+            "count": len(tools_list),
+            "categories": [{"name": k, "count": v} for k, v in sorted(cat_counts.items())],
+        })
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
 
 
 async def api_tool_permit(request):
