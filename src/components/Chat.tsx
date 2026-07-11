@@ -114,6 +114,23 @@ export default function ChatPage() {
       .catch(() => setConvLoading(false));
   }, []);
 
+  // 监听自动化执行后跳转
+  useEffect(() => {
+    const handler = (e: CustomEvent) => {
+      const key = e.detail?.key;
+      if (key) {
+        // 刷新对话列表后再跳转
+        apiGet<{ conversations: ConvItem[] }>("/api/conversations")
+          .then(d => setConvs(d.conversations))
+          .catch(() => {});
+        setActiveKey(key);
+        setSideTab(null);
+      }
+    };
+    window.addEventListener("navigate-to-conv", handler as EventListener);
+    return () => window.removeEventListener("navigate-to-conv", handler as EventListener);
+  }, []);
+
   // 定时刷新会话列表（自动更新自动化产生的对话）
   useEffect(() => {
     const t = setInterval(() => {
@@ -220,7 +237,7 @@ export default function ChatPage() {
           });
         }
       } catch {}
-    }, 5000);
+    }, 1000);
     return () => clearInterval(t);
   }, [activeKey]);
 

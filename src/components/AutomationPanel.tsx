@@ -142,11 +142,14 @@ export default function AutomationPanel({ onClose, onNavigate }: { onClose: () =
       const res = await apiPost<{ ok: boolean; result?: string; error?: string; conv_key?: string }>("/api/automations/run", { id });
       if (res?.ok) {
         notify("执行成功", "success");
-        // 使用后端返回的 conv_key（中文等字符在 Python/JS 中编码一致）
-        if (res.conv_key && onNavigate) onNavigate(res.conv_key);
+        // 刷新自动化列表
+        await load();
+        // 通知 Chat 组件刷新对话列表并跳转
+        if (res.conv_key) {
+          window.dispatchEvent(new CustomEvent("navigate-to-conv", { detail: { key: res.conv_key } }));
+        }
       }
       else notify(res?.error || "执行失败", "error");
-      await load();
     } catch { notify("执行失败", "error"); }
   };
 
