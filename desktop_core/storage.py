@@ -559,10 +559,10 @@ def automation_add_run(auto_id: str, status: str, prompt: str = "", reply: str =
     conn = _get_conn()
     try:
         conn.execute(
-            "INSERT INTO naixi_automation_runs (automation_id, run_time, status, prompt, reply, error, model_used, duration_ms) VALUES (?, datetime('now'), ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO naixi_automation_runs (automation_id, run_time, status, prompt, reply, error, model_used, duration_ms) VALUES (?, datetime('now', 'localtime'), ?, ?, ?, ?, ?, ?)",
             (auto_id, status, prompt, reply, error, model_used, duration_ms)
         )
-        conn.execute("UPDATE naixi_automations SET last_run=datetime('now'), last_result=?, updated_at=datetime('now') WHERE id=?", (status, auto_id))
+        conn.execute("UPDATE naixi_automations SET last_run=datetime('now', 'localtime'), last_result=?, updated_at=datetime('now') WHERE id=?", (status, auto_id))
         conn.commit()
     finally:
         conn.close()
