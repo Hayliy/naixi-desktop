@@ -118,6 +118,7 @@ export default function AutomationPanel({ onClose, onNavigate }: { onClose: () =
       notify(editId ? "已保存" : "已创建", "success");
       closeForm();
       await load();
+      window.dispatchEvent(new CustomEvent("automation-changed"));
     } catch (e) {
       notify("保存失败", "error");
       closeForm();  // 出错也关闭表单
@@ -129,6 +130,7 @@ export default function AutomationPanel({ onClose, onNavigate }: { onClose: () =
     try {
       await apiPost("/api/automations/toggle", { id, status: status === "active" ? "paused" : "active" });
       await load();
+      window.dispatchEvent(new CustomEvent("automation-changed"));
     } catch {}
   };
 
@@ -137,6 +139,7 @@ export default function AutomationPanel({ onClose, onNavigate }: { onClose: () =
       await apiPost("/api/automations/delete", { id });
       notify("已删除", "success");
       await load();
+      window.dispatchEvent(new CustomEvent("automation-changed"));
     } catch {}
   };
 

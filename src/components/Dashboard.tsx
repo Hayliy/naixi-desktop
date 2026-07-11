@@ -618,7 +618,18 @@ function SchedulerPage() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // 自动刷新：切换到该页面时立即刷新 + 每 30 秒轮询
+  // 监听其他页面（Chat 自动化面板）的变更通知
+  useEffect(() => {
+    const handler = () => {
+      apiGet<{ automations: any[] }>("/api/automations")
+        .then(d => { if (d?.automations) setAutomations(d.automations); })
+        .catch(() => {});
+    };
+    window.addEventListener("automation-changed", handler);
+    return () => window.removeEventListener("automation-changed", handler);
+  }, []);
+
+  // 自动刷新：每 30 秒轮询（保底）
   useEffect(() => {
     const t = setInterval(() => {
       // 只在前台且可能显示时刷新
