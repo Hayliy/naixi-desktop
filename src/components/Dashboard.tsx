@@ -697,17 +697,30 @@ function SchedulerPage() {
     setExecTarget(auto);
     setExecFilter("");
     try {
-      const [wfRes] = await Promise.all([apiGet<any>("/api/workflows")]);
-      const batch = (wfRes?.workflows || []).slice(0, 3);
-      const allRuns: any[] = [];
-      await Promise.all(batch.map(async (w: any) => {
-        try {
-          const r = await apiGet<any>(`/api/workflows/${w.id}/runs?limit=20`);
-          (r?.runs || []).forEach((run: any) => allRuns.push({ ...run, wf_name: w.name }));
-        } catch {}
+      // 先查 automation 自带的 history
+      let allRuns: any[] = (auto.history || []).map((h: any) => ({
+        id: h.time,
+        started_at: h.time,
+        status: h.status,
+        wf_name: auto.name,
+        duration: "",
+        trigger: "auto",
       }));
+      
+      // 再查 workflow 执行记录（如果有 workflow_id）
+      if (auto.workflow_id) {
+        const [wfRes] = await Promise.all([apiGet<any>("/api/workflows")]);
+        const batch = (wfRes?.workflows || []).slice(0, 3);
+        await Promise.all(batch.map(async (w: any) => {
+          try {
+            const r = await apiGet<any>(`/api/workflows/${w.id}/runs?limit=20`);
+            (r?.runs || []).forEach((run: any) => allRuns.push({ ...run, wf_name: w.name }));
+          } catch {}
+        }));
+      }
+      
       allRuns.sort((a, b) => ((b.started_at || b.created_at) || "").localeCompare((a.started_at || a.created_at) || ""));
-      setExecRuns(allRuns.filter(r => r.workflow_id === auto.workflow_id || r.wf_name === auto.name));
+      setExecRuns(allRuns);
     } catch { setExecRuns([]); }
     setShowExecModal(true);
   }, []);
