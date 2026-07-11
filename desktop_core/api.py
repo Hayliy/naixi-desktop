@@ -1683,12 +1683,22 @@ async def api_conversations_list(request):
 
 
 async def api_conversation_get(request):
-    """获取某个对话的消息"""
+    """获取某个对话的消息（支持 ?limit= 限制条数，默认 200，auto 对话默认 50）"""
     key = request.match_info.get("key", "")
     if not key:
         return web.json_response({"error": "缺少 key"}, status=400)
+    try:
+        limit = int(request.query.get("limit", 0))
+    except:
+        limit = 0
+    # auto 对话默认只返回最近 50 条，其他默认 200
+    if not limit:
+        limit = 50 if key.startswith("auto:") else 200
     msgs = conv_get_messages(key)
-    return web.json_response({"key": key, "messages": msgs, "total": len(msgs)})
+    total = len(msgs)
+    if limit > 0 and total > limit:
+        msgs = msgs[-limit:]
+    return web.json_response({"key": key, "messages": msgs, "total": total})
 
 
 async def api_conversation_delete(request):
