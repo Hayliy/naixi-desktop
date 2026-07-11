@@ -641,18 +641,14 @@ function SchedulerPage() {
   const handleRun = useCallback(async (id: string, auto?: any) => {
     try {
       if (auto?.workflow_id) {
-        const res = await apiPost<any>("/api/workflows/run", { id: auto.workflow_id });
-        console.log("工作流运行结果", res);
+        await apiPost<any>("/api/workflows/run", { id: auto.workflow_id });
       } else {
-        const res = await apiPost<any>("/api/automations/run", { id });
-        console.log("自动化运行结果", res);
+        await apiPost<any>("/api/automations/run", { id });
       }
     } catch (e) {
       console.warn("运行失败", e);
     }
-    // 延迟刷新避免界面抖动
-    setTimeout(() => refetch(), 500);
-  }, [refetch]);
+  }, []);
 
   const handleToggle = useCallback(async (item: any) => {
     try { await apiPost("/api/automations/toggle", { id: item.id }); refetch(); } catch {}
@@ -851,10 +847,10 @@ function SchedulerPage() {
                 {a.last_run && <span className="ml-1">{a.last_run.slice(5, 16)}</span>}
               </div>
               <div className="flex items-center justify-end gap-1">
-                <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleRun(a.id, a); }} className="p-1 rounded hover:bg-teal-50 text-sakura-300 hover:text-teal-500 transition-colors" title="立即执行"><Play size={11} /></button>
-                <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); openExecModal(a); }} className="p-1 rounded hover:bg-sakura-50 text-sakura-300 hover:text-sakura-500 transition-colors" title="执行记录"><Clock size={11} /></button>
-                <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowCreate(true); }} className="p-1 rounded hover:bg-sakura-50 text-sakura-300 hover:text-sakura-500 transition-colors" title="编辑"><Edit3 size={11} /></button>
-                <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setDeleteTarget(a); setShowDeleteModal(true); }} className="p-1 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500 transition-colors" title="删除"><Trash2 size={11} /></button>
+                <button type="button" onClick={() => handleRun(a.id, a)} className="p-1 rounded hover:bg-teal-50 text-sakura-300 hover:text-teal-500 transition-colors" title="立即执行"><Play size={11} /></button>
+                <button type="button" onClick={() => openExecModal(a)} className="p-1 rounded hover:bg-sakura-50 text-sakura-300 hover:text-sakura-500 transition-colors" title="执行记录"><Clock size={11} /></button>
+                <button type="button" onClick={() => setShowCreate(true)} className="p-1 rounded hover:bg-sakura-50 text-sakura-300 hover:text-sakura-500 transition-colors" title="编辑"><Edit3 size={11} /></button>
+                <button type="button" onClick={() => { setDeleteTarget(a); setShowDeleteModal(true); }} className="p-1 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500 transition-colors" title="删除"><Trash2 size={11} /></button>
               </div>
             </div>
           </div>
