@@ -2141,6 +2141,11 @@ async def api_automations_save(request):
         "valid_until": body.get("valid_until", ""),
         "last_run": "",
         "created_at": now,
+        "workflow_id": body.get("workflow_id", ""),
+        "trigger_type": body.get("trigger_type", "schedule"),
+        "config": body.get("config", ""),
+        "description": body.get("description", ""),
+        "last_result": "",
     }
     automation_save(item)
     return web.json_response({"ok": True, "id": item["id"]})
