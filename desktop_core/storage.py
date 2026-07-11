@@ -229,9 +229,15 @@ def init_tables():
                 prompt TEXT DEFAULT '',
                 reply TEXT DEFAULT '',
                 error TEXT DEFAULT '',
-                model_used TEXT DEFAULT ''
+                model_used TEXT DEFAULT '',
+                duration_ms INTEGER DEFAULT 0
             );
         """)
+        # 为现有表添加 duration_ms 列（如果不存在）
+        try:
+            conn.execute("ALTER TABLE naixi_automation_runs ADD COLUMN duration_ms INTEGER DEFAULT 0")
+        except:
+            pass
         # 迁移旧 JSON 数据到新表
         _migrate_naixi_automations()
         conn.commit()
@@ -542,13 +548,13 @@ def automation_delete(id: str):
         conn.close()
 
 
-def automation_add_run(auto_id: str, status: str, prompt: str = "", reply: str = "", error: str = "", model_used: str = ""):
+def automation_add_run(auto_id: str, status: str, prompt: str = "", reply: str = "", error: str = "", model_used: str = "", duration_ms: int = 0):
     """记录自动化执行"""
     conn = _get_conn()
     try:
         conn.execute(
-            "INSERT INTO naixi_automation_runs (automation_id, run_time, status, prompt, reply, error, model_used) VALUES (?, datetime('now'), ?, ?, ?, ?, ?)",
-            (auto_id, status, prompt, reply, error, model_used)
+            "INSERT INTO naixi_automation_runs (automation_id, run_time, status, prompt, reply, error, model_used, duration_ms) VALUES (?, datetime('now'), ?, ?, ?, ?, ?, ?)",
+            (auto_id, status, prompt, reply, error, model_used, duration_ms)
         )
         conn.execute("UPDATE naixi_automations SET last_run=datetime('now'), updated_at=datetime('now') WHERE id=?", (auto_id,))
         conn.commit()

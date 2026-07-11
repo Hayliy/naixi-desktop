@@ -2153,49 +2153,114 @@ async def api_automations_delete(request):
 
 
 async def api_automations_run(request):
-    """立即执行自动化"""
+    """立即执行自动化（Agent 模式 + 耗时统计）"""
     from desktop_core.storage import automation_get, automation_add_run
-    import time, aiohttp
+    import time, aiohttp, json
     body = await request.json()
     auto = automation_get(body.get("id", ""))
     if not auto:
         return web.json_response({"error": "未找到该自动化"}, status=404)
 
+    start_ts = time.time()
     prompt = auto.get("prompt", "")
-    result = f"已执行: {auto.get('name', '')}"
     reply = ""
     model_used = ""
     if prompt:
         try:
             from desktop_core.storage import meta_get, decrypt_config
+            from desktop_core.tools import get_fast_definitions, execute
             raw_cfg = meta_get("desktop_config")
             cfg = json.loads(raw_cfg) if raw_cfg else {}
             decrypt_config(cfg)
             providers = cfg.get("api_providers", {})
             model_name = auto.get("model", "")
+            api_key = api_url = ""
             for pid, pcfg in providers.items():
                 if model_name and pcfg.get("model") == model_name:
-                    api_key, api_url = pcfg.get("api_key", ""), pcfg.get("api_url", "")
-                    model_used = pcfg.get("model", "")
+                    api_key, api_url, model_used = pcfg.get("api_key", ""), pcfg.get("api_url", ""), pcfg.get("model", "")
                     break
                 elif pcfg.get("type", "chat") == "chat" and pcfg.get("api_key") and pcfg.get("api_url"):
-                    api_key, api_url = pcfg.get("api_key", ""), pcfg.get("api_url", "")
-                    model_used = pcfg.get("model", "")
+                    api_key, api_url, model_used = pcfg.get("api_key", ""), pcfg.get("api_url", ""), pcfg.get("model", "")
                     break
             if api_key and api_url:
+                # Agent 循环
+                tools = get_fast_definitions()
+                messages = [{"role": "user", "content": prompt}]
                 headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-                payload = {"model": model_used or "default", "messages": [{"role": "user", "content": prompt}], "max_tokens": 1024}
-                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as sess:
-                    async with sess.post(api_url.rstrip("/") + "/chat/completions", headers=headers, json=payload) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                            result = f"手动执行: {reply[:200]}"
+                for _ in range(5):
+                    payload = {"model": model_used or "default", "messages": messages, "tools": tools, "tool_choice": "auto", "max_tokens": 2048}
+                    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as sess:
+                        async with sess.post(api_url.rstrip("/") + "/chat/completions", headers=headers, json=payload) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                msg = data.get("choices", [{}])[0].get("message", {})
+                                reply = msg.get("content") or ""
+                                tc = msg.get("tool_calls")
+                                if not tc:
+                                    break
+                                messages.append(msg)
+                                for t in tc:
+                                    try: args = json.loads(t["function"]["arguments"])
+                                    except: args = {}
+                                    r = await execute(t["function"]["name"], args, {"user_id": "manual", "group_id": ""})
+                                    messages.append({"role": "tool", "tool_call_id": t["id"], "content": str(r)[:500]})
+                            else:
+                                break
         except Exception as e:
             log.warning(f"手动执行 LLM 失败: {e}")
 
-    automation_add_run(auto["id"], "success", prompt=prompt, reply=reply, model_used=model_used)
+    duration = int((time.time() - start_ts) * 1000)
+    automation_add_run(auto["id"], "success" if reply else "failed", prompt=prompt, reply=reply, model_used=model_used, duration_ms=duration)
+    result = f"手动执行: {reply[:200]}" if reply else f"执行失败"
     return web.json_response({"ok": True, "result": result})
+
+
+async def api_automations_trigger(request):
+    """外部触发自动化执行（webhook）"""
+    from desktop_core.storage import automation_get, automation_add_run
+    import time, aiohttp
+    body = await request.json() if request.can_read_body else {}
+    auto_id = body.get("id", "") or request.query.get("id", "")
+    if not auto_id:
+        return web.json_response({"error": "缺少自动化 id"}, status=400)
+    auto = automation_get(auto_id)
+    if not auto:
+        return web.json_response({"error": "未找到该自动化"}, status=404)
+    if auto.get("status") != "active":
+        return web.json_response({"error": "自动化已暂停"}, status=400)
+
+    start_ts = time.time()
+    prompt = auto.get("prompt", "")
+    reply = ""
+    model_used = ""
+    try:
+        from desktop_core.storage import meta_get, decrypt_config
+        raw_cfg = meta_get("desktop_config")
+        cfg = json.loads(raw_cfg) if raw_cfg else {}
+        decrypt_config(cfg)
+        model_name = auto.get("model", "")
+        api_key = api_url = ""
+        for pid, pcfg in (cfg.get("api_providers") or {}).items():
+            if model_name and pcfg.get("model") == model_name:
+                api_key, api_url, model_used = pcfg.get("api_key", ""), pcfg.get("api_url", ""), pcfg.get("model", "")
+                break
+            elif pcfg.get("type", "chat") == "chat" and pcfg.get("api_key") and pcfg.get("api_url"):
+                api_key, api_url, model_used = pcfg.get("api_key", ""), pcfg.get("api_url", ""), pcfg.get("model", "")
+                break
+        if api_key and api_url and prompt:
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            payload = {"model": model_used or "default", "messages": [{"role": "user", "content": prompt}], "max_tokens": 1024}
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as sess:
+                async with sess.post(api_url.rstrip("/") + "/chat/completions", headers=headers, json=payload) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    except Exception as e:
+        log.warning(f"外部触发执行 LLM 失败: {e}")
+
+    duration = int((time.time() - start_ts) * 1000)
+    automation_add_run(auto_id, "success" if reply else "failed", prompt=prompt, reply=reply, model_used=model_used, duration_ms=duration)
+    return web.json_response({"ok": True, "result": f"已触发: {auto.get('name', '')}", "reply": reply[:200] if reply else ""})
 
 
 # ── 路由注册 ──
@@ -2268,6 +2333,8 @@ def setup_routes(app):
     app.router.add_post("/api/automations/toggle", api_automations_toggle)
     app.router.add_post("/api/automations/delete", api_automations_delete)
     app.router.add_post("/api/automations/run", api_automations_run)
+    app.router.add_post("/api/automations/trigger", api_automations_trigger)
+    app.router.add_get("/api/automations/trigger", api_automations_trigger)  # GET 也支持（webhook 兼容）
 
     # 工作流
     app.router.add_get("/api/workflows", api_workflow_list)

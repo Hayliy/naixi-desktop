@@ -156,35 +156,6 @@ async def main():
         # 执行中任务保护（防止重复触发）
         _running: set[str] = set()
 
-        async def _call_llm(prompt: str, model_cfg: dict | None) -> str:
-            """调 LLM 并返回回复，支持指定模型"""
-            api_key = api_url = model_name = ""
-            if model_cfg:
-                api_key = model_cfg.get("api_key", "")
-                api_url = model_cfg.get("api_url", "")
-                model_name = model_cfg.get("model", "")
-            if not all([prompt, api_key, api_url]):
-                # 降级到默认 provider
-                raw = meta_get("desktop_config")
-                cfg = json.loads(raw) if raw else {}
-                decrypt_config(cfg)
-                for pid, pcfg in (cfg.get("api_providers") or {}).items():
-                    if pcfg.get("type", "chat") == "chat" and pcfg.get("api_key") and pcfg.get("api_url"):
-                        api_key, api_url, model_name = pcfg["api_key"], pcfg["api_url"], pcfg.get("model", "")
-                        break
-            if not all([prompt, api_key, api_url]):
-                return ""
-            try:
-                headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-                payload = {"model": model_name or "default", "messages": [{"role": "user", "content": prompt}], "max_tokens": 1024}
-                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as sess:
-                    async with sess.post(api_url.rstrip("/") + "/chat/completions", headers=headers, json=payload) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            return data.get("choices", [{}])[0].get("message", {}).get("content", "")[:200]
-            except: pass
-            return ""
-
         def _find_provider_for_model(model_name: str) -> dict | None:
             """根据模型名查找对应的 provider 配置"""
             raw = meta_get("desktop_config")
@@ -207,28 +178,74 @@ async def main():
             except Exception as e:
                 log.warning(f"写入自动化对话失败: {e}")
 
+        async def _call_llm_with_tools(prompt: str, provider: dict | None) -> str:
+            """调用 LLM（支持 Agent 循环 + 工具调用），返回最终回复"""
+            api_key = (provider or {}).get("api_key", "")
+            api_url = (provider or {}).get("api_url", "")
+            model_name = (provider or {}).get("model", "")
+            if not all([prompt, api_key, api_url]):
+                return ""
+            try:
+                # 加载工具定义
+                from desktop_core.tools import get_fast_definitions, execute
+                tools = get_fast_definitions()
+                messages = [{"role": "user", "content": prompt}]
+                headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+                max_rounds = 5
+                for _ in range(max_rounds):
+                    payload = {"model": model_name or "default", "messages": messages, "tools": tools, "tool_choice": "auto", "max_tokens": 2048}
+                    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as sess:
+                        async with sess.post(api_url.rstrip("/") + "/chat/completions", headers=headers, json=payload) as resp:
+                            if resp.status != 200:
+                                return ""
+                            data = await resp.json()
+                            msg = data.get("choices", [{}])[0].get("message", {})
+                            content = msg.get("content") or ""
+                            tool_calls = msg.get("tool_calls")
+
+                    if not tool_calls:
+                        return content or "执行完成"
+
+                    # 处理工具调用
+                    messages.append(msg)
+                    for tc in tool_calls:
+                        fid = tc["function"]["name"]
+                        try:
+                            args = json.loads(tc["function"]["arguments"])
+                        except:
+                            args = {}
+                        result = await execute(fid, args, {"user_id": "auto", "group_id": ""})
+                        messages.append({"role": "tool", "tool_call_id": tc["id"], "content": str(result)[:500]})
+
+                return "执行完成（工具调用次数超过限制）"
+            except Exception as e:
+                log.warning(f"Agent 执行失败: {e}")
+                return ""
+
         async def _execute_one(auto: dict):
-            """执行单个自动化任务"""
+            """执行单个自动化任务（Agent 模式 + 耗时统计）"""
             aid = auto["id"]
             if aid in _running:
                 log.info(f"自动化跳过: {auto['name']} 正在执行中")
                 return
             _running.add(aid)
+            start_ts = time.time()
             try:
                 prompt = auto.get("prompt", "")
                 model_name = auto.get("model", "")
                 provider = _find_provider_for_model(model_name) if model_name else None
-                reply = await _call_llm(prompt, provider)
-                automation_add_run(aid, "success", prompt=prompt, reply=reply or "", model_used=model_name or "default")
+                reply = await _call_llm_with_tools(prompt, provider)
+                duration = int((time.time() - start_ts) * 1000)
+                automation_add_run(aid, "success", prompt=prompt, reply=reply or "", model_used=model_name or "default", duration_ms=duration)
                 _save_to_conv(auto.get("name", "自动化"), prompt, reply)
-                log.info(f"自动化执行: {auto['name']} ✅")
-                # 一次性任务执行后标记过期
+                log.info(f"自动化执行: {auto['name']} ✅ ({duration}ms)")
                 if auto.get("schedule_type") == "once":
                     auto["status"] = "expired"
                     automation_save(auto)
             except Exception as e:
-                automation_add_run(aid, "failed", prompt=auto.get("prompt", ""), error=str(e))
-                log.warning(f"自动化执行失败: {auto['name']}: {e}")
+                duration = int((time.time() - start_ts) * 1000)
+                automation_add_run(aid, "failed", prompt=auto.get("prompt", ""), error=str(e), duration_ms=duration)
+                log.warning(f"自动化执行失败: {auto['name']}: {e} ({duration}ms)")
             finally:
                 _running.discard(aid)
 
