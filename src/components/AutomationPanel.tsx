@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { apiGet, apiPost } from "@/lib/api";
-import { X, Plus, Trash2, Play, Pause, Clock, Check, ChevronDown, ChevronUp, History, Loader2, Calendar, Repeat, Zap, CircleAlert } from "lucide-react";
+import { X, Plus, Trash2, Play, Pause, Clock, Check, ChevronDown, ChevronUp, History, Loader2, Calendar, Repeat, Zap, CircleAlert, Edit3 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 
 interface RunRecord {
@@ -298,7 +298,10 @@ export default function AutomationPanel({ onClose, onNavigate }: { onClose: () =
                   <button onClick={() => handleToggle(a.id, a.status)} className="p-1 rounded hover:bg-amber-50 text-sakura-300 hover:text-amber-500" title={a.status === "active" ? "暂停" : "启用"}>
                     {a.status === "active" ? <Pause size={11} /> : <Play size={11} />}
                   </button>
-                  <button onClick={() => openEdit(a)} className="p-1 rounded hover:bg-sakura-100 text-sakura-300 hover:text-sakura-500"><ChevronDown size={11} /></button>
+                  <button onClick={() => setExpandedId(expandedId === a.id ? null : a.id)} className="p-1 rounded hover:bg-sakura-100 text-sakura-300 hover:text-sakura-500" title={expandedId === a.id ? "收起" : "展开执行记录"}>
+                    {expandedId === a.id ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                  </button>
+                  <button onClick={() => openEdit(a)} className="p-1 rounded hover:bg-sakura-100 text-sakura-300 hover:text-sakura-500" title="编辑"><Edit3 size={11} /></button>
                   <button onClick={() => handleDelete(a.id)} className="p-1 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500"><Trash2 size={11} /></button>
                 </div>
               </div>
