@@ -639,14 +639,16 @@ function SchedulerPage() {
   }, [refetch]);
 
   const handleRun = useCallback(async (id: string, auto?: any) => {
-    try {
-      if (auto?.workflow_id) {
+    // 工作流型：先触发 workflow run，再更新 automation last_result
+    if (auto?.workflow_id) {
+      try {
         await apiPost<any>("/api/workflows/run", { id: auto.workflow_id, input: { silent_mode: true } });
-      } else {
-        await apiPost<any>("/api/automations/run", { id });
-      }
-    } catch (e) {
-      console.warn("运行失败", e);
+      } catch {}
+      try {
+        await apiPost("/api/automations/run", { id });
+      } catch {}
+    } else {
+      await apiPost<any>("/api/automations/run", { id }).catch(() => {});
     }
   }, []);
 

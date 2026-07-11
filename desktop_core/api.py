@@ -2183,8 +2183,17 @@ async def api_automations_run(request):
 
     start_ts = time.time()
     prompt = auto.get("prompt", "")
+    workflow_id = auto.get("workflow_id", "")
     reply = ""
     model_used = ""
+    
+    # 工作流型：直接标记成功（无需 LLM 执行）
+    if workflow_id and not prompt:
+        duration = int((time.time() - start_ts) * 1000)
+        automation_add_run(auto["id"], "success", prompt=f"[触发工作流] {auto.get('name', '')}", 
+                          reply="", duration_ms=duration)
+        return web.json_response({"ok": True, "result": "已触发工作流", "conv_key": "", "messages": []})
+    
     if prompt:
         try:
             from desktop_core.storage import meta_get, decrypt_config
