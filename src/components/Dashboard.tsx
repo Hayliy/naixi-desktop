@@ -649,6 +649,11 @@ function SchedulerPage() {
     } else {
       await apiPost<any>("/api/automations/run", { id }).then(() => showToast("已触发执行")).catch(() => showToast("执行失败", "error"));
     }
+    // 静默刷新列表（不显示 loading 转圈，避免页面闪动）
+    try {
+      const res = await apiGet<{ automations: any[] }>("/api/automations");
+      if (res?.automations) setAutomations(res.automations);
+    } catch {}
   }, []);
 
   const handleToggle = useCallback(async (item: any) => {
