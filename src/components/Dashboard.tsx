@@ -584,6 +584,7 @@ function SchedulerPage() {
   const [formTrigger, setFormTrigger] = useState("schedule");
   const [formConfig, setFormConfig] = useState("0 9 * * *");
   const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
   const PAGE_SIZE = 10;
 
   const loadData = useCallback(async () => {
@@ -639,16 +640,14 @@ function SchedulerPage() {
   }, [refetch]);
 
   const handleRun = useCallback(async (id: string, auto?: any) => {
-    // 工作流型：先触发 workflow run，再更新 automation last_result
     if (auto?.workflow_id) {
       try {
         await apiPost<any>("/api/workflows/run", { id: auto.workflow_id, input: { silent_mode: true } });
-      } catch {}
-      try {
-        await apiPost("/api/automations/run", { id });
-      } catch {}
+        showToast("已触发工作流执行");
+      } catch { showToast("工作流执行失败", "error"); }
+      try { await apiPost("/api/automations/run", { id }); } catch {}
     } else {
-      await apiPost<any>("/api/automations/run", { id }).catch(() => {});
+      await apiPost<any>("/api/automations/run", { id }).then(() => showToast("已触发执行")).catch(() => showToast("执行失败", "error"));
     }
   }, []);
 
@@ -699,6 +698,11 @@ function SchedulerPage() {
     if (a.trigger_type === "schedule") return `定时 (${safeParse(a.config).cron || "?"})`;
     if (a.trigger_type === "webhook") return `Webhook`;
     return "手动";
+  };
+
+  const showToast = (msg: string, type: "success" | "error" = "success") => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 2500);
   };
 
   if (loading) return (
@@ -927,6 +931,18 @@ function SchedulerPage() {
                 共 {execRuns.length} 条记录
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ 执行反馈 Toast ═══ */}
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-[100] animate-bounce-in">
+          <div className={`flex items-center gap-2 px-4 py-2.5 rounded-xl shadow-lg text-xs font-medium ${
+            toast.type === "success" ? "bg-green-500 text-white" : "bg-red-500 text-white"
+          }`}>
+            {toast.type === "success" ? <Check size={13} /> : <CircleAlert size={13} />}
+            {toast.msg}
           </div>
         </div>
       )}
