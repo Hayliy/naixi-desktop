@@ -2108,114 +2108,94 @@ async def api_knowledge_import_github(request):
 
 async def api_automations_list(request):
     """列出所有自动化任务"""
-    import time
-    raw = meta_get("naixi_automations")
-    items = json.loads(raw) if raw else []
-    return web.json_response({"automations": items})
+    from desktop_core.storage import automation_list
+    return web.json_response({"automations": automation_list()})
 
 
 async def api_automations_save(request):
     """创建或更新自动化任务"""
     import time
+    from desktop_core.storage import automation_save
     body = await request.json()
-    raw = meta_get("naixi_automations")
-    items = json.loads(raw) if raw else []
-    now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time()))
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
     item = {
+        "id": body.get("id", f"auto_{int(time.time())}"),
         "name": body.get("name", ""),
         "prompt": body.get("prompt", ""),
         "schedule_type": body.get("schedule_type", "recurring"),
         "rrule": body.get("rrule", ""),
         "scheduled_at": body.get("scheduled_at", ""),
         "status": "active",
-        "history": [],
-        "created_at": now,
+        "model": body.get("model", ""),
+        "valid_from": body.get("valid_from", ""),
+        "valid_until": body.get("valid_until", ""),
         "last_run": "",
-        "next_run": "",
+        "created_at": now,
     }
-    eid = body.get("id", "")
-    if eid:
-        for i, it in enumerate(items):
-            if it.get("id") == eid:
-                item["id"] = eid
-                item["history"] = it.get("history", [])
-                item["created_at"] = it.get("created_at", now)
-                items[i] = item
-                break
-        else:
-            eid = ""
-    if not eid:
-        item["id"] = f"auto_{int(time.time())}"
-        items.append(item)
-    meta_set("naixi_automations", json.dumps(items, ensure_ascii=False))
+    automation_save(item)
     return web.json_response({"ok": True, "id": item["id"]})
 
 
 async def api_automations_toggle(request):
     """启用/暂停自动化"""
+    from desktop_core.storage import automation_toggle
     body = await request.json()
-    raw = meta_get("naixi_automations")
-    items = json.loads(raw) if raw else []
-    for item in items:
-        if item.get("id") == body.get("id"):
-            item["status"] = body.get("status", "paused")
-            break
-    meta_set("naixi_automations", json.dumps(items, ensure_ascii=False))
+    automation_toggle(body.get("id", ""))
     return web.json_response({"ok": True})
 
 
 async def api_automations_delete(request):
     """删除自动化"""
+    from desktop_core.storage import automation_delete
     body = await request.json()
-    raw = meta_get("naixi_automations")
-    items = json.loads(raw) if raw else []
-    items = [i for i in items if i.get("id") != body.get("id")]
-    meta_set("naixi_automations", json.dumps(items, ensure_ascii=False))
+    automation_delete(body.get("id", ""))
     return web.json_response({"ok": True})
 
 
 async def api_automations_run(request):
     """立即执行自动化"""
-    from desktop_core.storage import meta_get, meta_set
-    import time
+    from desktop_core.storage import automation_get, automation_add_run
+    import time, aiohttp
     body = await request.json()
-    raw = meta_get("naixi_automations")
-    items = json.loads(raw) if raw else []
-    for item in items:
-        if item.get("id") == body.get("id"):
-            import aiohttp
-            now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time()))
-            prompt = item.get("prompt", "")
-            result = f"已执行: {item.get('name', '')}"
-            # 尝试调 LLM
-            if prompt:
-                try:
-                    raw_cfg = meta_get("desktop_config")
-                    cfg = json.loads(raw_cfg) if raw_cfg else {}
-                    from desktop_core.storage import decrypt_config
-                    decrypt_config(cfg)
-                    providers = cfg.get("api_providers", {})
-                    for pid, pcfg in providers.items():
-                        if pcfg.get("type", "chat") == "chat" and pcfg.get("api_key") and pcfg.get("api_url"):
-                            headers = {"Authorization": f"Bearer {pcfg['api_key']}", "Content-Type": "application/json"}
-                            payload = {"model": pcfg.get("model", "default"), "messages": [{"role": "user", "content": prompt}], "max_tokens": 1024}
-                            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as sess:
-                                async with sess.post(pcfg["api_url"].rstrip("/") + "/chat/completions", headers=headers, json=payload) as resp:
-                                    if resp.status == 200:
-                                        data = await resp.json()
-                                        reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                                        if reply:
-                                            result = f"手动执行: {reply[:200]}"
-                            break
-                except Exception as e:
-                    log.warning(f"手动执行 LLM 失败: {e}")
-            rec = {"time": now_str, "status": "success", "result": result[:200]}
-            if "history" not in item: item["history"] = []
-            item["history"].append(rec)
-            item["last_run"] = now_str
-            meta_set("naixi_automations", json.dumps(items, ensure_ascii=False))
-            return web.json_response({"ok": True, "result": result})
-    return web.json_response({"error": "未找到该自动化"}, status=404)
+    auto = automation_get(body.get("id", ""))
+    if not auto:
+        return web.json_response({"error": "未找到该自动化"}, status=404)
+
+    prompt = auto.get("prompt", "")
+    result = f"已执行: {auto.get('name', '')}"
+    reply = ""
+    model_used = ""
+    if prompt:
+        try:
+            from desktop_core.storage import meta_get, decrypt_config
+            raw_cfg = meta_get("desktop_config")
+            cfg = json.loads(raw_cfg) if raw_cfg else {}
+            decrypt_config(cfg)
+            providers = cfg.get("api_providers", {})
+            model_name = auto.get("model", "")
+            for pid, pcfg in providers.items():
+                if model_name and pcfg.get("model") == model_name:
+                    api_key, api_url = pcfg.get("api_key", ""), pcfg.get("api_url", "")
+                    model_used = pcfg.get("model", "")
+                    break
+                elif pcfg.get("type", "chat") == "chat" and pcfg.get("api_key") and pcfg.get("api_url"):
+                    api_key, api_url = pcfg.get("api_key", ""), pcfg.get("api_url", "")
+                    model_used = pcfg.get("model", "")
+                    break
+            if api_key and api_url:
+                headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+                payload = {"model": model_used or "default", "messages": [{"role": "user", "content": prompt}], "max_tokens": 1024}
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as sess:
+                    async with sess.post(api_url.rstrip("/") + "/chat/completions", headers=headers, json=payload) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                            result = f"手动执行: {reply[:200]}"
+        except Exception as e:
+            log.warning(f"手动执行 LLM 失败: {e}")
+
+    automation_add_run(auto["id"], "success", prompt=prompt, reply=reply, model_used=model_used)
+    return web.json_response({"ok": True, "result": result})
 
 
 # ── 路由注册 ──

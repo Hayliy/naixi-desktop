@@ -204,7 +204,36 @@ def init_tables():
                 dsl TEXT DEFAULT '',
                 published_at TEXT DEFAULT (datetime('now'))
             );
+            DROP TABLE IF EXISTS automations;
+            DROP TABLE IF EXISTS automation_runs;
+            CREATE TABLE IF NOT EXISTS naixi_automations (
+                id TEXT PRIMARY KEY,
+                name TEXT DEFAULT '',
+                prompt TEXT DEFAULT '',
+                schedule_type TEXT DEFAULT 'once',
+                rrule TEXT DEFAULT '',
+                scheduled_at TEXT DEFAULT '',
+                status TEXT DEFAULT 'active',
+                model TEXT DEFAULT '',
+                last_run TEXT DEFAULT '',
+                valid_from TEXT DEFAULT '',
+                valid_until TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS naixi_automation_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                automation_id TEXT NOT NULL,
+                run_time TEXT DEFAULT (datetime('now')),
+                status TEXT DEFAULT 'running',
+                prompt TEXT DEFAULT '',
+                reply TEXT DEFAULT '',
+                error TEXT DEFAULT '',
+                model_used TEXT DEFAULT ''
+            );
         """)
+        # 迁移旧 JSON 数据到新表
+        _migrate_naixi_automations()
         conn.commit()
     finally:
         conn.close()
@@ -409,5 +438,161 @@ def conv_delete(conv_key: str):
         conn.execute("DELETE FROM conv_messages WHERE conv_key=?", (conv_key,))
         conn.execute("DELETE FROM convs WHERE key=?", (conv_key,))
         conn.commit()
+    finally:
+        conn.close()
+
+
+# ── 自动化 ──
+
+def _migrate_naixi_automations():
+    """从 JSON blob 迁移到 naixi_automations 表（幂等，只执行一次）"""
+    raw = meta_get("naixi_automations")
+    if not raw:
+        return
+    conn = _get_conn()
+    try:
+        existing = conn.execute("SELECT COUNT(*) AS c FROM naixi_automations").fetchone()["c"]
+        if existing > 0:
+            return  # 已迁移
+        items = json.loads(raw)
+        for item in items:
+            conn.execute(
+                """INSERT OR REPLACE INTO naixi_automations 
+                   (id, name, prompt, schedule_type, rrule, scheduled_at, status, model, last_run, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (item.get("id", ""), item.get("name", ""), item.get("prompt", ""),
+                 item.get("schedule_type", "once"), item.get("rrule", ""),
+                 item.get("scheduled_at", ""), item.get("status", "active"),
+                 item.get("model", ""), item.get("last_run", ""),
+                 item.get("created_at", ""))
+            )
+            # 迁移历史记录
+            for h in item.get("history", []):
+                conn.execute(
+                    "INSERT INTO naixi_automation_runs (automation_id, run_time, status, reply, model_used) VALUES (?, ?, ?, ?, ?)",
+                    (item.get("id", ""), h.get("time", ""), h.get("status", "success"), h.get("result", ""), "")
+                )
+        conn.commit()
+        log.info(f"迁移 {len(items)} 条自动化任务到 SQLite")
+    finally:
+        conn.close()
+
+
+def automation_list() -> list[dict]:
+    """获取所有自动化任务"""
+    conn = _get_conn()
+    try:
+        rows = conn.execute("SELECT * FROM naixi_automations ORDER BY created_at DESC").fetchall()
+        result = []
+        for r in rows:
+            a = dict(r)
+            # 获取执行记录
+            runs = conn.execute(
+                "SELECT * FROM naixi_automation_runs WHERE automation_id=? ORDER BY id DESC",
+                (a["id"],)
+            ).fetchall()
+            a["history"] = [{"time": rr["run_time"], "status": rr["status"], "result": (rr["reply"] or rr["error"] or "")} for rr in runs]
+            result.append(a)
+        return result
+    finally:
+        conn.close()
+
+
+def automation_save(item: dict):
+    """保存/更新自动化任务"""
+    conn = _get_conn()
+    try:
+        conn.execute(
+            """INSERT OR REPLACE INTO naixi_automations 
+               (id, name, prompt, schedule_type, rrule, scheduled_at, status, model, last_run, valid_from, valid_until, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
+            (item.get("id", ""), item.get("name", ""), item.get("prompt", ""),
+             item.get("schedule_type", "once"), item.get("rrule", ""),
+             item.get("scheduled_at", ""), item.get("status", "active"),
+             item.get("model", ""), item.get("last_run", ""),
+             item.get("valid_from", ""), item.get("valid_until", ""))
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def automation_toggle(id: str):
+    """切换启用/暂停"""
+    conn = _get_conn()
+    try:
+        row = conn.execute("SELECT status FROM naixi_automations WHERE id=?", (id,)).fetchone()
+        if not row:
+            return
+        new_status = "paused" if row["status"] == "active" else "active"
+        conn.execute("UPDATE naixi_automations SET status=?, updated_at=datetime('now') WHERE id=?", (new_status, id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def automation_delete(id: str):
+    """删除自动化及执行记录"""
+    conn = _get_conn()
+    try:
+        conn.execute("DELETE FROM naixi_automation_runs WHERE automation_id=?", (id,))
+        conn.execute("DELETE FROM naixi_automations WHERE id=?", (id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def automation_add_run(auto_id: str, status: str, prompt: str = "", reply: str = "", error: str = "", model_used: str = ""):
+    """记录自动化执行"""
+    conn = _get_conn()
+    try:
+        conn.execute(
+            "INSERT INTO naixi_automation_runs (automation_id, run_time, status, prompt, reply, error, model_used) VALUES (?, datetime('now'), ?, ?, ?, ?, ?)",
+            (auto_id, status, prompt, reply, error, model_used)
+        )
+        conn.execute("UPDATE naixi_automations SET last_run=datetime('now'), updated_at=datetime('now') WHERE id=?", (auto_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def automation_get(id: str) -> dict | None:
+    """获取单个自动化"""
+    conn = _get_conn()
+    try:
+        row = conn.execute("SELECT * FROM naixi_automations WHERE id=?", (id,)).fetchone()
+        if not row:
+            return None
+        a = dict(row)
+        runs = conn.execute(
+            "SELECT * FROM naixi_automation_runs WHERE automation_id=? ORDER BY id DESC",
+            (a["id"],)
+        ).fetchall()
+        a["history"] = [{"time": rr["run_time"], "status": rr["status"], "result": (rr["reply"] or rr["error"] or "")} for rr in runs]
+        return a
+    finally:
+        conn.close()
+
+
+def automation_get_active() -> list[dict]:
+    """获取所有激活的自动化（含有效期检查）"""
+    import time
+    now = time.strftime("%Y-%m-%d %H:%M")
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM naixi_automations WHERE status='active' ORDER BY created_at"
+        ).fetchall()
+        result = []
+        for r in rows:
+            a = dict(r)
+            # 有效期检查
+            vf, vu = a.get("valid_from", ""), a.get("valid_until", "")
+            if vf and vf > now:
+                continue
+            if vu and vu < now:
+                continue
+            result.append(a)
+        return result
     finally:
         conn.close()

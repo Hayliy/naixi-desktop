@@ -115,9 +115,11 @@ async def main():
         if node_bin_dir not in os.environ.get("PATH", ""):
             os.environ["PATH"] = node_bin_dir + os.pathsep + os.environ.get("PATH", "")
         from desktop_core.tools import connect_mcp_servers
-        mcp_count = await connect_mcp_servers()
+        mcp_count = await asyncio.wait_for(connect_mcp_servers(), timeout=8)
         if mcp_count > 0:
             log.info(f"MCP: {mcp_count} 个服务器已自动连接")
+    except asyncio.TimeoutError:
+        log.warning("MCP 自动连接超时（跳过）")
     except Exception as e:
         log.warning(f"MCP 自动连接失败: {e}")
 
@@ -145,17 +147,36 @@ async def main():
 
     # ── 自动化调度器 ──
     async def automation_scheduler():
-        """每分钟检查并执行到期的自动化任务"""
-        from desktop_core.storage import meta_get, meta_set, decrypt_config
-        import json, aiohttp, re
+        """精确到秒的自动化调度器，执行保护 + 有效期检查 + 可配置模型"""
+        from desktop_core.storage import (
+            automation_get_active, automation_add_run, automation_save, decrypt_config, meta_get
+        )
+        import aiohttp, re
 
-        async def _call_llm(prompt: str, api_key: str, api_url: str, model: str) -> str:
-            """调 LLM 并返回回复"""
+        # 执行中任务保护（防止重复触发）
+        _running: set[str] = set()
+
+        async def _call_llm(prompt: str, model_cfg: dict | None) -> str:
+            """调 LLM 并返回回复，支持指定模型"""
+            api_key = api_url = model_name = ""
+            if model_cfg:
+                api_key = model_cfg.get("api_key", "")
+                api_url = model_cfg.get("api_url", "")
+                model_name = model_cfg.get("model", "")
+            if not all([prompt, api_key, api_url]):
+                # 降级到默认 provider
+                raw = meta_get("desktop_config")
+                cfg = json.loads(raw) if raw else {}
+                decrypt_config(cfg)
+                for pid, pcfg in (cfg.get("api_providers") or {}).items():
+                    if pcfg.get("type", "chat") == "chat" and pcfg.get("api_key") and pcfg.get("api_url"):
+                        api_key, api_url, model_name = pcfg["api_key"], pcfg["api_url"], pcfg.get("model", "")
+                        break
             if not all([prompt, api_key, api_url]):
                 return ""
             try:
                 headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-                payload = {"model": model or "default", "messages": [{"role": "user", "content": prompt}], "max_tokens": 1024}
+                payload = {"model": model_name or "default", "messages": [{"role": "user", "content": prompt}], "max_tokens": 1024}
                 async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as sess:
                     async with sess.post(api_url.rstrip("/") + "/chat/completions", headers=headers, json=payload) as resp:
                         if resp.status == 200:
@@ -164,8 +185,20 @@ async def main():
             except: pass
             return ""
 
+        def _find_provider_for_model(model_name: str) -> dict | None:
+            """根据模型名查找对应的 provider 配置"""
+            raw = meta_get("desktop_config")
+            if not raw:
+                return None
+            cfg = json.loads(raw)
+            decrypt_config(cfg)
+            for pid, pcfg in (cfg.get("api_providers") or {}).items():
+                if pcfg.get("model") == model_name or pcfg.get("type", "chat") == "chat":
+                    if pcfg.get("api_key") and pcfg.get("api_url"):
+                        return pcfg
+            return None
+
         def _save_to_conv(name: str, prompt: str, reply: str):
-            """将自动化执行结果写入对话，用户可以在聊天记录中看到"""
             try:
                 from desktop_core.storage import conv_save_message_sync
                 key = f"auto:{''.join(c if c.isalnum() or c in ' _-' else '_' for c in name)[:30]}"
@@ -174,91 +207,84 @@ async def main():
             except Exception as e:
                 log.warning(f"写入自动化对话失败: {e}")
 
-        def _is_recurring_due(item: dict, now_str: str) -> bool:
-            """检查重复任务是否到执行时间"""
-            rrule = item.get("rrule", "FREQ=DAILY")
-            last_run = item.get("last_run", "")
-            parts = {k: v for kv in rrule.split(";") for k, v in [kv.split("=")] if "=" in kv}
-            freq = parts.get("FREQ", "DAILY")
-            interval = int(parts.get("INTERVAL", "1"))
-            # 解析 last_run
-            if not last_run:
-                return True  # 从未执行过，立即执行
+        async def _execute_one(auto: dict):
+            """执行单个自动化任务"""
+            aid = auto["id"]
+            if aid in _running:
+                log.info(f"自动化跳过: {auto['name']} 正在执行中")
+                return
+            _running.add(aid)
             try:
-                last = time.mktime(time.strptime(last_run, "%Y-%m-%d %H:%M:%S"))
-                now = time.time()
-                diff_hours = (now - last) / 3600
-                if freq == "HOURLY":
-                    return diff_hours >= interval
-                elif freq == "DAILY":
-                    # 检查工作日逻辑
-                    byday = parts.get("BYDAY", "")
-                    if byday:
-                        wd = time.localtime(now).tm_wday
-                        wd_map = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
-                        allowed = [wd_map.get(d.strip(), -1) for d in byday.split(",")]
-                        if wd not in allowed:
-                            return False
-                    return diff_hours >= 24 * interval
-                elif freq == "WEEKLY":
-                    return diff_hours >= 168 * interval
-                return diff_hours >= 24
-            except:
-                return True
+                prompt = auto.get("prompt", "")
+                model_name = auto.get("model", "")
+                provider = _find_provider_for_model(model_name) if model_name else None
+                reply = await _call_llm(prompt, provider)
+                automation_add_run(aid, "success", prompt=prompt, reply=reply or "", model_used=model_name or "default")
+                _save_to_conv(auto.get("name", "自动化"), prompt, reply)
+                log.info(f"自动化执行: {auto['name']} ✅")
+                # 一次性任务执行后标记过期
+                if auto.get("schedule_type") == "once":
+                    auto["status"] = "expired"
+                    automation_save(auto)
+            except Exception as e:
+                automation_add_run(aid, "failed", prompt=auto.get("prompt", ""), error=str(e))
+                log.warning(f"自动化执行失败: {auto['name']}: {e}")
+            finally:
+                _running.discard(aid)
 
         while True:
             try:
-                raw = meta_get("naixi_automations")
-                items = json.loads(raw) if raw else []
-                cfg_raw = meta_get("desktop_config")
-                cfg = json.loads(cfg_raw) if cfg_raw else {}
-                decrypt_config(cfg)
-                providers = cfg.get("api_providers", {})
-                api_key = api_url = model = ""
-                for pid, pcfg in providers.items():
-                    if pcfg.get("type", "chat") == "chat" and pcfg.get("api_key") and pcfg.get("api_url"):
-                        api_key, api_url, model = pcfg["api_key"], pcfg["api_url"], pcfg.get("model", "")
-                        break
+                # 计算下次需要执行的时间（精确调度）
+                now_ts = time.time()
+                next_due = 60.0  # 默认 60 秒兜底
 
-                now_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(time.time()))
-                now_sec = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time()))
-                changed = False
+                active = automation_get_active()
+                for auto in active:
+                    sched_type = auto.get("schedule_type", "once")
+                    if sched_type == "once":
+                        scheduled = auto.get("scheduled_at", "").replace("T", " ")
+                        if scheduled:
+                            try:
+                                t = time.mktime(time.strptime(scheduled, "%Y-%m-%d %H:%M"))
+                                if t <= now_ts + 1:
+                                    # 到点了，立即执行
+                                    asyncio.create_task(_execute_one(auto))
+                                    next_due = min(next_due, 10.0)
+                                else:
+                                    next_due = min(next_due, max(1.0, t - now_ts))
+                            except:
+                                pass
+                    elif sched_type == "recurring":
+                        rrule = auto.get("rrule", "FREQ=DAILY")
+                        parts = {k: v for kv in rrule.split(";") for k, v in [kv.split("=")] if "=" in kv}
+                        freq = parts.get("FREQ", "DAILY")
+                        interval = int(parts.get("INTERVAL", "1"))
+                        last_run = auto.get("last_run", "")
+                        if not last_run:
+                            # 从未执行过，立即执行
+                            asyncio.create_task(_execute_one(auto))
+                            next_due = min(next_due, 10.0)
+                            continue
+                        try:
+                            last_ts = time.mktime(time.strptime(last_run, "%Y-%m-%d %H:%M:%S"))
+                            diff = now_ts - last_ts
+                            period = {"HOURLY": 3600, "DAILY": 86400, "WEEKLY": 604800}.get(freq, 86400) * interval
+                            if diff >= period - 1:
+                                asyncio.create_task(_execute_one(auto))
+                                next_due = min(next_due, 10.0)
+                            else:
+                                next_due = min(next_due, max(1.0, period - diff))
+                        except:
+                            asyncio.create_task(_execute_one(auto))
+                            next_due = min(next_due, 10.0)
 
-                for item in items:
-                    if item.get("status") != "active":
-                        continue
-
-                    if item.get("schedule_type") == "once":
-                        scheduled = item.get("scheduled_at", "").replace("T", " ")
-                        last_result = (item.get("history") or [{}])[-1].get("result", "")
-                        already_done = f"已执行({scheduled.replace(' ', 'T')})" in last_result or f"已执行({scheduled})" in last_result
-                        if scheduled and scheduled <= now_str and not already_done:
-                            reply = await _call_llm(item.get("prompt", ""), api_key, api_url, model)
-                            result_text = f"已执行({scheduled})" + (f": {reply}" if reply else "")
-                            _save_to_conv(item.get("name", "自动化"), item.get("prompt", ""), reply)
-                            record = {"time": now_sec, "status": "success", "result": result_text}
-                            item.setdefault("history", []).append(record)
-                            item["last_run"] = now_sec
-                            item["status"] = "expired"
-                            changed = True
-                            log.info(f"自动化执行: {item['name']} (一次性)")
-
-                    elif item.get("schedule_type") == "recurring":
-                        if _is_recurring_due(item, now_str):
-                            reply = await _call_llm(item.get("prompt", ""), api_key, api_url, model)
-                            result_text = f"自动执行" + (f": {reply}" if reply else "")
-                            _save_to_conv(item.get("name", "自动化"), item.get("prompt", ""), reply)
-                            record = {"time": now_sec, "status": "success", "result": result_text}
-                            item.setdefault("history", []).append(record)
-                            item["last_run"] = now_sec
-                            changed = True
-                            log.info(f"自动化执行: {item['name']} (重复)")
-
-                if changed:
-                    meta_set("naixi_automations", json.dumps(items, ensure_ascii=False))
+                # 精确 sleep 到下次检查
+                await asyncio.sleep(min(next_due, 60.0))
             except Exception as e:
                 log.warning(f"自动化调度异常: {e}")
-            await asyncio.sleep(60)
+                await asyncio.sleep(30)
+
+    asyncio.create_task(automation_scheduler())
 
     asyncio.create_task(automation_scheduler())
 
