@@ -123,6 +123,22 @@ def get_fast_definitions():
     result.extend(get_discovered_definitions())
     return result
 
+
+def get_auto_definitions():
+    """自动化专用精简工具集（约 5 个），大幅减少 token 消耗"""
+    auto_tools = {"search_web", "current_datetime", "calculate", "generate_image", "web_fetch"}
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t["description"],
+                "parameters": t["parameters"],
+            }
+        }
+        for t in _registry.values() if t["name"] in auto_tools
+    ]
+
 async def execute(name, args, context=None):
     """执行工具，返回结果文本"""
     tool = _registry.get(name)

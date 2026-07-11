@@ -2178,7 +2178,7 @@ async def api_automations_run(request):
     if prompt:
         try:
             from desktop_core.storage import meta_get, decrypt_config
-            from desktop_core.tools import get_fast_definitions, execute
+            from desktop_core.tools import get_auto_definitions, execute
             raw_cfg = meta_get("desktop_config")
             cfg = json.loads(raw_cfg) if raw_cfg else {}
             decrypt_config(cfg)
@@ -2198,7 +2198,7 @@ async def api_automations_run(request):
                 if not base_url.endswith("/chat/completions"):
                     base_url += "/chat/completions"
                 # Agent 循环
-                tools = get_fast_definitions()
+                tools = get_auto_definitions()
                 messages = [{"role": "user", "content": prompt}]
                 headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
                 for _ in range(5):

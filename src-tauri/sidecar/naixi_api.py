@@ -187,8 +187,8 @@ async def main():
                 return ""
             try:
                 # 加载工具定义
-                from desktop_core.tools import get_fast_definitions, execute
-                tools = get_fast_definitions()
+                from desktop_core.tools import get_auto_definitions, execute
+                tools = get_auto_definitions()
                 messages = [{"role": "user", "content": prompt}]
                 headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
                 max_rounds = 5
