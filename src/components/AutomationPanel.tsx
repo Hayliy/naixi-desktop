@@ -144,10 +144,8 @@ export default function AutomationPanel({ onClose, onNavigate }: { onClose: () =
         notify("执行成功", "success");
         // 刷新自动化列表
         await load();
-        // 通知 Chat 组件刷新对话列表并跳转
-        if (res.conv_key) {
-          window.dispatchEvent(new CustomEvent("navigate-to-conv", { detail: { key: res.conv_key } }));
-        }
+        // 使用 onNavigate 跳转到 auto 对话
+        if (res.conv_key && onNavigate) onNavigate(res.conv_key);
       }
       else notify(res?.error || "执行失败", "error");
     } catch { notify("执行失败", "error"); }
