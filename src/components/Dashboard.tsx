@@ -709,6 +709,19 @@ function SchedulerPage() {
   });
 
   const triggerLabel = (a: any) => {
+    // 工作流型
+    if (a.workflow_id) return `工作流`;
+    // Prompt 型
+    if (a.prompt) {
+      if (a.schedule_type === "once") return `一次 (${a.scheduled_at?.slice(5, 16) || "?"})`;
+      if (a.rrule) {
+        if (a.rrule.includes("DAILY")) return `每天`;
+        if (a.rrule.includes("WEEKLY")) return `每周`;
+        if (a.rrule.includes("HOURLY")) return `每小时`;
+        return `定时`;
+      }
+      return `Prompt`;
+    }
     if (a.trigger_type === "schedule") return `定时 (${safeParse(a.config).cron || "?"})`;
     if (a.trigger_type === "webhook") return `Webhook`;
     return "手动";
@@ -849,6 +862,7 @@ function SchedulerPage() {
               <div className="min-w-0">
                 <span className="text-[12px] font-medium text-sakura-600 truncate block cursor-pointer hover:text-sakura-700" onClick={() => openExecModal(a)} title="查看执行记录">{a.name}</span>
                 {a.description && <span className="text-[10px] text-sakura-400 truncate block mt-0.5">{a.description}</span>}
+                {!a.description && a.prompt && <span className="text-[10px] text-sakura-300 truncate block mt-0.5">Prompt: {a.prompt.slice(0, 60)}</span>}
               </div>
               <div className="flex items-center gap-1.5 text-[11px]">
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${a.trigger_type === "schedule" ? "bg-green-400" : a.trigger_type === "webhook" ? "bg-blue-400" : "bg-gray-300"}`} />
