@@ -18,6 +18,7 @@ import {
   CheckCircle, AlertTriangle, Users, Wifi, WifiOff,
   HardDrive, Shield, Film, Layers, GitBranch,
   Cpu as CpuIcon, Zap, Network, Lock,
+  Plus, Check, Repeat, Play, Pause, ChevronDown, ChevronUp, Edit3, Trash2, CircleAlert,
 } from "lucide-react";
 
 const PAGE_TITLES: Record<string, string> = {
@@ -567,6 +568,8 @@ function SchedulerPage() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [showCreate, setShowCreate] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [formName, setFormName] = useState("");
   const [formDesc, setFormDesc] = useState("");
   const [formWorkflow, setFormWorkflow] = useState("");
@@ -616,6 +619,7 @@ function SchedulerPage() {
         trigger_type: formTrigger, config,
       });
       setShowCreate(false);
+      setEditId(null);
       setFormName(""); setFormDesc(""); setFormWorkflow(""); setFormConfig("0 9 * * *");
       refetch();
     } catch {}
@@ -648,172 +652,188 @@ function SchedulerPage() {
 
   if (loading) return (
     <div className="flex items-center justify-center h-64">
-      <p className="text-xs text-gray-400">加载中...</p>
+      <p className="text-xs text-sakura-400">加载中...</p>
     </div>
   );
 
+  const triggerLabel = (a: any) => {
+    if (a.trigger_type === "schedule") return `定时 (${safeParse(a.config).cron || "?"})`;
+    if (a.trigger_type === "webhook") return `Webhook ${safeParse(a.config).method || "POST"}`;
+    return "手动";
+  };
+
+  const closeCreate = () => { setShowCreate(false); setEditId(null); };
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
+      {/* 统计卡片 */}
       <div className="grid grid-cols-4 gap-3">
-        <div className="bg-white border border-gray-200 rounded-xl px-4 py-3">
-          <p className="text-[11px] text-gray-400">工作流</p>
-          <p className="text-xl font-semibold text-gray-700 mt-1">{workflows.length}</p>
-        </div>
-        <div className="bg-white border border-gray-200 rounded-xl px-4 py-3">
-          <p className="text-[11px] text-gray-400">定时任务</p>
-          <p className="text-xl font-semibold text-gray-700 mt-1">{automations.filter((a:any) => a.trigger_type === "schedule").length}</p>
-        </div>
-        <div className="bg-white border border-gray-200 rounded-xl px-4 py-3">
-          <p className="text-[11px] text-gray-400">Webhook</p>
-          <p className="text-xl font-semibold text-gray-700 mt-1">{automations.filter((a:any) => a.trigger_type === "webhook").length}</p>
-        </div>
-        <div className="bg-white border border-gray-200 rounded-xl px-4 py-3">
-          <p className="text-[11px] text-gray-400">今日执行</p>
-          <p className="text-xl font-semibold text-gray-700 mt-1">{todayRuns.length}</p>
-        </div>
+        {[
+          { label: "工作流", value: workflows.length, color: "text-sakura-500" },
+          { label: "定时任务", value: automations.filter((a:any) => a.trigger_type === "schedule").length, color: "text-sakura-500" },
+          { label: "Webhook", value: automations.filter((a:any) => a.trigger_type === "webhook").length, color: "text-sakura-500" },
+          { label: "今日执行", value: todayRuns.length, color: "text-sakura-500" },
+        ].map((card, i) => (
+          <div key={i} className="bg-white border border-sakura-100 rounded-xl px-4 py-3">
+            <p className="text-[11px] text-sakura-400">{card.label}</p>
+            <p className={`text-xl font-semibold mt-1 ${card.color}`}>{card.value}</p>
+          </div>
+        ))}
       </div>
 
-      <div className="flex items-center gap-3">
+      {/* 搜索/筛选/新建 */}
+      <div className="flex items-center gap-2">
         <input value={search} onChange={e => setSearch(e.target.value)}
-          className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-xs outline-none focus:border-sakura-300"
+          className="flex-1 px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-sakura-50 text-sakura-600 placeholder:text-sakura-300"
           placeholder="搜索自动化..." />
         <select value={filter} onChange={e => setFilter(e.target.value)}
-          className="px-3 py-2 border border-gray-200 rounded-lg text-xs outline-none focus:border-sakura-300">
+          className="px-2 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-white text-sakura-500">
           <option value="all">全部</option>
           <option value="schedule">定时</option>
           <option value="webhook">Webhook</option>
           <option value="manual">手动</option>
         </select>
-        <button onClick={() => setShowCreate(true)}
-          className="px-4 py-2 bg-sakura-100 text-sakura-600 rounded-lg text-xs hover:bg-sakura-200 transition-colors">
-          + 新建
-        </button>
-      </div>
-
-      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-        <div className="grid grid-cols-[2fr_1.2fr_1fr_1fr_100px] gap-3 px-4 py-2.5 border-b border-gray-100 text-[11px] text-gray-400 font-medium">
-          <span>名称</span><span>触发方式</span><span>状态</span><span>上次运行</span><span />
-        </div>
-        {filtered.length === 0 && (
-          <div className="px-4 py-10 text-center text-xs text-gray-400">
-            {search ? "没有匹配的自动化" : "还没有自动任务，点击右上角新建"}
-          </div>
+        {!showCreate && (
+          <button onClick={() => setShowCreate(true)}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+            <Plus size={10} /> 新建
+          </button>
         )}
-        {filtered.map((a: any) => (
-          <div key={a.id} className="grid grid-cols-[2fr_1.2fr_1fr_1fr_100px] gap-3 px-4 py-3 border-b border-gray-100 last:border-b-0 items-center hover:bg-gray-50 transition-colors">
-            <div>
-              <p className="text-sm font-medium text-gray-700 truncate">{a.name}</p>
-              <p className="text-[11px] text-gray-400 truncate">{a.description}</p>
-            </div>
-            <span className="flex items-center gap-1.5 text-xs text-gray-600">
-              <span className={`w-1.5 h-1.5 rounded-full ${a.trigger_type === "schedule" ? "bg-green-400" : a.trigger_type === "webhook" ? "bg-blue-400" : "bg-gray-400"}`} />
-              {a.trigger_type === "schedule"
-                ? `定时 (${safeParse(a.config).cron || "?"})`
-                : a.trigger_type === "webhook"
-                  ? `Webhook ${safeParse(a.config).method || "POST"}`
-                  : "手动"}
-            </span>
-            <span>
-              <button onClick={() => handleToggle(a)}
-                className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors ${
-                  a.status === "active"
-                    ? "bg-green-50 text-green-600 hover:bg-green-100"
-                    : "bg-gray-100 text-gray-500 hover:bg-gray-200"
-                }`}>
-                {a.status === "active" ? "运行中" : "已暂停"}
-              </button>
-            </span>
-            <span className="text-[11px] text-gray-400">
-              {a.last_result === "success" ? "成功" : a.last_result === "failed" ? "失败" : "--"}
-              {a.last_run ? ` ${a.last_run.slice(5, 16)}` : ""}
-            </span>
-            <div className="flex items-center gap-1">
-              <button onClick={() => handleRun(a.id)}
-                className="px-2.5 py-1 rounded text-[11px] bg-sakura-50 text-sakura-600 hover:bg-sakura-100 transition-colors">
-                执行
-              </button>
-              <button onClick={() => handleDelete(a.id)}
-                className="px-2.5 py-1 rounded text-[11px] text-red-400 hover:bg-red-50 transition-colors">
-                删除
-              </button>
-            </div>
-          </div>
-        ))}
       </div>
 
-      <div>
-        <p className="text-sm font-semibold text-gray-700 mb-2">执行历史</p>
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          <div className="grid grid-cols-[1.5fr_1fr_1fr_1.2fr] gap-3 px-4 py-2.5 border-b border-gray-100 text-[11px] text-gray-400 font-medium">
-            <span>工作流</span><span>触发</span><span>状态</span><span>时间</span>
-          </div>
-          {runs.length === 0 && (
-            <div className="px-4 py-10 text-center text-xs text-gray-400">暂无执行记录</div>
-          )}
-          {runs.slice(0, 15).map((r: any) => (
-            <div key={r.id} className="grid grid-cols-[1.5fr_1fr_1fr_1.2fr] gap-3 px-4 py-2.5 border-b border-gray-100 last:border-b-0 text-xs text-gray-600 hover:bg-gray-50 transition-colors">
-              <span className="truncate">{r.wf_name || r.workflow_id?.slice(0, 8)}</span>
-              <span className="text-gray-400">{r.trigger || "manual"}</span>
-              <span className={r.status === "success" ? "text-green-600" : r.status === "failed" ? "text-red-500" : "text-amber-500"}>
-                {r.status === "success" ? "成功" : r.status === "failed" ? "失败" : r.status === "running" ? "执行中" : r.status}
-              </span>
-              <span className="text-gray-400">{r.started_at?.slice(5, 16) || r.created_at?.slice(5, 16) || "--"}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
+      {/* 新建表单（内联） */}
       {showCreate && (
-        <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50" onClick={() => setShowCreate(false)}>
-          <div className="bg-white rounded-xl shadow-xl w-[480px] p-6" onClick={e => e.stopPropagation()}>
-            <p className="text-sm font-semibold text-gray-700 mb-4">新建自动化</p>
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">名称</label>
-                <input value={formName} onChange={e => setFormName(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs outline-none focus:border-sakura-300" />
-              </div>
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">描述</label>
-                <input value={formDesc} onChange={e => setFormDesc(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs outline-none focus:border-sakura-300" />
-              </div>
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">关联工作流</label>
-                <select value={formWorkflow} onChange={e => setFormWorkflow(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs outline-none focus:border-sakura-300">
-                  <option value="">选择工作流...</option>
-                  {workflows.map((w: any) => (
-                    <option key={w.id} value={w.id}>{w.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">触发方式</label>
-                <select value={formTrigger} onChange={e => setFormTrigger(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs outline-none focus:border-sakura-300">
-                  <option value="schedule">定时 (Cron)</option>
-                  <option value="webhook">Webhook</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">
-                  {formTrigger === "schedule" ? "Cron 表达式" : "Webhook 端点"}
-                </label>
-                <input value={formConfig} onChange={e => setFormConfig(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs font-mono outline-none focus:border-sakura-300"
-                  placeholder={formTrigger === "schedule" ? "0 9 * * *" : "/webhook/my-trigger"} />
-              </div>
+        <div className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs">
+          <p className="text-[10px] font-semibold text-sakura-500">新建自动化</p>
+          <div>
+            <p className="text-[9px] text-sakura-400 mb-0.5">名称</p>
+            <input value={formName} onChange={e => setFormName(e.target.value)}
+              className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px]" placeholder="自动化名称" />
+          </div>
+          <div>
+            <p className="text-[9px] text-sakura-400 mb-0.5">描述</p>
+            <input value={formDesc} onChange={e => setFormDesc(e.target.value)}
+              className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px]" placeholder="描述..." />
+          </div>
+          <div>
+            <p className="text-[9px] text-sakura-400 mb-0.5">关联工作流</p>
+            <select value={formWorkflow} onChange={e => setFormWorkflow(e.target.value)}
+              className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px]">
+              <option value="">选择工作流...</option>
+              {workflows.map((w: any) => (
+                <option key={w.id} value={w.id}>{w.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <p className="text-[9px] text-sakura-400 mb-0.5">触发方式</p>
+            <div className="flex gap-1">
+              <button onClick={() => setFormTrigger("schedule")}
+                className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] border ${formTrigger === "schedule" ? "bg-sakura-100 border-sakura-300 text-sakura-600" : "bg-white border-sakura-100 text-sakura-400"}`}>
+                <Repeat size={10} /> 定时
+              </button>
+              <button onClick={() => setFormTrigger("webhook")}
+                className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] border ${formTrigger === "webhook" ? "bg-sakura-100 border-sakura-300 text-sakura-600" : "bg-white border-sakura-100 text-sakura-400"}`}>
+                <Zap size={10} /> Webhook
+              </button>
             </div>
-            <div className="flex justify-end gap-2 mt-5">
-              <button onClick={() => setShowCreate(false)}
-                className="px-4 py-2 border border-gray-200 rounded-lg text-xs text-gray-500 hover:bg-gray-50 transition-colors">取消</button>
-              <button onClick={handleCreate}
-                className="px-4 py-2 bg-sakura-100 text-sakura-600 rounded-lg text-xs hover:bg-sakura-200 transition-colors">创建</button>
-            </div>
+          </div>
+          <div>
+            <p className="text-[9px] text-sakura-400 mb-0.5">{formTrigger === "schedule" ? "Cron 表达式" : "Webhook 端点"}</p>
+            <input value={formConfig} onChange={e => setFormConfig(e.target.value)}
+              className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] font-mono"
+              placeholder={formTrigger === "schedule" ? "0 9 * * *" : "/webhook/xxx"} />
+          </div>
+          <div className="flex items-center gap-1 pt-0.5">
+            <button onClick={closeCreate} className="px-2.5 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
+            <button onClick={handleCreate} disabled={!formName || !formWorkflow}
+              className="flex items-center gap-1 px-3 py-1 rounded text-[10px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
+              <Check size={10} /> 创建
+            </button>
           </div>
         </div>
       )}
+
+      {/* 自动化列表（卡片） */}
+      {filtered.length === 0 ? (
+        <div className="text-center py-8 text-sakura-300 text-xs">
+          {search ? "没有匹配的自动化" : "还没有自动任务，点击上方新建"}
+        </div>
+      ) : filtered.map((a: any) => (
+        <div key={a.id}>
+          {editId === a.id ? (
+            /* ═══ 编辑模式 ═══ */
+            <div className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs">
+              <p className="text-[10px] font-semibold text-sakura-500">编辑自动化</p>
+              <div>
+                <p className="text-[9px] text-sakura-400 mb-0.5">名称</p>
+                <input value={formName} onChange={e => setFormName(e.target.value)}
+                  className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px]" />
+              </div>
+              <div>
+                <p className="text-[9px] text-sakura-400 mb-0.5">状态</p>
+                <button onClick={() => handleToggle(a)}
+                  className={`px-2 py-1 rounded text-[10px] border ${a.status === "active" ? "bg-green-50 border-green-200 text-green-600" : "bg-sakura-100 border-sakura-100 text-sakura-400"}`}>
+                  {a.status === "active" ? "运行中" : "已暂停"}
+                </button>
+              </div>
+              <div className="flex items-center gap-1 pt-0.5">
+                <button onClick={() => setEditId(null)} className="px-2.5 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
+              </div>
+            </div>
+          ) : (
+            /* ═══ 展示模式 ═══ */
+            <div className="bg-sakura-50 border border-sakura-100 rounded-lg p-2.5 group">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0 space-y-0.5" onClick={() => setExpandedId(expandedId === a.id ? null : a.id)}>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-medium text-sakura-600 truncate">{a.name}</span>
+                    <span className={`text-[9px] px-1 py-0.5 rounded ${a.status === "active" ? "bg-green-100 text-green-600" : "bg-sakura-100 text-sakura-400"}`}>
+                      {a.status === "active" ? "运行中" : "已暂停"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[9px] text-sakura-400">
+                    <span className="flex items-center gap-0.5">
+                      <span className={`w-1.5 h-1.5 rounded-full ${a.trigger_type === "schedule" ? "bg-green-400" : a.trigger_type === "webhook" ? "bg-blue-400" : "bg-gray-400"}`} />
+                      {triggerLabel(a)}
+                    </span>
+                    <span>{a.description ? a.description.slice(0, 30) : "—"}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-0.5 shrink-0">
+                  <button onClick={() => handleRun(a.id)} className="p-1 rounded hover:bg-teal-50 text-sakura-300 hover:text-teal-500" title="立即执行"><Zap size={11} /></button>
+                  <button onClick={() => handleToggle(a)} className="p-1 rounded hover:bg-amber-50 text-sakura-300 hover:text-amber-500" title={a.status === "active" ? "暂停" : "启用"}>
+                    {a.status === "active" ? <Pause size={11} /> : <Play size={11} />}
+                  </button>
+                  <button onClick={() => setExpandedId(expandedId === a.id ? null : a.id)} className="p-1 rounded hover:bg-sakura-100 text-sakura-300 hover:text-sakura-500" title={expandedId === a.id ? "收起" : "展开执行记录"}>
+                    {expandedId === a.id ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                  </button>
+                  <button onClick={() => { setEditId(a.id); setShowCreate(false); }} className="p-1 rounded hover:bg-sakura-100 text-sakura-300 hover:text-sakura-500" title="编辑"><Edit3 size={11} /></button>
+                  <button onClick={() => handleDelete(a.id)} className="p-1 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500"><Trash2 size={11} /></button>
+                </div>
+              </div>
+            </div>
+          )}
+          {/* 执行历史（当前自动化的关联运行记录） */}
+          {expandedId === a.id && editId !== a.id && (
+            <div className="mx-2 mb-1 px-2.5 py-2 rounded bg-white border border-sakura-100 space-y-1">
+              <p className="text-[9px] text-sakura-400 font-medium">执行记录</p>
+              {runs.filter(r => r.workflow_id === a.workflow_id || r.wf_name === a.name).slice(0, 5).length === 0 ? (
+                <p className="text-[9px] text-sakura-300 py-1">暂无记录</p>
+              ) : runs.filter(r => r.workflow_id === a.workflow_id || r.wf_name === a.name).slice(0, 5).map((r: any) => (
+                <div key={r.id} className="flex items-start gap-1 text-[9px] text-sakura-500">
+                  {r.status === "success" ? <Check size={9} className="text-green-500 shrink-0 mt-0.5" /> : r.status === "failed" ? <CircleAlert size={9} className="text-red-400 shrink-0 mt-0.5" /> : <Clock size={9} className="text-amber-400 shrink-0 mt-0.5" />}
+                  <span className="shrink-0 font-mono">{r.started_at?.slice(5, 16) || r.created_at?.slice(5, 16) || "--"}</span>
+                  <span className="text-sakura-400">{r.wf_name || r.workflow_id?.slice(0, 8)}</span>
+                  <span className={r.status === "success" ? "text-green-600" : r.status === "failed" ? "text-red-500" : "text-amber-500"}>
+                    {r.status === "success" ? "成功" : r.status === "failed" ? "失败" : r.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
