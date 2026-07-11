@@ -641,7 +641,7 @@ function SchedulerPage() {
   const handleRun = useCallback(async (id: string, auto?: any) => {
     try {
       if (auto?.workflow_id) {
-        await apiPost<any>("/api/workflows/run", { id: auto.workflow_id });
+        await apiPost<any>("/api/workflows/run", { id: auto.workflow_id, input: { silent_mode: true } });
       } else {
         await apiPost<any>("/api/automations/run", { id });
       }

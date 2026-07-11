@@ -136,8 +136,13 @@ async def api_workflow_run(request):
         body = await request.json()
     except Exception:
         return web.json_response({"error": "无效的 JSON"}, status=400)
+    input_data = body.get("input", {})
+    if isinstance(input_data, dict):
+        silent = input_data.pop("silent_mode", False)
+    else:
+        silent = False
     wf = _get_workflow_api()
-    result = await wf["run"](body.get("id", ""), body.get("input", {}))
+    result = await wf["run"](body.get("id", ""), input_data or {}, silent_mode=silent)
     return web.json_response(result)
 
 async def api_workflow_runs(request):

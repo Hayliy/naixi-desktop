@@ -3121,12 +3121,23 @@ async def api_delete_workflow(wid: str) -> dict:
     return {"success": True}
 
 
-async def api_run_workflow(wid: str, input_data: dict = None) -> dict:
+async def api_run_workflow(wid: str, input_data: dict = None, silent_mode: bool = False) -> dict:
     wf = _get_workflow(wid)
     if not wf:
         return {"status": "error", "error": "工作流不存在"}
     
     nodes = json.loads(wf.get("nodes", "[]"))
+    edges = json.loads(wf.get("edges", "[]"))
+    
+    # 静默模式：自动跳过 human_input 节点
+    if silent_mode:
+        for node in nodes:
+            node_data = node.get("data", {})
+            if node_data.get("type") == "human-input":
+                config = node_data.get("config", {})
+                config["auto_confirm"] = True
+                config["auto_value"] = config.get("auto_value", "静默跳过")
+                node_data["config"] = config
     edges = json.loads(wf.get("edges", "[]"))
     
     run_id = uuid.uuid4().hex[:12]
