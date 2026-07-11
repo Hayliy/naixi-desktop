@@ -645,8 +645,10 @@ function SchedulerPage() {
       } else {
         await apiPost("/api/automations/run", { id });
       }
-      refetch();
-    } catch {}
+    } catch {
+      // 执行失败不阻塞
+    }
+    refetch();
   }, [refetch]);
 
   const handleToggle = useCallback(async (item: any) => {
@@ -715,7 +717,7 @@ function SchedulerPage() {
           <p className="text-sm font-semibold text-sakura-600">自动化</p>
           <p className="text-[10px] text-sakura-400 mt-0.5">定时执行任务，自动产出结果</p>
         </div>
-        <button onClick={() => setShowCreate(true)}
+        <button type="button" onClick={() => setShowCreate(true)}
           className="flex items-center gap-1 px-3.5 py-2 rounded-lg text-[11px] font-medium bg-sakura-500 text-white hover:bg-sakura-600 transition-colors shadow-sm">
           <Plus size={12} /> 创建
         </button>
