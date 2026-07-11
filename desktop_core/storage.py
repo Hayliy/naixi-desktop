@@ -510,13 +510,19 @@ def automation_save(item: dict):
     try:
         conn.execute(
             """INSERT OR REPLACE INTO naixi_automations 
-               (id, name, prompt, schedule_type, rrule, scheduled_at, status, model, last_run, valid_from, valid_until, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
+               (id, name, prompt, schedule_type, rrule, scheduled_at, status, model, 
+                last_run, valid_from, valid_until, updated_at,
+                workflow_id, trigger_type, config, description, last_result)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'),
+                       ?, ?, ?, ?, ?)""",
             (item.get("id", ""), item.get("name", ""), item.get("prompt", ""),
              item.get("schedule_type", "once"), item.get("rrule", ""),
              item.get("scheduled_at", ""), item.get("status", "active"),
              item.get("model", ""), item.get("last_run", ""),
-             item.get("valid_from", ""), item.get("valid_until", ""))
+             item.get("valid_from", ""), item.get("valid_until", ""),
+             item.get("workflow_id", ""), item.get("trigger_type", "schedule"),
+             item.get("config", ""), item.get("description", ""),
+             item.get("last_result", ""))
         )
         conn.commit()
     finally:
@@ -556,7 +562,7 @@ def automation_add_run(auto_id: str, status: str, prompt: str = "", reply: str =
             "INSERT INTO naixi_automation_runs (automation_id, run_time, status, prompt, reply, error, model_used, duration_ms) VALUES (?, datetime('now'), ?, ?, ?, ?, ?, ?)",
             (auto_id, status, prompt, reply, error, model_used, duration_ms)
         )
-        conn.execute("UPDATE naixi_automations SET last_run=datetime('now'), updated_at=datetime('now') WHERE id=?", (auto_id,))
+        conn.execute("UPDATE naixi_automations SET last_run=datetime('now'), last_result=?, updated_at=datetime('now') WHERE id=?", (status, auto_id))
         conn.commit()
     finally:
         conn.close()

@@ -19,7 +19,7 @@ import {
   HardDrive, Shield, Film, Layers, GitBranch,
   Cpu as CpuIcon, Zap, Network, Lock,
   Plus, Check, Repeat, Play, Pause, ChevronDown, ChevronUp, Edit3, Trash2, CircleAlert,
-  Search,
+  Search, X,
 } from "lucide-react";
 
 const PAGE_TITLES: Record<string, string> = {
@@ -586,7 +586,7 @@ function SchedulerPage() {
         apiGet<any>("/api/automations"),
       ]);
       if (wfRes?.workflows) setWorkflows(wfRes.workflows);
-      if (Array.isArray(autoRes)) setAutomations(autoRes);
+      if (autoRes?.automations) setAutomations(autoRes.automations);
 
       const allRuns: any[] = [];
       if (wfRes?.workflows) {
@@ -615,9 +615,10 @@ function SchedulerPage() {
     if (!formName || !formWorkflow) return;
     try {
       const config = formTrigger === "schedule" ? { cron: formConfig } : { endpoint: formConfig, method: "POST" };
-      await apiPost("/api/automations/create", {
+      await apiPost("/api/automations/save", {
         name: formName, description: formDesc, workflow_id: formWorkflow,
-        trigger_type: formTrigger, config,
+        trigger_type: formTrigger, config: JSON.stringify(config),
+        schedule_type: formTrigger,  // 兼容旧字段
       });
       setShowCreate(false); setEditId(null);
       setFormName(""); setFormDesc(""); setFormWorkflow(""); setFormConfig("0 9 * * *");
@@ -629,13 +630,19 @@ function SchedulerPage() {
     try { await apiPost("/api/automations/delete", { id }); refetch(); } catch {}
   }, [refetch]);
 
-  const handleRun = useCallback(async (id: string) => {
-    try { await apiPost("/api/automations/run", { id }); refetch(); } catch {}
+  const handleRun = useCallback(async (id: string, auto?: any) => {
+    try {
+      if (auto?.workflow_id) {
+        await apiPost("/api/workflows/run", { id: auto.workflow_id });
+      } else {
+        await apiPost("/api/automations/run", { id });
+      }
+      refetch();
+    } catch {}
   }, [refetch]);
 
   const handleToggle = useCallback(async (item: any) => {
-    const newStatus = item.status === "active" ? "paused" : "active";
-    try { await apiPost("/api/automations/update", { id: item.id, status: newStatus }); refetch(); } catch {}
+    try { await apiPost("/api/automations/toggle", { id: item.id }); refetch(); } catch {}
   }, [refetch]);
 
   const filtered = automations.filter((a: any) => {
@@ -806,7 +813,7 @@ function SchedulerPage() {
                 {a.last_run && <span className="ml-1">{a.last_run.slice(5, 16)}</span>}
               </div>
               <div className="flex items-center justify-end gap-0.5">
-                <button onClick={() => handleRun(a.id)} className="p-1.5 rounded hover:bg-teal-50 text-sakura-300 hover:text-teal-500 transition-colors" title="立即执行"><Play size={11} /></button>
+                <button onClick={() => handleRun(a.id, a)} className="p-1.5 rounded hover:bg-teal-50 text-sakura-300 hover:text-teal-500 transition-colors" title="立即执行"><Play size={11} /></button>
                 <button onClick={() => { setEditId(a.id); }} className="p-1.5 rounded hover:bg-sakura-50 text-sakura-300 hover:text-sakura-500 transition-colors" title="编辑"><Edit3 size={11} /></button>
                 <button onClick={() => handleDelete(a.id)} className="p-1.5 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500 transition-colors" title="删除"><Trash2 size={11} /></button>
               </div>
