@@ -554,6 +554,16 @@ def automation_delete(id: str):
         conn.close()
 
 
+def automation_delete_run(run_id: int):
+    """删除单条执行记录"""
+    conn = _get_conn()
+    try:
+        conn.execute("DELETE FROM naixi_automation_runs WHERE id=?", (run_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def automation_add_run(auto_id: str, status: str, prompt: str = "", reply: str = "", error: str = "", model_used: str = "", duration_ms: int = 0):
     """记录自动化执行"""
     conn = _get_conn()

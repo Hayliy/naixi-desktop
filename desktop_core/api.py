@@ -2265,6 +2265,14 @@ async def api_automations_run(request):
     return web.json_response({"ok": True, "result": result, "conv_key": conv_key, "messages": conv_messages})
 
 
+async def api_automations_delete_run(request):
+    """删除单条执行记录"""
+    from desktop_core.storage import automation_delete_run
+    body = await request.json()
+    automation_delete_run(body.get("id", 0))
+    return web.json_response({"ok": True})
+
+
 async def api_automations_trigger(request):
     """外部触发自动化执行（webhook）"""
     from desktop_core.storage import automation_get, automation_add_run
@@ -2391,6 +2399,7 @@ def setup_routes(app):
     app.router.add_post("/api/automations/toggle", api_automations_toggle)
     app.router.add_post("/api/automations/delete", api_automations_delete)
     app.router.add_post("/api/automations/run", api_automations_run)
+    app.router.add_post("/api/automations/delete-run", api_automations_delete_run)
     app.router.add_post("/api/automations/trigger", api_automations_trigger)
     app.router.add_get("/api/automations/trigger", api_automations_trigger)  # GET 也支持（webhook 兼容）
 

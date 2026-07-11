@@ -687,6 +687,15 @@ function SchedulerPage() {
     setShowExecModal(true);
   }, []);
 
+  // 删除单条执行记录
+  const handleDeleteRun = useCallback(async (runId: number) => {
+    try {
+      await apiPost("/api/automations/delete-run", { id: runId });
+      setExecRuns(prev => prev.filter(r => r.id !== runId));
+      showToast("已删除");
+    } catch { showToast("删除失败", "error"); }
+  }, []);
+
   const filtered = automations.filter((a: any) => {
     if (filter !== "all" && a.trigger_type !== filter) return false;
     if (search && !a.name.toLowerCase().includes(search.toLowerCase())) return false;
@@ -922,12 +931,13 @@ function SchedulerPage() {
               {execRuns.filter(r => !execFilter || r.status === execFilter).length === 0 ? (
                 <p className="text-center text-[11px] text-sakura-300 py-8">暂无执行记录</p>
               ) : execRuns.filter(r => !execFilter || r.status === execFilter).map((r: any) => (
-                <div key={r.id} className="flex items-center gap-3 text-[11px] py-1.5 px-2 rounded hover:bg-sakura-50">
+                <div key={r.id} className="flex items-center gap-3 text-[11px] py-1.5 px-2 rounded hover:bg-sakura-50 group">
                   <span className={`w-2 h-2 rounded-full shrink-0 ${r.status === "success" ? "bg-green-400" : r.status === "failed" ? "bg-red-400" : "bg-amber-400"}`} />
                   <span className="text-sakura-500 min-w-[6rem] font-mono">{r.started_at?.slice(5, 16) || r.created_at?.slice(5, 16) || "--"}</span>
                   <span className={`font-medium ${r.status === "success" ? "text-green-600" : r.status === "failed" ? "text-red-500" : "text-amber-500"}`}>{r.status === "success" ? "成功" : r.status === "failed" ? "失败" : r.status}</span>
                   <span className="text-sakura-400 flex-1 truncate">{r.wf_name || r.workflow_id?.slice(0, 8) || "—"}</span>
                   <span className="text-sakura-300">{r.duration ? `${r.duration}ms` : ""}</span>
+                  <button onClick={() => handleDeleteRun(r.id)} className="p-0.5 rounded text-sakura-200 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity" title="删除此记录"><Trash2 size={10} /></button>
                 </div>
               ))}
             </div>
