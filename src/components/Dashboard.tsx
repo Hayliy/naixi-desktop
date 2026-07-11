@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { apiGet, apiPost } from "@/lib/api";
 import { AppShell, Sidebar, Header, Main } from "@/components/shell";
 import { AppProvider } from "@/contexts/AppContext";
-import { ToastProvider } from "@/components/Toast";
+import { ToastProvider, useToast } from "@/components/Toast";
 import { Card } from "@/components/ui";
 import { loadAvatarCache } from "@/lib/avatar";
 import ChatPage from "@/components/Chat";
@@ -445,35 +445,242 @@ function Row({ l, v }: { l: string; v: string }) {
 
 /* ─── 子页面 ─── */
 function KbPage({ kb }: { kb: KbData | null }) {
+  const [items, setItems] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [activeCat, setActiveCat] = useState("");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [editItem, setEditItem] = useState<any | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [formTitle, setFormTitle] = useState("");
+  const [formContent, setFormContent] = useState("");
+  const [formCategory, setFormCategory] = useState("");
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const { notify } = useToast();
+
   const cats = kb?.categories ?? [];
   const total = kb?.total ?? 0;
+
+  const loadItems = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await apiGet<{ items: any[]; categories: any[]; total: number }>("/api/knowledge/list");
+      setItems(res.items || []);
+    } catch {}
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { loadItems(); }, [loadItems]);
+
+  const catsAll = cats.length > 0 ? [{ name: "", count: total }, ...cats] : [];
+
+  const filtered = items.filter(item => {
+    if (activeCat && item.category !== activeCat) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      return item.title?.toLowerCase().includes(q) || item.content?.toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  const handleAdd = async () => {
+    if (!formTitle.trim()) { notify("标题不能为空", "warning"); return; }
+    try {
+      await apiPost("/api/knowledge/add", { title: formTitle.trim(), content: formContent.trim(), category: formCategory.trim() || "默认" });
+      notify("已添加", "success");
+      setShowAddForm(false); setFormTitle(""); setFormContent(""); setFormCategory("");
+      await loadItems();
+    } catch { notify("添加失败", "error"); }
+  };
+
+  const handleUpdate = async () => {
+    if (!editItem || !formTitle.trim()) return;
+    try {
+      await apiPost("/api/knowledge/update", { id: editItem.id, title: formTitle.trim(), content: formContent.trim(), category: formCategory.trim() || editItem.category });
+      notify("已更新", "success");
+      setEditItem(null); setFormTitle(""); setFormContent(""); setFormCategory("");
+      await loadItems();
+    } catch { notify("更新失败", "error"); }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await apiPost("/api/knowledge/delete", { id });
+      notify("已删除", "success");
+      setDeleteConfirm(null);
+      await loadItems();
+    } catch { notify("删除失败", "error"); }
+  };
+
+  const startEdit = (item: any) => {
+    setEditItem(item);
+    setFormTitle(item.title);
+    setFormContent(item.content);
+    setFormCategory(item.category || "");
+    setShowAddForm(false);
+  };
+
+  const startAdd = () => {
+    setShowAddForm(true);
+    setEditItem(null);
+    setFormTitle(""); setFormContent(""); setFormCategory("");
+  };
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
+      {/* 顶栏：标题 + 总数 + 添加 */}
       <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-sakura-600">知识库</p>
-        <span className="text-[10px] text-sakura-400 bg-sakura-50 px-2 py-0.5 rounded-full">{total} 条目</span>
+        <p className="text-sm font-semibold text-sakura-600">知识库 <span className="text-sakura-300 font-normal text-[11px]">({total} 条目)</span></p>
+        <button onClick={startAdd} className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-medium bg-gradient-to-br from-sakura-400 to-sakura-500 text-white hover:shadow-md transition-shadow">
+          <Plus size={12} /> 添加
+        </button>
       </div>
-      {total === 0 ? (
-        <div className="text-center py-12">
-          <div className="w-10 h-10 rounded-full bg-sakura-50 flex items-center justify-center mx-auto mb-2">
-            <BookOpen size={16} className="text-sakura-300" />
-          </div>
-          <p className="text-xs text-sakura-400 mb-1">知识库为空</p>
-          <p className="text-[10px] text-sakura-300">在对话中使用「添加知识」或导入功能填充</p>
+
+      {/* 搜索 */}
+      <div className="relative">
+        <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sakura-300" />
+        <input value={search} onChange={e => setSearch(e.target.value)}
+          className="w-full pl-8 pr-3 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-sakura-50/50 text-sakura-600 placeholder:text-sakura-300 transition-colors"
+          placeholder="搜索标题或内容..." />
+      </div>
+
+      {/* 分类筛选标签 */}
+      {catsAll.length > 1 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {catsAll.map((c, i) => (
+            <button key={i} onClick={() => setActiveCat(activeCat === c.name ? "" : c.name)}
+              className={`text-[10px] px-2.5 py-1 rounded-full border transition-colors ${
+                activeCat === c.name
+                  ? "bg-sakura-500 text-white border-sakura-500"
+                  : "bg-white text-sakura-500 border-sakura-100 hover:border-sakura-300"
+              }`}>
+              {c.name || "全部"} {c.count !== undefined && <span className="ml-0.5 opacity-60">{c.count}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* 加载状态 */}
+      {loading ? (
+        <div className="text-center py-8">
+          <div className="w-5 h-5 border-2 border-sakura-200 border-t-sakura-500 rounded-full animate-spin mx-auto" />
+          <p className="text-xs text-sakura-400 mt-2">加载中...</p>
         </div>
       ) : (
         <>
-          <div className="grid gap-2 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-            {cats.map((c, i) => (
-              <div key={i} className="bg-white border border-sakura-100 rounded-xl px-4 py-3 flex items-center justify-between hover:bg-sakura-50/50 transition-colors">
-                <span className="text-xs text-sakura-600">{c.name}</span>
-                <span className="text-[11px] font-semibold text-sakura-500 bg-sakura-50 px-2 py-0.5 rounded-full">{c.count}</span>
+          {/* 空状态 */}
+          {filtered.length === 0 && !showAddForm && (
+            <div className="text-center py-10">
+              <div className="w-10 h-10 rounded-full bg-sakura-50 flex items-center justify-center mx-auto mb-2">
+                <BookOpen size={16} className="text-sakura-300" />
+              </div>
+              <p className="text-xs text-sakura-400 mb-1">
+                {search || activeCat ? "没有匹配的知识条目" : "知识库为空"}
+              </p>
+              <p className="text-[10px] text-sakura-300">
+                {search || activeCat ? "试试其他关键词或分类" : "点击右上角「添加」创建第一条知识"}
+              </p>
+            </div>
+          )}
+
+          {/* 新建/编辑表单 */}
+          {(showAddForm || editItem) && (
+            <div className="bg-white border border-sakura-200 rounded-xl p-3 space-y-2 shadow-sm">
+              <p className="text-[10px] font-semibold text-sakura-500">
+                {editItem ? "编辑知识" : "新建知识"}
+              </p>
+              <div>
+                <p className="text-[9px] text-sakura-400 mb-0.5">标题</p>
+                <input value={formTitle} onChange={e => setFormTitle(e.target.value)}
+                  className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-sakura-50"
+                  placeholder="知识标题" />
+              </div>
+              <div>
+                <p className="text-[9px] text-sakura-400 mb-0.5">内容</p>
+                <textarea value={formContent} onChange={e => setFormContent(e.target.value)}
+                  className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-sakura-50 resize-none"
+                  rows={4} placeholder="知识内容..." />
+              </div>
+              <div>
+                <p className="text-[9px] text-sakura-400 mb-0.5">分类（可选）</p>
+                <input value={formCategory} onChange={e => setFormCategory(e.target.value)}
+                  className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-sakura-50"
+                  placeholder="默认" />
+              </div>
+              <div className="flex items-center gap-1.5 pt-0.5">
+                <button onClick={() => { setShowAddForm(false); setEditItem(null); }}
+                  className="px-3 py-1.5 rounded text-[10px] text-sakura-400 hover:bg-sakura-50 border border-sakura-100 transition-colors">
+                  取消
+                </button>
+                <button onClick={editItem ? handleUpdate : handleAdd}
+                  disabled={!formTitle.trim()}
+                  className="px-3 py-1.5 rounded text-[10px] font-medium bg-sakura-500 text-white disabled:opacity-50 hover:bg-sakura-600 transition-colors">
+                  <Check size={10} className="inline mr-0.5" />
+                  {editItem ? "保存" : "创建"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* 条目列表 */}
+          <div className="space-y-1">
+            {filtered.map((item) => (
+              <div key={item.id} className="bg-white border border-sakura-100 rounded-lg overflow-hidden">
+                {/* 条目行 */}
+                <div className="flex items-center gap-2 px-3 py-2.5 group hover:bg-sakura-50/30 transition-colors cursor-pointer"
+                  onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}>
+                  <BookOpen size={12} className="text-sakura-400 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-medium text-sakura-600 truncate">{item.title}</span>
+                      {item.category && (
+                        <span className="text-[9px] text-sakura-400 bg-sakura-50 px-1.5 py-0.5 rounded-full shrink-0">{item.category}</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 text-[9px] text-sakura-300 mt-0.5">
+                      <span>{item.created_at?.slice(0, 10) || ""}</span>
+                      <span>{item.content ? `${item.content.length} 字` : ""}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                    <button onClick={(e) => { e.stopPropagation(); startEdit(item); }}
+                      className="p-1 rounded hover:bg-sakura-100 text-sakura-300 hover:text-sakura-500 transition-colors" title="编辑">
+                      <Edit3 size={10} />
+                    </button>
+                    {deleteConfirm === item.id ? (
+                      <div className="flex items-center gap-0.5">
+                        <button onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }}
+                          className="px-1.5 py-0.5 rounded text-[9px] bg-red-500 text-white hover:bg-red-600 transition-colors">确认</button>
+                        <button onClick={(e) => { e.stopPropagation(); setDeleteConfirm(null); }}
+                          className="px-1.5 py-0.5 rounded text-[9px] text-sakura-400 hover:bg-sakura-100 transition-colors">取消</button>
+                      </div>
+                    ) : (
+                      <button onClick={(e) => { e.stopPropagation(); setDeleteConfirm(item.id); }}
+                        className="p-1 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500 transition-colors" title="删除">
+                        <Trash2 size={10} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {/* 展开详情 */}
+                {expandedId === item.id && (
+                  <div className="px-3 py-2.5 border-t border-sakura-50 bg-sakura-50/30">
+                    <p className="text-[10px] text-sakura-600 leading-relaxed whitespace-pre-wrap">{item.content}</p>
+                    <div className="flex items-center gap-2 mt-1.5 text-[9px] text-sakura-300">
+                      <span>分类: {item.category || "未分类"}</span>
+                      <span>创建: {item.created_at || "未知"}</span>
+                      {item.updated_at && <span>更新: {item.updated_at}</span>}
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
-          {cats.length === 0 && (
-            <div className="text-xs text-sakura-400 text-center py-4">
-              共 {total} 条条目，暂无分类统计
+
+          {/* 结果统计 */}
+          {filtered.length > 0 && (
+            <div className="text-[9px] text-sakura-300 text-center py-1">
+              共 {filtered.length} 条{search || activeCat ? `（共 ${total} 条）` : ""}
             </div>
           )}
         </>
