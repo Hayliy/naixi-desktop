@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Search, Plus, MessageCircle, X, Tag, Folder } from "lucide-react";
+import { Search, Plus, MessageCircle, X, Tag, Folder, Clock } from "lucide-react";
 import type { ConvItem, MsgItem } from "@/components/ChatTypes";
 import { fmtTime, convName } from "@/components/ChatTypes";
 import { resolveAvatarUrl, getAvatarUrl, AVATAR_KEYS } from "@/lib/avatar";
@@ -78,6 +78,11 @@ export default function ConvList({
               className={`w-full text-left px-3 py-2.5 border-b border-sakura-50 transition-colors hover:bg-sakura-50 ${activeKey === c.key ? "bg-sakura-100" : ""}`}
               title={`${customNames[c.key] || convName(c.key)} — ${c.last_msg}`}>
               <div className="flex items-start gap-2">
+                {c.key.startsWith("auto:") ? (
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-indigo-100 text-indigo-400">
+                    <Clock size={14} />
+                  </div>
+                ) : (
                 <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 bg-sakura-50">
                   <img
                     src={c.last_role === "assistant"
@@ -88,6 +93,7 @@ export default function ConvList({
                     onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
                   />
                 </div>
+                )}
                 <div className="flex-1 min-w-0 pr-4">
                   <div className="flex items-center justify-between gap-1">
                     <span className="text-xs font-medium text-sakura-600 truncate">{customNames[c.key] || convName(c.key)}</span>

@@ -164,6 +164,16 @@ async def main():
             except: pass
             return ""
 
+        def _save_to_conv(name: str, prompt: str, reply: str):
+            """将自动化执行结果写入对话，用户可以在聊天记录中看到"""
+            try:
+                from desktop_core.storage import conv_save_message_sync
+                key = f"auto:{''.join(c if c.isalnum() or c in ' _-' else '_' for c in name)[:30]}"
+                conv_save_message_sync(key, "user", f"[自动化] {prompt}")
+                conv_save_message_sync(key, "assistant", reply or "执行完成")
+            except Exception as e:
+                log.warning(f"写入自动化对话失败: {e}")
+
         def _is_recurring_due(item: dict, now_str: str) -> bool:
             """检查重复任务是否到执行时间"""
             rrule = item.get("rrule", "FREQ=DAILY")
@@ -225,6 +235,7 @@ async def main():
                         if scheduled and scheduled <= now_str and not already_done:
                             reply = await _call_llm(item.get("prompt", ""), api_key, api_url, model)
                             result_text = f"已执行({scheduled})" + (f": {reply}" if reply else "")
+                            _save_to_conv(item.get("name", "自动化"), item.get("prompt", ""), reply)
                             record = {"time": now_sec, "status": "success", "result": result_text}
                             item.setdefault("history", []).append(record)
                             item["last_run"] = now_sec
@@ -236,6 +247,7 @@ async def main():
                         if _is_recurring_due(item, now_str):
                             reply = await _call_llm(item.get("prompt", ""), api_key, api_url, model)
                             result_text = f"自动执行" + (f": {reply}" if reply else "")
+                            _save_to_conv(item.get("name", "自动化"), item.get("prompt", ""), reply)
                             record = {"time": now_sec, "status": "success", "result": result_text}
                             item.setdefault("history", []).append(record)
                             item["last_run"] = now_sec

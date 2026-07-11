@@ -29,6 +29,7 @@ export function convName(key: string, msgs?: MsgItem[], customName?: string) {
   const id = parts[1];
   if (parts[0] === "group") return `群聊 ${id.slice(-4)}`;
   if (parts[0] === "user") return `私聊 ${id.slice(-4)}`;
+  if (parts[0] === "auto") return `自动: ${id.replace(/_/g, " ").slice(0, 15)}`;
   return "新对话";
 }
 

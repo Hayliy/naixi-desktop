@@ -36,17 +36,28 @@ function computeNextRun(rrule: string): string {
   rrule.split(";").forEach(p => { const [k, v] = p.split("="); if (k && v) parts[k] = v; });
   const freq = parts.FREQ || "DAILY";
   const interval = parseInt(parts.INTERVAL || "1");
+  const byday = parts.BYDAY || "";
   const now = new Date();
-  // 取整到下一个整点/零点
   const next = new Date(now);
+  
+  // 工作日跳过函数
+  const isWeekday = (d: Date) => {
+    if (!byday) return true;
+    const wd_map: Record<string, number> = { MO: 0, TU: 1, WE: 2, TH: 3, FR: 4, SA: 5, SU: 6 };
+    const allowed = byday.split(",").map(d => wd_map[d.trim()]).filter(v => v !== undefined);
+    return allowed.includes(d.getDay());
+  };
+  const advanceToWeekday = (d: Date) => {
+    while (!isWeekday(d)) d.setDate(d.getDate() + 1);
+  };
+
   if (freq === "HOURLY") { next.setHours(next.getHours() + 1, 0, 0, 0); }
-  else if (freq === "DAILY") { next.setDate(next.getDate() + 1); next.setHours(9, 0, 0, 0); }
-  else if (freq === "WEEKLY") { next.setDate(next.getDate() + (7 - next.getDay() + 1) % 7 || 7); next.setHours(9, 0, 0, 0); }
+  else if (freq === "DAILY") { next.setDate(next.getDate() + 1); next.setHours(9, 0, 0, 0); if (byday) advanceToWeekday(next); }
+  else if (freq === "WEEKLY") { next.setDate(next.getDate() + 7); next.setHours(9, 0, 0, 0); }
   else { next.setDate(next.getDate() + 1); next.setHours(9, 0, 0, 0); }
-  // 如果计算出的时间在现在之前，再推一个周期
   if (next.getTime() <= now.getTime()) {
     if (freq === "HOURLY") next.setHours(next.getHours() + interval);
-    else next.setDate(next.getDate() + interval);
+    else { next.setDate(next.getDate() + interval); if (byday) advanceToWeekday(next); }
   }
   return `${next.getMonth() + 1}月${next.getDate()}日 ${String(next.getHours()).padStart(2, "0")}:${String(next.getMinutes()).padStart(2, "0")}`;
 }
