@@ -205,6 +205,25 @@ export default function ChatPage() {
 
   useEffect(() => { msgEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs]);
 
+  // auto 对话实时轮询新消息
+  useEffect(() => {
+    if (!activeKey || !activeKey.startsWith("auto:")) return;
+    const t = setInterval(async () => {
+      try {
+        const res = await apiGet<{ messages: MsgItem[]; total: number }>(
+          `/api/conversation/${encodeURIComponent(activeKey)}?limit=50`
+        );
+        if (res) {
+          setMsgs(prev => {
+            if (prev.length === res.messages.length) return prev; // 没新消息，不触发重渲染
+            return res.messages;
+          });
+        }
+      } catch {}
+    }, 5000);
+    return () => clearInterval(t);
+  }, [activeKey]);
+
   // ── 消息处理 ──
   const handleNormalChat = async (text: string) => {
     const userMsg: MsgItem = { id: Date.now(), role: "user", content: text, time: Math.floor(Date.now() / 1000) };
