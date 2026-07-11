@@ -446,17 +446,38 @@ function Row({ l, v }: { l: string; v: string }) {
 /* ─── 子页面 ─── */
 function KbPage({ kb }: { kb: KbData | null }) {
   const cats = kb?.categories ?? [];
+  const total = kb?.total ?? 0;
   return (
     <div className="space-y-4">
-      <p className="text-sm font-semibold text-sakura-500">知识库 <span className="text-sakura-300 font-normal">({kb?.total ?? 0} 条目)</span></p>
-      <div className="grid gap-2 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-        {cats.map((c, i) => (
-          <div key={i} className="bg-white border border-sakura-100 rounded-xl px-4 py-3 flex items-center justify-between">
-            <span className="text-xs text-sakura-600">{c.name}</span>
-            <span className="text-xs font-semibold text-sakura-500">{c.count}</span>
-          </div>
-        ))}
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-sakura-600">知识库</p>
+        <span className="text-[10px] text-sakura-400 bg-sakura-50 px-2 py-0.5 rounded-full">{total} 条目</span>
       </div>
+      {total === 0 ? (
+        <div className="text-center py-12">
+          <div className="w-10 h-10 rounded-full bg-sakura-50 flex items-center justify-center mx-auto mb-2">
+            <BookOpen size={16} className="text-sakura-300" />
+          </div>
+          <p className="text-xs text-sakura-400 mb-1">知识库为空</p>
+          <p className="text-[10px] text-sakura-300">在对话中使用「添加知识」或导入功能填充</p>
+        </div>
+      ) : (
+        <>
+          <div className="grid gap-2 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+            {cats.map((c, i) => (
+              <div key={i} className="bg-white border border-sakura-100 rounded-xl px-4 py-3 flex items-center justify-between hover:bg-sakura-50/50 transition-colors">
+                <span className="text-xs text-sakura-600">{c.name}</span>
+                <span className="text-[11px] font-semibold text-sakura-500 bg-sakura-50 px-2 py-0.5 rounded-full">{c.count}</span>
+              </div>
+            ))}
+          </div>
+          {cats.length === 0 && (
+            <div className="text-xs text-sakura-400 text-center py-4">
+              共 {total} 条条目，暂无分类统计
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

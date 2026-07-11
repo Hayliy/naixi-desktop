@@ -1925,6 +1925,22 @@ async def api_knowledge_list(request):
         return web.json_response({"error": str(e)}, status=400)
 
 
+async def api_knowledge_summary(request):
+    """知识库汇总（分类统计 + 总数）"""
+    from desktop_core.storage import meta_get
+    try:
+        raw = meta_get("knowledge_base")
+        items = json.loads(raw) if raw else []
+        from collections import Counter
+        cats = Counter(i.get("category", "未分类") for i in items)
+        return web.json_response({
+            "total": len(items),
+            "categories": [{"name": k, "count": v} for k, v in cats.most_common()],
+        })
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+
 async def api_knowledge_add(request):
     """添加知识条目"""
     from desktop_core.storage import meta_get, meta_set
@@ -2395,6 +2411,7 @@ def setup_routes(app):
 
     # 知识库
     app.router.add_get("/api/knowledge/list", api_knowledge_list)
+    app.router.add_get("/api/knowledge/summary", api_knowledge_summary)
     app.router.add_post("/api/knowledge/add", api_knowledge_add)
     app.router.add_post("/api/knowledge/delete", api_knowledge_delete)
     app.router.add_post("/api/knowledge/search", api_knowledge_search)
