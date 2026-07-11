@@ -697,10 +697,10 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
   const [expandedTool, setExpandedTool] = useState<string | null>(null);
   const { notify } = useToast();
 
-  // MCP 管理
-  const [mcpExpanded, setMcpExpanded] = useState(false);
+  // MCP 弹窗
+  const [showMcpDialog, setShowMcpDialog] = useState(false);
   const [mcpServers, setMcpServers] = useState<Record<string, { command: string; args: string[]; env: Record<string, string> }>>({});
-  const [mcpLoading, setMcpLoading] = useState(false);
+  const [mcpDialogLoading, setMcpDialogLoading] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const [showMcpForm, setShowMcpForm] = useState(false);
@@ -710,20 +710,22 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
   const [fArgs, setFArgs] = useState("");
   const [mcpDelete, setMcpDelete] = useState<string | null>(null);
 
+  const openMcpDialog = async () => {
+    setShowMcpDialog(true);
+    setMcpDialogLoading(true);
+    try {
+      const res = await apiGet<{ servers: any }>("/api/mcp/servers");
+      setMcpServers(res.servers || {});
+    } catch {}
+    setMcpDialogLoading(false);
+  };
+
   useEffect(() => {
     setLoading(true);
     apiGet<{ tools: any[]; count: number; categories: { name: string; count: number }[] }>("/api/tools")
       .then(d => { setItems(d.tools || []); setLoading(false); })
       .catch(() => setLoading(false));
   }, []);
-
-  useEffect(() => {
-    if (!mcpExpanded) return;
-    setMcpLoading(true);
-    apiGet<{ servers: any }>("/api/mcp/servers")
-      .then(d => { setMcpServers(d.servers || {}); setMcpLoading(false); })
-      .catch(() => setMcpLoading(false));
-  }, [mcpExpanded]);
 
   const catMap = new Map<string, number>();
   items.forEach(t => {
@@ -808,6 +810,10 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
       {/* 顶栏 */}
       <div className="flex items-center justify-between">
         <p className="text-sm font-semibold text-sakura-600">工具列表 <span className="text-sakura-300 font-normal text-[11px]">({total} 个)</span></p>
+        <button onClick={openMcpDialog}
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-medium bg-sakura-50 text-sakura-500 hover:bg-sakura-100 border border-sakura-100 transition-colors">
+          <Wifi size={10} /> MCP 配置
+        </button>
       </div>
 
       {/* 统计卡片 */}
@@ -837,100 +843,130 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
           placeholder="搜索工具名称或描述..." />
       </div>
 
-      {/* ── MCP 服务器管理（可折叠） ── */}
-      <div className="bg-white border border-sakura-100 rounded-lg overflow-hidden">
-        <div className="flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-sakura-50/30 transition-colors"
-          onClick={() => setMcpExpanded(!mcpExpanded)}>
-          <div className="flex items-center gap-2">
-            <div className="w-5 h-5 rounded flex items-center justify-center bg-gradient-to-br from-sakura-400 to-sakura-500 text-white">
-              <Wifi size={9} />
+      {/* ── MCP 配置弹窗 ── */}
+      {showMcpDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => setShowMcpDialog(false)}>
+          <div className="absolute inset-0 bg-black/20" />
+          <div className="relative bg-white rounded-xl shadow-2xl w-[520px] max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="p-4 space-y-3">
+              {/* 弹窗标题 */}
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold text-sakura-600">MCP 服务器</p>
+                <div className="flex items-center gap-1.5">
+                  <button onClick={async () => { setConnecting(true); try { const r = await apiPost<{ ok: boolean; tool_count: number }>("/api/mcp/connect", {}); notify(`连接完成，共 ${r.tool_count} 个工具`, "success"); } catch { notify("连接失败", "error"); } setConnecting(false); }}
+                    disabled={connecting || Object.keys(mcpServers).length === 0}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-medium bg-teal-50 text-teal-600 hover:bg-teal-100 disabled:opacity-50 transition-colors">
+                    {connecting ? <Loader2 size={10} className="animate-spin" /> : <Zap size={10} />} 连接全部
+                  </button>
+                  <button onClick={() => setShowMcpDialog(false)} className="p-1 hover:bg-sakura-50 rounded text-sakura-400"><X size={14} /></button>
+                </div>
+              </div>
+
+              {mcpDialogLoading ? (
+                <div className="flex items-center justify-center py-8 text-xs text-sakura-400">
+                  <Loader2 size={12} className="animate-spin mr-2" />加载中...
+                </div>
+              ) : (
+                <>
+                  {/* 添加/编辑表单 */}
+                  {showMcpForm && (
+                    <div className="bg-sakura-50 border border-sakura-100 rounded-lg p-3 space-y-2">
+                      <p className="text-[10px] font-semibold text-sakura-500">{mcpEditKey ? "编辑 MCP 服务器" : "添加 MCP 服务器"}</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <p className="text-[9px] text-sakura-400 mb-0.5">名称</p>
+                          <input value={fName} onChange={e => setFName(e.target.value)}
+                            className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-white" placeholder="如: fetch" />
+                        </div>
+                        <div>
+                          <p className="text-[9px] text-sakura-400 mb-0.5">命令</p>
+                          <input value={fCmd} onChange={e => setFCmd(e.target.value)}
+                            className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-white font-mono" placeholder="如: npx" />
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-[9px] text-sakura-400 mb-0.5">参数（空格分隔）</p>
+                        <input value={fArgs} onChange={e => setFArgs(e.target.value)}
+                          className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-white font-mono" placeholder="如: @modelcontextprotocol/server-fetch" />
+                      </div>
+                      <div className="flex items-center gap-1.5 pt-0.5">
+                        <button onClick={() => { setShowMcpForm(false); setMcpEditKey(null); }}
+                          className="px-3 py-1.5 rounded text-[10px] text-sakura-400 hover:bg-sakura-50 border border-sakura-100 transition-colors">取消</button>
+                        <button onClick={saveMcp} disabled={!fName.trim() || !fCmd.trim()}
+                          className="px-3 py-1.5 rounded text-[10px] font-medium bg-sakura-500 text-white disabled:opacity-50 hover:bg-sakura-600 transition-colors">
+                          <Check size={10} className="inline mr-0.5" />{mcpEditKey ? "保存" : "添加"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 服务器列表 */}
+                  {Object.keys(mcpServers).length === 0 && !showMcpForm && (
+                    <div className="text-center py-8">
+                      <div className="w-10 h-10 rounded-full bg-sakura-50 flex items-center justify-center mx-auto mb-2">
+                        <Wifi size={16} className="text-sakura-300" />
+                      </div>
+                      <p className="text-xs text-sakura-400 mb-1">未配置 MCP 服务器</p>
+                      <p className="text-[10px] text-sakura-300">点击下方按钮添加</p>
+                    </div>
+                  )}
+
+                  {Object.keys(mcpServers).length > 0 && (
+                    <div className="space-y-1.5">
+                      {Object.keys(mcpServers).map(key => {
+                        const srv = mcpServers[key];
+                        return (
+                          <div key={key} className="flex items-center justify-between gap-2 px-3 py-2.5 bg-white border border-sakura-100 rounded-lg hover:bg-sakura-50/30 transition-colors">
+                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                              <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-gradient-to-br from-sakura-400 to-sakura-500 text-white">
+                                <Wifi size={11} />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="text-[11px] font-medium text-sakura-600">{key}</p>
+                                <p className="text-[9px] text-sakura-400 truncate font-mono">{srv.command} {(srv.args || []).join(" ")}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button onClick={() => testMcp(key)} disabled={testing === key}
+                                className="p-1.5 rounded hover:bg-teal-50 text-sakura-300 hover:text-teal-500 transition-colors" title="测试">
+                                {testing === key ? <Loader2 size={10} className="animate-spin" /> : <Zap size={10} />}
+                              </button>
+                              <button onClick={() => { setShowMcpForm(true); setMcpEditKey(key); setFName(key); setFCmd(srv.command); setFArgs((srv.args || []).join(" ")); }}
+                                className="p-1.5 rounded hover:bg-sakura-50 text-sakura-300 hover:text-sakura-500 transition-colors" title="编辑">
+                                <Edit3 size={10} />
+                              </button>
+                              {mcpDelete === key ? (
+                                <div className="flex items-center gap-0.5">
+                                  <button onClick={() => deleteMcp(key)} className="px-1.5 py-0.5 rounded text-[9px] bg-red-500 text-white hover:bg-red-600">确认</button>
+                                  <button onClick={() => setMcpDelete(null)} className="px-1.5 py-0.5 rounded text-[9px] text-sakura-400 hover:bg-sakura-100">取消</button>
+                                </div>
+                              ) : (
+                                <button onClick={() => setMcpDelete(key)} className="p-1.5 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500 transition-colors" title="删除">
+                                  <Trash2 size={10} />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* 添加按钮 */}
+                  {!showMcpForm && (
+                    <button onClick={() => { setShowMcpForm(true); setMcpEditKey(null); setFName(""); setFCmd(""); setFArgs(""); }}
+                      className="w-full flex items-center justify-center gap-1 px-3 py-2 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+                      <Plus size={11} /> 添加服务器
+                    </button>
+                  )}
+                </>
+              )}
             </div>
-            <span className="text-[11px] font-medium text-sakura-600">MCP 服务器</span>
-            <span className="text-[9px] text-sakura-300">{mcpKeys.length > 0 ? `${mcpKeys.length} 个` : "未配置"}</span>
-          </div>
-          <div className="flex items-center gap-1">
-            {mcpExpanded && (
-              <>
-                <button onClick={(e) => { e.stopPropagation(); connectMcp(); }} disabled={connecting || mcpKeys.length === 0}
-                  className="px-2 py-1 rounded text-[9px] font-medium bg-teal-50 text-teal-600 hover:bg-teal-100 disabled:opacity-50 transition-colors">
-                  {connecting ? <Loader2 size={8} className="animate-spin inline" /> : <Zap size={8} className="inline" />} 连接全部
-                </button>
-                <button onClick={(e) => { e.stopPropagation(); setShowMcpForm(true); setMcpEditKey(null); setFName(""); setFCmd(""); setFArgs(""); }}
-                  className="p-1 rounded hover:bg-sakura-100 text-sakura-300 hover:text-sakura-500 transition-colors" title="添加">
-                  <Plus size={11} />
-                </button>
-              </>
-            )}
-            {mcpExpanded ? <ChevronUp size={11} className="text-sakura-300" /> : <ChevronDown size={11} className="text-sakura-300" />}
           </div>
         </div>
-        {mcpExpanded && (
-          <div className="px-3 pb-2.5 space-y-1.5 border-t border-sakura-50">
-            {mcpLoading ? (
-              <div className="flex items-center justify-center py-4 text-[10px] text-sakura-400">
-                <Loader2 size={10} className="animate-spin mr-1" /> 加载中...
-              </div>
-            ) : (
-              <>
-                {/* MCP 表单 */}
-                {showMcpForm && (
-                  <div className="bg-sakura-50 border border-sakura-100 rounded-lg p-2 space-y-1.5 mt-1.5">
-                    <p className="text-[9px] font-semibold text-sakura-500">{mcpEditKey ? "编辑" : "添加"} MCP 服务器</p>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      <input value={fName} onChange={e => setFName(e.target.value)}
-                        className="px-2 py-1 border border-sakura-100 rounded text-[10px] outline-none focus:border-sakura-300 bg-white" placeholder="名称" />
-                      <input value={fCmd} onChange={e => setFCmd(e.target.value)}
-                        className="px-2 py-1 border border-sakura-100 rounded text-[10px] outline-none focus:border-sakura-300 bg-white font-mono" placeholder="命令" />
-                    </div>
-                    <input value={fArgs} onChange={e => setFArgs(e.target.value)}
-                      className="w-full px-2 py-1 border border-sakura-100 rounded text-[10px] outline-none focus:border-sakura-300 bg-white font-mono" placeholder="参数（空格分隔）" />
-                    <div className="flex items-center gap-1">
-                      <button onClick={() => { setShowMcpForm(false); setMcpEditKey(null); }}
-                        className="px-2 py-1 rounded text-[9px] text-sakura-400 hover:bg-sakura-100 border border-sakura-100">取消</button>
-                      <button onClick={saveMcp} disabled={!fName.trim() || !fCmd.trim()}
-                        className="px-2 py-1 rounded text-[9px] font-medium bg-sakura-500 text-white disabled:opacity-50">{mcpEditKey ? "保存" : "添加"}</button>
-                    </div>
-                  </div>
-                )}
-                {/* MCP 列表 */}
-                {mcpKeys.length === 0 ? (
-                  <div className="text-center py-3 text-[10px] text-sakura-300">未配置 MCP 服务器</div>
-                ) : mcpKeys.map(key => {
-                  const srv = mcpServers[key];
-                  return (
-                    <div key={key} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded hover:bg-sakura-50/50 transition-colors">
-                      <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                        <span className="text-[10px] font-medium text-sakura-600 truncate">{key}</span>
-                        <span className="text-[8px] text-sakura-300 truncate font-mono">{srv.command} {(srv.args || []).join(" ")}</span>
-                      </div>
-                      <div className="flex items-center gap-0.5 shrink-0">
-                        <button onClick={() => testMcp(key)} disabled={testing === key}
-                          className="p-0.5 rounded hover:bg-teal-50 text-sakura-300 hover:text-teal-500" title="测试">
-                          {testing === key ? <Loader2 size={9} className="animate-spin" /> : <Zap size={9} />}
-                        </button>
-                        <button onClick={() => { setShowMcpForm(true); setMcpEditKey(key); setFName(key); setFCmd(srv.command); setFArgs((srv.args || []).join(" ")); }}
-                          className="p-0.5 rounded hover:bg-sakura-50 text-sakura-300 hover:text-sakura-500" title="编辑">
-                          <Edit3 size={9} />
-                        </button>
-                        {mcpDelete === key ? (
-                          <div className="flex items-center gap-0.5">
-                            <button onClick={() => deleteMcp(key)} className="px-1 py-0.5 rounded text-[8px] bg-red-500 text-white">确认</button>
-                            <button onClick={() => setMcpDelete(null)} className="px-1 py-0.5 rounded text-[8px] text-sakura-400 hover:bg-sakura-100">取消</button>
-                          </div>
-                        ) : (
-                          <button onClick={() => setMcpDelete(key)} className="p-0.5 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500" title="删除">
-                            <Trash2 size={9} />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </>
-            )}
-          </div>
-        )}
-      </div>
+      )}
+
+      {/* 加载状态 */}
 
       {/* 加载状态 */}
       {loading ? (
