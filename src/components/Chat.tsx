@@ -114,6 +114,16 @@ export default function ChatPage() {
       .catch(() => setConvLoading(false));
   }, []);
 
+  // 定时刷新会话列表（自动更新自动化产生的对话）
+  useEffect(() => {
+    const t = setInterval(() => {
+      apiGet<{ conversations: ConvItem[] }>("/api/conversations")
+        .then(d => setConvs(d.conversations))
+        .catch(() => {});
+    }, 30000);
+    return () => clearInterval(t);
+  }, []);
+
   // 从全局配置加载可用模型
   const { config, loaded } = useAppConfig();
   useEffect(() => {
