@@ -749,6 +749,7 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
       case "system": return <CpuIcon size={11} />;
       case "mcp": return <Wifi size={11} />;
       case "plugin": return <HardDrive size={11} />;
+      case "workflow": return <GitBranch size={11} />;
       default: return <Wrench size={11} />;
     }
   };
@@ -1035,6 +1036,7 @@ function catLabel(cat: string): string {
     system: "系统",
     mcp: "MCP",
     plugin: "插件",
+    workflow: "工作流",
   };
   return labels[cat] || cat;
 }
