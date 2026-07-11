@@ -139,12 +139,11 @@ export default function AutomationPanel({ onClose, onNavigate }: { onClose: () =
 
   const handleRun = async (id: string, name?: string) => {
     try {
-      const res = await apiPost<{ ok: boolean; result?: string; error?: string }>("/api/automations/run", { id });
+      const res = await apiPost<{ ok: boolean; result?: string; error?: string; conv_key?: string }>("/api/automations/run", { id });
       if (res?.ok) {
         notify("执行成功", "success");
-        // 执行后跳转到对应的 auto 对话
-        const convKey = `auto:${(name || "自动化").replace(/[^a-zA-Z0-9 _-]/g, "_").slice(0, 30)}`;
-        if (onNavigate) onNavigate(convKey);
+        // 使用后端返回的 conv_key（中文等字符在 Python/JS 中编码一致）
+        if (res.conv_key && onNavigate) onNavigate(res.conv_key);
       }
       else notify(res?.error || "执行失败", "error");
       await load();
