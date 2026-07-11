@@ -618,6 +618,20 @@ function SchedulerPage() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // 自动刷新：切换到该页面时立即刷新 + 每 30 秒轮询
+  useEffect(() => {
+    const t = setInterval(() => {
+      // 只在前台且可能显示时刷新
+      apiGet<{ automations: any[] }>("/api/automations")
+        .then(d => { if (d?.automations) setAutomations(d.automations); })
+        .catch(() => {});
+      apiGet<{ workflows: any[] }>("/api/workflows")
+        .then(d => { if (d?.workflows) setWorkflows(d.workflows); })
+        .catch(() => {});
+    }, 30000);
+    return () => clearInterval(t);
+  }, []);
+
   const refetch = useCallback(() => loadData(), [loadData]);
 
   const handleCreate = useCallback(async () => {
