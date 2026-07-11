@@ -2622,12 +2622,25 @@ async def api_tools_list(request):
         for name, t in registry.items():
             if cat and t.get("category", "") != cat:
                 continue
+            params = t.get("parameters", {})
+            props = params.get("properties", {})
+            required = params.get("required", [])
+            param_details = []
+            for pname, pinfo in props.items():
+                param_details.append({
+                    "name": pname,
+                    "type": pinfo.get("type", "string"),
+                    "description": pinfo.get("description", ""),
+                    "required": pname in required,
+                })
             tools_list.append({
                 "name": name,
                 "description": t.get("description", ""),
                 "category": t.get("category", "core"),
-                "has_params": bool(t.get("parameters", {}).get("properties", {})),
-                "param_count": len(t.get("parameters", {}).get("properties", {})),
+                "has_params": bool(props),
+                "param_count": len(props),
+                "params": param_details,
+                "required_params": required,
             })
             c = t.get("category", "core")
             cat_counts[c] = cat_counts.get(c, 0) + 1

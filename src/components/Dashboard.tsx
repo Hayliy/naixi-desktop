@@ -704,13 +704,12 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
       .catch(() => setLoading(false));
   }, []);
 
-  const cats: { name: string; count: number }[] = [];
   const catMap = new Map<string, number>();
   items.forEach(t => {
     const c = t.category || "core";
     catMap.set(c, (catMap.get(c) || 0) + 1);
   });
-  catMap.forEach((count, name) => cats.push({ name, count }));
+  const cats = Array.from(catMap.entries()).map(([name, count]) => ({ name, count }));
   const total = items.length;
 
   const filtered = items.filter(t => {
@@ -722,12 +721,53 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
     return true;
   });
 
+  const catIcon = (c: string) => {
+    const icons: Record<string, string> = { core: "🔧", extra: "🧩", system: "⚙️", mcp: "🔌", plugin: "📦" };
+    return icons[c] || "🔧";
+  };
+
+  const catColors: Record<string, string> = {
+    core: "bg-pink-100 text-pink-600 border-pink-200",
+    extra: "bg-purple-100 text-purple-600 border-purple-200",
+    system: "bg-blue-100 text-blue-600 border-blue-200",
+    mcp: "bg-green-100 text-green-600 border-green-200",
+    plugin: "bg-amber-100 text-amber-600 border-amber-200",
+  };
+  const catDot: Record<string, string> = {
+    core: "bg-pink-400", extra: "bg-purple-400", system: "bg-blue-400",
+    mcp: "bg-green-400", plugin: "bg-amber-400",
+  };
+  const catFill: Record<string, string> = {
+    core: "from-pink-400 to-pink-500", extra: "from-purple-400 to-purple-500",
+    system: "from-blue-400 to-blue-500", mcp: "from-green-400 to-green-500",
+    plugin: "from-amber-400 to-amber-500",
+  };
+
   return (
     <div className="space-y-3">
       {/* 顶栏 */}
       <div className="flex items-center justify-between">
         <p className="text-sm font-semibold text-sakura-600">工具列表 <span className="text-sakura-300 font-normal text-[11px]">({total} 个)</span></p>
       </div>
+
+      {/* 统计卡片 */}
+      {!loading && cats.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+          {cats.map((c, i) => (
+            <div key={i}
+              className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5 flex items-center gap-2.5 cursor-pointer hover:shadow-sm transition-shadow"
+              onClick={() => setActiveCat(activeCat === c.name ? "" : c.name)}>
+              <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-white text-[11px] bg-gradient-to-br ${catFill[c.name] || "from-sakura-400 to-sakura-500"}`}>
+                {catIcon(c.name)}
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold text-sakura-600">{c.count}</p>
+                <p className="text-[9px] text-sakura-400">{catLabel(c.name)}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* 搜索 */}
       <div className="relative">
@@ -736,28 +776,6 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
           className="w-full pl-8 pr-3 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-sakura-50/50 text-sakura-600 placeholder:text-sakura-300 transition-colors"
           placeholder="搜索工具名称或描述..." />
       </div>
-
-      {/* 分类筛选 */}
-      {cats.length > 1 && (
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <button onClick={() => setActiveCat("")}
-            className={`text-[10px] px-2.5 py-1 rounded-full border transition-colors ${
-              !activeCat ? "bg-sakura-500 text-white border-sakura-500" : "bg-white text-sakura-500 border-sakura-100 hover:border-sakura-300"
-            }`}>
-            全部 ({total})
-          </button>
-          {cats.map((c, i) => (
-            <button key={i} onClick={() => setActiveCat(activeCat === c.name ? "" : c.name)}
-              className={`text-[10px] px-2.5 py-1 rounded-full border transition-colors ${
-                activeCat === c.name
-                  ? "bg-sakura-500 text-white border-sakura-500"
-                  : "bg-white text-sakura-500 border-sakura-100 hover:border-sakura-300"
-              }`}>
-              {catLabel(c.name)} ({c.count})
-            </button>
-          ))}
-        </div>
-      )}
 
       {/* 加载状态 */}
       {loading ? (
@@ -782,39 +800,66 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
             </div>
           )}
 
-          {/* 工具卡片列表 */}
+          {/* 工具列表 */}
           <div className="space-y-1">
-            {filtered.map((t) => (
+            {filtered.map((t) => {
+              const catCls = catColors[t.category] || "bg-sakura-50 text-sakura-500 border-sakura-100";
+              const isExpanded = expandedTool === t.name;
+              return (
               <div key={t.name} className="bg-white border border-sakura-100 rounded-lg overflow-hidden">
                 <div className="flex items-center gap-2 px-3 py-2.5 group hover:bg-sakura-50/30 transition-colors cursor-pointer"
-                  onClick={() => setExpandedTool(expandedTool === t.name ? null : t.name)}>
-                  <Wrench size={12} className="text-sakura-400 shrink-0" />
+                  onClick={() => setExpandedTool(isExpanded ? null : t.name)}>
+                  <div className={`w-6 h-6 rounded flex items-center justify-center text-[10px] bg-gradient-to-br ${catFill[t.category] || "from-sakura-400 to-sakura-500"} text-white`}>
+                    {catIcon(t.category)}
+                  </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-[11px] font-medium text-sakura-600 truncate">{t.name}</span>
-                      <span className="text-[9px] px-1.5 py-0.5 rounded-full shrink-0 bg-sakura-50 text-sakura-400">{catLabel(t.category)}</span>
+                      <span className="text-[11px] font-semibold text-sakura-600 truncate">{t.name}</span>
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full shrink-0 border ${catCls}`}>{catLabel(t.category)}</span>
                       {t.param_count > 0 && (
-                        <span className="text-[9px] text-sakura-300" title={`${t.param_count} 个参数`}>
-                          {t.param_count} 参数
-                        </span>
+                        <span className="text-[9px] text-sakura-300">{t.param_count} 参数</span>
                       )}
                     </div>
                     <p className="text-[10px] text-sakura-400 mt-0.5 truncate">{t.description}</p>
                   </div>
-                  {expandedTool === t.name ? <ChevronUp size={11} className="text-sakura-300 shrink-0" /> : <ChevronDown size={11} className="text-sakura-300 shrink-0" />}
+                  {isExpanded ? <ChevronUp size={11} className="text-sakura-300 shrink-0" /> : <ChevronDown size={11} className="text-sakura-300 shrink-0" />}
                 </div>
-                {expandedTool === t.name && (
-                  <div className="px-3 py-2.5 border-t border-sakura-50 bg-sakura-50/30">
+                {/* 展开详情：完整描述 + 参数列表 */}
+                {isExpanded && (
+                  <div className="px-3 py-2.5 border-t border-sakura-50 bg-sakura-50/30 space-y-2">
                     <p className="text-[10px] text-sakura-600 leading-relaxed">{t.description}</p>
-                    <div className="flex items-center gap-3 mt-1.5 text-[9px] text-sakura-400">
+                    <div className="flex items-center gap-3 text-[9px] text-sakura-400">
                       <span><span className="text-sakura-500 font-medium">分类:</span> {catLabel(t.category)}</span>
                       <span><span className="text-sakura-500 font-medium">参数:</span> {t.param_count} 个</span>
                       <span><span className="text-sakura-500 font-medium">类型:</span> function</span>
                     </div>
+                    {/* 参数详情 */}
+                    {t.params && t.params.length > 0 && (
+                      <div>
+                        <p className="text-[9px] font-semibold text-sakura-500 mb-1">参数列表</p>
+                        <div className="space-y-0.5">
+                          {t.params.map((p: any, pi: number) => (
+                            <div key={pi} className="flex items-center gap-2 px-2 py-1 rounded bg-white/60 text-[10px]">
+                              <span className="font-mono font-medium text-sakura-600 w-28 shrink-0 truncate">{p.name}</span>
+                              <span className="text-sakura-400 w-16 shrink-0 text-[9px]">{p.type}</span>
+                              {p.required ? (
+                                <span className="text-red-400 text-[9px] shrink-0">必填</span>
+                              ) : (
+                                <span className="text-sakura-300 text-[9px] shrink-0">可选</span>
+                              )}
+                              <span className="text-sakura-400 flex-1 truncate">{p.description}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {(!t.params || t.params.length === 0) && (
+                      <p className="text-[9px] text-sakura-300 italic">该工具无需参数</p>
+                    )}
                   </div>
                 )}
               </div>
-            ))}
+            )})}
           </div>
 
           {/* 底部统计 */}
