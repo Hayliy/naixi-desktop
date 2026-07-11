@@ -95,7 +95,7 @@ export default function AutomationPanel({ onClose, onNavigate }: { onClose: () =
   useEffect(() => { load(); }, [load]);
 
   const closeForm = () => {
-    setShowForm(false); setEditId(null);
+    setShowForm(false); setEditId(null); setLoading(false);
     setFName(""); setFPrompt(""); setFSchedType("recurring");
     setFPreset("FREQ=DAILY"); setFOnceAt(""); setFModel(""); setFValidFrom(""); setFValidUntil("");
   };
@@ -118,7 +118,10 @@ export default function AutomationPanel({ onClose, onNavigate }: { onClose: () =
       notify(editId ? "已保存" : "已创建", "success");
       closeForm();
       await load();
-    } catch { notify("保存失败", "error"); }
+    } catch (e) {
+      notify("保存失败", "error");
+      closeForm();  // 出错也关闭表单
+    }
     setLoading(false);
   };
 
