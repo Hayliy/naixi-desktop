@@ -2193,6 +2193,10 @@ async def api_automations_run(request):
                     api_key, api_url, model_used = pcfg.get("api_key", ""), pcfg.get("api_url", ""), pcfg.get("model", "")
                     break
             if api_key and api_url:
+                # 修复 URL：避免重复 append /chat/completions
+                base_url = api_url.rstrip("/")
+                if not base_url.endswith("/chat/completions"):
+                    base_url += "/chat/completions"
                 # Agent 循环
                 tools = get_fast_definitions()
                 messages = [{"role": "user", "content": prompt}]
@@ -2200,7 +2204,7 @@ async def api_automations_run(request):
                 for _ in range(5):
                     payload = {"model": model_used or "default", "messages": messages, "tools": tools, "tool_choice": "auto", "max_tokens": 2048}
                     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as sess:
-                        async with sess.post(api_url.rstrip("/") + "/chat/completions", headers=headers, json=payload) as resp:
+                        async with sess.post(base_url, headers=headers, json=payload) as resp:
                             if resp.status == 200:
                                 data = await resp.json()
                                 msg = data.get("choices", [{}])[0].get("message", {})
@@ -2215,6 +2219,15 @@ async def api_automations_run(request):
                                     r = await execute(t["function"]["name"], args, {"user_id": "manual", "group_id": ""})
                                     messages.append({"role": "tool", "tool_call_id": t["id"], "content": str(r)[:500]})
                             else:
+                                err_text = await resp.text()
+                                log.warning(f"手动执行 LLM {resp.status}: {err_text[:200]}")
+                                if not reply:  # 首次失败尝试无工具的请求
+                                    payload2 = {"model": model_used or "default", "messages": [{"role": "user", "content": prompt}], "max_tokens": 1024}
+                                    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as s2:
+                                        async with s2.post(base_url, headers=headers, json=payload2) as r2:
+                                            if r2.status == 200:
+                                                d2 = await r2.json()
+                                                reply = d2.get("choices", [{}])[0].get("message", {}).get("content", "")
                                 break
         except Exception as e:
             log.warning(f"手动执行 LLM 失败: {e}")
@@ -2266,10 +2279,13 @@ async def api_automations_trigger(request):
                 api_key, api_url, model_used = pcfg.get("api_key", ""), pcfg.get("api_url", ""), pcfg.get("model", "")
                 break
         if api_key and api_url and prompt:
+            base_url = api_url.rstrip("/")
+            if not base_url.endswith("/chat/completions"):
+                base_url += "/chat/completions"
             headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
             payload = {"model": model_used or "default", "messages": [{"role": "user", "content": prompt}], "max_tokens": 1024}
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as sess:
-                async with sess.post(api_url.rstrip("/") + "/chat/completions", headers=headers, json=payload) as resp:
+                async with sess.post(base_url, headers=headers, json=payload) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")

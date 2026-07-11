@@ -194,8 +194,11 @@ async def main():
                 max_rounds = 5
                 for _ in range(max_rounds):
                     payload = {"model": model_name or "default", "messages": messages, "tools": tools, "tool_choice": "auto", "max_tokens": 2048}
+                    base_url = api_url.rstrip("/")
+                    if not base_url.endswith("/chat/completions"):
+                        base_url += "/chat/completions"
                     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as sess:
-                        async with sess.post(api_url.rstrip("/") + "/chat/completions", headers=headers, json=payload) as resp:
+                        async with sess.post(base_url, headers=headers, json=payload) as resp:
                             if resp.status != 200:
                                 return ""
                             data = await resp.json()
