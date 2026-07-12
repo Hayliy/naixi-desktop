@@ -19,7 +19,7 @@ import {
   HardDrive, Shield, Film, Layers, GitBranch,
   Cpu as CpuIcon, Zap, Network, Lock,
   Plus, Check, Repeat, Play, Pause, ChevronDown, ChevronUp, ChevronLeft, Edit3, Trash2, CircleAlert,
-  Search, X, Loader2, Copy, Download,
+  Search, X, Loader2, Copy, Download, RefreshCw,
 } from "lucide-react";
 
 const PAGE_TITLES: Record<string, string> = {
@@ -1533,114 +1533,144 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    apiGet<any>("/api/stats").then(d => setData(d)).finally(() => setLoading(false));
+  const load = useCallback(async () => {
+    try {
+      const d = await apiGet<any>("/api/stats");
+      setData(d);
+    } catch {}
+    setLoading(false);
   }, []);
 
-  if (loading) return (
-    <div className="space-y-3">
-      <p className="text-sm font-semibold text-sakura-600">运维</p>
-      <div className="text-center py-8"><div className="w-5 h-5 border-2 border-sakura-200 border-t-sakura-500 rounded-full animate-spin mx-auto" /></div>
-    </div>
-  );
+  useEffect(() => { load(); }, [load]);
 
-  const d = data;
-  const recentErrors = errors.slice(-5).reverse();
+  // 判断系统健康状态
+  const backendOk = data?.backend?.pid != null;
+  const services = data?.services || {};
+  const depOk = Object.values(services).filter(Boolean).length;
+  const hasKey = (data?.providers?.with_key ?? 0) > 0;
+  const totalServices = Object.keys(services).length;
+
+  let status: "healthy" | "warning" | "critical" = "healthy";
+  const issues: string[] = [];
+  if (!backendOk) { status = "critical"; issues.push("后端进程未响应"); }
+  if (depOk === 0 && totalServices > 0) { status = "critical"; issues.push("所有依赖服务离线"); }
+  else if (depOk < totalServices) { status = "warning"; issues.push(`${totalServices - depOk} 个依赖服务离线`); }
+  if (!hasKey) { status = "warning"; issues.push("未配置有效的 API Key"); }
+  if (errors.length > 5) { status = "warning"; issues.push(`近期有 ${errors.length} 个错误`); }
+
+  const statusLabel = { healthy: "系统运行正常", warning: "系统运行异常", critical: "系统严重故障" };
+  const statusColor = { healthy: "bg-green-500", warning: "bg-yellow-500", critical: "bg-red-500" };
+  const statusBg = { healthy: "bg-green-50 border-green-200 text-green-700", warning: "bg-yellow-50 border-yellow-200 text-yellow-700", critical: "bg-red-50 border-red-200 text-red-700" };
+
+  const recentErrors = errors.slice(-8).reverse();
 
   return (
     <div className="space-y-3">
       <p className="text-sm font-semibold text-sakura-600">运维</p>
 
-      {/* 后端进程 */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5">
-          <p className="text-[8px] text-sakura-400">后端状态</p>
-          <p className="text-[12px] font-semibold text-green-600">运行中</p>
-          <p className="text-[7px] text-sakura-300">PID {d?.backend?.pid}</p>
+      {/* 1. 全局状态 - 一眼看出系统正常吗 */}
+      <div className={`rounded-xl p-3 border ${statusBg[status]}`}>
+        <div className="flex items-center gap-2">
+          <div className={`w-3 h-3 rounded-full ${statusColor[status]}`} />
+          <p className={`text-xs font-semibold ${status === "healthy" ? "text-green-700" : status === "warning" ? "text-yellow-700" : "text-red-700"}`}>
+            {statusLabel[status]}
+          </p>
+          <button onClick={load} className="ml-auto p-1 rounded hover:bg-white/50 text-current opacity-60 hover:opacity-100" title="刷新">
+            <RefreshCw size={11} />
+          </button>
         </div>
-        <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5">
-          <p className="text-[8px] text-sakura-400">内存占用</p>
-          <p className="text-[12px] font-semibold text-sakura-600">{d?.backend?.memory_mb ?? "?"} MB</p>
-          <p className="text-[7px] text-sakura-300">版本 {d?.backend?.version}</p>
-        </div>
-        <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5">
-          <p className="text-[8px] text-sakura-400">API 提供商</p>
-          <p className="text-[12px] font-semibold text-sakura-600">{d?.providers?.with_key ?? 0} / {d?.providers?.total ?? 0}</p>
-          <p className="text-[7px] text-sakura-300">已配置 / 总共</p>
-        </div>
-        <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5">
-          <p className="text-[8px] text-sakura-400">数据库</p>
-          <p className="text-[12px] font-semibold text-sakura-600">{d?.database?.size_mb ?? 0} MB</p>
-          <p className="text-[7px] text-sakura-300">{d?.database?.tables?.length ?? 0} 张表</p>
-        </div>
+        {issues.length > 0 && (
+          <ul className="mt-1.5 space-y-0.5">
+            {issues.map((s, i) => <li key={i} className="text-[10px] opacity-80">• {s}</li>)}
+          </ul>
+        )}
       </div>
 
-      {/* 服务状态 */}
-      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-        <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30">
-          <span className="text-[10px] font-medium text-sakura-500">依赖服务</span>
+      {/* 2. 关键服务 - 每个服务一张卡片 */}
+      <div className="grid grid-cols-2 gap-2">
+        {/* 后端 */}
+        <div className="bg-white border border-sakura-100 rounded-xl p-2.5">
+          <div className="flex items-center gap-1.5 mb-1">
+            <div className={`w-2 h-2 rounded-full ${backendOk ? "bg-green-500" : "bg-red-500"}`} />
+            <span className="text-[10px] font-medium text-sakura-600">后端</span>
+          </div>
+          <p className="text-[9px] text-sakura-400">PID {data?.backend?.pid || "?"}</p>
+          <p className="text-[9px] text-sakura-400">内存 {data?.backend?.memory_mb ?? "?"} MB</p>
         </div>
-        <div className="divide-y divide-sakura-50">
-          {d?.services && Object.entries(d.services).map(([name, ok]: [string, any]) => (
-            <div key={name} className="flex items-center gap-2.5 px-3 py-2">
-              <div className={`w-2 h-2 rounded-full shrink-0 ${ok ? "bg-green-500" : "bg-red-500"}`} />
-              <span className="text-[11px] font-medium text-sakura-600 flex-1">{name}</span>
-              <span className={`text-[8px] px-1.5 py-0.5 rounded font-medium ${ok ? "bg-green-50 text-green-600" : "bg-red-50 text-red-500"}`}>
-                {ok ? "在线" : "离线"}
-              </span>
+        {/* NapCat */}
+        {Object.entries(services).filter(([k]) => k.includes("NapCat")).map(([k, v]) => (
+          <div key={k} className="bg-white border border-sakura-100 rounded-xl p-2.5">
+            <div className="flex items-center gap-1.5 mb-1">
+              <div className={`w-2 h-2 rounded-full ${v ? "bg-green-500" : "bg-red-500"}`} />
+              <span className="text-[10px] font-medium text-sakura-600">{k}</span>
+            </div>
+            <p className="text-[9px] text-sakura-400">{v ? "已连接" : "离线"}</p>
+          </div>
+        ))}
+        {/* Ollama + SearXNG */}
+        {Object.entries(services).filter(([k]) => !k.includes("NapCat") && k !== "后端API").map(([k, v]) => (
+          <div key={k} className="bg-white border border-sakura-100 rounded-xl p-2.5">
+            <div className="flex items-center gap-1.5 mb-1">
+              <div className={`w-2 h-2 rounded-full ${v ? "bg-green-500" : "bg-red-500"}`} />
+              <span className="text-[10px] font-medium text-sakura-600">{k}</span>
+            </div>
+            <p className="text-[9px] text-sakura-400">{v ? "在线" : "离线"}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* 3. API 提供商 */}
+      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+        <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
+          <span className="text-[10px] font-medium text-sakura-500">API 提供商</span>
+          <span className="text-[8px] text-sakura-400">{data?.providers?.with_key ?? 0}/{data?.providers?.total ?? 0} 有效</span>
+        </div>
+        <div className="max-h-[140px] overflow-y-auto divide-y divide-sakura-50">
+          {(data?.providers?.list || []).length === 0 ? (
+            <div className="px-3 py-3 text-center text-[10px] text-sakura-300">未配置 API 提供商</div>
+          ) : (data?.providers?.list || []).map((p: any, i: number) => (
+            <div key={i} className="flex items-center gap-2 px-3 py-1.5">
+              <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${p.has_key ? "bg-green-500" : "bg-sakura-300"}`} />
+              <span className="text-[9px] font-mono text-sakura-600 flex-1 truncate">{p.name}</span>
+              <span className="text-[8px] text-sakura-400">{p.model}</span>
             </div>
           ))}
         </div>
       </div>
 
-      {/* API 提供商 */}
-      {(d?.providers?.list || []).length > 0 && (
-        <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-          <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30">
-            <span className="text-[10px] font-medium text-sakura-500">API 提供商 ({d.providers.total})</span>
-          </div>
-          <div className="divide-y divide-sakura-50">
-            {d.providers.list.map((p: any, i: number) => (
-              <div key={i} className="flex items-center gap-2 px-3 py-1.5">
-                <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${p.has_key ? "bg-green-500" : "bg-sakura-300"}`} />
-                <span className="text-[9px] font-mono text-sakura-600 flex-1 truncate">{p.name}</span>
-                <span className="text-[8px] text-sakura-400">{p.model}</span>
-                <span className={`text-[8px] ${p.has_key ? "text-green-600" : "text-sakura-400"}`}>{p.has_key ? "已配置" : "无密钥"}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* 数据库表 */}
+      {/* 4. 数据库 + 养护 */}
       <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-        <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30">
-          <span className="text-[10px] font-medium text-sakura-500">数据库 ({d?.database?.tables?.length ?? 0} 表)</span>
+        <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
+          <span className="text-[10px] font-medium text-sakura-500">数据库 ({data?.database?.size_mb ?? 0} MB)</span>
         </div>
-        <div className="divide-y divide-sakura-50">
-          {(d?.database?.tables || []).slice(0, 12).map((t: any, i: number) => (
-            <div key={i} className="flex items-center justify-between px-3 py-1.5">
-              <span className="text-[9px] text-sakura-500 font-mono truncate">{t.name}</span>
-              <span className="text-[9px] text-sakura-600 font-medium">{t.count.toLocaleString()} 条</span>
+        <div className="max-h-[150px] overflow-y-auto divide-y divide-sakura-50">
+          {(data?.database?.tables || []).slice(0, 10).map((t: any, i: number) => (
+            <div key={i} className="flex items-center justify-between px-3 py-1">
+              <span className="text-[8px] text-sakura-500 font-mono truncate">{t.name}</span>
+              <span className="text-[9px] text-sakura-600 font-medium">{t.count.toLocaleString()}</span>
             </div>
           ))}
         </div>
       </div>
 
-      {/* 最近错误 */}
-      {recentErrors.length > 0 && (
+      {/* 5. 最近错误 */}
+      {recentErrors.length > 0 ? (
         <div className="bg-white border border-red-200 rounded-xl overflow-hidden">
-          <div className="px-3 py-2 border-b border-red-100 bg-red-50/30">
+          <div className="px-3 py-2 border-b border-red-100 bg-red-50/30 flex items-center justify-between">
             <span className="text-[10px] font-medium text-red-500">最近错误 ({recentErrors.length})</span>
           </div>
-          <div className="divide-y divide-red-50">
+          <div className="max-h-[160px] overflow-y-auto divide-y divide-red-50">
             {recentErrors.map((e, i) => (
-              <div key={i} className="px-3 py-1.5">
-                <p className="text-[9px] text-red-600 font-mono truncate">{e.msg}</p>
-                <p className="text-[8px] text-sakura-400">{new Date(e.time).toLocaleString("zh-CN")}</p>
+              <div key={i} className="px-3 py-1">
+                <p className="text-[8px] text-red-600 font-mono truncate">{e.msg}</p>
+                <p className="text-[7px] text-sakura-400">{new Date(e.time).toLocaleString("zh-CN")}</p>
               </div>
             ))}
           </div>
+        </div>
+      ) : (
+        <div className="bg-white border border-green-200 rounded-xl p-3 text-center">
+          <p className="text-[10px] text-green-600">无错误</p>
         </div>
       )}
     </div>
