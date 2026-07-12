@@ -2144,7 +2144,118 @@ async def api_knowledge_import_github(request):
         return web.json_response({"error": f"导入失败: {str(e)[:200]}"}, status=400)
 
 
-# ── 自动化管理 API ──
+# ── 记忆 API（Hermes 风格：FTS 搜索 + 统计 + 分类）──
+
+async def api_memory_stats(request):
+    """记忆统计：总数、按对话类型分组、最近活动"""
+    from desktop_core.storage import _get_conn
+    try:
+        conn = _get_conn()
+        # 总消息数
+        total = conn.execute("SELECT COUNT(*) as c FROM conv_messages").fetchone()["c"]
+        # 对话数
+        conv_count = conn.execute("SELECT COUNT(*) as c FROM convs").fetchone()["c"]
+        # 按类型分组（auto: 自动化 / test: 测试 / 其他）
+        type_rows = conn.execute(
+            """SELECT 
+                CASE 
+                    WHEN conv_key LIKE 'auto:%' THEN '自动'
+                    WHEN conv_key LIKE 'test%' THEN '测试'
+                    ELSE '对话'
+                END as type,
+                COUNT(*) as cnt 
+               FROM conv_messages GROUP BY type ORDER BY cnt DESC"""
+        ).fetchall()
+        categories = [{"name": r["type"], "count": r["cnt"]} for r in type_rows]
+        # 最近 7 天活跃
+        recent = conn.execute(
+            "SELECT COUNT(*) as c FROM conv_messages WHERE time >= datetime('now', '-7 days', 'localtime')"
+        ).fetchone()["c"]
+        # 最近记忆片段（最新 5 条消息）
+        recent_rows = conn.execute(
+            "SELECT conv_key, role, content, time FROM conv_messages ORDER BY id DESC LIMIT 5"
+        ).fetchall()
+        recent_items = []
+        for r in recent_rows:
+            recent_items.append({
+                "conv": r["conv_key"],
+                "role": r["role"],
+                "content": r["content"][:100] if r["content"] else "",
+                "time": r["time"],
+            })
+        conn.close()
+        return web.json_response({
+            "total": total,
+            "conversations": conv_count,
+            "recent_7d": recent,
+            "categories": categories,
+            "recent": recent_items,
+        })
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+
+async def api_memory_search(request):
+    """搜索记忆（对话内容 FTS）"""
+    from desktop_core.storage import _get_conn
+    try:
+        body = await request.json()
+        query = body.get("query", "").strip().lower()
+        conv_filter = body.get("conv", "")
+        page = max(1, int(body.get("page", 1)))
+        limit = min(50, max(1, int(body.get("limit", 20))))
+        if not query:
+            return web.json_response({"items": [], "total": 0})
+        
+        conn = _get_conn()
+        where = "WHERE LOWER(content) LIKE ?"
+        params = [f"%{query}%"]
+        if conv_filter:
+            where += " AND conv_key = ?"
+            params.append(conv_filter)
+        
+        total = conn.execute(f"SELECT COUNT(*) as c FROM conv_messages {where}", params).fetchone()["c"]
+        offset = (page - 1) * limit
+        rows = conn.execute(
+            f"SELECT id, conv_key, role, content, time FROM conv_messages {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+            params + [limit, offset]
+        ).fetchall()
+        conn.close()
+        items = []
+        for r in rows:
+            items.append({
+                "id": r["id"],
+                "conv": r["conv_key"],
+                "role": r["role"],
+                "content": (r["content"] or "")[:300],
+                "time": r["time"],
+            })
+        return web.json_response({"items": items, "total": total, "page": page})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+
+async def api_memory_categories(request):
+    """记忆分类列表（对话列表作为分类）"""
+    from desktop_core.storage import _get_conn
+    try:
+        conn = _get_conn()
+        rows = conn.execute(
+            "SELECT key, last_msg, msg_count, last_time FROM convs ORDER BY last_time DESC"
+        ).fetchall()
+        conn.close()
+        categories = []
+        for r in rows:
+            categories.append({
+                "key": r["key"],
+                "label": r["key"][:30],
+                "count": r["msg_count"] or 0,
+                "last_msg": (r["last_msg"] or "")[:60],
+                "last_time": r["last_time"] or "",
+            })
+        return web.json_response({"categories": categories, "total": len(categories)})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
 
 async def api_automations_list(request):
     """列出所有自动化任务"""
@@ -2418,6 +2529,11 @@ def setup_routes(app):
     app.router.add_post("/api/knowledge/import-github", api_knowledge_import_github)
     app.router.add_post("/api/knowledge/update", api_knowledge_update)
     app.router.add_post("/api/knowledge/import-url", api_knowledge_import_url)
+
+    # 记忆（对话内容检索）
+    app.router.add_get("/api/memory/stats", api_memory_stats)
+    app.router.add_post("/api/memory/search", api_memory_search)
+    app.router.add_get("/api/memory/categories", api_memory_categories)
 
     # 自动化
     app.router.add_get("/api/automations", api_automations_list)

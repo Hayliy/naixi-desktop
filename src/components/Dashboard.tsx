@@ -1078,20 +1078,168 @@ function catLabel(cat: string): string {
 }
 
 function MemPage({ memLayers }: { memLayers: { name: string; desc: string; count: number; status: string }[] }) {
+  const [stats, setStats] = useState<any>(null);
+  const [items, setItems] = useState<any[]>([]);
+  const [categories, setCategories] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [activeCat, setActiveCat] = useState("");
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [searchTotal, setSearchTotal] = useState(0);
+  const [searchPage, setSearchPage] = useState(1);
+  const { notify } = useToast();
+
+  useEffect(() => {
+    Promise.all([
+      apiGet<any>("/api/memory/stats").then(setStats).catch(() => {}),
+      apiGet<any>("/api/memory/categories").then(d => setCategories(d.categories || [])).catch(() => {}),
+    ]).finally(() => setLoading(false));
+  }, []);
+
+  const doSearch = useCallback(async (q: string, cat: string, page: number = 1) => {
+    if (!q.trim()) { setItems([]); setSearchTotal(0); return; }
+    try {
+      const res = await apiPost<{ items: any[]; total: number; page: number }>("/api/memory/search", {
+        query: q, conv: cat, page, limit: 20,
+      });
+      setItems(res.items || []);
+      setSearchTotal(res.total || 0);
+      setSearchPage(res.page || 1);
+    } catch { setItems([]); }
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => doSearch(search, activeCat, 1), 300);
+    return () => clearTimeout(timer);
+  }, [search, activeCat, doSearch]);
+
   return (
-    <div className="space-y-4">
-      <p className="text-sm font-semibold text-sakura-500">记忆系统</p>
-      <div className="space-y-2">
-        {memLayers.map((l, i) => (
-          <div key={i} className="bg-white border border-sakura-100 rounded-xl px-4 py-3">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-medium text-sakura-600">{l.name}</p>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded ${l.status === "active" ? "bg-green-50 text-green-600" : "bg-sakura-50 text-sakura-400"}`}>{l.status}</span>
-            </div>
-            <p className="text-[11px] text-sakura-400 mt-0.5">{l.desc} · {l.count} 条</p>
-          </div>
-        ))}
+    <div className="space-y-3">
+      {/* 顶栏 */}
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-sakura-600">记忆系统</p>
       </div>
+
+      {/* 统计卡片 */}
+      {!loading && stats && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5">
+            <p className="text-[9px] text-sakura-400">总记忆</p>
+            <p className="text-sm font-semibold text-sakura-600">{stats.total}</p>
+          </div>
+          <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5">
+            <p className="text-[9px] text-sakura-400">对话数</p>
+            <p className="text-sm font-semibold text-sakura-600">{stats.conversations}</p>
+          </div>
+          <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5">
+            <p className="text-[9px] text-sakura-400">近7天活跃</p>
+            <p className="text-sm font-semibold text-sakura-600">{stats.recent_7d}</p>
+          </div>
+          <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5">
+            <p className="text-[9px] text-sakura-400">分类</p>
+            <p className="text-sm font-semibold text-sakura-600">{stats.categories?.length || 0}</p>
+          </div>
+        </div>
+      )}
+
+      {/* 分类分布 */}
+      {!loading && stats?.categories?.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {stats.categories.map((c: any, i: number) => (
+            <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-sakura-50 text-sakura-500 border border-sakura-100">
+              {c.name} <span className="opacity-60">{c.count}</span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* 搜索 */}
+      <div className="relative">
+        <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sakura-300" />
+        <input value={search} onChange={e => setSearch(e.target.value)}
+          className="w-full pl-8 pr-3 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-sakura-50/50 text-sakura-600 placeholder:text-sakura-300 transition-colors"
+          placeholder="搜索记忆内容（对话消息 FTS）..." />
+      </div>
+
+      {/* 加载状态 */}
+      {loading ? (
+        <div className="text-center py-8">
+          <div className="w-5 h-5 border-2 border-sakura-200 border-t-sakura-500 rounded-full animate-spin mx-auto" />
+          <p className="text-xs text-sakura-400 mt-2">加载中...</p>
+        </div>
+      ) : (
+        <>
+          {/* 最近记忆（无搜索时） */}
+          {!search && stats?.recent?.length > 0 && (
+            <div>
+              <p className="text-[10px] font-medium text-sakura-500 mb-1">最近记忆</p>
+              <div className="space-y-1">
+                {stats.recent.map((r: any, i: number) => (
+                  <div key={i} className="flex items-start gap-2 px-2.5 py-2 bg-white border border-sakura-100 rounded-lg">
+                    <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${r.role === "user" ? "bg-pink-100" : "bg-sakura-100"}`}>
+                      <Brain size={10} className={r.role === "user" ? "text-pink-400" : "text-sakura-400"} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[9px] font-medium text-sakura-500">{r.role === "user" ? "用户" : "奶昔"}</span>
+                        <span className="text-[8px] text-sakura-300 truncate">{r.conv}</span>
+                      </div>
+                      <p className="text-[10px] text-sakura-600 mt-0.5 truncate">{r.content}</p>
+                    </div>
+                    <span className="text-[8px] text-sakura-300 shrink-0">{r.time?.slice(5, 16) || ""}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 搜索无结果 */}
+          {search && items.length === 0 && searchTotal === 0 && (
+            <div className="text-center py-10">
+              <div className="w-10 h-10 rounded-full bg-sakura-50 flex items-center justify-center mx-auto mb-2">
+                <Brain size={16} className="text-sakura-300" />
+              </div>
+              <p className="text-xs text-sakura-400">没有找到匹配的记忆</p>
+              <p className="text-[10px] text-sakura-300 mt-1">试试其他关键词</p>
+            </div>
+          )}
+
+          {/* 搜索结果 */}
+          {items.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-[10px] text-sakura-400 mb-1">找到 {searchTotal} 条结果</p>
+              {items.map((item) => (
+                <div key={item.id} className="bg-white border border-sakura-100 rounded-lg overflow-hidden">
+                  <div className="flex items-start gap-2 px-3 py-2.5 cursor-pointer hover:bg-sakura-50/30 transition-colors"
+                    onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}>
+                    <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${item.role === "user" ? "bg-pink-100" : "bg-sakura-100"}`}>
+                      <Brain size={10} className={item.role === "user" ? "text-pink-400" : "text-sakura-400"} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-medium text-sakura-600">{item.role === "user" ? "用户" : "奶昔"}</span>
+                        <span className="text-[8px] text-sakura-300 px-1.5 py-0.5 rounded bg-sakura-50">{item.conv?.startsWith("auto:") ? "自动" : item.conv?.startsWith("test") ? "测试" : "对话"}</span>
+                      </div>
+                      <p className="text-[10px] text-sakura-500 mt-0.5 line-clamp-2">{item.content}</p>
+                      <span className="text-[8px] text-sakura-300 mt-0.5 block">{item.time}</span>
+                    </div>
+                  </div>
+                  {expandedId === item.id && (
+                    <div className="px-3 py-2 border-t border-sakura-50 bg-sakura-50/30">
+                      <p className="text-[10px] text-sakura-600 leading-relaxed whitespace-pre-wrap">{item.content}</p>
+                      <div className="flex items-center gap-2 mt-1.5 text-[9px] text-sakura-400">
+                        <span>对话: {item.conv}</span>
+                        <span>角色: {item.role}</span>
+                        <span>时间: {item.time}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
