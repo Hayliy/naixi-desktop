@@ -18,8 +18,8 @@ import {
   CheckCircle, AlertTriangle, Users, Wifi, WifiOff,
   HardDrive, Shield, Film, Layers, GitBranch,
   Cpu as CpuIcon, Zap, Network, Lock,
-  Plus, Check, Repeat, Play, Pause, ChevronDown, ChevronUp, Edit3, Trash2, CircleAlert,
-  Search, X, Loader2,
+  Plus, Check, Repeat, Play, Pause, ChevronDown, ChevronUp, ChevronLeft, Edit3, Trash2, CircleAlert,
+  Search, X, Loader2, Copy,
 } from "lucide-react";
 
 const PAGE_TITLES: Record<string, string> = {
@@ -1087,6 +1087,10 @@ function MemPage({ memLayers }: { memLayers: { name: string; desc: string; count
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [searchTotal, setSearchTotal] = useState(0);
   const [searchPage, setSearchPage] = useState(1);
+  const [viewingConv, setViewingConv] = useState<string | null>(null);
+  const [convMsgs, setConvMsgs] = useState<any[]>([]);
+  const [convLoading, setConvLoading] = useState(false);
+  const [timeFilter, setTimeFilter] = useState("all");
   const { notify } = useToast();
 
   useEffect(() => {
@@ -1113,133 +1117,178 @@ function MemPage({ memLayers }: { memLayers: { name: string; desc: string; count
     return () => clearTimeout(timer);
   }, [search, activeCat, doSearch]);
 
+  const openConv = async (key: string) => {
+    setViewingConv(key);
+    setConvLoading(true);
+    try {
+      const res = await apiGet<{ key: string; messages: any[] }>(`/api/conversation/${encodeURIComponent(key)}`);
+      setConvMsgs(res.messages || []);
+    } catch { setConvMsgs([]); }
+    setConvLoading(false);
+  };
+
+  const groupByDate = (msgs: any[]) => {
+    const groups: { label: string; items: any[] }[] = [];
+    const today = new Date().toISOString().slice(0, 10);
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    for (const m of msgs) {
+      const d = (m.time || "").slice(0, 10);
+      let label = d;
+      if (d === today) label = "今天";
+      else if (d === yesterday) label = "昨天";
+      const last = groups[groups.length - 1];
+      if (last && last.label === label) last.items.push(m);
+      else groups.push({ label, items: [m] });
+    }
+    return groups;
+  };
+
+  if (viewingConv !== null) {
+    const filtered = convMsgs.filter((m: any) => {
+      if (timeFilter === "all") return true;
+      const d = (m.time || "").slice(0, 10);
+      if (!d) return true;
+      const diff = Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
+      return timeFilter === "7d" ? diff <= 7 : diff <= 30;
+    });
+    const groups = groupByDate(filtered);
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <button onClick={() => { setViewingConv(null); setConvMsgs([]); }}
+            className="p-1 rounded hover:bg-sakura-50 text-sakura-400 transition-colors"><ChevronLeft size={14} /></button>
+          <p className="text-sm font-semibold text-sakura-600 truncate flex-1">{viewingConv}</p>
+          <span className="text-[10px] text-sakura-400">{convMsgs.length} 条</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {[{k:"all",l:"全部"},{k:"7d",l:"近7天"},{k:"30d",l:"近30天"}].map(t => (
+            <button key={t.k} onClick={() => setTimeFilter(t.k)}
+              className={`text-[10px] px-2 py-1 rounded-full border transition-colors ${timeFilter===t.k?"bg-sakura-500 text-white border-sakura-500":"bg-white text-sakura-500 border-sakura-100 hover:border-sakura-300"}`}>{t.l}</button>
+          ))}
+        </div>
+        {convLoading ? (
+          <div className="text-center py-8"><Loader2 size={14} className="animate-spin mx-auto text-sakura-300" /></div>
+        ) : groups.length === 0 ? (
+          <div className="text-center py-10 text-xs text-sakura-400">该时间范围内暂无消息</div>
+        ) : groups.map((g, gi) => (
+          <div key={gi}>
+            <div className="flex items-center gap-2 mb-1"><span className="text-[10px] font-medium text-sakura-500">{g.label}</span><span className="text-[9px] text-sakura-300">{g.items.length} 条</span><div className="flex-1 border-t border-sakura-100" /></div>
+            <div className="space-y-1">
+              {g.items.map((m: any, mi: number) => (
+                <div key={mi} className="flex items-start gap-2 px-2.5 py-2 bg-white border border-sakura-100 rounded-lg group">
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${m.role==="user"?"bg-pink-100":"bg-sakura-100"}`}>
+                    <Brain size={10} className={m.role==="user"?"text-pink-400":"text-sakura-400"} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[9px] font-medium text-sakura-500">{m.role==="user"?"用户":"奶昔"}</span>
+                      <span className="text-[8px] text-sakura-300">{(m.time||"").slice(11,16)}</span>
+                    </div>
+                    <p className="text-[10px] text-sakura-600 mt-0.5 whitespace-pre-wrap">{m.content}</p>
+                  </div>
+                  <button onClick={() => { navigator.clipboard.writeText(m.content||""); notify("已复制","success"); }}
+                    className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-sakura-50 text-sakura-300 hover:text-sakura-500 transition-all shrink-0"><Copy size={10} /></button>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
-      {/* 顶栏 */}
       <div className="flex items-center justify-between">
         <p className="text-sm font-semibold text-sakura-600">记忆系统</p>
       </div>
-
-      {/* 统计卡片 */}
       {!loading && stats && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5">
-            <p className="text-[9px] text-sakura-400">总记忆</p>
-            <p className="text-sm font-semibold text-sakura-600">{stats.total}</p>
-          </div>
-          <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5">
-            <p className="text-[9px] text-sakura-400">对话数</p>
-            <p className="text-sm font-semibold text-sakura-600">{stats.conversations}</p>
-          </div>
-          <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5">
-            <p className="text-[9px] text-sakura-400">近7天活跃</p>
-            <p className="text-sm font-semibold text-sakura-600">{stats.recent_7d}</p>
-          </div>
-          <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5">
-            <p className="text-[9px] text-sakura-400">分类</p>
-            <p className="text-sm font-semibold text-sakura-600">{stats.categories?.length || 0}</p>
-          </div>
-        </div>
-      )}
-
-      {/* 分类分布 */}
-      {!loading && stats?.categories?.length > 0 && (
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {stats.categories.map((c: any, i: number) => (
-            <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-sakura-50 text-sakura-500 border border-sakura-100">
-              {c.name} <span className="opacity-60">{c.count}</span>
-            </span>
+          {[{l:"总记忆",v:stats.total},{l:"对话数",v:stats.conversations},{l:"近7天活跃",v:stats.recent_7d},{l:"分类",v:stats.categories?.length||0}].map((c,i) => (
+            <div key={i} className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5">
+              <p className="text-[9px] text-sakura-400">{c.l}</p>
+              <p className="text-sm font-semibold text-sakura-600">{c.v}</p>
+            </div>
           ))}
         </div>
       )}
-
-      {/* 搜索 */}
+      {!loading && stats?.categories?.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {stats.categories.map((c: any, i: number) => (
+            <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-sakura-50 text-sakura-500 border border-sakura-100">{c.name} <span className="opacity-60">{c.count}</span></span>
+          ))}
+        </div>
+      )}
+      {!loading && categories.length > 0 && !search && (
+        <div>
+          <p className="text-[10px] font-medium text-sakura-500 mb-1">所有对话</p>
+          <div className="space-y-1">
+            {categories.map((c: any, i: number) => (
+              <div key={i} className="flex items-center gap-2 px-3 py-2 bg-white border border-sakura-100 rounded-lg cursor-pointer hover:bg-sakura-50/50 transition-colors" onClick={() => openConv(c.key)}>
+                <div className="w-6 h-6 rounded flex items-center justify-center bg-gradient-to-br from-sakura-400 to-sakura-500 text-white"><MessageCircle size={11} /></div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[11px] font-medium text-sakura-600 truncate">{c.label}</p>
+                  <p className="text-[9px] text-sakura-400 truncate">{c.last_msg||"暂无消息"}</p>
+                </div>
+                <div className="text-right shrink-0"><p className="text-[10px] font-semibold text-sakura-500">{c.count}</p><p className="text-[8px] text-sakura-300">条</p></div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="relative">
         <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sakura-300" />
         <input value={search} onChange={e => setSearch(e.target.value)}
           className="w-full pl-8 pr-3 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-sakura-50/50 text-sakura-600 placeholder:text-sakura-300 transition-colors"
-          placeholder="搜索记忆内容（对话消息 FTS）..." />
+          placeholder="搜索记忆内容..." />
       </div>
-
-      {/* 加载状态 */}
       {loading ? (
-        <div className="text-center py-8">
-          <div className="w-5 h-5 border-2 border-sakura-200 border-t-sakura-500 rounded-full animate-spin mx-auto" />
-          <p className="text-xs text-sakura-400 mt-2">加载中...</p>
-        </div>
-      ) : (
-        <>
-          {/* 最近记忆（无搜索时） */}
-          {!search && stats?.recent?.length > 0 && (
-            <div>
-              <p className="text-[10px] font-medium text-sakura-500 mb-1">最近记忆</p>
-              <div className="space-y-1">
-                {stats.recent.map((r: any, i: number) => (
-                  <div key={i} className="flex items-start gap-2 px-2.5 py-2 bg-white border border-sakura-100 rounded-lg">
-                    <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${r.role === "user" ? "bg-pink-100" : "bg-sakura-100"}`}>
-                      <Brain size={10} className={r.role === "user" ? "text-pink-400" : "text-sakura-400"} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[9px] font-medium text-sakura-500">{r.role === "user" ? "用户" : "奶昔"}</span>
-                        <span className="text-[8px] text-sakura-300 truncate">{r.conv}</span>
-                      </div>
-                      <p className="text-[10px] text-sakura-600 mt-0.5 truncate">{r.content}</p>
-                    </div>
-                    <span className="text-[8px] text-sakura-300 shrink-0">{typeof r.time === "string" ? r.time.slice(5, 16) : new Date((r.time || 0) * 1000).toLocaleString("zh-CN", {month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"})}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* 搜索无结果 */}
-          {search && items.length === 0 && searchTotal === 0 && (
-            <div className="text-center py-10">
-              <div className="w-10 h-10 rounded-full bg-sakura-50 flex items-center justify-center mx-auto mb-2">
-                <Brain size={16} className="text-sakura-300" />
-              </div>
-              <p className="text-xs text-sakura-400">没有找到匹配的记忆</p>
-              <p className="text-[10px] text-sakura-300 mt-1">试试其他关键词</p>
-            </div>
-          )}
-
-          {/* 搜索结果 */}
-          {items.length > 0 && (
-            <div className="space-y-1">
-              <p className="text-[10px] text-sakura-400 mb-1">找到 {searchTotal} 条结果</p>
-              {items.map((item) => (
-                <div key={item.id} className="bg-white border border-sakura-100 rounded-lg overflow-hidden">
-                  <div className="flex items-start gap-2 px-3 py-2.5 cursor-pointer hover:bg-sakura-50/30 transition-colors"
-                    onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}>
-                    <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${item.role === "user" ? "bg-pink-100" : "bg-sakura-100"}`}>
-                      <Brain size={10} className={item.role === "user" ? "text-pink-400" : "text-sakura-400"} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] font-medium text-sakura-600">{item.role === "user" ? "用户" : "奶昔"}</span>
-                        <span className="text-[8px] text-sakura-300 px-1.5 py-0.5 rounded bg-sakura-50">{item.conv?.startsWith("auto:") ? "自动" : item.conv?.startsWith("test") ? "测试" : "对话"}</span>
-                      </div>
-                      <p className="text-[10px] text-sakura-500 mt-0.5 line-clamp-2">{item.content}</p>
-                      <span className="text-[8px] text-sakura-300 mt-0.5 block">{typeof item.time === "string" ? item.time : new Date((item.time || 0) * 1000).toLocaleString("zh-CN")}</span>
-                    </div>
-                  </div>
-                  {expandedId === item.id && (
-                    <div className="px-3 py-2 border-t border-sakura-50 bg-sakura-50/30">
-                      <p className="text-[10px] text-sakura-600 leading-relaxed whitespace-pre-wrap">{item.content}</p>
-                      <div className="flex items-center gap-2 mt-1.5 text-[9px] text-sakura-400">
-                        <span>对话: {item.conv}</span>
-                        <span>角色: {item.role}</span>
-                        <span>时间: {typeof item.time === "string" ? item.time : new Date((item.time || 0) * 1000).toLocaleString("zh-CN")}</span>
-                      </div>
-                    </div>
-                  )}
+        <div className="text-center py-8"><div className="w-5 h-5 border-2 border-sakura-200 border-t-sakura-500 rounded-full animate-spin mx-auto" /><p className="text-xs text-sakura-400 mt-2">加载中...</p></div>
+      ) : (<>
+        {!search && stats?.recent?.length > 0 && (
+          <div><p className="text-[10px] font-medium text-sakura-500 mb-1">最近记忆</p>
+            <div className="space-y-1">{stats.recent.map((r: any, i: number) => (
+              <div key={i} className="flex items-start gap-2 px-2.5 py-2 bg-white border border-sakura-100 rounded-lg cursor-pointer hover:bg-sakura-50/50" onClick={() => openConv(r.conv)}>
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${r.role==="user"?"bg-pink-100":"bg-sakura-100"}`}>
+                  <Brain size={10} className={r.role==="user"?"text-pink-400":"text-sakura-400"} />
                 </div>
-              ))}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5"><span className="text-[9px] font-medium text-sakura-500">{r.role==="user"?"用户":"奶昔"}</span><span className="text-[8px] text-sakura-300 truncate">{r.conv}</span></div>
+                  <p className="text-[10px] text-sakura-600 mt-0.5 truncate">{r.content}</p>
+                </div>
+                <span className="text-[8px] text-sakura-300 shrink-0">{(r.time||"").slice(5,16)}</span>
+              </div>
+            ))}</div>
+          </div>
+        )}
+        {search && items.length===0 && searchTotal===0 && (
+          <div className="text-center py-10"><div className="w-10 h-10 rounded-full bg-sakura-50 flex items-center justify-center mx-auto mb-2"><Brain size={16} className="text-sakura-300" /></div><p className="text-xs text-sakura-400">没有找到匹配的记忆</p><p className="text-[10px] text-sakura-300 mt-1">试试其他关键词</p></div>
+        )}
+        {items.length > 0 && (<div className="space-y-1"><p className="text-[10px] text-sakura-400 mb-1">找到 {searchTotal} 条结果</p>
+          {items.map((item) => (
+            <div key={item.id} className="bg-white border border-sakura-100 rounded-lg overflow-hidden">
+              <div className="flex items-start gap-2 px-3 py-2.5 cursor-pointer hover:bg-sakura-50/30 transition-colors" onClick={() => setExpandedId(expandedId===item.id?null:item.id)}>
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${item.role==="user"?"bg-pink-100":"bg-sakura-100"}`}>
+                  <Brain size={10} className={item.role==="user"?"text-pink-400":"text-sakura-400"} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5"><span className="text-[10px] font-medium text-sakura-600">{item.role==="user"?"用户":"奶昔"}</span><span className="text-[8px] text-sakura-300 px-1.5 py-0.5 rounded bg-sakura-50">{item.conv?.startsWith("auto:")?"自动":"对话"}</span></div>
+                  <p className="text-[10px] text-sakura-500 mt-0.5 line-clamp-2">{item.content}</p>
+                  <span className="text-[8px] text-sakura-300 mt-0.5 block">{item.time}</span>
+                </div>
+              </div>
+              {expandedId===item.id && (
+                <div className="px-3 py-2 border-t border-sakura-50 bg-sakura-50/30">
+                  <p className="text-[10px] text-sakura-600 leading-relaxed whitespace-pre-wrap">{item.content}</p>
+                  <div className="flex items-center gap-2 mt-1.5 text-[9px] text-sakura-400">
+                    <span>对话: {item.conv}</span><span>角色: {item.role}</span><span>时间: {item.time}</span>
+                  </div>
+                </div>
+              )}
             </div>
-          )}
-        </>
-      )}
+          ))}
+        </div>)}
+      </>)}
     </div>
   );
 }
