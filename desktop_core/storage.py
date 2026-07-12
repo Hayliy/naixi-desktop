@@ -386,7 +386,7 @@ def conv_get_messages(conv_key: str):
     conn = _get_conn()
     try:
         rows = conn.execute(
-            "SELECT id, role, content, content_blocks, time FROM conv_messages WHERE conv_key=? ORDER BY id ASC",
+            "SELECT id, role, content, content_blocks, datetime(time, 'unixepoch', 'localtime') as time FROM conv_messages WHERE conv_key=? ORDER BY id ASC",
             (conv_key,)
         ).fetchall()
         msgs = []

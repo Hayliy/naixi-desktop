@@ -1127,12 +1127,19 @@ function MemPage({ memLayers }: { memLayers: { name: string; desc: string; count
     setConvLoading(false);
   };
 
+  const safeTime = (t: any): string => {
+    if (!t) return "";
+    if (typeof t === "string") return t;
+    if (typeof t === "number") return new Date(t * 1000).toLocaleString("zh-CN");
+    return String(t);
+  };
+
   const groupByDate = (msgs: any[]) => {
     const groups: { label: string; items: any[] }[] = [];
     const today = new Date().toISOString().slice(0, 10);
     const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
     for (const m of msgs) {
-      const d = (m.time || "").slice(0, 10);
+      const d = safeTime(m.time).slice(0, 10);
       let label = d;
       if (d === today) label = "今天";
       else if (d === yesterday) label = "昨天";
@@ -1146,7 +1153,7 @@ function MemPage({ memLayers }: { memLayers: { name: string; desc: string; count
   if (viewingConv !== null) {
     const filtered = convMsgs.filter((m: any) => {
       if (timeFilter === "all") return true;
-      const d = (m.time || "").slice(0, 10);
+      const d = safeTime(m.time).slice(0, 10);
       if (!d) return true;
       const diff = Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
       return timeFilter === "7d" ? diff <= 7 : diff <= 30;
@@ -1182,7 +1189,7 @@ function MemPage({ memLayers }: { memLayers: { name: string; desc: string; count
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
                       <span className="text-[9px] font-medium text-sakura-500">{m.role==="user"?"用户":"奶昔"}</span>
-                      <span className="text-[8px] text-sakura-300">{(m.time||"").slice(11,16)}</span>
+                      <span className="text-[8px] text-sakura-300">{safeTime(m.time).slice(11,16)}</span>
                     </div>
                     <p className="text-[10px] text-sakura-600 mt-0.5 whitespace-pre-wrap">{m.content}</p>
                   </div>
@@ -1256,7 +1263,7 @@ function MemPage({ memLayers }: { memLayers: { name: string; desc: string; count
                   <div className="flex items-center gap-1.5"><span className="text-[9px] font-medium text-sakura-500">{r.role==="user"?"用户":"奶昔"}</span><span className="text-[8px] text-sakura-300 truncate">{r.conv}</span></div>
                   <p className="text-[10px] text-sakura-600 mt-0.5 truncate">{r.content}</p>
                 </div>
-                <span className="text-[8px] text-sakura-300 shrink-0">{(r.time||"").slice(5,16)}</span>
+                <span className="text-[8px] text-sakura-300 shrink-0">{safeTime(r.time).slice(5,16)}</span>
               </div>
             ))}</div>
           </div>
@@ -1274,7 +1281,7 @@ function MemPage({ memLayers }: { memLayers: { name: string; desc: string; count
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5"><span className="text-[10px] font-medium text-sakura-600">{item.role==="user"?"用户":"奶昔"}</span><span className="text-[8px] text-sakura-300 px-1.5 py-0.5 rounded bg-sakura-50">{item.conv?.startsWith("auto:")?"自动":"对话"}</span></div>
                   <p className="text-[10px] text-sakura-500 mt-0.5 line-clamp-2">{item.content}</p>
-                  <span className="text-[8px] text-sakura-300 mt-0.5 block">{item.time}</span>
+                  <span className="text-[8px] text-sakura-300 mt-0.5 block">{safeTime(item.time)}</span>
                 </div>
               </div>
               {expandedId===item.id && (
