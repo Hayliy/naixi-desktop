@@ -458,6 +458,60 @@ async def api_system_resources(request):
         return web.json_response({"cpu": 0, "memory": 0, "disk": 0, "gpu_util": 0, "error": str(e)[:50]})
 
 
+async def api_system_info(request):
+    """系统基本信息：主机名、OS、Python 版本、运行时长"""
+    import platform, socket, os
+    hostname = socket.gethostname()
+    os_ver = platform.platform()
+    py_ver = platform.python_version()
+    pid = os.getpid()
+    return web.json_response({
+        "hostname": hostname, "os": os_ver, "python": py_ver,
+        "pid": pid,
+    })
+
+
+async def api_system_processes(request):
+    """当前系统中的 Python 和 Node 进程列表"""
+    import asyncio
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "powershell", "-NoProfile", "-Command",
+            "Get-Process | Where-Object { $_.ProcessName -match 'python|node' } | "
+            "Select-Object Id, ProcessName, @{N='MemMB';E={[math]::Round($_.WorkingSet64/1MB,1)}}, CPU, StartTime | "
+            "ConvertTo-Json -Compress",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        data = json.loads(stdout.decode("gbk", errors="ignore"))
+        if not isinstance(data, list):
+            data = [data]
+        return web.json_response({"processes": data})
+    except Exception as e:
+        return web.json_response({"processes": [], "error": str(e)[:50]})
+
+
+async def api_system_disks(request):
+    """磁盘分区详细信息"""
+    import asyncio
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "powershell", "-NoProfile", "-Command",
+            "Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | "
+            "Select-Object DeviceID, @{N='SizeGB';E={[math]::Round($_.Size/1GB,1)}}, "
+            "@{N='FreeGB';E={[math]::Round($_.FreeSpace/1GB,1)}}, "
+            "@{N='UsedGB';E={[math]::Round(($_.Size-$_.FreeSpace)/1GB,1)}} | ConvertTo-Json -Compress",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        data = json.loads(stdout.decode("gbk", errors="ignore"))
+        if not isinstance(data, list):
+            data = [data]
+        return web.json_response({"disks": data})
+    except Exception as e:
+        return web.json_response({"disks": [], "error": str(e)[:50]})
+
+
 async def api_service_health(request):
     """检测各服务端口连通性"""
     import asyncio
@@ -2551,6 +2605,9 @@ def setup_routes(app):
     app.router.add_post("/api/desktop/models", api_desktop_list_models)
     app.router.add_get("/api/desktop/platforms", api_desktop_platforms)
     app.router.add_get("/api/system/resources", api_system_resources)
+    app.router.add_get("/api/system/info", api_system_info)
+    app.router.add_get("/api/system/processes", api_system_processes)
+    app.router.add_get("/api/system/disks", api_system_disks)
     app.router.add_get("/api/service/health", api_service_health)
     app.router.add_get("/api/database/stats", api_database_stats)
     app.router.add_post("/api/chat/stream", api_chat_stream)

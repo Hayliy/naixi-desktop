@@ -217,7 +217,7 @@ export default function Dashboard() {
           <div style={{ display: activeNav === "tools" ? "block" : "none", height: "100%" }}><ErrorBoundary name="工具"><ToolsPage toolsData={toolsData} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "memory" ? "block" : "none", height: "100%" }}><ErrorBoundary name="记忆"><MemPage memLayers={memLayers} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "connection" ? "block" : "none", height: "100%" }}><ErrorBoundary name="连接"><NapcatPage napcat={napcat} /></ErrorBoundary></div>
-          <div style={{ display: activeNav === "ops" ? "block" : "none", height: "100%" }}><ErrorBoundary name="运维"><OpsPage sys={sys} health={health} dbStats={dbStats} status={st} errors={globalErrors} /></ErrorBoundary></div>
+          <div style={{ display: activeNav === "ops" ? "block" : "none", height: "100%" }}><ErrorBoundary name="运维"><OpsPage errors={globalErrors} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "live" ? "block" : "none", height: "100%" }}><ErrorBoundary name="直播"><LivePage /></ErrorBoundary></div>
           <div style={{ display: activeNav === "scheduler" ? "block" : "none", height: "100%" }}><ErrorBoundary name="自动化"><SchedulerPage /></ErrorBoundary></div>
           <div style={{ display: activeNav === "logs" ? "block" : "none", height: "100%" }}><ErrorBoundary name="日志"><LogsPage /></ErrorBoundary></div>
@@ -1529,19 +1529,22 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
     </div>
   );
 }
-function OpsPage({ sys, health, dbStats, status, errors }:
-  { sys: any; health: any; dbStats: any; status: any; errors: { msg: string; stack: string; time: number }[] }) {
-  const [loading, setLoading] = useState(true);
+function OpsPage({ errors }: { errors: { msg: string; stack: string; time: number }[] }) {
+  const [tab, setTab] = useState("overview");
+  const [sysInfo, setSysInfo] = useState<any>(null);
   const [resources, setResources] = useState<any>(null);
   const [services, setServices] = useState<any>(null);
-  const [tables, setTables] = useState<any[]>([]);
-  const { notify } = useToast();
+  const [processes, setProcesses] = useState<any[]>([]);
+  const [disks, setDisks] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     Promise.all([
+      apiGet<any>("/api/system/info").then(setSysInfo).catch(() => {}),
       apiGet<any>("/api/system/resources").then(setResources).catch(() => {}),
       apiGet<any>("/api/service/health").then(setServices).catch(() => {}),
-      apiGet<any>("/api/database/stats").then(d => setTables(d.tables || [])).catch(() => {}),
+      apiGet<any>("/api/system/processes").then(d => setProcesses(d.processes || [])).catch(() => {}),
+      apiGet<any>("/api/system/disks").then(d => setDisks(d.disks || [])).catch(() => {}),
     ]).finally(() => setLoading(false));
   }, []);
 
@@ -1554,60 +1557,47 @@ function OpsPage({ sys, health, dbStats, status, errors }:
   ].map(s => ({ ...s, ok: services[s.k] === true })) : [];
 
   const recentErrors = errors.slice(-5).reverse();
-  const diskPct = resources?.disk ?? 0;
-  const memPct = resources?.memory ?? 0;
-  const cpuPct = resources?.cpu ?? 0;
+
+  const tabs = [
+    { k: "overview", l: "概览" },
+    { k: "services", l: "服务" },
+    { k: "resources", l: "资源" },
+    { k: "processes", l: "进程" },
+    { k: "disks", l: "磁盘" },
+  ];
+
+  if (loading) return (
+    <div className="space-y-3">
+      <p className="text-sm font-semibold text-sakura-600">运维</p>
+      <div className="flex items-center gap-1.5 pb-1">
+        {tabs.map(t => (
+          <button key={t.k} onClick={() => setTab(t.k)}
+            className={`px-2.5 py-1 rounded text-[10px] font-medium transition-colors ${tab === t.k ? "bg-sakura-100 text-sakura-600" : "text-sakura-400 hover:text-sakura-500"}`}>{t.l}</button>
+        ))}
+      </div>
+      <div className="text-center py-8"><div className="w-5 h-5 border-2 border-sakura-200 border-t-sakura-500 rounded-full animate-spin mx-auto" /></div>
+    </div>
+  );
 
   return (
     <div className="space-y-3">
-      <p className="text-sm font-semibold text-sakura-600">运维监控</p>
-      {loading ? (
-        <div className="text-center py-8"><div className="w-5 h-5 border-2 border-sakura-200 border-t-sakura-500 rounded-full animate-spin mx-auto" /></div>
-      ) : (
-        <>
-          {/* 服务健康 */}
-          <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-            <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30">
-              <span className="text-[10px] font-medium text-sakura-500">服务健康</span>
-            </div>
-            <div className="divide-y divide-sakura-50">
-              {srvList.map(s => (
-                <div key={s.k} className="flex items-center gap-2.5 px-3 py-2">
-                  <div className={`w-2 h-2 rounded-full shrink-0 ${s.ok ? "bg-green-500" : "bg-red-500"}`} />
-                  <span className="text-[11px] font-medium text-sakura-600 min-w-[6rem]">{s.n}</span>
-                  <span className="text-[8px] text-sakura-400 font-mono">:{s.p}</span>
-                  <div className="flex-1" />
-                  <span className={`text-[8px] px-1.5 py-0.5 rounded font-medium ${s.ok ? "bg-green-50 text-green-600" : "bg-red-50 text-red-500"}`}>
-                    {s.ok ? "在线" : "离线"}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
+      <p className="text-sm font-semibold text-sakura-600">运维</p>
+      <div className="flex items-center gap-1.5 pb-1 border-b border-sakura-100">
+        {tabs.map(t => (
+          <button key={t.k} onClick={() => setTab(t.k)}
+            className={`px-2.5 py-1.5 rounded text-[10px] font-medium transition-colors ${tab === t.k ? "bg-sakura-100 text-sakura-600" : "text-sakura-400 hover:text-sakura-500"}`}>{t.l}</button>
+        ))}
+      </div>
 
-          {/* 系统资源 */}
-          <div className="bg-white border border-sakura-100 rounded-xl p-3 space-y-2">
-            <p className="text-[10px] font-medium text-sakura-500">系统资源</p>
-            <Bar label="CPU" val={`${cpuPct.toFixed(1)}%`} w={cpuPct} />
-            <Bar label="内存" val={`${memPct.toFixed(1)}%`} w={memPct} />
-            <Bar label="磁盘" val={`${diskPct.toFixed(1)}%`} w={diskPct} />
+      {tab === "overview" && (
+        <div className="space-y-2">
+          <div className="bg-white border border-sakura-100 rounded-xl p-3 space-y-1.5">
+            <p className="text-[10px] font-medium text-sakura-500">系统信息</p>
+            <Row l="主机名" v={sysInfo?.hostname || "—"} />
+            <Row l="操作系统" v={sysInfo?.os || "—"} />
+            <Row l="Python" v={sysInfo?.python || "—"} />
+            <Row l="进程 PID" v={String(sysInfo?.pid || "—")} />
           </div>
-
-          {/* 数据库 */}
-          <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-            <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30">
-              <span className="text-[10px] font-medium text-sakura-500">数据库</span>
-            </div>
-            <div className="divide-y divide-sakura-50">
-              {tables.slice(0, 10).map(t => (
-                <div key={t.name} className="flex items-center justify-between px-3 py-1.5">
-                  <span className="text-[9px] text-sakura-500 font-mono">{t.name}</span>
-                  <span className="text-[9px] text-sakura-600 font-medium">{t.count.toLocaleString()} 条</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
           {/* 最近错误 */}
           {recentErrors.length > 0 && (
             <div className="bg-white border border-red-200 rounded-xl overflow-hidden">
@@ -1624,18 +1614,82 @@ function OpsPage({ sys, health, dbStats, status, errors }:
               </div>
             </div>
           )}
+          {recentErrors.length === 0 && (
+            <div className="bg-white border border-green-200 rounded-xl p-3 text-center">
+              <p className="text-[10px] text-green-600">没有捕获到前端错误</p>
+            </div>
+          )}
+        </div>
+      )}
 
-          {/* 系统信息 */}
-          <div className="flex items-center gap-2 text-[9px] text-sakura-400 px-0.5">
-            <span>版本 {status?.version || "?"}</span>
-            <span className="text-sakura-200">|</span>
-            <span>工具 {status?.tools || 0} 个</span>
-            <span className="text-sakura-200">|</span>
-            <span>技能 {status?.skills || 0}</span>
-            <span className="text-sakura-200">|</span>
-            <span>Agent {status?.agents || 0}</span>
+      {tab === "services" && (
+        <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+          <div className="divide-y divide-sakura-50">
+            {srvList.map(s => (
+              <div key={s.k} className="flex items-center gap-2.5 px-3 py-2">
+                <div className={`w-2 h-2 rounded-full shrink-0 ${s.ok ? "bg-green-500" : "bg-red-500"}`} />
+                <span className="text-[11px] font-medium text-sakura-600 min-w-[7rem]">{s.n}</span>
+                <span className="text-[8px] text-sakura-400 font-mono">:{s.p}</span>
+                <div className="flex-1" />
+                <span className={`text-[8px] px-1.5 py-0.5 rounded font-medium ${s.ok ? "bg-green-50 text-green-600" : "bg-red-50 text-red-500"}`}>
+                  {s.ok ? "在线" : "离线"}
+                </span>
+              </div>
+            ))}
           </div>
-        </>
+        </div>
+      )}
+
+      {tab === "resources" && (
+        <div className="bg-white border border-sakura-100 rounded-xl p-3 space-y-2">
+          <Bar label="CPU" val={`${(resources?.cpu ?? 0).toFixed(1)}%`} w={resources?.cpu ?? 0} />
+          <Bar label="内存" val={`${(resources?.memory ?? 0).toFixed(1)}%`} w={resources?.memory ?? 0} />
+          <Bar label="磁盘" val={`${(resources?.disk ?? 0).toFixed(1)}%`} w={resources?.disk ?? 0} />
+        </div>
+      )}
+
+      {tab === "processes" && (
+        <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+          <div className="grid grid-cols-[1fr_0.8fr_0.6fr] gap-2 px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 text-[9px] text-sakura-400 font-medium">
+            <span>进程名</span><span>PID</span><span className="text-right">内存</span>
+          </div>
+          {processes.length === 0 ? (
+            <div className="px-3 py-6 text-center text-[10px] text-sakura-300">未获取到进程数据</div>
+          ) : processes.slice(0, 20).map((p: any, i: number) => (
+            <div key={i} className="grid grid-cols-[1fr_0.8fr_0.6fr] gap-2 px-3 py-1.5 border-b border-sakura-50 last:border-b-0 text-[9px] text-sakura-500">
+              <span className="truncate font-mono">{p.ProcessName}.exe</span>
+              <span>{p.Id}</span>
+              <span className="text-right font-mono">{p.MemMB} MB</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === "disks" && (
+        <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+          <div className="grid grid-cols-[0.5fr_1fr_0.8fr_0.8fr_0.8fr] gap-2 px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 text-[9px] text-sakura-400 font-medium">
+            <span>盘符</span><span>使用率</span><span className="text-right">已用</span><span className="text-right">空闲</span><span className="text-right">总量</span>
+          </div>
+          {disks.length === 0 ? (
+            <div className="px-3 py-6 text-center text-[10px] text-sakura-300">未获取到磁盘信息</div>
+          ) : disks.map((d: any, i: number) => {
+            const pct = d.SizeGB > 0 ? ((d.UsedGB / d.SizeGB) * 100).toFixed(1) : 0;
+            return (
+              <div key={i} className="grid grid-cols-[0.5fr_1fr_0.8fr_0.8fr_0.8fr] gap-2 px-3 py-2 border-b border-sakura-50 last:border-b-0 items-center">
+                <span className="text-[10px] font-semibold text-sakura-600">{d.DeviceID}</span>
+                <div className="flex items-center gap-1.5">
+                  <div className="flex-1 h-2 bg-sakura-100 rounded-full overflow-hidden">
+                    <div className="h-full rounded-full bg-gradient-to-r from-sakura-400 to-sakura-500" style={{ width: `${pct}%` }} />
+                  </div>
+                  <span className="text-[9px] text-sakura-500 w-9 text-right">{pct}%</span>
+                </div>
+                <span className="text-right text-[9px] text-sakura-500 font-mono">{d.UsedGB} GB</span>
+                <span className="text-right text-[9px] text-sakura-400 font-mono">{d.FreeGB} GB</span>
+                <span className="text-right text-[9px] text-sakura-400 font-mono">{d.SizeGB} GB</span>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
