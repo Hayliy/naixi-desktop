@@ -429,70 +429,45 @@ async def api_desktop_status(request):
 
 
 async def api_stats(request):
-    """真正的运维数据：一个端点返回全部系统指标"""
-    import psutil, socket, platform, time as _time
-    import os as _os
-    boot_ts = psutil.boot_time()
-    uptime_sec = int(_time.time() - boot_ts)
-    def fmt_uptime(s):
-        d = s // 86400; h = (s % 86400) // 3600; m = (s % 3600) // 60
-        return f"{d}天 {h}小时 {m}分钟"
+    """奶昔桌面端运维数据：后端自身状态 + 服务 + 数据库 + 提供商"""
+    import psutil, os as _os, json, time as _time, asyncio
+    from desktop_core.storage import meta_get, _get_conn
+    
+    self_pid = _os.getpid()
+    try:
+        self_proc = psutil.Process(self_pid)
+        self_mem = round(self_proc.memory_info().rss / (1024**2), 1)
+        self_cpu = self_proc.cpu_percent(interval=0.3)
+    except:
+        self_mem = 0; self_cpu = 0
 
-    # CPU
-    cpu_percent = psutil.cpu_percent(interval=0.3)
-    cpu_cores = psutil.cpu_count(logical=True)
-    cpu_phys = psutil.cpu_count(logical=False)
-    cpu_load = [round(x / psutil.cpu_count() * 100, 1) for x in psutil.getloadavg()] if hasattr(psutil, "getloadavg") else [0, 0, 0]
+    conn = _get_conn()
+    db_size, db_tables = 0, []
+    try:
+        db_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "data", "naixi_desktop.db")
+        if _os.path.exists(db_path):
+            db_size = _os.path.getsize(db_path)
+        tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
+        for r in tables:
+            cnt = conn.execute(f'SELECT COUNT(*) as c FROM "{r[0]}"').fetchone()["c"]
+            db_tables.append({"name": r[0], "count": cnt})
+        conn.close()
+    except:
+        pass
 
-    # 内存
-    mem = psutil.virtual_memory()
-    swap = psutil.swap_memory()
-    mem_total_gb = round(mem.total / (1024**3), 1)
-    mem_used_gb = round(mem.used / (1024**3), 1)
-    mem_avail_gb = round(mem.available / (1024**3), 1)
-
-    # 磁盘
-    disk_root = psutil.disk_usage("/")
-    disk_total_gb = round(disk_root.total / (1024**3), 1)
-    disk_used_gb = round(disk_root.used / (1024**3), 1)
-    disk_free_gb = round(disk_root.free / (1024**3), 1)
-
-    # 所有分区
-    partitions = []
-    for p in psutil.disk_partitions():
+    raw = meta_get("desktop_config")
+    providers = []
+    if raw:
         try:
-            u = psutil.disk_usage(p.mountpoint)
-            partitions.append({
-                "device": p.device, "mount": p.mountpoint, "fstype": p.fstype,
-                "total_gb": round(u.total / (1024**3), 1),
-                "used_gb": round(u.used / (1024**3), 1),
-                "free_gb": round(u.free / (1024**3), 1),
-                "percent": u.percent,
-            })
+            cfg = json.loads(raw)
+            for pid, pcfg in cfg.get("api_providers", {}).items():
+                providers.append({"name": pid, "model": pcfg.get("model",""), "has_key": bool(pcfg.get("api_key","")), "type": pcfg.get("type","chat")})
         except:
             pass
 
-    # 网络
-    net = psutil.net_io_counters()
-    net_sent_mb = round(net.bytes_sent / (1024**2), 1)
-    net_recv_mb = round(net.bytes_recv / (1024**2), 1)
-
-    # 进程统计
-    all_procs = list(psutil.process_iter(["pid", "name", "memory_info", "cpu_percent"]))
-    proc_count = len(all_procs)
-    py_procs = [p.info for p in all_procs if p.info.get("name") and ("python" in p.info["name"].lower() or "node" in p.info["name"].lower())]
-    top_procs = sorted([p.info for p in all_procs if p.info.get("memory_info")],
-                       key=lambda x: x["memory_info"].rss if x.get("memory_info") else 0, reverse=True)[:10]
-    top_list = [{
-        "name": p.get("name", "?"), "pid": p.get("pid", 0),
-        "mem_mb": round(p.get("memory_info").rss / (1024**2), 1) if p.get("memory_info") else 0,
-    } for p in top_procs]
-
-    # 服务端口检测
-    import asyncio
-    port_checks = {"backend": 9845, "napcat_http": 3000, "napcat_ws": 3001, "ollama": 11434, "searxng": 8898}
+    ports = {"后端API":9845, "NapCat HTTP":3000, "NapCat WS":3001, "Ollama":11434, "SearXNG":8898}
     services = {}
-    for name, port in port_checks.items():
+    for name, port in ports.items():
         try:
             _, w = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", port), timeout=1)
             w.close(); await w.wait_closed()
@@ -501,39 +476,11 @@ async def api_stats(request):
             services[name] = False
 
     return web.json_response({
-        "hostname": socket.gethostname(),
-        "os": platform.platform(),
-        "python": platform.python_version(),
-        "uptime": uptime_sec,
-        "uptime_str": fmt_uptime(uptime_sec),
-        "boot_time": int(boot_ts),
-        "cpu": {
-            "percent": cpu_percent, "cores": cpu_cores, "physical": cpu_phys,
-            "load_1m": cpu_load[0], "load_5m": cpu_load[1], "load_15m": cpu_load[2],
-        },
-        "memory": {
-            "total_gb": mem_total_gb, "used_gb": mem_used_gb, "avail_gb": mem_avail_gb,
-            "percent": round(mem.percent, 1),
-            "swap_total_gb": round(swap.total / (1024**3), 1),
-            "swap_used_gb": round(swap.used / (1024**3), 1),
-            "swap_percent": round(swap.percent, 1),
-        },
-        "disk": {
-            "total_gb": disk_total_gb, "used_gb": disk_used_gb, "free_gb": disk_free_gb,
-            "percent": round(disk_root.percent, 1),
-            "partitions": partitions,
-        },
-        "network": {
-            "sent_mb": net_sent_mb, "recv_mb": net_recv_mb,
-        },
-        "processes": {
-            "total": proc_count,
-            "python_node": py_procs[:20],
-            "top_mem": top_list,
-        },
+        "backend": {"pid": self_pid, "memory_mb": self_mem, "cpu": self_cpu, "version": "0.1.0"},
         "services": services,
+        "providers": {"total": len(providers), "with_key": sum(1 for p in providers if p.get("has_key")), "list": providers[:10]},
+        "database": {"size_mb": round(db_size/(1024**2),1) if db_size else 0, "tables": db_tables},
     })
-
 
 async def api_system_resources(request):
     """返回系统资源使用情况（通过 PowerShell 获取）"""

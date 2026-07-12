@@ -1530,18 +1530,12 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
   );
 }
 function OpsPage({ errors }: { errors: { msg: string; stack: string; time: number }[] }) {
-  const [stats, setStats] = useState<any>(null);
+  const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
-    try {
-      const d = await apiGet<any>("/api/stats");
-      setStats(d);
-    } catch {}
-    setLoading(false);
+  useEffect(() => {
+    apiGet<any>("/api/stats").then(d => setData(d)).finally(() => setLoading(false));
   }, []);
-
-  useEffect(() => { load(); }, [load]);
 
   if (loading) return (
     <div className="space-y-3">
@@ -1549,130 +1543,89 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
       <div className="text-center py-8"><div className="w-5 h-5 border-2 border-sakura-200 border-t-sakura-500 rounded-full animate-spin mx-auto" /></div>
     </div>
   );
-  if (!stats) return <div className="text-xs text-sakura-400 text-center py-8">无法获取运维数据</div>;
 
-  const s = stats;
+  const d = data;
   const recentErrors = errors.slice(-5).reverse();
 
   return (
     <div className="space-y-3">
       <p className="text-sm font-semibold text-sakura-600">运维</p>
 
-      {/* 系统概要 */}
+      {/* 后端进程 */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2">
-          <p className="text-[8px] text-sakura-400">主机</p>
-          <p className="text-[11px] font-semibold text-sakura-600 truncate">{s.hostname}</p>
-          <p className="text-[7px] text-sakura-300 mt-0.5 truncate">{s.os?.split(" ").slice(0,2).join(" ")}</p>
+        <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5">
+          <p className="text-[8px] text-sakura-400">后端状态</p>
+          <p className="text-[12px] font-semibold text-green-600">运行中</p>
+          <p className="text-[7px] text-sakura-300">PID {d?.backend?.pid}</p>
         </div>
-        <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2">
-          <p className="text-[8px] text-sakura-400">运行时间</p>
-          <p className="text-[11px] font-semibold text-sakura-600">{s.uptime_str?.split(" ")[0] || "?"}</p>
-          <p className="text-[7px] text-sakura-300 mt-0.5">{s.uptime_str || ""}</p>
+        <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5">
+          <p className="text-[8px] text-sakura-400">内存占用</p>
+          <p className="text-[12px] font-semibold text-sakura-600">{d?.backend?.memory_mb ?? "?"} MB</p>
+          <p className="text-[7px] text-sakura-300">版本 {d?.backend?.version}</p>
         </div>
-        <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2">
-          <p className="text-[8px] text-sakura-400">进程数</p>
-          <p className="text-[11px] font-semibold text-sakura-600">{s.processes?.total || 0}</p>
-          <p className="text-[7px] text-sakura-300 mt-0.5">Python/Node: {(s.processes?.python_node || []).length}</p>
+        <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5">
+          <p className="text-[8px] text-sakura-400">API 提供商</p>
+          <p className="text-[12px] font-semibold text-sakura-600">{d?.providers?.with_key ?? 0} / {d?.providers?.total ?? 0}</p>
+          <p className="text-[7px] text-sakura-300">已配置 / 总共</p>
         </div>
-        <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2">
-          <p className="text-[8px] text-sakura-400">Python</p>
-          <p className="text-[11px] font-semibold text-sakura-600">{s.python}</p>
-          <p className="text-[7px] text-sakura-300 mt-0.5">PID: {stats._pid || "?"}</p>
+        <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5">
+          <p className="text-[8px] text-sakura-400">数据库</p>
+          <p className="text-[12px] font-semibold text-sakura-600">{d?.database?.size_mb ?? 0} MB</p>
+          <p className="text-[7px] text-sakura-300">{d?.database?.tables?.length ?? 0} 张表</p>
         </div>
       </div>
 
-      {/* 服务健康 */}
+      {/* 服务状态 */}
       <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
         <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30">
-          <span className="text-[10px] font-medium text-sakura-500">服务状态</span>
+          <span className="text-[10px] font-medium text-sakura-500">依赖服务</span>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-5 divide-x divide-sakura-50">
-          {s.services && Object.entries(s.services).map(([k, v]: [string, any]) => {
-            const labels: Record<string, string> = { backend: "后端", napcat_http: "NapCat HTTP", napcat_ws: "NapCat WS", ollama: "Ollama", searxng: "SearXNG" };
-            return (
-              <div key={k} className="px-3 py-2 text-center">
-                <div className={`w-2 h-2 rounded-full mx-auto mb-1 ${v ? "bg-green-500" : "bg-red-500"}`} />
-                <p className="text-[9px] font-medium text-sakura-600">{labels[k] || k}</p>
-                <p className={`text-[8px] ${v ? "text-green-600" : "text-red-500"}`}>{v ? "在线" : "离线"}</p>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* 资源 */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        <div className="bg-white border border-sakura-100 rounded-xl p-3 space-y-2">
-          <p className="text-[9px] font-medium text-sakura-500">CPU</p>
-          <Bar label="使用率" val={`${s.cpu?.percent ?? 0}%`} w={s.cpu?.percent ?? 0} />
-          <div className="flex items-center justify-between text-[8px] text-sakura-400">
-            <span>{s.cpu?.physical || 0} 物理核 / {s.cpu?.cores || 0} 逻辑核</span>
-            <span>负载 {s.cpu?.load_1m ?? 0}% / {s.cpu?.load_5m ?? 0}% / {s.cpu?.load_15m ?? 0}%</span>
-          </div>
-        </div>
-        <div className="bg-white border border-sakura-100 rounded-xl p-3 space-y-2">
-          <p className="text-[9px] font-medium text-sakura-500">内存</p>
-          <Bar label="物理" val={`${s.memory?.percent ?? 0}%`} w={s.memory?.percent ?? 0} />
-          <div className="flex items-center justify-between text-[8px] text-sakura-400">
-            <span>{s.memory?.used_gb ?? 0} GB / {s.memory?.total_gb ?? 0} GB</span>
-            <span>Swap: {s.memory?.swap_percent ?? 0}%</span>
-          </div>
-        </div>
-      </div>
-
-      {/* 磁盘 */}
-      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-        <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
-          <span className="text-[10px] font-medium text-sakura-500">磁盘</span>
-          <span className="text-[8px] text-sakura-400">{s.disk?.used_gb ?? 0} GB / {s.disk?.total_gb ?? 0} GB ({s.disk?.percent ?? 0}%)</span>
-        </div>
-        {s.disk?.partitions?.map((p: any, i: number) => (
-          <div key={i} className="flex items-center gap-2.5 px-3 py-2 border-b border-sakura-50 last:border-b-0">
-            <span className="text-[10px] font-semibold text-sakura-600 min-w-[3rem]">{p.device}</span>
-            <div className="flex-1 flex items-center gap-1.5">
-              <div className="flex-1 h-2 bg-sakura-100 rounded-full overflow-hidden">
-                <div className="h-full rounded-full bg-gradient-to-r from-sakura-400 to-sakura-500" style={{ width: `${p.percent}%` }} />
-              </div>
-              <span className="text-[9px] text-sakura-500 w-10 text-right min-w-[3rem]">{p.percent}%</span>
+        <div className="divide-y divide-sakura-50">
+          {d?.services && Object.entries(d.services).map(([name, ok]: [string, any]) => (
+            <div key={name} className="flex items-center gap-2.5 px-3 py-2">
+              <div className={`w-2 h-2 rounded-full shrink-0 ${ok ? "bg-green-500" : "bg-red-500"}`} />
+              <span className="text-[11px] font-medium text-sakura-600 flex-1">{name}</span>
+              <span className={`text-[8px] px-1.5 py-0.5 rounded font-medium ${ok ? "bg-green-50 text-green-600" : "bg-red-50 text-red-500"}`}>
+                {ok ? "在线" : "离线"}
+              </span>
             </div>
-            <span className="text-[8px] text-sakura-400 min-w-[7rem] text-right">{p.mount} ({p.fstype})</span>
-          </div>
-        ))}
-      </div>
-
-      {/* 网络 */}
-      <div className="bg-white border border-sakura-100 rounded-xl p-3">
-        <p className="text-[9px] font-medium text-sakura-500 mb-1.5">网络流量</p>
-        <div className="grid grid-cols-2 gap-2">
-          <div className="bg-sakura-50 rounded-lg px-2.5 py-2">
-            <p className="text-[7px] text-sakura-400">发送</p>
-            <p className="text-[11px] font-semibold text-sakura-600">{s.network?.sent_mb ?? 0} MB</p>
-          </div>
-          <div className="bg-sakura-50 rounded-lg px-2.5 py-2">
-            <p className="text-[7px] text-sakura-400">接收</p>
-            <p className="text-[11px] font-semibold text-sakura-600">{s.network?.recv_mb ?? 0} MB</p>
-          </div>
+          ))}
         </div>
       </div>
 
-      {/* 内存占用 Top 进程 */}
-      {(s.processes?.top_mem || []).length > 0 && (
+      {/* API 提供商 */}
+      {(d?.providers?.list || []).length > 0 && (
         <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
           <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30">
-            <span className="text-[10px] font-medium text-sakura-500">内存占用 Top 10</span>
+            <span className="text-[10px] font-medium text-sakura-500">API 提供商 ({d.providers.total})</span>
           </div>
           <div className="divide-y divide-sakura-50">
-            {(s.processes?.top_mem || []).slice(0, 5).map((p: any, i: number) => (
-              <div key={i} className="flex items-center justify-between px-3 py-1.5">
-                <span className="text-[9px] text-sakura-500 font-mono truncate flex-1">{p.name}</span>
-                <span className="text-[8px] text-sakura-400 mx-2">PID {p.pid}</span>
-                <span className="text-[9px] text-sakura-600 font-medium">{p.mem_mb} MB</span>
+            {d.providers.list.map((p: any, i: number) => (
+              <div key={i} className="flex items-center gap-2 px-3 py-1.5">
+                <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${p.has_key ? "bg-green-500" : "bg-sakura-300"}`} />
+                <span className="text-[9px] font-mono text-sakura-600 flex-1 truncate">{p.name}</span>
+                <span className="text-[8px] text-sakura-400">{p.model}</span>
+                <span className={`text-[8px] ${p.has_key ? "text-green-600" : "text-sakura-400"}`}>{p.has_key ? "已配置" : "无密钥"}</span>
               </div>
             ))}
           </div>
         </div>
       )}
+
+      {/* 数据库表 */}
+      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+        <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30">
+          <span className="text-[10px] font-medium text-sakura-500">数据库 ({d?.database?.tables?.length ?? 0} 表)</span>
+        </div>
+        <div className="divide-y divide-sakura-50">
+          {(d?.database?.tables || []).slice(0, 12).map((t: any, i: number) => (
+            <div key={i} className="flex items-center justify-between px-3 py-1.5">
+              <span className="text-[9px] text-sakura-500 font-mono truncate">{t.name}</span>
+              <span className="text-[9px] text-sakura-600 font-medium">{t.count.toLocaleString()} 条</span>
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* 最近错误 */}
       {recentErrors.length > 0 && (
