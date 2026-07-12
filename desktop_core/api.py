@@ -2583,6 +2583,7 @@ def setup_routes(app):
     app.router.add_post("/api/mcp/connect", api_mcp_connect)
     app.router.add_post("/api/mcp/disconnect", api_mcp_disconnect)
     app.router.add_post("/api/mcp/test", api_mcp_test)
+    app.router.add_post("/api/platform/test", api_platform_test)
 
     # 启动时连接 MCP 服务器
     app.on_startup.append(_on_startup_mcp)
@@ -2725,6 +2726,25 @@ async def api_mcp_test(request):
         return web.json_response({"ok": False, "error": "连接失败（初始化超时或无响应）"})
     except Exception as e:
         return web.json_response({"ok": False, "error": str(e)[:200]})
+
+
+async def api_platform_test(request):
+    """测试平台连接（HTTP 端点 ping）"""
+    try:
+        body = await request.json()
+        url = body.get("url", "")
+        if not url:
+            return web.json_response({"ok": False, "error": "缺少测试地址"})
+        import aiohttp
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8)) as sess:
+            async with sess.get(url) as resp:
+                if resp.status < 500:
+                    return web.json_response({"ok": True, "status": resp.status})
+                return web.json_response({"ok": False, "error": f"HTTP {resp.status}"})
+    except asyncio.TimeoutError:
+        return web.json_response({"ok": False, "error": "连接超时（8秒）"})
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)[:100]})
 
 
 async def api_tools_list(request):

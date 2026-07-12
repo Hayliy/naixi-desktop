@@ -1351,6 +1351,8 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
   const [configMode, setConfigMode] = useState<string | null>(null);
   const [fExtra, setFExtra] = useState("{}");
   const [fEnabled, setFEnabled] = useState(true);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<string | null>(null);
   const { notify } = useToast();
 
   const loadConns = useCallback(async () => {
@@ -1413,6 +1415,27 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
     } catch { notify("保存失败", "error"); }
   };
 
+  const testPlatform = async () => {
+    if (!configMode) return;
+    setTesting(true);
+    setTestResult(null);
+    let vals: Record<string, string> = {};
+    try { vals = JSON.parse(fExtra); } catch {}
+    // 取第一个看起来像 URL 的字段值
+    const testUrl = Object.values(vals).find(v => v.startsWith("http") || v.startsWith("ws"));
+    if (!testUrl) {
+      setTestResult("没有找到可测试的地址");
+      setTesting(false);
+      return;
+    }
+    try {
+      const res = await apiPost<{ ok: boolean; error?: string; status?: number }>("/api/platform/test", { url: testUrl, config: vals });
+      if (res.ok) setTestResult(`连通 (HTTP ${res.status})`);
+      else setTestResult(res.error || "连接失败");
+    } catch { setTestResult("测试失败"); }
+    setTesting(false);
+  };
+
   if (configMode) {
     const conn = conns.find(c => c.id === configMode);
     if (!conn) return null;
@@ -1442,8 +1465,18 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
             <div className="flex-1" />
             <button onClick={() => setConfigMode(null)} className="px-3 py-1.5 rounded text-[9px] text-sakura-400 hover:bg-sakura-50 border border-sakura-100">取消</button>
             <button onClick={saveConfig} className="px-3 py-1.5 rounded text-[9px] font-medium bg-gradient-to-br from-sakura-400 to-sakura-500 text-white">保存</button>
+            <button onClick={testPlatform} disabled={testing}
+              className="px-3 py-1.5 rounded text-[9px] font-medium bg-teal-50 text-teal-600 hover:bg-teal-100 disabled:opacity-50 transition-colors">
+              {testing ? <Loader2 size={9} className="animate-spin inline" /> : "测试"}
+            </button>
           </div>
+          {testResult && (
+            <p className={`text-[9px] ${testResult.includes("连通") ? "text-green-600" : "text-red-500"}`}>{testResult}</p>
+          )}
         </div>
+        <p className="text-[9px] text-sakura-400 font-mono bg-sakura-50 px-2.5 py-1.5 rounded-lg">
+          Webhook: /api/webhook/{configMode}
+        </p>
       </div>
     );
   }
