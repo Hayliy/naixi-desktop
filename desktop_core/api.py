@@ -2762,6 +2762,21 @@ async def api_ops_trends(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
+async def api_ops_delete(request):
+    """删除运维记录"""
+    from desktop_core.ops_engine import delete_record
+    try:
+        body = await request.json()
+        table = body.get("table", "")
+        record_id = body.get("id", 0)
+        if not table or not record_id:
+            return web.json_response({"error": "缺少 table 或 id 参数"}, status=400)
+        ok = delete_record(table, record_id)
+        return web.json_response({"ok": ok})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
 # ── 路由注册 ──
 
 def setup_routes(app):
@@ -2855,6 +2870,7 @@ def setup_routes(app):
     app.router.add_get("/api/ops/changelog", api_ops_changelog)
     app.router.add_get("/api/ops/health-history", api_ops_health_history)
     app.router.add_get("/api/ops/trends", api_ops_trends)
+    app.router.add_post("/api/ops/delete", api_ops_delete)
 
     # 工作流
     app.router.add_get("/api/workflows", api_workflow_list)

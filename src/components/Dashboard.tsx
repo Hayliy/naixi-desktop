@@ -443,6 +443,64 @@ function Row({ l, v }: { l: string; v: string }) {
   return <div className="flex justify-between"><span className="text-sakura-400">{l}</span><span className="text-sakura-600 font-medium">{v}</span></div>;
 }
 
+function HealthGauge({ score, size = "sm" }: { score: number; size?: "sm" | "md" | "lg" }) {
+  const color = score >= 80 ? "text-green-600" : score >= 60 ? "text-yellow-600" : "text-red-600";
+  const barColor = score >= 80 ? "bg-green-500" : score >= 60 ? "bg-yellow-500" : "bg-red-500";
+  const dims = size === "lg" ? { w: 80, h: 80, stroke: 6 } : size === "md" ? { w: 56, h: 56, stroke: 5 } : { w: 40, h: 40, stroke: 4 };
+  const r = (dims.w - dims.stroke) / 2;
+  const circ = 2 * Math.PI * r;
+  const offset = circ - (score / 100) * circ;
+  return (
+    <svg width={dims.w} height={dims.h} viewBox={`0 0 ${dims.w} ${dims.h}`} className="shrink-0">
+      <circle cx={dims.w/2} cy={dims.h/2} r={r} fill="none" stroke="#f1e4e8" strokeWidth={dims.stroke} />
+      <circle cx={dims.w/2} cy={dims.h/2} r={r} fill="none" stroke="currentColor" strokeWidth={dims.stroke}
+        strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round" className={barColor.replace("bg-", "text-")}
+        transform={`rotate(-90 ${dims.w/2} ${dims.h/2})`} style={{ transition: "stroke-dashoffset 0.5s ease" }} />
+      <text x={dims.w/2} y={dims.h/2} textAnchor="middle" dominantBaseline="central"
+        className={`${color} font-bold`} fontSize={size === "lg" ? 22 : size === "md" ? 16 : 12}>
+        {score}
+      </text>
+    </svg>
+  );
+}
+
+function MiniSparkline({ data, height = 60 }: { data: { ts: number; score: number }[]; height?: number }) {
+  if (!data || data.length < 2) return <div className="text-[8px] text-sakura-300 flex items-center justify-center" style={{ height }}>数据不足</div>;
+  const bars = 60;
+  const step = Math.max(1, Math.floor(data.length / bars));
+  const sampled: { ts: number; score: number }[] = [];
+  for (let i = data.length - 1; i >= 0 && sampled.length < bars; i -= step) sampled.push(data[i]);
+  sampled.reverse();
+  if (sampled.length < 2) return null;
+  const barW = `${Math.floor(100 / sampled.length)}%`;
+  const latest = sampled[sampled.length - 1];
+  return (
+    <div className="relative" style={{ height }}>
+      <div className="absolute inset-x-0 border-t border-dashed border-green-300" style={{ top: "20%" }}>
+        <span className="absolute -top-2.5 right-0 text-[7px] text-green-400">80</span>
+      </div>
+      <div className="absolute inset-x-0 border-t border-dashed border-yellow-300" style={{ top: "40%" }}>
+        <span className="absolute -top-2.5 right-0 text-[7px] text-yellow-400">60</span>
+      </div>
+      <div className="flex items-end h-full gap-[1px] absolute inset-x-0 bottom-0">
+        {sampled.map((d, i) => {
+          const pct = (d.score / 100) * height;
+          const barColor = d.score >= 80 ? "bg-green-400" : d.score >= 60 ? "bg-yellow-400" : "bg-red-400";
+          return (
+            <div key={i} className={`${barColor} rounded-t shrink-0 opacity-80 hover:opacity-100`}
+              style={{ width: `calc(${barW} - 1px)`, height: `${Math.max(2, pct)}px`, minWidth: 2 }}
+              title={`${new Date(d.ts * 1000).toLocaleString("zh-CN")} · ${d.score}分`} />
+          );
+        })}
+      </div>
+      <div className="absolute top-0 left-0 bg-white/80 rounded px-1 text-[8px] font-bold font-mono leading-tight"
+        style={{ color: latest.score >= 80 ? "#16a34a" : latest.score >= 60 ? "#ca8a04" : "#dc2626" }}>
+        {latest.score}
+      </div>
+    </div>
+  );
+}
+
 /* ─── 子页面 ─── */
 function KbPage({ kb }: { kb: KbData | null }) {
   const [items, setItems] = useState<any[]>([]);
@@ -583,41 +641,40 @@ function KbPage({ kb }: { kb: KbData | null }) {
             </div>
           )}
 
-          {/* 新建/编辑表单 */}
+          {/* 新建/编辑侧边栏（右滑式） */}
           {(showAddForm || editItem) && (
-            <div className="bg-white border border-sakura-200 rounded-xl p-3 space-y-2 shadow-sm">
-              <p className="text-[10px] font-semibold text-sakura-500">
-                {editItem ? "编辑知识" : "新建知识"}
-              </p>
-              <div>
-                <p className="text-[9px] text-sakura-400 mb-0.5">标题</p>
-                <input value={formTitle} onChange={e => setFormTitle(e.target.value)}
-                  className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-sakura-50"
-                  placeholder="知识标题" />
-              </div>
-              <div>
-                <p className="text-[9px] text-sakura-400 mb-0.5">内容</p>
-                <textarea value={formContent} onChange={e => setFormContent(e.target.value)}
-                  className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-sakura-50 resize-none"
-                  rows={4} placeholder="知识内容..." />
-              </div>
-              <div>
-                <p className="text-[9px] text-sakura-400 mb-0.5">分类（可选）</p>
-                <input value={formCategory} onChange={e => setFormCategory(e.target.value)}
-                  className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-sakura-50"
-                  placeholder="默认" />
-              </div>
-              <div className="flex items-center gap-1.5 pt-0.5">
-                <button onClick={() => { setShowAddForm(false); setEditItem(null); }}
-                  className="px-3 py-1.5 rounded text-[10px] text-sakura-400 hover:bg-sakura-50 border border-sakura-100 transition-colors">
-                  取消
-                </button>
-                <button onClick={editItem ? handleUpdate : handleAdd}
-                  disabled={!formTitle.trim()}
-                  className="px-3 py-1.5 rounded text-[10px] font-medium bg-sakura-500 text-white disabled:opacity-50 hover:bg-sakura-600 transition-colors">
-                  <Check size={10} className="inline mr-0.5" />
-                  {editItem ? "保存" : "创建"}
-                </button>
+            <div className="fixed inset-0 z-50 flex justify-end" onClick={() => { setShowAddForm(false); setEditItem(null); }}>
+              <div className="absolute inset-0 bg-black/20" />
+              <div className="relative w-[420px] bg-white h-full shadow-2xl overflow-y-auto" onClick={e => e.stopPropagation()}>
+                <div className="p-5 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-sakura-600">{editItem ? "编辑知识" : "新建知识"}</p>
+                    <button onClick={() => { setShowAddForm(false); setEditItem(null); setFormTitle(""); setFormContent(""); setFormCategory(""); }} className="p-1 hover:bg-sakura-50 rounded text-sakura-400"><X size={14} /></button>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-sakura-500 font-medium mb-1">标题 <span className="text-red-400">*</span></label>
+                    <input value={formTitle} onChange={e => setFormTitle(e.target.value)}
+                      className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300" placeholder="知识标题" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-sakura-500 font-medium mb-1">内容</label>
+                    <textarea value={formContent} onChange={e => setFormContent(e.target.value)}
+                      className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 resize-none" rows={6} placeholder="知识内容..." />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-sakura-500 font-medium mb-1">分类（可选）</label>
+                    <input value={formCategory} onChange={e => setFormCategory(e.target.value)}
+                      className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300" placeholder="默认" />
+                  </div>
+                  <div className="flex items-center gap-2 pt-2">
+                    <button onClick={() => { setShowAddForm(false); setEditItem(null); setFormTitle(""); setFormContent(""); setFormCategory(""); }}
+                      className="flex-1 px-3 py-2 rounded-lg text-xs border border-sakura-100 text-sakura-400 hover:bg-sakura-50 transition-colors">取消</button>
+                    <button onClick={editItem ? handleUpdate : handleAdd} disabled={!formTitle.trim()}
+                      className="flex-1 px-3 py-2 rounded-lg text-xs font-medium bg-sakura-500 text-white hover:bg-sakura-600 disabled:opacity-50 transition-colors">
+                      {editItem ? "保存" : "创建"}
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -1529,50 +1586,6 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
     </div>
   );
 }
-function HealthGauge({ score, size = "md" }: { score: number; size?: "sm" | "md" | "lg" }) {
-  const color = score >= 80 ? "text-green-600" : score >= 60 ? "text-yellow-600" : "text-red-600";
-  const barColor = score >= 80 ? "bg-green-500" : score >= 60 ? "bg-yellow-500" : "bg-red-500";
-  const dims = size === "lg" ? { w: 80, h: 80, stroke: 6 } : size === "md" ? { w: 56, h: 56, stroke: 5 } : { w: 40, h: 40, stroke: 4 };
-  const r = (dims.w - dims.stroke) / 2;
-  const circ = 2 * Math.PI * r;
-  const offset = circ - (score / 100) * circ;
-  return (
-    <svg width={dims.w} height={dims.h} viewBox={`0 0 ${dims.w} ${dims.h}`} className="shrink-0">
-      <circle cx={dims.w/2} cy={dims.h/2} r={r} fill="none" stroke="#f1e4e8" strokeWidth={dims.stroke} />
-      <circle cx={dims.w/2} cy={dims.h/2} r={r} fill="none" stroke="currentColor" strokeWidth={dims.stroke}
-        strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round" className={barColor.replace("bg-", "text-")}
-        transform={`rotate(-90 ${dims.w/2} ${dims.h/2})`} style={{ transition: "stroke-dashoffset 0.5s ease" }} />
-      <text x={dims.w/2} y={dims.h/2} textAnchor="middle" dominantBaseline="central"
-        className={`${color} font-bold`} fontSize={size === "lg" ? 22 : size === "md" ? 16 : 12}>
-        {score}
-      </text>
-    </svg>
-  );
-}
-
-function MiniSparkline({ data, color = "bg-sakura-400", height = 28 }: { data: { ts: number; score: number }[]; color?: string; height?: number }) {
-  if (!data || data.length < 2) return <div className="text-[8px] text-sakura-300 h-7 flex items-center">数据不足</div>;
-  const scores = data.map(d => d.score);
-  const min = Math.min(...scores);
-  const max = Math.max(...scores);
-  const range = max - min || 1;
-  const bars = 40;
-  const step = Math.max(1, Math.floor(scores.length / bars));
-  const sampled = [];
-  for (let i = 0; i < scores.length && sampled.length < bars; i += step) sampled.push(scores[i]);
-  if (sampled.length < 2) return null;
-  const w = 100 / sampled.length;
-  return (
-    <div className="flex items-end gap-[1px]" style={{ height }}>
-      {sampled.map((v, i) => {
-        const pct = ((v - min) / range * 100);
-        return <div key={i} className={`${color} rounded-t shrink-0`}
-          style={{ width: `calc(${w}% - 1px)`, height: `${Math.max(3, pct)}%`, minWidth: 2 }} title={`${v}分`} />;
-      })}
-    </div>
-  );
-}
-
 function OpsPage({ errors }: { errors: { msg: string; stack: string; time: number }[] }) {
   const [health, setHealth] = useState<any>(null);
   const [incidents, setIncidents] = useState<any[]>([]);
@@ -1585,7 +1598,6 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
   const [inspecting, setInspecting] = useState(false);
   const [maintaining, setMaintaining] = useState(false);
   const [maintResult, setMaintResult] = useState<any>(null);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({ incidents: true, inspection: false, heal: true, maintenance: false, changelog: false });
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -1593,7 +1605,7 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
       const [d, inc, insp, he, cl] = await Promise.all([
         apiGet<any>("/api/ops/dashboard"),
         apiGet<any>("/api/ops/incidents"),
-        apiGet<any>("/api/ops/inspections?limit=5"),
+        apiGet<any>("/api/ops/inspections?limit=3"),
         apiGet<any>("/api/ops/self-heals?limit=10"),
         apiGet<any>("/api/ops/changelog?limit=20"),
       ]);
@@ -1608,25 +1620,25 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  // 自动刷新
+  // 实时刷新（仅健康数据，减轻负载）
   useEffect(() => {
     const t = setInterval(() => {
       apiGet<any>("/api/ops/dashboard").then(d => { if (d) setHealth(d); }).catch(() => {});
-    }, 30000);
+    }, 3000);
     return () => clearInterval(t);
   }, []);
 
   const handleHeal = async () => {
     setHealing(true);
-    const r = await apiPost<any>("/api/ops/self-heal", {});
-    if (r) { await loadAll(); }
+    await apiPost<any>("/api/ops/self-heal", {});
+    await loadAll();
     setHealing(false);
   };
 
   const handleInspect = async () => {
     setInspecting(true);
-    const r = await apiPost<any>("/api/ops/inspect", {});
-    if (r) { await loadAll(); }
+    await apiPost<any>("/api/ops/inspect", {});
+    await loadAll();
     setInspecting(false);
   };
 
@@ -1634,355 +1646,409 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
     setMaintaining(true);
     const r = await apiPost<any>("/api/ops/maintenance", { actions: actions || null });
     setMaintResult(r);
-    if (r?.ok) { await loadAll(); }
+    if (r?.ok) await loadAll();
     setMaintaining(false);
+  };
+
+  const handleDelete = async (table: string, id: number) => {
+    const r = await apiPost<any>("/api/ops/delete", { table, id });
+    if (r?.ok) await loadAll();
   };
 
   const score = health?.health_score ?? 0;
   const uptime = health?.uptime_24h ?? 100;
   const activeIncidents = health?.active_incidents ?? 0;
   const uptimeSec = health?.backend?.uptime_seconds ?? 0;
-  const fmtUptime = uptimeSec > 86400 ? `${Math.floor(uptimeSec/86400)}天${Math.floor((uptimeSec%86400)/3600)}时`
-    : uptimeSec > 3600 ? `${Math.floor(uptimeSec/3600)}时${Math.floor((uptimeSec%3600)/60)}分`
-    : `${Math.floor(uptimeSec/60)}分`;
-
-  // 最近错误（从外部传入的全局错误）
+  const fmtUptime = uptimeSec > 86400 ? Math.floor(uptimeSec/86400) + "天" + Math.floor((uptimeSec%86400)/3600) + "时"
+    : uptimeSec > 3600 ? Math.floor(uptimeSec/3600) + "时" + Math.floor((uptimeSec%3600)/60) + "分"
+    : Math.floor(uptimeSec/60) + "分";
   const recentErrors = errors.slice(-8).reverse();
-
-  const toggleSection = (key: string) => setExpanded(prev => ({ ...prev, [key]: !prev[key] }));
 
   if (loading && !health) {
     return (
       <div className="space-y-3">
         <p className="text-sm font-semibold text-sakura-600">运维</p>
-        <div className="flex items-center justify-center py-12">
-          <Loader2 size={20} className="animate-spin text-sakura-400" />
-        </div>
+        <div className="text-center py-8"><div className="w-5 h-5 border-2 border-sakura-200 border-t-sakura-500 rounded-full animate-spin mx-auto" /></div>
       </div>
     );
   }
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-sakura-600">运维</p>
-        <button onClick={loadAll} className="p-1 rounded hover:bg-sakura-50 text-sakura-400" title="刷新">
-          <RefreshCw size={12} />
-        </button>
-      </div>
+      <p className="text-sm font-semibold text-sakura-600">运维</p>
 
-      {/* ═══ 1. 健康仪表盘 — 四指标 ═══ */}
-      <div className="grid grid-cols-4 gap-2">
-        <div className="bg-white border border-sakura-100 rounded-xl p-2.5 flex items-center gap-2.5">
+      <div className="grid grid-cols-2 gap-2">
+        <div className="bg-white border border-sakura-100 rounded-xl p-3 flex items-center gap-3">
           <HealthGauge score={score} size="sm" />
           <div>
-            <p className="text-[8px] text-sakura-400">健康评分</p>
-            <p className={`text-[10px] font-bold ${score >= 80 ? "text-green-600" : score >= 60 ? "text-yellow-600" : "text-red-600"}`}>
+            <p className="text-[9px] text-sakura-400">健康评分</p>
+            <p className={"text-xs font-bold " + (score >= 80 ? "text-green-600" : score >= 60 ? "text-yellow-600" : "text-red-600")}>
               {score >= 80 ? "良好" : score >= 60 ? "异常" : "严重"}
             </p>
           </div>
         </div>
-        <div className="bg-white border border-sakura-100 rounded-xl p-2.5">
-          <p className="text-[8px] text-sakura-400">24h 可用性</p>
-          <p className={`text-xs font-bold ${uptime >= 99.9 ? "text-green-600" : uptime >= 99 ? "text-yellow-600" : "text-red-600"}`}>
-            {uptime}%
-          </p>
-          <p className="text-[7px] text-sakura-300">SLO ≥99.9%</p>
+        <div className="bg-white border border-sakura-100 rounded-xl p-3">
+          <p className="text-[9px] text-sakura-400">24h 可用性</p>
+          <p className={"text-xs font-bold " + (uptime >= 99.9 ? "text-green-600" : uptime >= 99 ? "text-yellow-600" : "text-red-600")}>{uptime}%</p>
+          <p className="text-[8px] text-sakura-300 mt-0.5">SLO ≥99.9%</p>
         </div>
-        <div className="bg-white border border-sakura-100 rounded-xl p-2.5">
-          <p className="text-[8px] text-sakura-400">运行时长</p>
+        <div className="bg-white border border-sakura-100 rounded-xl p-3">
+          <p className="text-[9px] text-sakura-400">运行时长</p>
           <p className="text-xs font-bold text-sakura-700">{fmtUptime}</p>
-          <p className="text-[7px] text-sakura-300">PID {health?.backend?.pid}</p>
+          <p className="text-[8px] text-sakura-300 mt-0.5">PID {health?.backend?.pid}</p>
         </div>
-        <div className="bg-white border border-sakura-100 rounded-xl p-2.5">
-          <p className="text-[8px] text-sakura-400">活跃告警</p>
-          <p className={`text-xs font-bold ${activeIncidents > 0 ? "text-red-600" : "text-green-600"}`}>
-            {activeIncidents > 0 ? `${activeIncidents} 个` : "无"}
-          </p>
-          <p className="text-[7px] text-sakura-300">{health?.services_ok ?? 0}/{health?.services_total ?? 0} 服务在线</p>
+        <div className="bg-white border border-sakura-100 rounded-xl p-3">
+          <p className="text-[9px] text-sakura-400">活跃告警</p>
+          <p className={"text-xs font-bold " + (activeIncidents > 0 ? "text-red-600" : "text-green-600")}>{activeIncidents > 0 ? activeIncidents + " 个" : "无"}</p>
+          <p className="text-[8px] text-sakura-300 mt-0.5">{health?.services_ok ?? 0}/{health?.services_total ?? 0} 服务在线</p>
         </div>
       </div>
 
-      {/* ═══ 2. 评分趋势 ═══ */}
       {health?.score_trend && health.score_trend.length > 1 && (
-        <div className="bg-white border border-sakura-100 rounded-xl p-2.5">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[9px] font-medium text-sakura-500">评分趋势（近24h）</span>
+        <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+          <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
+            <span className="text-[10px] font-medium text-sakura-500">评分趋势（近24h）</span>
             <span className="text-[8px] text-sakura-400">
-              最高{Math.max(...health.score_trend.map((d: any) => d.score))}
-              ·最低{Math.min(...health.score_trend.map((d: any) => d.score))}
-              ·平均{Math.round(health.score_trend.reduce((a: number, d: any) => a + d.score, 0) / health.score_trend.length)}
+              最高{Math.max(...health.score_trend.map((d) => d.score))} · 最低{Math.min(...health.score_trend.map((d) => d.score))}
             </span>
           </div>
-          <MiniSparkline data={health.score_trend} color={score >= 80 ? "bg-green-400" : score >= 60 ? "bg-yellow-400" : "bg-red-400"} height={30} />
+          <div className="p-3">
+            <MiniSparkline data={health.score_trend} height={60} />
+          </div>
         </div>
       )}
 
-      {/* ═══ 3. 告警中心 ═══ */}
-      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-        <button onClick={() => toggleSection("incidents")} className="w-full px-3 py-2 border-b border-sakura-100 flex items-center justify-between hover:bg-sakura-50/50">
-          <span className="text-[10px] font-medium text-sakura-500">
-            告警中心
-            {activeIncidents > 0 && <span className="ml-1.5 text-red-500">({activeIncidents} 个未处理)</span>}
-          </span>
-          {expanded.incidents ? <ChevronUp size={11} className="text-sakura-400" /> : <ChevronDown size={11} className="text-sakura-400" />}
-        </button>
-        {expanded.incidents && (
-          <div className="max-h-[180px] overflow-y-auto divide-y divide-sakura-50">
+      <div className="flex flex-col xl:flex-row gap-3 sm:gap-4">
+        <div className="flex-1 bg-white border border-sakura-100 rounded-xl overflow-hidden">
+          <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
+            <span className="text-[10px] font-medium text-sakura-500">告警中心</span>
+            {activeIncidents > 0 && <span className="text-[8px] text-red-500">{activeIncidents} 个未处理</span>}
+          </div>
+          <div className="divide-y divide-sakura-50 max-h-[200px] overflow-y-auto">
             {incidents.length === 0 && incidentHistory.length === 0 ? (
-              <div className="px-3 py-4 text-center text-[10px] text-sakura-300">暂无告警记录，系统运行稳定</div>
+              <div className="px-3 py-4 text-center"><p className="text-[10px] text-sakura-300">暂无告警记录</p></div>
             ) : (
               <>
-                {incidents.map((inc: any) => (
-                  <div key={inc.id} className="px-3 py-2 flex items-start gap-2 bg-red-50/30">
-                    <CircleAlert size={12} className="text-red-500 mt-0.5 shrink-0" />
+                {incidents.map((inc) => (
+                  <div key={inc.id} className="flex items-start gap-2.5 px-3 py-2 bg-red-50/30">
+                    <CircleAlert size={13} className="text-red-500 mt-0.5 shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <p className="text-[9px] font-medium text-red-700">{inc.title}</p>
-                      <p className="text-[8px] text-sakura-400 truncate">{inc.message}</p>
-                      <p className="text-[7px] text-sakura-300 mt-0.5">{new Date(inc.ts * 1000).toLocaleString("zh-CN")}</p>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-medium text-red-700">{inc.title}</span>
+                      </div>
+                      <p className="text-[8px] text-sakura-400 truncate mt-0.5">{inc.message}</p>
+                      <p className="text-[8px] text-sakura-300 mt-0.5">{new Date(inc.ts * 1000).toLocaleString("zh-CN")}</p>
                     </div>
                   </div>
                 ))}
-                {incidentHistory.filter((h: any) => h.status === "resolved").slice(0, 5).map((inc: any) => (
-                  <div key={inc.id} className="px-3 py-1.5 flex items-start gap-2 opacity-60">
-                    <CheckCircle size={10} className="text-green-500 mt-0.5 shrink-0" />
+                {incidentHistory.filter((h) => h.status === "resolved").slice(0, 5).map((inc) => (
+                  <div key={inc.id} className="flex items-start gap-2.5 px-3 py-2 opacity-60 group hover:bg-sakura-50/30 transition-colors">
+                    <CheckCircle size={13} className="text-green-500 mt-0.5 shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <p className="text-[8px] text-sakura-500 line-through">{inc.title}</p>
-                      <p className="text-[7px] text-sakura-300">
-                        {new Date(inc.ts * 1000).toLocaleString("zh-CN")}
-                        {inc.auto_healed ? " · 已自愈" : " · 已处理"}
-                        {inc.duration_seconds > 0 && ` · ${inc.duration_seconds}秒恢复`}
-                      </p>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-medium text-sakura-500 line-through">{inc.title}</span>
+                        <span className="text-[8px] px-1 py-0.5 rounded bg-sakura-50 text-sakura-400">{inc.auto_healed ? "已自愈" : "已处理"}</span>
+                      </div>
+                      <p className="text-[8px] text-sakura-300 mt-0.5">{new Date(inc.ts * 1000).toLocaleString("zh-CN")}{inc.duration_seconds > 0 ? " · " + inc.duration_seconds + "s" : ""}</p>
                     </div>
+                    <button onClick={() => handleDelete("incidents", inc.id)}
+                      className="px-2 py-1 rounded text-[8px] font-medium bg-white border border-sakura-100 text-sakura-400 hover:text-red-500 hover:border-red-200 transition-colors shrink-0 opacity-0 group-hover:opacity-100">
+                      删除
+                    </button>
                   </div>
                 ))}
               </>
             )}
           </div>
-        )}
-      </div>
+        </div>
 
-      {/* ═══ 4. 巡检报告 ═══ */}
-      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-        <button onClick={() => toggleSection("inspection")} className="w-full px-3 py-2 border-b border-sakura-100 flex items-center justify-between hover:bg-sakura-50/50">
-          <span className="text-[10px] font-medium text-sakura-500">巡检报告</span>
-          <div className="flex items-center gap-2">
+        <div className="xl:w-[280px] xl:flex-shrink-0 bg-white border border-sakura-100 rounded-xl overflow-hidden">
+          <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
+            <span className="text-[10px] font-medium text-sakura-500">巡检摘要</span>
             {inspecting && <Loader2 size={10} className="animate-spin text-sakura-400" />}
-            {expanded.inspection ? <ChevronUp size={11} className="text-sakura-400" /> : <ChevronDown size={11} className="text-sakura-400" />}
           </div>
-        </button>
-        {expanded.inspection && (
           <div className="p-3 space-y-2">
-            {/* 上次巡检 */}
             {inspections.length > 0 ? (
-              <div className="flex items-center justify-between">
-                <div>
-                  <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${
-                    inspections[0].result === "pass" ? "bg-green-500" :
-                    inspections[0].result === "warning" ? "bg-yellow-500" : "bg-red-500"
-                  }`} />
-                  <span className="text-[9px] text-sakura-600">
-                    上次巡检：评分 {inspections[0].score}/100
-                    {inspections[0].issues_found > 0 && ` · ${inspections[0].issues_found} 个问题`}
+              <>
+                <div className="flex items-center gap-1.5">
+                  <span className={"inline-block w-2 h-2 rounded-full " + (inspections[0].result === "pass" ? "bg-green-500" : inspections[0].result === "warning" ? "bg-yellow-500" : "bg-red-500")} />
+                  <span className="text-[11px] font-medium text-sakura-600">
+                    评分 {inspections[0].score}/100
+                    {inspections[0].issues_found > 0 ? " · " + inspections[0].issues_found + " 个问题" : " · 正常"}
                   </span>
                 </div>
-                <span className="text-[7px] text-sakura-400">
-                  {new Date(inspections[0].ts * 1000).toLocaleString("zh-CN")}
-                </span>
-              </div>
-            ) : (
-              <p className="text-[9px] text-sakura-400">尚未执行过巡检</p>
-            )}
-
-            {/* 巡检详情 */}
-            {inspections.length > 0 && inspections[0].details?.system && (
-              <div className="grid grid-cols-3 gap-1.5">
-                {Object.entries(inspections[0].details.system).map(([k, v]: [string, any]) => (
-                  <div key={k} className="bg-sakura-50/50 rounded-lg p-1.5 text-center">
-                    <p className="text-[7px] text-sakura-400">{k === "cpu" ? "CPU" : k === "memory" ? "内存" : "磁盘"}</p>
-                    <p className={`text-[9px] font-mono font-bold ${
-                      v > 90 ? "text-red-600" : v > 80 ? "text-yellow-600" : "text-sakura-700"
-                    }`}>{v}%</p>
+                {inspections[0].details?.system && (
+                  <div className="grid grid-cols-3 gap-1">
+                    {Object.entries(inspections[0].details.system).map(([k, v]) => (
+                      <div key={k} className="bg-sakura-50 rounded-lg p-1.5 text-center">
+                        <p className="text-[7px] text-sakura-400">{k === "cpu" ? "CPU" : k === "memory" ? "内存" : "磁盘"}</p>
+                        <p className={"text-[10px] font-mono font-bold " + (v > 90 ? "text-red-600" : v > 80 ? "text-yellow-600" : "text-sakura-700")}>{v}%</p>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            )}
-
-            {/* 巡检问题列表 */}
-            {inspections.length > 0 && (inspections[0] as any).issues && (inspections[0] as any).issues.length > 0 && (
-              <div className="max-h-[100px] overflow-y-auto space-y-1">
-                {(inspections[0] as any).issues.map((issue: any, i: number) => (
-                  <div key={i} className={`flex items-start gap-1.5 text-[8px] ${
-                    issue.severity === "critical" ? "text-red-600" :
-                    issue.severity === "warning" ? "text-yellow-700" : "text-sakura-500"
-                  }`}>
-                    <span className={`w-1.5 h-1.5 rounded-full mt-0.5 shrink-0 ${
-                      issue.severity === "critical" ? "bg-red-500" :
-                      issue.severity === "warning" ? "bg-yellow-500" : "bg-blue-400"
-                    }`} />
-                    <span>{issue.item}：{issue.value}</span>
+                )}
+                {(inspections[0] as any).issues && (inspections[0] as any).issues.length > 0 && (
+                  <div className="bg-red-50/30 rounded-lg p-2 space-y-0.5">
+                    {(inspections[0] as any).issues.map((issue: any, i: number) => (
+                      <div key={i} className="flex items-start gap-1.5 text-[8px]">
+                        <span className={"w-1.5 h-1.5 rounded-full mt-0.5 shrink-0 " + (issue.severity === "critical" ? "bg-red-500" : issue.severity === "warning" ? "bg-yellow-500" : "bg-blue-400")} />
+                        <span className={issue.severity === "critical" ? "text-red-600" : issue.severity === "warning" ? "text-yellow-700" : "text-sakura-500"}>{issue.item}：{issue.value}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            )}
-
-            <div className="flex gap-2 pt-1">
-              <button onClick={handleInspect} disabled={inspecting}
-                className="flex-1 py-1.5 rounded-lg bg-sakura-500 text-white text-[9px] font-medium hover:bg-sakura-600 disabled:opacity-50 flex items-center justify-center gap-1">
-                {inspecting ? <Loader2 size={10} className="animate-spin" /> : <Activity size={10} />}
-                {inspecting ? "巡检中..." : "执行全面巡检"}
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* ═══ 5. 自愈历史 ═══ */}
-      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-        <button onClick={() => toggleSection("heal")} className="w-full px-3 py-2 border-b border-sakura-100 flex items-center justify-between hover:bg-sakura-50/50">
-          <span className="text-[10px] font-medium text-sakura-500">自愈历史</span>
-          <div className="flex items-center gap-2">
-            {healing && <Loader2 size={10} className="animate-spin text-sakura-400" />}
-            {expanded.heal ? <ChevronUp size={11} className="text-sakura-400" /> : <ChevronDown size={11} className="text-sakura-400" />}
-          </div>
-        </button>
-        {expanded.heal && (
-          <div>
-            <div className="max-h-[140px] overflow-y-auto divide-y divide-sakura-50">
-              {heals.length === 0 ? (
-                <div className="px-3 py-3 text-center text-[10px] text-sakura-300">尚无自愈记录</div>
-              ) : heals.map((h: any) => (
-                <div key={h.id} className="px-3 py-1.5 flex items-start gap-2">
-                  <div className={`w-1.5 h-1.5 rounded-full mt-1 shrink-0 ${
-                    h.result === "success" ? "bg-green-500" : "bg-red-500"
-                  }`} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1">
-                      <span className="text-[8px] font-medium text-sakura-600">{h.action}</span>
-                      <span className={`text-[7px] px-1 rounded ${
-                        h.result === "success" ? "bg-green-50 text-green-600" : "bg-red-50 text-red-600"
-                      }`}>{h.result === "success" ? "成功" : "失败"}</span>
-                    </div>
-                    <p className="text-[7px] text-sakura-400 truncate">{h.message}</p>
-                    <p className="text-[7px] text-sakura-300">
-                      {new Date(h.ts * 1000).toLocaleString("zh-CN")}
-                      {h.duration_ms > 0 && ` · ${h.duration_ms}ms`}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="px-3 py-2 border-t border-sakura-100">
-              <button onClick={handleHeal} disabled={healing}
-                className="w-full py-1.5 rounded-lg border border-sakura-200 text-[9px] text-sakura-600 font-medium hover:bg-sakura-50 disabled:opacity-50 flex items-center justify-center gap-1">
-                {healing ? <Loader2 size={10} className="animate-spin" /> : <Zap size={10} />}
-                {healing ? "自愈执行中..." : "执行自动自愈"}
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* ═══ 6. 系统养护 ═══ */}
-      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-        <button onClick={() => toggleSection("maintenance")} className="w-full px-3 py-2 border-b border-sakura-100 flex items-center justify-between hover:bg-sakura-50/50">
-          <span className="text-[10px] font-medium text-sakura-500">系统养护</span>
-          {expanded.maintenance ? <ChevronUp size={11} className="text-sakura-400" /> : <ChevronDown size={11} className="text-sakura-400" />}
-        </button>
-        {expanded.maintenance && (
-          <div className="p-3 space-y-2">
-            <div className="grid grid-cols-3 gap-1.5">
-              <button onClick={() => handleMaintenance(["log_cleanup"])} disabled={maintaining}
-                className="py-1.5 rounded-lg border border-sakura-200 text-[8px] text-sakura-600 hover:bg-sakura-50 disabled:opacity-50">
-                清理日志
-              </button>
-              <button onClick={() => handleMaintenance(["db_vacuum"])} disabled={maintaining}
-                className="py-1.5 rounded-lg border border-sakura-200 text-[8px] text-sakura-600 hover:bg-sakura-50 disabled:opacity-50">
-                压缩数据库
-              </button>
-              <button onClick={() => handleMaintenance(["cache_cleanup"])} disabled={maintaining}
-                className="py-1.5 rounded-lg border border-sakura-200 text-[8px] text-sakura-600 hover:bg-sakura-50 disabled:opacity-50">
-                清理缓存
-              </button>
-            </div>
-            <button onClick={() => handleMaintenance()} disabled={maintaining}
-              className="w-full py-1.5 rounded-lg bg-sakura-500 text-white text-[9px] font-medium hover:bg-sakura-600 disabled:opacity-50 flex items-center justify-center gap-1">
-              {maintaining ? <Loader2 size={10} className="animate-spin" /> : <Shield size={10} />}
-              {maintaining ? "养护执行中..." : "执行全部养护"}
+                )}
+              </>
+            ) : null}
+            <button onClick={handleInspect} disabled={inspecting}
+              className="w-full py-2 rounded-lg text-[10px] font-medium bg-sakura-500 text-white hover:bg-sakura-600 disabled:opacity-50 transition-colors">
+              {inspecting ? "巡检中..." : "执行巡检"}
             </button>
-            {maintResult && (
-              <div className="bg-sakura-50 rounded-lg p-2 space-y-1">
-                <p className="text-[8px] font-medium text-sakura-600">养护结果：</p>
-                {Object.entries(maintResult.actions || {}).map(([k, v]: [string, any]) => (
-                  <p key={k} className={`text-[7px] ${v.ok ? "text-green-600" : "text-red-600"}`}>
-                    {v.ok ? "✓" : "✗"} {k}：{v.message}
-                  </p>
-                ))}
-              </div>
-            )}
           </div>
-        )}
+        </div>
       </div>
 
-      {/* ═══ 7. 变更记录 ═══ */}
-      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-        <button onClick={() => toggleSection("changelog")} className="w-full px-3 py-2 border-b border-sakura-100 flex items-center justify-between hover:bg-sakura-50/50">
-          <span className="text-[10px] font-medium text-sakura-500">变更记录</span>
-          {expanded.changelog ? <ChevronUp size={11} className="text-sakura-400" /> : <ChevronDown size={11} className="text-sakura-400" />}
-        </button>
-        {expanded.changelog && (
-          <div className="max-h-[160px] overflow-y-auto divide-y divide-sakura-50">
-            {changelog.length === 0 ? (
-              <div className="px-3 py-3 text-center text-[10px] text-sakura-300">无变更记录</div>
-            ) : changelog.map((c: any) => (
-              <div key={c.id} className="px-3 py-1.5 flex items-start gap-2">
-                <div className={`w-1 h-1 rounded-full mt-1.5 shrink-0 ${
-                  c.result === "ok" ? "bg-green-500" :
-                  c.action === "巡检" ? "bg-blue-400" :
-                  c.action === "自愈" ? "bg-purple-400" : "bg-sakura-400"
-                }`} />
+      <div className="flex flex-col xl:flex-row gap-3 sm:gap-4">
+        <div className="flex-1 bg-white border border-sakura-100 rounded-xl overflow-hidden">
+          <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
+            <span className="text-[10px] font-medium text-sakura-500">自愈历史</span>
+            {healing && <Loader2 size={10} className="animate-spin text-sakura-400" />}
+          </div>
+          <div className="divide-y divide-sakura-50 max-h-[200px] overflow-y-auto">
+            {heals.length === 0 ? (
+              <div className="px-3 py-3 text-center"><p className="text-[10px] text-sakura-300">尚无自愈记录</p></div>
+            ) : heals.map((h) => (
+              <div key={h.id} className="flex items-start gap-2.5 px-3 py-2 group hover:bg-sakura-50/30 transition-colors">
+                <div className={"w-1.5 h-1.5 rounded-full mt-2 shrink-0 " + (h.result === "success" ? "bg-green-500" : "bg-red-500")} />
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1">
-                    <span className="text-[8px] font-medium text-sakura-600">{c.action}</span>
-                    <span className="text-[7px] text-sakura-500">{c.target}</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-medium text-sakura-600">{h.action}</span>
+                    <span className={"text-[8px] px-1 py-0.5 rounded " + (h.result === "success" ? "bg-sakura-100 text-sakura-600" : "bg-red-50 text-red-600")}>
+                      {h.result === "success" ? "成功" : "失败"}
+                    </span>
                   </div>
-                  <p className="text-[7px] text-sakura-400 truncate">{c.detail}</p>
-                  <p className="text-[7px] text-sakura-300">{new Date(c.ts * 1000).toLocaleString("zh-CN")}</p>
+                  <p className="text-[8px] text-sakura-400 truncate mt-0.5">{h.message}</p>
+                  <p className="text-[8px] text-sakura-300 mt-0.5">{new Date(h.ts * 1000).toLocaleString("zh-CN")}{h.duration_ms > 0 ? " · " + h.duration_ms + "ms" : ""}</p>
                 </div>
+                <button onClick={() => handleDelete("self_heals", h.id)}
+                  className="px-2 py-1 rounded text-[8px] font-medium bg-white border border-sakura-100 text-sakura-400 hover:text-red-500 hover:border-red-200 transition-colors shrink-0 opacity-0 group-hover:opacity-100">
+                  删除
+                </button>
               </div>
             ))}
           </div>
-        )}
+          <div className="px-3 py-2 border-t border-sakura-100">
+            <button onClick={handleHeal} disabled={healing}
+              className="w-full py-2 rounded-lg text-[11px] font-medium border border-sakura-200 text-sakura-600 hover:bg-sakura-50 disabled:opacity-50 transition-colors">
+              {healing ? "自愈执行中..." : "执行自动自愈"}
+            </button>
+          </div>
+        </div>
+
+        <div className="xl:w-[280px] xl:flex-shrink-0 bg-white border border-sakura-100 rounded-xl overflow-hidden">
+          <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
+            <span className="text-[10px] font-medium text-sakura-500">系统养护</span>
+          </div>
+          <div className="p-3 space-y-2">
+            <div className="grid grid-cols-3 gap-1.5">
+              <button onClick={() => handleMaintenance(["log_cleanup"])} disabled={maintaining}
+                className="py-2 rounded-lg text-[10px] font-medium border border-sakura-200 text-sakura-600 hover:bg-sakura-50 disabled:opacity-50 transition-colors">日志</button>
+              <button onClick={() => handleMaintenance(["db_vacuum"])} disabled={maintaining}
+                className="py-2 rounded-lg text-[10px] font-medium border border-sakura-200 text-sakura-600 hover:bg-sakura-50 disabled:opacity-50 transition-colors">数据库</button>
+              <button onClick={() => handleMaintenance(["cache_cleanup"])} disabled={maintaining}
+                className="py-2 rounded-lg text-[10px] font-medium border border-sakura-200 text-sakura-600 hover:bg-sakura-50 disabled:opacity-50 transition-colors">缓存</button>
+            </div>
+            <button onClick={() => handleMaintenance()} disabled={maintaining}
+              className="w-full py-2 rounded-lg text-[11px] font-medium bg-sakura-500 text-white hover:bg-sakura-600 disabled:opacity-50 transition-colors">
+              {maintaining ? "养护执行中..." : "全部养护"}
+            </button>
+            {maintResult && (
+              <div className="bg-sakura-50 rounded-lg p-2 space-y-0.5">
+                <p className="text-[9px] font-medium text-sakura-600">结果：</p>
+                {Object.entries(maintResult.actions || {}).map(([k, v]) => (
+                  <p key={k} className={"text-[8px] " + (v.ok ? "text-green-600" : "text-red-600")}>{v.ok ? "OK" : "FAIL"} {k}：{v.message}</p>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
-      {/* ═══ 8. 最近错误 ═══ */}
-      {recentErrors.length > 0 && (
-        <div className="bg-white border border-red-200 rounded-xl overflow-hidden">
-          <div className="px-3 py-2 border-b border-red-100 bg-red-50/30 flex items-center">
-            <span className="text-[10px] font-medium text-red-500">最近错误 ({recentErrors.length})</span>
+      <div className="flex flex-col xl:flex-row gap-3 sm:gap-4">
+        <div className="flex-1 bg-white border border-sakura-100 rounded-xl overflow-hidden">
+          <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
+            <span className="text-[10px] font-medium text-sakura-500">变更记录</span>
           </div>
-          <div className="max-h-[120px] overflow-y-auto divide-y divide-red-50">
-            {recentErrors.map((e, i) => (
-              <div key={i} className="px-3 py-1">
-                <p className="text-[8px] text-red-600 font-mono truncate">{e.msg}</p>
-                <p className="text-[7px] text-sakura-400">{new Date(e.time).toLocaleString("zh-CN")}</p>
+          <div className="divide-y divide-sakura-50 max-h-[200px] overflow-y-auto">
+            {changelog.length === 0 ? (
+              <div className="px-3 py-3 text-center"><p className="text-[10px] text-sakura-300">无变更记录</p></div>
+            ) : changelog.map((c) => (
+              <div key={c.id} className="flex items-start gap-2.5 px-3 py-2 group hover:bg-sakura-50/30 transition-colors">
+                <div className={"w-1 h-1 rounded-full mt-2 shrink-0 " + (c.result === "ok" ? "bg-green-500" : c.action === "巡检" ? "bg-blue-400" : c.action === "自愈" ? "bg-purple-400" : "bg-sakura-400")} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-medium text-sakura-600">{c.action}</span>
+                    <span className="text-[8px] text-sakura-500">{c.target}</span>
+                  </div>
+                  <p className="text-[8px] text-sakura-400 truncate mt-0.5">{c.detail}</p>
+                  <p className="text-[8px] text-sakura-300 mt-0.5">{new Date(c.ts * 1000).toLocaleString("zh-CN")}</p>
+                </div>
+                <button onClick={() => handleDelete("changelog", c.id)}
+                  className="px-2 py-1 rounded text-[8px] font-medium bg-white border border-sakura-100 text-sakura-400 hover:text-red-500 hover:border-red-200 transition-colors shrink-0 opacity-0 group-hover:opacity-100">
+                  删除
+                </button>
               </div>
             ))}
           </div>
         </div>
-      )}
+
+        {recentErrors.length > 0 && (
+          <div className="xl:w-[280px] xl:flex-shrink-0 bg-white border border-red-200 rounded-xl overflow-hidden">
+            <div className="px-3 py-2 border-b border-red-100 bg-red-50/30 flex items-center justify-between">
+              <span className="text-[10px] font-medium text-red-500">最近错误</span>
+              <span className="text-[8px] text-red-400">{recentErrors.length} 条</span>
+            </div>
+            <div className="divide-y divide-red-50 max-h-[200px] overflow-y-auto">
+              {recentErrors.map((e, i) => (
+                <div key={i} className="flex items-start gap-2.5 px-3 py-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-red-400 mt-1.5 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[10px] text-red-600 font-mono truncate">{e.msg}</p>
+                    <p className="text-[8px] text-sakura-400 mt-0.5">{new Date(e.time).toLocaleString("zh-CN")}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
 function LivePage() {
+  const [biliCfg, setBiliCfg] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [accessKey, setAccessKey] = useState("");
+  const [roomId, setRoomId] = useState("");
+  const [showConfig, setShowConfig] = useState(false);
+  const { notify } = useToast();
+
+  useEffect(() => {
+    apiGet<any>("/api/desktop/config").then(d => {
+      const p = d?.platform_configs?.bilibili || {};
+      setBiliCfg(p);
+      setAccessKey(p.access_key || "");
+      setRoomId(p.room_id || "");
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  const saveConfig = async () => {
+    try {
+      const cfg = await apiGet<any>("/api/desktop/config");
+      const platform_configs = cfg.platform_configs || {};
+      platform_configs.bilibili = { access_key: accessKey, room_id: roomId, enabled: true };
+      await apiPost("/api/desktop/config", { platform_configs });
+      notify("已保存", "success");
+      setShowConfig(false);
+      setBiliCfg({ access_key: accessKey, room_id: roomId });
+    } catch { notify("保存失败", "error"); }
+  };
+
+  const connected = !!(biliCfg?.access_key);
+
+  const pipeline = [
+    { name: "弹幕监听", agent: "danmaku_agent", desc: "B站开放平台 WebSocket", status: connected ? "就绪" : "未配置", icon: <MessageCircle size={14} /> },
+    { name: "场景决策", agent: "scene_agent", desc: "LLM 弹幕→场景判断", status: "等待上游", icon: <Brain size={14} /> },
+    { name: "语音合成", agent: "tts_agent", desc: "CosyVoice / Edge-TTS", status: "等待上游", icon: <Activity size={14} /> },
+    { name: "虚拟角色", agent: "avatar_agent", desc: "Live2D 立绘渲染", status: "等待上游", icon: <Film size={14} /> },
+    { name: "推流输出", agent: "stream_agent", desc: "ffmpeg RTMP 推流", status: "等待上游", icon: <Zap size={14} /> },
+  ];
+
   return (
-    <div className="space-y-4">
-      <p className="text-sm font-semibold text-sakura-500">虚拟主播</p>
-      <div className="bg-white border border-sakura-100 rounded-xl px-4 py-8 text-center">
-        <p className="text-xs text-sakura-400">虚拟主播模块（5 Agent 串联）</p>
-        <p className="text-[11px] text-sakura-300 mt-1">弹幕 → LLM → TTS → 立绘 → RTMP 推流</p>
-        <p className="text-[11px] text-sakura-300 mt-1">B站开发者认证审核中，通过后配置即可上线</p>
+    <div className="space-y-3">
+      <p className="text-sm font-semibold text-sakura-600">虚拟主播</p>
+
+      {/* 状态卡片 */}
+      <div className={`rounded-xl p-3 border ${connected ? "bg-green-50 border-green-200" : "bg-sakura-50 border-sakura-100"}`}>
+        <div className="flex items-center gap-2.5">
+          <div className={`w-8 h-8 rounded-full flex items-center justify-center ${connected ? "bg-green-100" : "bg-sakura-100"}`}>
+            <Film size={16} className={connected ? "text-green-500" : "text-sakura-400"} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className={`text-[13px] font-bold ${connected ? "text-green-700" : "text-sakura-600"}`}>
+              {connected ? "B站已接入" : "未接入直播间"}
+            </p>
+            <p className="text-[10px] text-sakura-400 mt-0.5">
+              {connected ? `直播间 ${biliCfg.room_id || "未设置"}` : "配置 B站 开放平台凭证后启用"}
+            </p>
+          </div>
+          <button onClick={() => setShowConfig(!showConfig)}
+            className="px-3 py-1.5 rounded-lg text-[10px] font-medium bg-white border border-sakura-100 text-sakura-500 hover:text-sakura-600 hover:border-sakura-300 transition-colors shrink-0">
+            {showConfig ? "收起" : "配置"}
+          </button>
+        </div>
+      </div>
+
+      {/* 配置面板 */}
+      {showConfig && (
+        <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+          <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30">
+            <span className="text-[10px] font-medium text-sakura-500">B站 开放平台配置</span>
+          </div>
+          <div className="p-3 space-y-2.5">
+            <div>
+              <p className="text-[9px] text-sakura-500 mb-0.5">Access Key</p>
+              <input value={accessKey} onChange={e => setAccessKey(e.target.value)}
+                className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-sakura-50 text-sakura-600 font-mono"
+                placeholder="从 B站 开放平台获取" />
+            </div>
+            <div>
+              <p className="text-[9px] text-sakura-500 mb-0.5">直播间 ID（可选）</p>
+              <input value={roomId} onChange={e => setRoomId(e.target.value)}
+                className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-sakura-50 text-sakura-600 font-mono"
+                placeholder="留空自动检测" />
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => setShowConfig(false)}
+                className="px-3 py-1.5 rounded text-[9px] text-sakura-400 hover:bg-sakura-50 border border-sakura-100 transition-colors">取消</button>
+              <button onClick={saveConfig}
+                className="px-3 py-1.5 rounded text-[9px] font-medium bg-sakura-500 text-white hover:bg-sakura-600 transition-colors">保存</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 流水线状态 */}
+      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+        <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30">
+          <span className="text-[10px] font-medium text-sakura-500">Agent 流水线</span>
+        </div>
+        <div className="divide-y divide-sakura-50">
+          {pipeline.map((p, i) => (
+            <div key={p.agent} className="flex items-center gap-3 px-3 py-2.5 hover:bg-sakura-50/30 transition-colors">
+              <div className="w-6 h-6 rounded-full bg-sakura-100 flex items-center justify-center shrink-0">{p.icon}</div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-medium text-sakura-600">{p.name}</span>
+                  <span className={`text-[8px] px-1 py-0.5 rounded ${p.status === "就绪" ? "bg-green-50 text-green-600" : p.status === "等待上游" ? "bg-sakura-100 text-sakura-500" : "bg-sakura-50 text-sakura-400"}`}>{p.status}</span>
+                </div>
+                <p className="text-[8px] text-sakura-400 mt-0.5">{p.desc}</p>
+              </div>
+              {i < pipeline.length - 1 && (
+                <div className="w-4 flex-shrink-0 flex flex-col items-center text-sakura-300">
+                  <ChevronDown size={10} />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 说明 */}
+      <div className="bg-sakura-50 border border-sakura-100 rounded-xl p-3">
+        <p className="text-[9px] text-sakura-500 font-medium mb-1">数据流</p>
+        <p className="text-[9px] text-sakura-400">弹幕 → LLM(场景决策) → TTS(语音合成) → 立绘(角色动画) → RTMP(推流)</p>
+        <p className="text-[8px] text-sakura-300 mt-1">B站开放平台个人开发者认证审核中，通过后配置 Access Key 即可上线</p>
       </div>
     </div>
   );
@@ -2080,16 +2146,18 @@ function SchedulerPage() {
     if (!formName || !formWorkflow) return;
     try {
       const config = formTrigger === "schedule" ? { cron: formConfig } : { endpoint: formConfig, method: "POST" };
-      await apiPost("/api/automations/save", {
+      const payload: any = {
+        id: editId || undefined,
         name: formName, description: formDesc, workflow_id: formWorkflow,
         trigger_type: formTrigger, config: JSON.stringify(config),
-        schedule_type: formTrigger,  // 兼容旧字段
-      });
+        schedule_type: formTrigger,
+      };
+      await apiPost("/api/automations/save", payload);
       setShowCreate(false); setEditId(null);
       setFormName(""); setFormDesc(""); setFormWorkflow(""); setFormConfig("0 9 * * *");
       refetch();
     } catch {}
-  }, [formName, formDesc, formWorkflow, formTrigger, formConfig, refetch]);
+  }, [formName, formDesc, formWorkflow, formTrigger, formConfig, editId, refetch]);
 
   const handleDelete = useCallback(async (id: string) => {
     try { await apiPost("/api/automations/delete", { id }); refetch(); } catch {}
@@ -2261,8 +2329,8 @@ function SchedulerPage() {
           <div className="relative w-[420px] bg-white h-full shadow-2xl overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="p-5 space-y-4">
               <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold text-sakura-600">新建自动化</p>
-                <button onClick={() => setShowCreate(false)} className="p-1 hover:bg-sakura-50 rounded text-sakura-400"><X size={14} /></button>
+                <p className="text-sm font-semibold text-sakura-600">{editId ? "编辑自动化" : "新建自动化"}</p>
+                <button onClick={() => { setShowCreate(false); setEditId(null); }} className="p-1 hover:bg-sakura-50 rounded text-sakura-400"><X size={14} /></button>
               </div>
               <div>
                 <label className="block text-[10px] text-sakura-500 font-medium mb-1">名称 <span className="text-red-400">*</span></label>
@@ -2299,9 +2367,9 @@ function SchedulerPage() {
                 {formTrigger === "schedule" && <p className="text-[9px] text-sakura-300 mt-1">分 时 日 月 周，如 0 9 * * * = 每天 9:00</p>}
               </div>
               <div className="flex items-center gap-2 pt-2">
-                <button onClick={() => setShowCreate(false)} className="flex-1 px-3 py-2 rounded-lg text-xs border border-sakura-100 text-sakura-400 hover:bg-sakura-50 transition-colors">取消</button>
+                <button onClick={() => { setShowCreate(false); setEditId(null); setFormName(""); setFormDesc(""); setFormWorkflow(""); setFormConfig("0 9 * * *"); }} className="flex-1 px-3 py-2 rounded-lg text-xs border border-sakura-100 text-sakura-400 hover:bg-sakura-50 transition-colors">取消</button>
                 <button onClick={handleCreate} disabled={!formName || !formWorkflow}
-                  className="flex-1 px-3 py-2 rounded-lg text-xs font-medium bg-sakura-500 text-white hover:bg-sakura-600 disabled:opacity-50 transition-colors">创建</button>
+                  className="flex-1 px-3 py-2 rounded-lg text-xs font-medium bg-sakura-500 text-white hover:bg-sakura-600 disabled:opacity-50 transition-colors">{editId ? "保存" : "创建"}</button>
               </div>
             </div>
           </div>
@@ -2348,7 +2416,7 @@ function SchedulerPage() {
               <div className="flex items-center justify-end gap-1">
                 <button type="button" onClick={() => handleRun(a.id, a)} className="p-1 rounded hover:bg-teal-50 text-sakura-300 hover:text-teal-500 transition-colors" title="立即执行"><Play size={11} /></button>
                 <button type="button" onClick={() => openExecModal(a)} className="p-1 rounded hover:bg-sakura-50 text-sakura-300 hover:text-sakura-500 transition-colors" title="执行记录"><Clock size={11} /></button>
-                <button type="button" onClick={() => setShowCreate(true)} className="p-1 rounded hover:bg-sakura-50 text-sakura-300 hover:text-sakura-500 transition-colors" title="编辑"><Edit3 size={11} /></button>
+                <button type="button" onClick={() => { setEditId(a.id); setFormName(a.name); setFormDesc(a.description || ""); setFormWorkflow(a.workflow_id || ""); setFormTrigger(a.trigger_type || "schedule"); try { const c = JSON.parse(a.config || "{}"); setFormConfig(c.cron || c.endpoint || "0 9 * * *"); } catch { setFormConfig("0 9 * * *"); } setShowCreate(true); }} className="p-1 rounded hover:bg-sakura-50 text-sakura-300 hover:text-sakura-500 transition-colors" title="编辑"><Edit3 size={11} /></button>
                 <button type="button" onClick={() => { setDeleteTarget(a); setShowDeleteModal(true); }} className="p-1 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500 transition-colors" title="删除"><Trash2 size={11} /></button>
               </div>
             </div>

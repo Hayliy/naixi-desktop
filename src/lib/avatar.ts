@@ -4,8 +4,7 @@ const AVATAR_BASE = "https://api.dicebear.com/9.x";
 
 /** 备用 DiceBear 风格列表（AI 头像未生成时用） */
 const STYLES = [
-  "open-peeps", "personas", "micah", "miniavs", "big-ears",
-  "big-smile", "dylan", "croodles", "toon-head", "notionists-neutral",
+  "adventurer",
 ] as const;
 
 // ── 后端头像缓存（内存级，启动时从 API 拉取） ──

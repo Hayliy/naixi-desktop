@@ -478,6 +478,36 @@ def get_changelog(limit: int = 50) -> list[dict]:
         conn.close()
 
 
+# ── 删除记录 ──
+
+def delete_record(table: str, record_id: int) -> bool:
+    """删除指定运维表中的一条记录，返回是否成功"""
+    valid_tables = {
+        "incidents": "ops_incidents",
+        "inspections": "ops_inspections",
+        "self_heals": "ops_self_heals",
+        "changelog": "ops_changelog",
+        "health_log": "ops_health_log",
+    }
+    real_table = valid_tables.get(table)
+    if not real_table:
+        log.warning(f"尝试删除无效表: {table}")
+        return False
+    conn = _get_conn()
+    try:
+        cur = conn.execute(f"DELETE FROM {real_table} WHERE id=?", (record_id,))
+        conn.commit()
+        deleted = cur.rowcount > 0
+        if deleted:
+            log.info(f"已删除 {real_table} 记录 ID={record_id}")
+        return deleted
+    except Exception as e:
+        log.warning(f"删除 {real_table} 记录失败: {e}")
+        return False
+    finally:
+        conn.close()
+
+
 # ────────────────────────────────────────────
 # 4. 自愈引擎
 # ────────────────────────────────────────────
