@@ -1395,6 +1395,7 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
   const openConfig = (conn: any) => {
     setConfigMode(conn.id);
     setFEnabled(conn.enabled);
+    setTestResult(null);
     const vals: Record<string, string> = {};
     conn.fields.forEach((f: any) => { vals[f.k] = f.v; });
     setFExtra(JSON.stringify(vals));
