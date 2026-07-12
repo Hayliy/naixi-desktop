@@ -1350,8 +1350,8 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
   const [config, setConfig] = useState<any>({});
   const [mcpServers, setMcpServers] = useState<Record<string, any>>({});
   const [mcpLoading, setMcpLoading] = useState(false);
-  const [expanded, setExpanded] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [detailKey, setDetailKey] = useState<string | null>(null);
   const { notify } = useToast();
 
   useEffect(() => {
@@ -1364,18 +1364,6 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
 
   const napcatOk = napcat?.connected ?? false;
   const srvKeys = Object.keys(mcpServers);
-  const platformIcons: Record<string, any> = {
-    MessageCircle: <MessageCircle size={14} />,
-    Mail: <Server size={14} />,
-    GitBranch: <GitBranch size={14} />,
-    Globe: <Globe size={14} />,
-  };
-  const platformColors: string[] = [
-    "bg-pink-50 border-pink-200", "bg-purple-50 border-purple-200", "bg-blue-50 border-blue-200",
-    "bg-teal-50 border-teal-200", "bg-amber-50 border-amber-200", "bg-rose-50 border-rose-200",
-    "bg-sky-50 border-sky-200", "bg-lime-50 border-lime-200", "bg-indigo-50 border-indigo-200",
-    "bg-violet-50 border-violet-200", "bg-cyan-50 border-cyan-200", "bg-emerald-50 border-emerald-200",
-  ];
 
   const connectMcp = async () => {
     setMcpLoading(true);
@@ -1386,105 +1374,130 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
     setMcpLoading(false);
   };
 
+  // 详情页
+  if (detailKey) {
+    const p = platforms.find(x => x.id === detailKey);
+    if (p) {
+      const isQQ = p.id === "napcat";
+      const isConnected = isQQ ? napcatOk : !!config[p.id];
+      return (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <button onClick={() => setDetailKey(null)} className="p-1 rounded hover:bg-sakura-50 text-sakura-400 transition-colors"><ChevronLeft size={14} /></button>
+            <p className="text-sm font-semibold text-sakura-600">{p.name}</p>
+            <span className={`text-[9px] px-2 py-0.5 rounded ${isConnected ? "bg-green-50 text-green-600" : "bg-sakura-100 text-sakura-400"}`}>
+              {isConnected ? (isQQ ? "运行中" : "已配置") : "未连接"}
+            </span>
+          </div>
+          <p className="text-[10px] text-sakura-500 leading-relaxed">{p.description}</p>
+          <div className="bg-white border border-sakura-100 rounded-lg p-3 space-y-2">
+            <p className="text-[10px] font-medium text-sakura-600">配置步骤</p>
+            {(p.steps || []).map((step: string, si: number) => (
+              <p key={si} className="text-[9px] text-sakura-500 leading-relaxed">{si + 1}. {step}</p>
+            ))}
+          </div>
+          <p className="text-[9px] text-sakura-400 font-mono bg-sakura-50 px-2.5 py-1.5 rounded-lg">
+            Webhook: /api/webhook/{p.id}
+          </p>
+          {(p.links || []).length > 0 && (
+            <div className="flex items-center gap-2 flex-wrap">
+              {(p.links || []).map((link: any, li: number) => (
+                <a key={li} href={link.url} target="_blank" rel="noopener noreferrer"
+                  className="text-[9px] text-sakura-500 underline hover:text-sakura-700">{link.label}</a>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+  }
+
   return (
-    <div className="space-y-3">
-      {/* 顶栏 */}
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-sakura-600">连接管理</p>
-        <button onClick={connectMcp} disabled={mcpLoading || srvKeys.length === 0}
-          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-medium bg-teal-50 text-teal-600 hover:bg-teal-100 disabled:opacity-50 transition-colors">
-          {mcpLoading ? <Loader2 size={10} className="animate-spin" /> : <Zap size={10} />}
-          {mcpLoading ? "连接中..." : "连接 MCP"}
-        </button>
-      </div>
+    <div className="space-y-4">
+      <p className="text-sm font-semibold text-sakura-600">连接</p>
 
       {loading ? (
         <div className="text-center py-8"><div className="w-5 h-5 border-2 border-sakura-200 border-t-sakura-500 rounded-full animate-spin mx-auto" /></div>
       ) : (
         <>
-          {/* 平台连接卡片网格 */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {platforms.map((p, i) => {
-              const isQQ = p.id === "napcat";
-              const isConnected = isQQ ? napcatOk : !!config[p.id];
-              return (
-                <div key={p.id} className={`rounded-lg border ${platformColors[i % platformColors.length]} overflow-hidden`}>
-                  <div className="flex items-center gap-2.5 px-3 py-2.5 cursor-pointer hover:bg-white/50 transition-colors"
-                    onClick={() => setExpanded(expanded === p.id ? null : p.id)}>
-                    <div className="w-7 h-7 rounded flex items-center justify-center bg-white/80 text-sakura-500">
-                      {platformIcons[p.icon] || <MessageCircle size={13} />}
+          {/* 消息平台列表 - Claude 风格：图标+名称+描述+操作按钮，"状态即按钮" */}
+          <div>
+            <p className="text-[10px] font-medium text-sakura-500 mb-1.5">消息平台</p>
+            <div className="space-y-0.5">
+              {platforms.filter(p => ["napcat","feishu","wecom","dingtalk","discord","slack","telegram","whatsapp"].includes(p.id)).map(p => {
+                const isQQ = p.id === "napcat";
+                const isConnected = isQQ ? napcatOk : !!config[p.id];
+                return (
+                  <div key={p.id} className="flex items-center gap-3 px-2.5 py-2 rounded-lg hover:bg-sakura-50/50 transition-colors group">
+                    <div className="w-7 h-7 rounded flex items-center justify-center bg-sakura-50 text-sakura-400 shrink-0">
+                      <MessageCircle size={12} />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[11px] font-medium text-sakura-600">{p.name}</span>
-                        <span className={`text-[8px] px-1.5 py-0.5 rounded-full ${isConnected ? "bg-green-100 text-green-600" : "bg-sakura-100 text-sakura-400"}`}>
-                          {isConnected ? (isQQ ? "运行中" : "已配置") : "未配置"}
-                        </span>
-                      </div>
-                      <p className="text-[8px] text-sakura-400 mt-0.5 truncate">{p.description}</p>
+                      <p className="text-[11px] font-medium text-sakura-600">{p.name}</p>
+                      <p className="text-[8px] text-sakura-400 truncate">{p.description}</p>
                     </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? "bg-green-500" : "bg-sakura-300"}`} />
-                      {expanded === p.id ? <ChevronUp size={10} className="text-sakura-300" /> : <ChevronDown size={10} className="text-sakura-300" />}
-                    </div>
+                    <button onClick={() => setDetailKey(p.id)}
+                      className={`px-2.5 py-1 rounded text-[9px] font-medium transition-colors shrink-0 ${
+                        isConnected
+                          ? "bg-sakura-100 text-sakura-600 hover:bg-sakura-200"
+                          : "text-sakura-400 hover:text-sakura-600 hover:bg-sakura-50 opacity-0 group-hover:opacity-100"
+                      }`}>
+                      {isConnected ? "配置" : "连接"}
+                    </button>
                   </div>
-                  {expanded === p.id && (
-                    <div className="px-3 py-2 border-t border-white/60 bg-white/40 space-y-1.5">
-                      <p className="text-[9px] text-sakura-500 font-medium">配置步骤</p>
-                      {(p.steps || []).map((step: string, si: number) => (
-                        <p key={si} className="text-[8px] text-sakura-400 leading-relaxed">{si + 1}. {step}</p>
-                      ))}
-                      {(p.links || []).length > 0 && (
-                        <div className="flex items-center gap-1 pt-0.5">
-                          {(p.links || []).map((link: any, li: number) => (
-                            <a key={li} href={link.url} target="_blank" rel="noopener noreferrer"
-                              className="text-[8px] text-sakura-500 underline hover:text-sakura-700">{link.label}</a>
-                          ))}
-                        </div>
-                      )}
-                      <p className="text-[8px] text-sakura-300 pt-0.5 font-mono">Webhook: /api/webhook/{p.id}</p>
-                    </div>
-                  )}
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Webhook / 平台（非消息平台） */}
+          <div>
+            <p className="text-[10px] font-medium text-sakura-500 mb-1.5">Webhook</p>
+            <div className="space-y-0.5">
+              {platforms.filter(p => ["email","github","gitlab","generic"].includes(p.id)).map(p => (
+                <div key={p.id} className="flex items-center gap-3 px-2.5 py-2 rounded-lg hover:bg-sakura-50/50 transition-colors group">
+                  <div className="w-7 h-7 rounded flex items-center justify-center bg-sakura-50 text-sakura-400 shrink-0">
+                    {p.icon === "GitBranch" ? <GitBranch size={12} /> : p.icon === "Mail" ? <Server size={12} /> : <Globe size={12} />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[11px] font-medium text-sakura-600">{p.name}</p>
+                    <p className="text-[8px] text-sakura-400 truncate">{p.description}</p>
+                  </div>
+                  <button onClick={() => setDetailKey(p.id)}
+                    className="px-2.5 py-1 rounded text-[9px] font-medium text-sakura-400 hover:text-sakura-600 hover:bg-sakura-50 opacity-0 group-hover:opacity-100 transition-colors shrink-0">
+                   详情
+                  </button>
                 </div>
-              );
-            })}
-          </div>
-
-          {/* 基础设施连接 */}
-          <p className="text-[10px] font-medium text-sakura-500 mb-0 mt-2">基础设施</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg border border-sakura-100 bg-white">
-              <div className="w-7 h-7 rounded flex items-center justify-center bg-sakura-50 text-sakura-400"><Server size={13} /></div>
-              <div className="flex-1"><p className="text-[11px] font-medium text-sakura-600">后端服务</p><p className="text-[8px] text-sakura-400">端口 9845 · API 正常</p></div>
-              <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-            </div>
-            <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg border border-sakura-100 bg-white">
-              <div className="w-7 h-7 rounded flex items-center justify-center bg-sakura-50 text-sakura-400"><Cpu size={13} /></div>
-              <div className="flex-1"><p className="text-[11px] font-medium text-sakura-600">Ollama</p><p className="text-[8px] text-sakura-400">端口 11434 · 本地模型</p></div>
-              <div className="w-1.5 h-1.5 rounded-full bg-sakura-300" />
+              ))}
             </div>
           </div>
 
-          {/* MCP 服务器列表 */}
-          {srvKeys.length > 0 && (
-            <div>
-              <p className="text-[10px] font-medium text-sakura-500 mb-1">MCP 服务器</p>
-              <div className="space-y-1">
-                {srvKeys.map(key => {
-                  const s = mcpServers[key];
-                  return (
-                    <div key={key} className="flex items-center gap-2 px-3 py-2 bg-white border border-sakura-100 rounded-lg">
-                      <div className="w-5 h-5 rounded flex items-center justify-center bg-gradient-to-br from-sakura-400 to-sakura-500 text-white"><Wifi size={9} /></div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[10px] font-medium text-sakura-600 truncate">{key}</p>
-                        <p className="text-[8px] text-sakura-300 truncate font-mono">{s.command} {(s.args || []).join(" ")}</p>
-                      </div>
-                    </div>
-                  );
-                })}
+          {/* 基础设施 */}
+          <div>
+            <p className="text-[10px] font-medium text-sakura-500 mb-1.5">基础设施</p>
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-3 px-2.5 py-2 rounded-lg">
+                <div className="w-7 h-7 rounded flex items-center justify-center bg-sakura-50 text-sakura-400 shrink-0"><Server size={12} /></div>
+                <div className="flex-1"><p className="text-[11px] font-medium text-sakura-600">后端服务</p><p className="text-[8px] text-sakura-400">端口 9845</p></div>
+                <span className="px-2 py-0.5 rounded text-[8px] bg-green-50 text-green-600 font-medium">运行中</span>
               </div>
+              <div className="flex items-center gap-3 px-2.5 py-2 rounded-lg">
+                <div className="w-7 h-7 rounded flex items-center justify-center bg-sakura-50 text-sakura-400 shrink-0"><Cpu size={12} /></div>
+                <div className="flex-1"><p className="text-[11px] font-medium text-sakura-600">Ollama</p><p className="text-[8px] text-sakura-400">端口 11434</p></div>
+                <span className="px-2 py-0.5 rounded text-[8px] bg-sakura-100 text-sakura-400 font-medium">未检测</span>
+              </div>
+              {srvKeys.length > 0 && (
+                <div className="flex items-center gap-3 px-2.5 py-2 rounded-lg">
+                  <div className="w-7 h-7 rounded flex items-center justify-center bg-sakura-50 text-sakura-400 shrink-0"><Wifi size={12} /></div>
+                  <div className="flex-1"><p className="text-[11px] font-medium text-sakura-600">MCP 服务器</p><p className="text-[8px] text-sakura-400 truncate">{srvKeys.join(" · ")}</p></div>
+                  <button onClick={connectMcp} disabled={mcpLoading}
+                    className="px-2 py-0.5 rounded text-[8px] font-medium bg-teal-50 text-teal-600 hover:bg-teal-100 disabled:opacity-50 transition-colors">
+                    {mcpLoading ? <Loader2 size={8} className="animate-spin" /> : "连接"}
+                  </button>
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </>
       )}
     </div>
