@@ -1186,7 +1186,7 @@ function MemPage({ memLayers }: { memLayers: { name: string; desc: string; count
                       </div>
                       <p className="text-[10px] text-sakura-600 mt-0.5 truncate">{r.content}</p>
                     </div>
-                    <span className="text-[8px] text-sakura-300 shrink-0">{r.time?.slice(5, 16) || ""}</span>
+                    <span className="text-[8px] text-sakura-300 shrink-0">{typeof r.time === "string" ? r.time.slice(5, 16) : new Date((r.time || 0) * 1000).toLocaleString("zh-CN", {month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"})}</span>
                   </div>
                 ))}
               </div>
@@ -1221,7 +1221,7 @@ function MemPage({ memLayers }: { memLayers: { name: string; desc: string; count
                         <span className="text-[8px] text-sakura-300 px-1.5 py-0.5 rounded bg-sakura-50">{item.conv?.startsWith("auto:") ? "自动" : item.conv?.startsWith("test") ? "测试" : "对话"}</span>
                       </div>
                       <p className="text-[10px] text-sakura-500 mt-0.5 line-clamp-2">{item.content}</p>
-                      <span className="text-[8px] text-sakura-300 mt-0.5 block">{item.time}</span>
+                      <span className="text-[8px] text-sakura-300 mt-0.5 block">{typeof item.time === "string" ? item.time : new Date((item.time || 0) * 1000).toLocaleString("zh-CN")}</span>
                     </div>
                   </div>
                   {expandedId === item.id && (
@@ -1230,7 +1230,7 @@ function MemPage({ memLayers }: { memLayers: { name: string; desc: string; count
                       <div className="flex items-center gap-2 mt-1.5 text-[9px] text-sakura-400">
                         <span>对话: {item.conv}</span>
                         <span>角色: {item.role}</span>
-                        <span>时间: {item.time}</span>
+                        <span>时间: {typeof item.time === "string" ? item.time : new Date((item.time || 0) * 1000).toLocaleString("zh-CN")}</span>
                       </div>
                     </div>
                   )}

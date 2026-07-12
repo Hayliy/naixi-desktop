@@ -2173,7 +2173,7 @@ async def api_memory_stats(request):
         ).fetchone()["c"]
         # 最近记忆片段（最新 5 条消息）
         recent_rows = conn.execute(
-            "SELECT conv_key, role, content, time FROM conv_messages ORDER BY id DESC LIMIT 5"
+            "SELECT conv_key, role, content, datetime(time, 'unixepoch', 'localtime') as time FROM conv_messages ORDER BY id DESC LIMIT 5"
         ).fetchall()
         recent_items = []
         for r in recent_rows:
@@ -2217,7 +2217,7 @@ async def api_memory_search(request):
         total = conn.execute(f"SELECT COUNT(*) as c FROM conv_messages {where}", params).fetchone()["c"]
         offset = (page - 1) * limit
         rows = conn.execute(
-            f"SELECT id, conv_key, role, content, time FROM conv_messages {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+            f"SELECT id, conv_key, role, content, datetime(time, 'unixepoch', 'localtime') as time FROM conv_messages {where} ORDER BY id DESC LIMIT ? OFFSET ?",
             params + [limit, offset]
         ).fetchall()
         conn.close()
