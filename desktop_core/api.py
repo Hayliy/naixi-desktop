@@ -465,7 +465,7 @@ async def api_stats(request):
         except:
             pass
 
-    ports = {"后端API":9845, "NapCat HTTP":3000, "NapCat WS":3001, "Ollama":11434, "SearXNG":8898}
+    ports = {"后端API":9845, "SearXNG":8899}
     services = {}
     for name, port in ports.items():
         try:

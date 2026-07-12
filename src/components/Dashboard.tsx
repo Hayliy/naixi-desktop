@@ -1588,27 +1588,7 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
 
       {/* 2. 关键服务 - 每个服务一张卡片 */}
       <div className="grid grid-cols-2 gap-2">
-        {/* 后端 */}
-        <div className="bg-white border border-sakura-100 rounded-xl p-2.5">
-          <div className="flex items-center gap-1.5 mb-1">
-            <div className={`w-2 h-2 rounded-full ${backendOk ? "bg-green-500" : "bg-red-500"}`} />
-            <span className="text-[10px] font-medium text-sakura-600">后端</span>
-          </div>
-          <p className="text-[9px] text-sakura-400">PID {data?.backend?.pid || "?"}</p>
-          <p className="text-[9px] text-sakura-400">内存 {data?.backend?.memory_mb ?? "?"} MB</p>
-        </div>
-        {/* NapCat */}
-        {Object.entries(services).filter(([k]) => k.includes("NapCat")).map(([k, v]) => (
-          <div key={k} className="bg-white border border-sakura-100 rounded-xl p-2.5">
-            <div className="flex items-center gap-1.5 mb-1">
-              <div className={`w-2 h-2 rounded-full ${v ? "bg-green-500" : "bg-red-500"}`} />
-              <span className="text-[10px] font-medium text-sakura-600">{k}</span>
-            </div>
-            <p className="text-[9px] text-sakura-400">{v ? "已连接" : "离线"}</p>
-          </div>
-        ))}
-        {/* Ollama + SearXNG */}
-        {Object.entries(services).filter(([k]) => !k.includes("NapCat") && k !== "后端API").map(([k, v]) => (
+        {Object.entries(services).map(([k, v]) => (
           <div key={k} className="bg-white border border-sakura-100 rounded-xl p-2.5">
             <div className="flex items-center gap-1.5 mb-1">
               <div className={`w-2 h-2 rounded-full ${v ? "bg-green-500" : "bg-red-500"}`} />
