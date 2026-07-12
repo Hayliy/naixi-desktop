@@ -19,7 +19,7 @@ import {
   HardDrive, Shield, Film, Layers, GitBranch,
   Cpu as CpuIcon, Zap, Network, Lock,
   Plus, Check, Repeat, Play, Pause, ChevronDown, ChevronUp, ChevronLeft, Edit3, Trash2, CircleAlert,
-  Search, X, Loader2, Copy,
+  Search, X, Loader2, Copy, Download,
 } from "lucide-react";
 
 const PAGE_TITLES: Record<string, string> = {
@@ -1083,6 +1083,7 @@ function MemPage({ memLayers }: { memLayers: { name: string; desc: string; count
   const [categories, setCategories] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [searchConvFilter, setSearchConvFilter] = useState("");
   const [activeCat, setActiveCat] = useState("");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [searchTotal, setSearchTotal] = useState(0);
@@ -1092,6 +1093,7 @@ function MemPage({ memLayers }: { memLayers: { name: string; desc: string; count
   const [convLoading, setConvLoading] = useState(false);
   const [timeFilter, setTimeFilter] = useState("all");
   const { notify } = useToast();
+  const PAGE_SIZE = 20;
 
   useEffect(() => {
     Promise.all([
@@ -1100,11 +1102,11 @@ function MemPage({ memLayers }: { memLayers: { name: string; desc: string; count
     ]).finally(() => setLoading(false));
   }, []);
 
-  const doSearch = useCallback(async (q: string, cat: string, page: number = 1) => {
+  const doSearch = useCallback(async (q: string, convFilter: string, page: number = 1) => {
     if (!q.trim()) { setItems([]); setSearchTotal(0); return; }
     try {
       const res = await apiPost<{ items: any[]; total: number; page: number }>("/api/memory/search", {
-        query: q, conv: cat, page, limit: 20,
+        query: q, conv: convFilter, page, limit: PAGE_SIZE,
       });
       setItems(res.items || []);
       setSearchTotal(res.total || 0);
@@ -1113,9 +1115,9 @@ function MemPage({ memLayers }: { memLayers: { name: string; desc: string; count
   }, []);
 
   useEffect(() => {
-    const timer = setTimeout(() => doSearch(search, activeCat, 1), 300);
+    const timer = setTimeout(() => doSearch(search, searchConvFilter, 1), 300);
     return () => clearTimeout(timer);
-  }, [search, activeCat, doSearch]);
+  }, [search, searchConvFilter, doSearch]);
 
   const openConv = async (key: string) => {
     setViewingConv(key);
@@ -1125,6 +1127,26 @@ function MemPage({ memLayers }: { memLayers: { name: string; desc: string; count
       setConvMsgs(res.messages || []);
     } catch { setConvMsgs([]); }
     setConvLoading(false);
+  };
+
+  const deleteConv = async (key: string) => {
+    if (!confirm(`确定删除对话「${key}」？`)) return;
+    try {
+      await apiPost("/api/conversation/delete", { key });
+      notify("已删除", "success");
+      setCategories(prev => prev.filter((c: any) => c.key !== key));
+      if (viewingConv === key) { setViewingConv(null); setConvMsgs([]); }
+    } catch { notify("删除失败", "error"); }
+  };
+
+  const exportConv = async (key: string, msgs: any[]) => {
+    const text = msgs.map((m: any) => `[${m.role === "user" ? "用户" : "奶昔"} ${safeTime(m.time).slice(0, 16) || ""}]\n${m.content}`).join("\n\n");
+    const blob = new Blob([`对话：${key}\n共 ${msgs.length} 条消息\n${"=".repeat(30)}\n\n${text}`], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `${key.replace(/[^a-zA-Z0-9_]/g, "_")}.txt`;
+    a.click(); URL.revokeObjectURL(url);
+    notify("已导出");
   };
 
   const safeTime = (t: any): string => {
@@ -1166,6 +1188,8 @@ function MemPage({ memLayers }: { memLayers: { name: string; desc: string; count
             className="p-1 rounded hover:bg-sakura-50 text-sakura-400 transition-colors"><ChevronLeft size={14} /></button>
           <p className="text-sm font-semibold text-sakura-600 truncate flex-1">{viewingConv}</p>
           <span className="text-[10px] text-sakura-400">{convMsgs.length} 条</span>
+          <button onClick={() => exportConv(viewingConv, convMsgs)} className="p-1.5 rounded hover:bg-sakura-50 text-sakura-300 hover:text-sakura-500 transition-colors" title="导出对话"><Download size={11} /></button>
+          <button onClick={() => deleteConv(viewingConv)} className="p-1.5 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500 transition-colors" title="删除对话"><Trash2 size={11} /></button>
         </div>
         <div className="flex items-center gap-1.5">
           {[{k:"all",l:"全部"},{k:"7d",l:"近7天"},{k:"30d",l:"近30天"}].map(t => (
@@ -1231,23 +1255,32 @@ function MemPage({ memLayers }: { memLayers: { name: string; desc: string; count
           <p className="text-[10px] font-medium text-sakura-500 mb-1">所有对话</p>
           <div className="space-y-1">
             {categories.map((c: any, i: number) => (
-              <div key={i} className="flex items-center gap-2 px-3 py-2 bg-white border border-sakura-100 rounded-lg cursor-pointer hover:bg-sakura-50/50 transition-colors" onClick={() => openConv(c.key)}>
+              <div key={i} className="flex items-center gap-2 px-3 py-2 bg-white border border-sakura-100 rounded-lg group cursor-pointer hover:bg-sakura-50/50 transition-colors" onClick={() => openConv(c.key)}>
                 <div className="w-6 h-6 rounded flex items-center justify-center bg-gradient-to-br from-sakura-400 to-sakura-500 text-white"><MessageCircle size={11} /></div>
                 <div className="min-w-0 flex-1">
                   <p className="text-[11px] font-medium text-sakura-600 truncate">{c.label}</p>
                   <p className="text-[9px] text-sakura-400 truncate">{c.last_msg||"暂无消息"}</p>
                 </div>
-                <div className="text-right shrink-0"><p className="text-[10px] font-semibold text-sakura-500">{c.count}</p><p className="text-[8px] text-sakura-300">条</p></div>
+                <div className="text-right shrink-0 mr-1"><p className="text-[10px] font-semibold text-sakura-500">{c.count}</p><p className="text-[8px] text-sakura-300">条</p></div>
+                <button onClick={(e) => { e.stopPropagation(); deleteConv(c.key); }} className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-50 text-sakura-300 hover:text-red-500 transition-all shrink-0" title="删除对话"><Trash2 size={10} /></button>
               </div>
             ))}
           </div>
         </div>
       )}
-      <div className="relative">
-        <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sakura-300" />
-        <input value={search} onChange={e => setSearch(e.target.value)}
-          className="w-full pl-8 pr-3 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-sakura-50/50 text-sakura-600 placeholder:text-sakura-300 transition-colors"
-          placeholder="搜索记忆内容..." />
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1">
+          <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sakura-300" />
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            className="w-full pl-8 pr-3 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-sakura-50/50 text-sakura-600 placeholder:text-sakura-300 transition-colors"
+            placeholder="搜索记忆内容..." />
+        </div>
+        <select value={searchConvFilter} onChange={e => { setSearchConvFilter(e.target.value); setSearchPage(1); }}
+          className="px-2 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-white text-sakura-500 shrink-0">
+          <option value="">全部对话</option>
+          <option value="auto:">自动</option>
+          <option value="test">测试</option>
+        </select>
       </div>
       {loading ? (
         <div className="text-center py-8"><div className="w-5 h-5 border-2 border-sakura-200 border-t-sakura-500 rounded-full animate-spin mx-auto" /><p className="text-xs text-sakura-400 mt-2">加载中...</p></div>
@@ -1288,12 +1321,24 @@ function MemPage({ memLayers }: { memLayers: { name: string; desc: string; count
                 <div className="px-3 py-2 border-t border-sakura-50 bg-sakura-50/30">
                   <p className="text-[10px] text-sakura-600 leading-relaxed whitespace-pre-wrap">{item.content}</p>
                   <div className="flex items-center gap-2 mt-1.5 text-[9px] text-sakura-400">
-                    <span>对话: {item.conv}</span><span>角色: {item.role}</span><span>时间: {item.time}</span>
+                    <span>对话: {item.conv}</span><span>角色: {item.role}</span><span>时间: {safeTime(item.time)}</span>
                   </div>
                 </div>
               )}
             </div>
           ))}
+          {/* 分页 */}
+          {searchTotal > PAGE_SIZE && (
+            <div className="flex items-center justify-center gap-1 pt-1">
+              <button onClick={() => doSearch(search, searchConvFilter, Math.max(1, searchPage - 1))}
+                disabled={searchPage <= 1}
+                className="px-2 py-1 rounded text-[9px] border border-sakura-100 text-sakura-500 disabled:opacity-30 hover:bg-sakura-50 transition-colors">上一页</button>
+              <span className="text-[9px] text-sakura-400 px-1">{searchPage} / {Math.ceil(searchTotal / PAGE_SIZE)}</span>
+              <button onClick={() => doSearch(search, searchConvFilter, searchPage + 1)}
+                disabled={searchPage >= Math.ceil(searchTotal / PAGE_SIZE)}
+                className="px-2 py-1 rounded text-[9px] border border-sakura-100 text-sakura-500 disabled:opacity-30 hover:bg-sakura-50 transition-colors">下一页</button>
+            </div>
+          )}
         </div>)}
       </>)}
     </div>
