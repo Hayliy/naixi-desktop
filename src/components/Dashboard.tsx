@@ -1359,12 +1359,25 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
       const cfg = await apiGet<any>("/api/desktop/config");
       const saved = cfg.platform_configs || {};
       const defaults = [
-        { id:"napcat", name:"QQ (NapCat)", desc:"WebSocket + HTTP 桥接", fields:[{k:"ws_url",l:"WebSocket 地址",p:"ws://127.0.0.1:3001"},{k:"http_url",l:"HTTP 地址",p:"http://127.0.0.1:3000"},{k:"token",l:"Token(可选)",p:""}] },
-        { id:"telegram", name:"Telegram", desc:"Bot API 轮询接收消息", fields:[{k:"token",l:"Bot Token",p:"123456:ABC-DEF123"},{k:"proxy",l:"代理地址(可选)",p:""}] },
-        { id:"discord", name:"Discord", desc:"Bot Token + Gateway Intents", fields:[{k:"token",l:"Bot Token",p:"MTIzNDU2Nzg5"},{k:"guild_id",l:"服务器 ID(可选)",p:""}] },
-        { id:"feishu", name:"飞书", desc:"自建应用事件回调", fields:[{k:"app_id",l:"App ID",p:"cli_xxxxx"},{k:"app_secret",l:"App Secret",p:""}] },
-        { id:"dingtalk", name:"钉钉", desc:"机器人出站消息回调", fields:[{k:"webhook",l:"Webhook 地址",p:"https://oapi.dingtalk.com/robot/send"},{k:"secret",l:"加签密钥",p:""}] },
-        { id:"slack", name:"Slack", desc:"App + Bot Token 事件订阅", fields:[{k:"token",l:"Bot Token",p:"xoxb-xxx"},{k:"signing_secret",l:"Signing Secret",p:""}] },
+        { id:"napcat", name:"QQ (NapCat)", desc:"NapCat/LLOneBot WebSocket 桥接", tp:"msg", fields:[{k:"ws_url",l:"WebSocket 地址",p:"ws://127.0.0.1:3001"},{k:"http_url",l:"HTTP 地址",p:"http://127.0.0.1:3000"},{k:"token",l:"Token(可选)",p:""}] },
+        { id:"qq_official", name:"QQ 官方机器人", desc:"QQ 官方 Bot API + 沙箱环境", tp:"msg", fields:[{k:"app_id",l:"App ID",p:"从开放平台获取"},{k:"token",l:"Bot Token",p:""},{k:"secret",l:"Secret",p:""}] },
+        { id:"qq_guild", name:"QQ 频道", desc:"QQ 频道机器人 WebSocket", tp:"msg", fields:[{k:"app_id",l:"App ID",p:""},{k:"token",l:"Bot Token",p:""}] },
+        { id:"wechat_personal", name:"个人微信", desc:"通过第三方库桥接(需扫码)", tp:"msg", fields:[{k:"mode",l:"连接方式",p:"pc / docker"},{k:"host",l:"服务地址",p:"http://127.0.0.1:8080"},{k:"token",l:"Token(可选)",p:""}] },
+        { id:"wechat_mp", name:"微信公众号", desc:"公众号开发模式消息回调", tp:"msg", fields:[{k:"app_id",l:"AppID",p:"从公众号后台获取"},{k:"app_secret",l:"AppSecret",p:""},{k:"token",l:"Token",p:"手动设置的 Token"}] },
+        { id:"wecom", name:"企业微信", desc:"企业内部应用消息回调", tp:"msg", fields:[{k:"corp_id",l:"企业 ID",p:"wwxxxx"},{k:"agent_id",l:"Agent ID",p:""},{k:"secret",l:"Secret",p:""},{k:"token",l:"Token",p:""}] },
+        { id:"feishu", name:"飞书", desc:"自建应用事件回调+机器人", tp:"msg", fields:[{k:"app_id",l:"App ID",p:"cli_xxxxx"},{k:"app_secret",l:"App Secret",p:""}] },
+        { id:"dingtalk", name:"钉钉", desc:"机器人出站消息+Stream 模式", tp:"msg", fields:[{k:"client_id",l:"Client ID",p:"从开放平台获取"},{k:"client_secret",l:"Client Secret",p:""}] },
+        { id:"telegram", name:"Telegram", desc:"Bot API 轮询或 Webhook", tp:"msg", fields:[{k:"token",l:"Bot Token",p:"123456:ABC-DEF123"},{k:"proxy",l:"代理地址(可选)",p:""}] },
+        { id:"discord", name:"Discord", desc:"Bot Token + Gateway Intents", tp:"msg", fields:[{k:"token",l:"Bot Token",p:"MTIzNDU2Nzg5"},{k:"guild_id",l:"服务器 ID(可选)",p:""}] },
+        { id:"slack", name:"Slack", desc:"App + Bot Token + Event Sub", tp:"msg", fields:[{k:"token",l:"Bot Token",p:"xoxb-xxx"},{k:"signing_secret",l:"Signing Secret",p:""}] },
+        { id:"line", name:"LINE", desc:"LINE Messaging API 回调", tp:"msg", fields:[{k:"channel_secret",l:"Channel Secret",p:"从 LINE Dev Console 获取"},{k:"access_token",l:"Channel Access Token",p:""}] },
+        { id:"kook", name:"KOOK(开黑啦)", desc:"KOOK Bot WebSocket", tp:"msg", fields:[{k:"token",l:"Bot Token",p:"从开发者中心获取"}] },
+        { id:"whatsapp", name:"WhatsApp", desc:"Cloud API / Baileys Webhook", tp:"msg", fields:[{k:"phone_id",l:"Phone Number ID",p:"Meta Business 后台"},{k:"token",l:"Access Token",p:""}] },
+        { id:"weibo", name:"微博", desc:"微博开放平台消息回调", tp:"msg", fields:[{k:"app_key",l:"App Key",p:"从开放平台获取"},{k:"app_secret",l:"App Secret",p:""}] },
+        { id:"bilibili", name:"哔哩哔哩", desc:"B站开放平台 WS 直播/私信", tp:"msg", fields:[{k:"access_key",l:"Access Key",p:"从开放平台获取"},{k:"room_id",l:"直播间 ID(可选)",p:""}] },
+        { id:"email", name:"电子邮件", desc:"POP3/IMAP 监听+SMTP 发送", tp:"webhook", fields:[{k:"imap_host",l:"IMAP 服务器",p:"imap.qq.com"},{k:"imap_port",l:"IMAP 端口",p:"993"},{k:"email",l:"邮箱地址",p:"xxx@qq.com"},{k:"password",l:"密码/授权码",p:""}] },
+        { id:"sms", name:"短信", desc:"通过 Twilio / 云片 收发", tp:"webhook", fields:[{k:"provider",l:"服务商",p:"twilio / 云片"},{k:"account_sid",l:"Account SID",p:""},{k:"auth_token",l:"Auth Token",p:""},{k:"phone",l:"绑定手机号",p:""}] },
+        { id:"webhook", name:"自定义 HTTP", desc:"通用 Webhook 接收器", tp:"webhook", fields:[{k:"endpoint",l:"自定义端点",p:"/webhook/my-bot"},{k:"secret",l:"验签 Secret",p:""}] },
       ];
       const merged = defaults.map(d => {
         const s = saved[d.id] || {};
