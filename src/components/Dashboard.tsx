@@ -52,7 +52,7 @@ const NAV_ITEMS = [
   { key: "knowledge",  icon: <BookOpen size={16} />,       label: "知识库" },
   { key: "tools",      icon: <Wrench size={16} />,         label: "工具" },
   { key: "memory",     icon: <Brain size={16} />,          label: "记忆" },
-  { key: "napcat",     icon: <Bot size={16} />,            label: "NapCat" },
+  { key: "connection", icon: <Wifi size={16} />,         label: "连接" },
   { key: "ops",        icon: <Server size={16} />,         label: "运维" },
   { key: "live",       icon: <Film size={16} />,           label: "直播" },
   { key: "logs",       icon: <FileText size={16} />,       label: "日志" },
@@ -216,7 +216,7 @@ export default function Dashboard() {
           <div style={{ display: activeNav === "knowledge" ? "block" : "none", height: "100%" }}><ErrorBoundary name="知识库"><KbPage kb={kb} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "tools" ? "block" : "none", height: "100%" }}><ErrorBoundary name="工具"><ToolsPage toolsData={toolsData} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "memory" ? "block" : "none", height: "100%" }}><ErrorBoundary name="记忆"><MemPage memLayers={memLayers} /></ErrorBoundary></div>
-          <div style={{ display: activeNav === "napcat" ? "block" : "none", height: "100%" }}><ErrorBoundary name="NapCat"><NapcatPage napcat={napcat} /></ErrorBoundary></div>
+          <div style={{ display: activeNav === "connection" ? "block" : "none", height: "100%" }}><ErrorBoundary name="连接"><NapcatPage napcat={napcat} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "ops" ? "block" : "none", height: "100%" }}><ErrorBoundary name="运维"><OpsPage sys={sys} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "live" ? "block" : "none", height: "100%" }}><ErrorBoundary name="直播"><LivePage /></ErrorBoundary></div>
           <div style={{ display: activeNav === "scheduler" ? "block" : "none", height: "100%" }}><ErrorBoundary name="自动化"><SchedulerPage /></ErrorBoundary></div>
@@ -1346,21 +1346,112 @@ function MemPage({ memLayers }: { memLayers: { name: string; desc: string; count
 }
 
 function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
-  const ok = napcat?.connected ?? false;
+  const [mcpServers, setMcpServers] = useState<Record<string, any>>({});
+  const [mcpConnected, setMcpConnected] = useState(false);
+  const [mcpLoading, setMcpLoading] = useState(false);
+
+  useEffect(() => {
+    apiGet<{ servers: any }>("/api/mcp/servers").then(d => setMcpServers(d.servers || {})).catch(() => {});
+    apiGet<{ ok: boolean }>("/api/status").then(d => { if (d) setMcpConnected(true); }).catch(() => {});
+  }, []);
+
+  const connectMcp = async () => {
+    setMcpLoading(true);
+    try {
+      const res = await apiPost<{ ok: boolean; tool_count: number }>("/api/mcp/connect", {});
+      setMcpConnected(res.ok || false);
+      notify(`连接完成，${res.tool_count} 个工具`, "success");
+    } catch { notify("连接失败", "error"); }
+    setMcpLoading(false);
+  };
+
+  const srvKeys = Object.keys(mcpServers);
+  const napcatOk = napcat?.connected ?? false;
+
+  const connections = [
+    {
+      name: "后端服务",
+      icon: <Server size={14} />,
+      status: true,
+      statusText: "运行中",
+      detail: "端口 9845 · API 正常",
+      color: "text-green-600 bg-green-50 border-green-200",
+    },
+    {
+      name: "NapCat (QQ)",
+      icon: <Bot size={14} />,
+      status: napcatOk,
+      statusText: napcatOk ? "已连接" : "离线",
+      detail: napcatOk ? `${napcat?.groups ?? 0} 个群` : "QQ 消息无法收发",
+      color: napcatOk ? "text-green-600 bg-green-50 border-green-200" : "text-red-500 bg-red-50 border-red-200",
+    },
+    {
+      name: "MCP 服务器",
+      icon: <Wifi size={14} />,
+      status: srvKeys.length > 0,
+      statusText: `${srvKeys.length} 个配置`,
+      detail: srvKeys.length > 0 ? srvKeys.join(" · ") : "未配置 MCP 服务器",
+      color: srvKeys.length > 0 ? "text-blue-600 bg-blue-50 border-blue-200" : "text-sakura-400 bg-sakura-50 border-sakura-100",
+    },
+    {
+      name: "Ollama",
+      icon: <Cpu size={14} />,
+      status: false,
+      statusText: "未检测",
+      detail: "端口 11434",
+      color: "text-sakura-400 bg-sakura-50 border-sakura-100",
+    },
+  ];
+
   return (
-    <div className="space-y-4">
-      <p className="text-sm font-semibold text-sakura-500">NapCat 连接</p>
-      <div className="bg-white border border-sakura-100 rounded-xl px-4 py-4">
-        <div className="flex items-center gap-3">
-          <div className={`w-12 h-12 rounded-full flex items-center justify-center ${ok ? "bg-green-100" : "bg-red-100"}`}>
-            {ok ? <Wifi size={24} className="text-green-500" /> : <WifiOff size={24} className="text-red-500" />}
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-sakura-600">连接状态</p>
+        <button onClick={connectMcp} disabled={mcpLoading || srvKeys.length === 0}
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-medium bg-teal-50 text-teal-600 hover:bg-teal-100 disabled:opacity-50 transition-colors">
+          {mcpLoading ? <Loader2 size={10} className="animate-spin" /> : <Zap size={10} />}
+          连接 MCP
+        </button>
+      </div>
+
+      <div className="space-y-2">
+        {connections.map((c, i) => (
+          <div key={i} className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border ${c.color}`}>
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/80">{c.icon}</div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] font-medium text-sakura-600">{c.name}</span>
+                <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${c.status ? "bg-green-100 text-green-600" : "bg-sakura-100 text-sakura-400"}`}>
+                  {c.statusText}
+                </span>
+              </div>
+              <p className="text-[9px] text-sakura-400 mt-0.5 truncate">{c.detail}</p>
+            </div>
+            <div className={`w-2 h-2 rounded-full shrink-0 ${c.status ? "bg-green-500" : "bg-sakura-300"}`} />
           </div>
-          <div>
-            <p className={`text-sm font-semibold ${ok ? "text-green-700" : "text-red-700"}`}>{ok ? "已连接" : "离线"}</p>
-            <p className="text-xs text-sakura-400 mt-0.5">{ok ? `${napcat?.groups ?? 0} 个群` : "QQ 消息无法收发"}</p>
+        ))}
+      </div>
+
+      {/* MCP 服务器列表 */}
+      {srvKeys.length > 0 && (
+        <div>
+          <p className="text-[10px] font-medium text-sakura-500 mb-1">配置的 MCP 服务器</p>
+          <div className="space-y-1">
+            {srvKeys.map(key => {
+              const s = mcpServers[key];
+              return (
+                <div key={key} className="flex items-center gap-2 px-3 py-2 bg-white border border-sakura-100 rounded-lg">
+                  <div className="w-5 h-5 rounded flex items-center justify-center bg-gradient-to-br from-sakura-400 to-sakura-500 text-white"><Wifi size={9} /></div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] font-medium text-sakura-600 truncate">{key}</p>
+                    <p className="text-[8px] text-sakura-300 truncate font-mono">{s.command} {(s.args || []).join(" ")}</p>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
