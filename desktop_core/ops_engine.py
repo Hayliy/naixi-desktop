@@ -565,19 +565,21 @@ async def _cleanup_disk(threshold: int = 85) -> tuple[bool, str]:
                         os.remove(fpath)
                         freed += sz
 
-        # 清理 __pycache__
-        cache_dirs = []
-        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        for dirpath, dirnames, _ in os.walk(root):
+        # 清理 __pycache__（仅限项目自身代码目录，不碰外部依赖）
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        for dirpath, dirnames, _ in os.walk(project_root):
+            # 跳过 searxng/ 等外部依赖目录
+            rel = os.path.relpath(dirpath, project_root)
+            if rel.startswith("searxng") or rel.startswith(".git") or rel.startswith("node_modules") or rel.startswith("src-tauri"):
+                dirnames.clear()
+                continue
             if "__pycache__" in dirnames:
-                cache_dirs.append(os.path.join(dirpath, "__pycache__"))
-
-        for cd in cache_dirs:
-            try:
-                import shutil
-                shutil.rmtree(cd, ignore_errors=True)
-            except:
-                pass
+                try:
+                    import shutil
+                    cache_path = os.path.join(dirpath, "__pycache__")
+                    shutil.rmtree(cache_path, ignore_errors=True)
+                except:
+                    pass
 
         freed_mb = round(freed / (1024**2), 1)
         return True, f"磁盘已自动养护：清理了 {freed_mb} MB 过期日志和缓存"
@@ -889,10 +891,16 @@ async def run_maintenance(actions: list[str] | None = None) -> dict:
             elif action == "cache_cleanup":
                 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                 import shutil
+                cleaned = 0
                 for dirpath, dirnames, _ in os.walk(root):
+                    rel = os.path.relpath(dirpath, root)
+                    if rel.startswith("searxng") or rel.startswith(".git") or rel.startswith("node_modules") or rel.startswith("src-tauri"):
+                        dirnames.clear()
+                        continue
                     if "__pycache__" in dirnames:
                         shutil.rmtree(os.path.join(dirpath, "__pycache__"), ignore_errors=True)
-                results[action] = {"ok": True, "message": "__pycache__ 缓存已清理"}
+                        cleaned += 1
+                results[action] = {"ok": True, "message": f"清理了 {cleaned} 个 __pycache__ 目录（仅项目代码）"}
 
             else:
                 results[action] = {"ok": False, "message": f"未知的养护操作：{action}"}
