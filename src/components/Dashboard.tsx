@@ -1346,67 +1346,93 @@ function MemPage({ memLayers }: { memLayers: { name: string; desc: string; count
 }
 
 function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
-  const [platforms, setPlatforms] = useState<any[]>([]);
-  const [config, setConfig] = useState<any>({});
-  const [mcpServers, setMcpServers] = useState<Record<string, any>>({});
-  const [mcpLoading, setMcpLoading] = useState(false);
+  const [conns, setConns] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [detailKey, setDetailKey] = useState<string | null>(null);
+  const [configMode, setConfigMode] = useState<string | null>(null);
+  const [fExtra, setFExtra] = useState("{}");
+  const [fEnabled, setFEnabled] = useState(true);
   const { notify } = useToast();
 
-  useEffect(() => {
-    Promise.all([
-      apiGet<{ platforms: any[] }>("/api/desktop/platforms").then(d => setPlatforms(d.platforms || [])).catch(() => {}),
-      apiGet<any>("/api/desktop/config").then(d => setConfig(d.platform_configs || {})).catch(() => {}),
-      apiGet<{ servers: any }>("/api/mcp/servers").then(d => setMcpServers(d.servers || {})).catch(() => {}),
-    ]).finally(() => setLoading(false));
+  const loadConns = useCallback(async () => {
+    setLoading(true);
+    try {
+      const cfg = await apiGet<any>("/api/desktop/config");
+      const saved = cfg.platform_configs || {};
+      const defaults = [
+        { id:"napcat", name:"QQ (NapCat)", desc:"WebSocket + HTTP 桥接", fields:[{k:"ws_url",l:"WebSocket 地址",p:"ws://127.0.0.1:3001"},{k:"http_url",l:"HTTP 地址",p:"http://127.0.0.1:3000"},{k:"token",l:"Token(可选)",p:""}] },
+        { id:"telegram", name:"Telegram", desc:"Bot API 轮询接收消息", fields:[{k:"token",l:"Bot Token",p:"123456:ABC-DEF123"},{k:"proxy",l:"代理地址(可选)",p:""}] },
+        { id:"discord", name:"Discord", desc:"Bot Token + Gateway Intents", fields:[{k:"token",l:"Bot Token",p:"MTIzNDU2Nzg5"},{k:"guild_id",l:"服务器 ID(可选)",p:""}] },
+        { id:"feishu", name:"飞书", desc:"自建应用事件回调", fields:[{k:"app_id",l:"App ID",p:"cli_xxxxx"},{k:"app_secret",l:"App Secret",p:""}] },
+        { id:"dingtalk", name:"钉钉", desc:"机器人出站消息回调", fields:[{k:"webhook",l:"Webhook 地址",p:"https://oapi.dingtalk.com/robot/send"},{k:"secret",l:"加签密钥",p:""}] },
+        { id:"slack", name:"Slack", desc:"App + Bot Token 事件订阅", fields:[{k:"token",l:"Bot Token",p:"xoxb-xxx"},{k:"signing_secret",l:"Signing Secret",p:""}] },
+      ];
+      const merged = defaults.map(d => {
+        const s = saved[d.id] || {};
+        return { ...d, enabled: s.enabled !== false, fields: d.fields.map(f => ({ ...f, v: s[f.k] || "" })) };
+      });
+      setConns(merged);
+    } catch {}
+    setLoading(false);
   }, []);
 
-  const napcatOk = napcat?.connected ?? false;
-  const srvKeys = Object.keys(mcpServers);
+  useEffect(() => { loadConns(); }, [loadConns]);
 
-  const connectMcp = async () => {
-    setMcpLoading(true);
-    try {
-      const res = await apiPost<{ ok: boolean; tool_count: number }>("/api/mcp/connect", {});
-      notify(`连接完成，${res.tool_count} 个工具`, "success");
-    } catch { notify("连接失败", "error"); }
-    setMcpLoading(false);
+  const openConfig = (conn: any) => {
+    setConfigMode(conn.id);
+    setFEnabled(conn.enabled);
+    const vals: Record<string, string> = {};
+    conn.fields.forEach((f: any) => { vals[f.k] = f.v; });
+    setFExtra(JSON.stringify(vals));
   };
 
-  if (detailKey) {
-    const p = platforms.find(x => x.id === detailKey);
-    if (p) {
-      const isQQ = p.id === "napcat";
-      const isConnected = isQQ ? napcatOk : !!config[p.id];
-      return (
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <button onClick={() => setDetailKey(null)} className="p-1 rounded hover:bg-sakura-50 text-sakura-400 transition-colors"><ChevronLeft size={14} /></button>
-            <p className="text-sm font-semibold text-sakura-600">{p.name}</p>
-            <span className={`text-[9px] px-2 py-0.5 rounded ${isConnected ? "bg-sakura-100 text-sakura-600" : "bg-sakura-50 text-sakura-400"}`}>
-              {isConnected ? (isQQ ? "运行中" : "已配置") : "未连接"}
-            </span>
-          </div>
-          <p className="text-[10px] text-sakura-500 leading-relaxed">{p.description}</p>
-          <div className="bg-white border border-sakura-100 rounded-xl p-3 space-y-2">
-            <p className="text-[10px] font-medium text-sakura-600">配置步骤</p>
-            {(p.steps || []).map((step: string, si: number) => (
-              <p key={si} className="text-[9px] text-sakura-500 leading-relaxed">{si + 1}. {step}</p>
-            ))}
-          </div>
-          <p className="text-[9px] text-sakura-400 font-mono bg-sakura-50 px-2.5 py-1.5 rounded-lg">Webhook: /api/webhook/{p.id}</p>
-          {(p.links || []).length > 0 && (
-            <div className="flex items-center gap-2 flex-wrap">
-              {(p.links || []).map((link: any, li: number) => (
-                <a key={li} href={link.url} target="_blank" rel="noopener noreferrer"
-                  className="text-[9px] text-sakura-500 underline hover:text-sakura-700">{link.label}</a>
-              ))}
-            </div>
-          )}
+  const saveConfig = async () => {
+    if (!configMode) return;
+    try {
+      const cfg = await apiGet<any>("/api/desktop/config");
+      const platform_configs = cfg.platform_configs || {};
+      let vals = {};
+      try { vals = JSON.parse(fExtra); } catch {}
+      platform_configs[configMode] = { ...vals, enabled: fEnabled };
+      await apiPost("/api/desktop/config", { platform_configs });
+      notify("已保存", "success");
+      setConfigMode(null);
+      loadConns();
+    } catch { notify("保存失败", "error"); }
+  };
+
+  if (configMode) {
+    const conn = conns.find(c => c.id === configMode);
+    if (!conn) return null;
+    let vals: Record<string, string> = {};
+    try { vals = JSON.parse(fExtra); } catch {}
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <button onClick={() => setConfigMode(null)} className="p-1 rounded hover:bg-sakura-50 text-sakura-400"><ChevronLeft size={14} /></button>
+          <p className="text-sm font-semibold text-sakura-600">{conn.name}</p>
         </div>
-      );
-    }
+        <div className="bg-white border border-sakura-100 rounded-xl p-3 space-y-2.5">
+          <p className="text-[10px] font-medium text-sakura-600">连接配置</p>
+          {conn.fields.map((f: any, i: number) => (
+            <div key={i}>
+              <p className="text-[9px] text-sakura-500 mb-0.5">{f.l}</p>
+              <input value={vals[f.k] || ""} onChange={e => { vals[f.k] = e.target.value; setFExtra(JSON.stringify(vals)); }}
+                className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-sakura-50 text-sakura-600 font-mono"
+                placeholder={f.p} />
+            </div>
+          ))}
+          <div className="flex items-center gap-2 pt-1">
+            <button onClick={() => setFEnabled(!fEnabled)}
+              className={`px-2.5 py-1 rounded text-[9px] font-medium transition-colors ${fEnabled ? "bg-sakura-100 text-sakura-600" : "bg-sakura-50 text-sakura-400"}`}>
+              {fEnabled ? "已启用" : "已禁用"}
+            </button>
+            <div className="flex-1" />
+            <button onClick={() => setConfigMode(null)} className="px-3 py-1.5 rounded text-[9px] text-sakura-400 hover:bg-sakura-50 border border-sakura-100">取消</button>
+            <button onClick={saveConfig} className="px-3 py-1.5 rounded text-[9px] font-medium bg-gradient-to-br from-sakura-400 to-sakura-500 text-white">保存</button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -1415,96 +1441,40 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
       {loading ? (
         <div className="text-center py-8"><div className="w-5 h-5 border-2 border-sakura-200 border-t-sakura-500 rounded-full animate-spin mx-auto" /></div>
       ) : (
-        <div className="space-y-3">
-          {/* 消息平台卡片组 */}
-          <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-            <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
-              <span className="text-[10px] font-medium text-sakura-500">消息平台</span>
-              <span className="text-[8px] text-sakura-300">{platforms.filter(p => ["napcat","feishu","wecom","dingtalk","discord","slack","telegram","whatsapp"].includes(p.id)).length} 个</span>
-            </div>
-            <div className="divide-y divide-sakura-50">
-              {platforms.filter(p => ["napcat","feishu","wecom","dingtalk","discord","slack","telegram","whatsapp"].includes(p.id)).map(p => {
-                const isQQ = p.id === "napcat";
-                const isConnected = isQQ ? napcatOk : !!config[p.id];
-                return (
-                  <div key={p.id} className="flex items-center gap-2.5 px-3 py-2 hover:bg-sakura-50/30 transition-colors group">
-                    <MessageCircle size={13} className="text-sakura-400 shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[11px] font-medium text-sakura-600">{p.name}</span>
-                        {isConnected && <span className="text-[8px] text-sakura-400 bg-sakura-50 px-1 py-0.5 rounded">运行中</span>}
-                      </div>
-                      <p className="text-[8px] text-sakura-400 truncate">{p.description}</p>
-                    </div>
-                    <button onClick={() => setDetailKey(p.id)}
-                      className={`px-2.5 py-1 rounded text-[9px] font-medium transition-colors shrink-0 ${
-                        isConnected
-                          ? "bg-sakura-100 text-sakura-600 hover:bg-sakura-200"
-                          : "bg-white border border-sakura-100 text-sakura-400 hover:text-sakura-600 hover:border-sakura-300"
-                      }`}>
-                      {isConnected ? "配置" : "连接"}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
+        <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+          <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
+            <span className="text-[10px] font-medium text-sakura-500">平台连接</span>
+            <span className="text-[8px] text-sakura-300">{conns.filter(c => c.enabled).length}/{conns.length} 已启用</span>
           </div>
-
-          {/* Webhook 卡片组 */}
-          <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-            <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
-              <span className="text-[10px] font-medium text-sakura-500">Webhook</span>
-              <span className="text-[8px] text-sakura-300">{platforms.filter(p => ["email","github","gitlab","generic"].includes(p.id)).length} 个</span>
-            </div>
-            <div className="divide-y divide-sakura-50">
-              {platforms.filter(p => ["email","github","gitlab","generic"].includes(p.id)).map(p => (
-                <div key={p.id} className="flex items-center gap-2.5 px-3 py-2 hover:bg-sakura-50/30 transition-colors group">
-                    {p.icon === "GitBranch" ? <GitBranch size={13} className="text-sakura-400 shrink-0" /> : p.icon === "Mail" ? <Server size={13} className="text-sakura-400 shrink-0" /> : <Globe size={13} className="text-sakura-400 shrink-0" />}
+          <div className="divide-y divide-sakura-50">
+            {conns.map(conn => {
+              const isQQ = conn.id === "napcat";
+              const connected = isQQ ? (napcat?.connected ?? false) : conn.enabled;
+              return (
+                <div key={conn.id} className="flex items-center gap-2.5 px-3 py-2 hover:bg-sakura-50/30 transition-colors">
+                  <MessageCircle size={13} className="text-sakura-400 shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <p className="text-[11px] font-medium text-sakura-600">{p.name}</p>
-                    <p className="text-[8px] text-sakura-400 truncate">{p.description}</p>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-medium text-sakura-600">{conn.name}</span>
+                      <span className={`text-[8px] px-1 py-0.5 rounded ${connected ? "bg-sakura-100 text-sakura-600" : "bg-sakura-50 text-sakura-400"}`}>
+                        {connected ? (isQQ ? "运行中" : "已启用") : "未启用"}
+                      </span>
+                    </div>
+                    <p className="text-[8px] text-sakura-400 truncate">{conn.desc}</p>
                   </div>
-                  <button onClick={() => setDetailKey(p.id)}
-                    className="px-2.5 py-1 rounded text-[9px] font-medium bg-white border border-sakura-100 text-sakura-400 hover:text-sakura-600 hover:border-sakura-300 transition-colors shrink-0">详情</button>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* 基础设施卡片组 */}
-          <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-            <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30">
-              <span className="text-[10px] font-medium text-sakura-500">基础设施</span>
-            </div>
-            <div className="divide-y divide-sakura-50">
-                <div className="flex items-center gap-2.5 px-3 py-2">
-                <Server size={13} className="text-sakura-400 shrink-0" />
-                <div className="flex-1"><p className="text-[11px] font-medium text-sakura-600">后端服务</p><p className="text-[8px] text-sakura-400">端口 9845</p></div>
-                <span className="px-2 py-0.5 rounded text-[8px] font-medium bg-sakura-100 text-sakura-600">运行中</span>
-              </div>
-              <div className="flex items-center gap-2.5 px-3 py-2">
-                <Cpu size={13} className="text-sakura-400 shrink-0" />
-                <div className="flex-1"><p className="text-[11px] font-medium text-sakura-600">Ollama</p><p className="text-[8px] text-sakura-400">端口 11434</p></div>
-                <span className="px-2 py-0.5 rounded text-[8px] font-medium bg-sakura-50 text-sakura-400">未检测</span>
-              </div>
-              {srvKeys.length > 0 && (
-                <div className="flex items-center gap-2.5 px-3 py-2">
-                  <Wifi size={13} className="text-sakura-400 shrink-0" />
-                  <div className="flex-1"><p className="text-[11px] font-medium text-sakura-600">MCP 服务器</p><p className="text-[8px] text-sakura-400 truncate">{srvKeys.join(" · ")}</p></div>
-                  <button onClick={connectMcp} disabled={mcpLoading}
-                    className="px-2 py-0.5 rounded text-[8px] font-medium bg-sakura-100 text-sakura-600 hover:bg-sakura-200 disabled:opacity-50 transition-colors">
-                    {mcpLoading ? <Loader2 size={8} className="animate-spin" /> : "连接"}
+                  <button onClick={() => openConfig(conn)}
+                    className="px-2.5 py-1 rounded text-[9px] font-medium bg-white border border-sakura-100 text-sakura-400 hover:text-sakura-600 hover:border-sakura-300 transition-colors shrink-0">
+                    配置
                   </button>
                 </div>
-              )}
-            </div>
+              );
+            })}
           </div>
         </div>
       )}
     </div>
   );
 }
-
 function OpsPage({ sys }: { sys: SysData | null }) {
   return (
     <div className="space-y-4">
