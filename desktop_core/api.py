@@ -428,6 +428,113 @@ async def api_desktop_status(request):
     })
 
 
+async def api_stats(request):
+    """真正的运维数据：一个端点返回全部系统指标"""
+    import psutil, socket, platform, time as _time
+    import os as _os
+    boot_ts = psutil.boot_time()
+    uptime_sec = int(_time.time() - boot_ts)
+    def fmt_uptime(s):
+        d = s // 86400; h = (s % 86400) // 3600; m = (s % 3600) // 60
+        return f"{d}天 {h}小时 {m}分钟"
+
+    # CPU
+    cpu_percent = psutil.cpu_percent(interval=0.3)
+    cpu_cores = psutil.cpu_count(logical=True)
+    cpu_phys = psutil.cpu_count(logical=False)
+    cpu_load = [round(x / psutil.cpu_count() * 100, 1) for x in psutil.getloadavg()] if hasattr(psutil, "getloadavg") else [0, 0, 0]
+
+    # 内存
+    mem = psutil.virtual_memory()
+    swap = psutil.swap_memory()
+    mem_total_gb = round(mem.total / (1024**3), 1)
+    mem_used_gb = round(mem.used / (1024**3), 1)
+    mem_avail_gb = round(mem.available / (1024**3), 1)
+
+    # 磁盘
+    disk_root = psutil.disk_usage("/")
+    disk_total_gb = round(disk_root.total / (1024**3), 1)
+    disk_used_gb = round(disk_root.used / (1024**3), 1)
+    disk_free_gb = round(disk_root.free / (1024**3), 1)
+
+    # 所有分区
+    partitions = []
+    for p in psutil.disk_partitions():
+        try:
+            u = psutil.disk_usage(p.mountpoint)
+            partitions.append({
+                "device": p.device, "mount": p.mountpoint, "fstype": p.fstype,
+                "total_gb": round(u.total / (1024**3), 1),
+                "used_gb": round(u.used / (1024**3), 1),
+                "free_gb": round(u.free / (1024**3), 1),
+                "percent": u.percent,
+            })
+        except:
+            pass
+
+    # 网络
+    net = psutil.net_io_counters()
+    net_sent_mb = round(net.bytes_sent / (1024**2), 1)
+    net_recv_mb = round(net.bytes_recv / (1024**2), 1)
+
+    # 进程统计
+    all_procs = list(psutil.process_iter(["pid", "name", "memory_info", "cpu_percent"]))
+    proc_count = len(all_procs)
+    py_procs = [p.info for p in all_procs if p.info.get("name") and ("python" in p.info["name"].lower() or "node" in p.info["name"].lower())]
+    top_procs = sorted([p.info for p in all_procs if p.info.get("memory_info")],
+                       key=lambda x: x["memory_info"].rss if x.get("memory_info") else 0, reverse=True)[:10]
+    top_list = [{
+        "name": p.get("name", "?"), "pid": p.get("pid", 0),
+        "mem_mb": round(p.get("memory_info").rss / (1024**2), 1) if p.get("memory_info") else 0,
+    } for p in top_procs]
+
+    # 服务端口检测
+    import asyncio
+    port_checks = {"backend": 9845, "napcat_http": 3000, "napcat_ws": 3001, "ollama": 11434, "searxng": 8898}
+    services = {}
+    for name, port in port_checks.items():
+        try:
+            _, w = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", port), timeout=1)
+            w.close(); await w.wait_closed()
+            services[name] = True
+        except:
+            services[name] = False
+
+    return web.json_response({
+        "hostname": socket.gethostname(),
+        "os": platform.platform(),
+        "python": platform.python_version(),
+        "uptime": uptime_sec,
+        "uptime_str": fmt_uptime(uptime_sec),
+        "boot_time": int(boot_ts),
+        "cpu": {
+            "percent": cpu_percent, "cores": cpu_cores, "physical": cpu_phys,
+            "load_1m": cpu_load[0], "load_5m": cpu_load[1], "load_15m": cpu_load[2],
+        },
+        "memory": {
+            "total_gb": mem_total_gb, "used_gb": mem_used_gb, "avail_gb": mem_avail_gb,
+            "percent": round(mem.percent, 1),
+            "swap_total_gb": round(swap.total / (1024**3), 1),
+            "swap_used_gb": round(swap.used / (1024**3), 1),
+            "swap_percent": round(swap.percent, 1),
+        },
+        "disk": {
+            "total_gb": disk_total_gb, "used_gb": disk_used_gb, "free_gb": disk_free_gb,
+            "percent": round(disk_root.percent, 1),
+            "partitions": partitions,
+        },
+        "network": {
+            "sent_mb": net_sent_mb, "recv_mb": net_recv_mb,
+        },
+        "processes": {
+            "total": proc_count,
+            "python_node": py_procs[:20],
+            "top_mem": top_list,
+        },
+        "services": services,
+    })
+
+
 async def api_system_resources(request):
     """返回系统资源使用情况（通过 PowerShell 获取）"""
     import asyncio
@@ -2603,12 +2710,8 @@ def setup_routes(app):
     app.router.add_post("/api/desktop/config", api_desktop_config_set)
     app.router.add_post("/api/desktop/test-connection", api_desktop_test_connection)
     app.router.add_post("/api/desktop/models", api_desktop_list_models)
+    app.router.add_get("/api/stats", api_stats)
     app.router.add_get("/api/desktop/platforms", api_desktop_platforms)
-    app.router.add_get("/api/system/resources", api_system_resources)
-    app.router.add_get("/api/system/info", api_system_info)
-    app.router.add_get("/api/system/processes", api_system_processes)
-    app.router.add_get("/api/system/disks", api_system_disks)
-    app.router.add_get("/api/service/health", api_service_health)
     app.router.add_get("/api/database/stats", api_database_stats)
     app.router.add_post("/api/chat/stream", api_chat_stream)
     app.router.add_post("/api/agent/stream", api_chat_stream)
