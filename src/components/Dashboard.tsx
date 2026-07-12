@@ -1419,12 +1419,19 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
     if (!configMode) return;
     setTesting(true);
     setTestResult(null);
+    const conn = conns.find(c => c.id === configMode);
+    const urlKeys = new Set(["ws_url", "http_url", "host", "webhook", "endpoint", "imap_host", "imap_port", "proxy"]);
+    const hasUrl = conn?.fields?.some((f: any) => urlKeys.has(f.k) || f.p?.startsWith("http") || f.p?.startsWith("ws"));
+    if (!hasUrl) {
+      setTestResult("该平台无 URL 测试端点，保存后接入使用即可");
+      setTesting(false);
+      return;
+    }
     let vals: Record<string, string> = {};
     try { vals = JSON.parse(fExtra); } catch {}
-    // 取第一个看起来像 URL 的字段值
-    const testUrl = Object.values(vals).find(v => v.startsWith("http") || v.startsWith("ws"));
+    const testUrl = Object.values(vals).find(v => v && (v.startsWith("http") || v.startsWith("ws")));
     if (!testUrl) {
-      setTestResult("没有找到可测试的地址");
+      setTestResult("请先填写地址再测试");
       setTesting(false);
       return;
     }
