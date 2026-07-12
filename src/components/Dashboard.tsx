@@ -217,7 +217,7 @@ export default function Dashboard() {
           <div style={{ display: activeNav === "tools" ? "block" : "none", height: "100%" }}><ErrorBoundary name="工具"><ToolsPage toolsData={toolsData} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "memory" ? "block" : "none", height: "100%" }}><ErrorBoundary name="记忆"><MemPage memLayers={memLayers} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "connection" ? "block" : "none", height: "100%" }}><ErrorBoundary name="连接"><NapcatPage napcat={napcat} /></ErrorBoundary></div>
-          <div style={{ display: activeNav === "ops" ? "block" : "none", height: "100%" }}><ErrorBoundary name="运维"><OpsPage sys={sys} /></ErrorBoundary></div>
+          <div style={{ display: activeNav === "ops" ? "block" : "none", height: "100%" }}><ErrorBoundary name="运维"><OpsPage sys={sys} health={health} dbStats={dbStats} status={st} errors={globalErrors} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "live" ? "block" : "none", height: "100%" }}><ErrorBoundary name="直播"><LivePage /></ErrorBoundary></div>
           <div style={{ display: activeNav === "scheduler" ? "block" : "none", height: "100%" }}><ErrorBoundary name="自动化"><SchedulerPage /></ErrorBoundary></div>
           <div style={{ display: activeNav === "logs" ? "block" : "none", height: "100%" }}><ErrorBoundary name="日志"><LogsPage /></ErrorBoundary></div>
@@ -1529,28 +1529,114 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
     </div>
   );
 }
-function OpsPage({ sys }: { sys: SysData | null }) {
+function OpsPage({ sys, health, dbStats, status, errors }:
+  { sys: any; health: any; dbStats: any; status: any; errors: { msg: string; stack: string; time: number }[] }) {
+  const [loading, setLoading] = useState(true);
+  const [resources, setResources] = useState<any>(null);
+  const [services, setServices] = useState<any>(null);
+  const [tables, setTables] = useState<any[]>([]);
+  const { notify } = useToast();
+
+  useEffect(() => {
+    Promise.all([
+      apiGet<any>("/api/system/resources").then(setResources).catch(() => {}),
+      apiGet<any>("/api/service/health").then(setServices).catch(() => {}),
+      apiGet<any>("/api/database/stats").then(d => setTables(d.tables || [])).catch(() => {}),
+    ]).finally(() => setLoading(false));
+  }, []);
+
+  const srvList = services ? [
+    { n: "后端 API", k: "backend", p: "9845" },
+    { n: "NapCat HTTP", k: "napcat_http", p: "3000" },
+    { n: "NapCat WS", k: "napcat_ws", p: "3001" },
+    { n: "Ollama", k: "ollama", p: "11434" },
+    { n: "SearXNG", k: "searxng", p: "8898" },
+  ].map(s => ({ ...s, ok: services[s.k] === true })) : [];
+
+  const recentErrors = errors.slice(-5).reverse();
+  const diskPct = resources?.disk ?? 0;
+  const memPct = resources?.memory ?? 0;
+  const cpuPct = resources?.cpu ?? 0;
+
   return (
-    <div className="space-y-4">
-      <p className="text-sm font-semibold text-sakura-500">运维监控</p>
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2">
-        <div className="bg-white border border-sakura-100 rounded-xl px-4 py-4 space-y-3">
-          <p className="text-xs font-medium text-sakura-500">系统资源</p>
-          <Bar label="CPU" val={`${sys?.cpu ?? 0}%`} w={sys?.cpu ?? 0} />
-          <Bar label="内存" val={`${sys?.memory ?? 0}%`} w={sys?.memory ?? 0} />
-          <Bar label="磁盘" val={`${sys?.disk ?? 0}%`} w={sys?.disk ?? 0} />
-          <Bar label="GPU" val={`${sys?.gpu_util ?? 0}%`} w={sys?.gpu_util ?? 0} />
-        </div>
-        <div className="bg-white border border-sakura-100 rounded-xl px-4 py-4 space-y-2">
-          <p className="text-xs font-medium text-sakura-500">服务状态</p>
-          <Row l="GPU 型号" v={sys?.gpu_name ?? "无"} />
-          <Row l="显存" v={`${sys?.gpu_mem_used ?? 0} MB / ${sys?.gpu_mem_total ?? 0} MB`} />
-          <Row l="后端口" v=":9845" />
-          <Row l="NapCat" v=":3000 / :3001" />
-          <Row l="Ollama" v=":11434" />
-          <Row l="SearXNG" v=":8898" />
-        </div>
-      </div>
+    <div className="space-y-3">
+      <p className="text-sm font-semibold text-sakura-600">运维监控</p>
+      {loading ? (
+        <div className="text-center py-8"><div className="w-5 h-5 border-2 border-sakura-200 border-t-sakura-500 rounded-full animate-spin mx-auto" /></div>
+      ) : (
+        <>
+          {/* 服务健康 */}
+          <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+            <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30">
+              <span className="text-[10px] font-medium text-sakura-500">服务健康</span>
+            </div>
+            <div className="divide-y divide-sakura-50">
+              {srvList.map(s => (
+                <div key={s.k} className="flex items-center gap-2.5 px-3 py-2">
+                  <div className={`w-2 h-2 rounded-full shrink-0 ${s.ok ? "bg-green-500" : "bg-red-500"}`} />
+                  <span className="text-[11px] font-medium text-sakura-600 min-w-[6rem]">{s.n}</span>
+                  <span className="text-[8px] text-sakura-400 font-mono">:{s.p}</span>
+                  <div className="flex-1" />
+                  <span className={`text-[8px] px-1.5 py-0.5 rounded font-medium ${s.ok ? "bg-green-50 text-green-600" : "bg-red-50 text-red-500"}`}>
+                    {s.ok ? "在线" : "离线"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 系统资源 */}
+          <div className="bg-white border border-sakura-100 rounded-xl p-3 space-y-2">
+            <p className="text-[10px] font-medium text-sakura-500">系统资源</p>
+            <Bar label="CPU" val={`${cpuPct.toFixed(1)}%`} w={cpuPct} />
+            <Bar label="内存" val={`${memPct.toFixed(1)}%`} w={memPct} />
+            <Bar label="磁盘" val={`${diskPct.toFixed(1)}%`} w={diskPct} />
+          </div>
+
+          {/* 数据库 */}
+          <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+            <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30">
+              <span className="text-[10px] font-medium text-sakura-500">数据库</span>
+            </div>
+            <div className="divide-y divide-sakura-50">
+              {tables.slice(0, 10).map(t => (
+                <div key={t.name} className="flex items-center justify-between px-3 py-1.5">
+                  <span className="text-[9px] text-sakura-500 font-mono">{t.name}</span>
+                  <span className="text-[9px] text-sakura-600 font-medium">{t.count.toLocaleString()} 条</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 最近错误 */}
+          {recentErrors.length > 0 && (
+            <div className="bg-white border border-red-200 rounded-xl overflow-hidden">
+              <div className="px-3 py-2 border-b border-red-100 bg-red-50/30">
+                <span className="text-[10px] font-medium text-red-500">最近错误 ({recentErrors.length})</span>
+              </div>
+              <div className="divide-y divide-red-50">
+                {recentErrors.map((e, i) => (
+                  <div key={i} className="px-3 py-1.5">
+                    <p className="text-[9px] text-red-600 font-mono truncate">{e.msg}</p>
+                    <p className="text-[8px] text-sakura-400">{new Date(e.time).toLocaleString("zh-CN")}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 系统信息 */}
+          <div className="flex items-center gap-2 text-[9px] text-sakura-400 px-0.5">
+            <span>版本 {status?.version || "?"}</span>
+            <span className="text-sakura-200">|</span>
+            <span>工具 {status?.tools || 0} 个</span>
+            <span className="text-sakura-200">|</span>
+            <span>技能 {status?.skills || 0}</span>
+            <span className="text-sakura-200">|</span>
+            <span>Agent {status?.agents || 0}</span>
+          </div>
+        </>
+      )}
     </div>
   );
 }
