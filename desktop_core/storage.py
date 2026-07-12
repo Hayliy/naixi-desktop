@@ -243,6 +243,9 @@ def init_tables():
         conn.commit()
     finally:
         conn.close()
+    # 运维数据表
+    from desktop_core.ops_engine import init_ops_tables
+    init_ops_tables()
 
 # ── 头像缓存 ──
 

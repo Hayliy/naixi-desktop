@@ -2646,6 +2646,122 @@ async def api_automations_trigger(request):
     return web.json_response({"ok": True, "result": f"已触发: {auto.get('name', '')}", "reply": reply[:200] if reply else ""})
 
 
+# ── 运维 API ──
+
+async def api_ops_dashboard(request):
+    """运维总览：健康评分、可用性、活跃告警、趋势"""
+    from desktop_core.ops_engine import get_ops_dashboard
+    try:
+        data = await get_ops_dashboard()
+        return web.json_response(data)
+    except Exception as e:
+        log.error(f"运维总览失败：{e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_ops_inspect(request):
+    """触发一次全面巡检"""
+    from desktop_core.ops_engine import run_inspection
+    try:
+        data = await run_inspection()
+        return web.json_response(data)
+    except Exception as e:
+        log.error(f"巡检失败：{e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_ops_inspections(request):
+    """获取巡检历史"""
+    from desktop_core.ops_engine import get_inspections
+    try:
+        limit = int(request.query.get("limit", 20))
+        data = get_inspections(limit)
+        return web.json_response({"inspections": data})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_ops_self_heal(request):
+    """尝试自愈"""
+    from desktop_core.ops_engine import try_self_heal
+    try:
+        data = await try_self_heal(trigger_type="manual")
+        return web.json_response(data)
+    except Exception as e:
+        log.error(f"自愈失败：{e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_ops_self_heals(request):
+    """获取自愈历史"""
+    from desktop_core.ops_engine import get_self_heal_history
+    try:
+        limit = int(request.query.get("limit", 30))
+        data = get_self_heal_history(limit)
+        return web.json_response({"heals": data})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_ops_incidents(request):
+    """获取告警/事件列表"""
+    from desktop_core.ops_engine import get_active_incidents, get_incident_history
+    try:
+        active = get_active_incidents()
+        history = get_incident_history(50)
+        return web.json_response({"active": active, "history": history})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_ops_maintenance(request):
+    """执行养护操作"""
+    from desktop_core.ops_engine import run_maintenance
+    try:
+        body = await request.json()
+        actions = body.get("actions", None)
+        result = await run_maintenance(actions)
+        return web.json_response(result)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_ops_changelog(request):
+    """获取变更记录"""
+    from desktop_core.ops_engine import get_changelog
+    try:
+        limit = int(request.query.get("limit", 50))
+        data = get_changelog(limit)
+        return web.json_response({"changelog": data})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_ops_health_history(request):
+    """获取健康评分历史趋势"""
+    from desktop_core.ops_engine import get_health_history, get_uptime_since
+    try:
+        hours = int(request.query.get("hours", 24))
+        data = get_health_history(hours)
+        uptime = get_uptime_since(hours)
+        return web.json_response({"records": data, "uptime": uptime})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_ops_trends(request):
+    """获取趋势数据"""
+    from desktop_core.ops_engine import get_trends
+    try:
+        metric = request.query.get("metric", "health_score")
+        hours = int(request.query.get("hours", 24))
+        bucket = request.query.get("bucket", None)
+        data = get_trends(metric, hours, bucket)
+        return web.json_response({"trends": data})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
 # ── 路由注册 ──
 
 def setup_routes(app):
@@ -2727,6 +2843,18 @@ def setup_routes(app):
     app.router.add_post("/api/automations/delete-run", api_automations_delete_run)
     app.router.add_post("/api/automations/trigger", api_automations_trigger)
     app.router.add_get("/api/automations/trigger", api_automations_trigger)  # GET 也支持（webhook 兼容）
+
+    # 运维管理
+    app.router.add_get("/api/ops/dashboard", api_ops_dashboard)
+    app.router.add_post("/api/ops/inspect", api_ops_inspect)
+    app.router.add_get("/api/ops/inspections", api_ops_inspections)
+    app.router.add_post("/api/ops/self-heal", api_ops_self_heal)
+    app.router.add_get("/api/ops/self-heals", api_ops_self_heals)
+    app.router.add_get("/api/ops/incidents", api_ops_incidents)
+    app.router.add_post("/api/ops/maintenance", api_ops_maintenance)
+    app.router.add_get("/api/ops/changelog", api_ops_changelog)
+    app.router.add_get("/api/ops/health-history", api_ops_health_history)
+    app.router.add_get("/api/ops/trends", api_ops_trends)
 
     # 工作流
     app.router.add_get("/api/workflows", api_workflow_list)

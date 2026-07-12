@@ -1529,117 +1529,439 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
     </div>
   );
 }
-function OpsPage({ errors }: { errors: { msg: string; stack: string; time: number }[] }) {
-  const [data, setData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+function HealthGauge({ score, size = "md" }: { score: number; size?: "sm" | "md" | "lg" }) {
+  const color = score >= 80 ? "text-green-600" : score >= 60 ? "text-yellow-600" : "text-red-600";
+  const barColor = score >= 80 ? "bg-green-500" : score >= 60 ? "bg-yellow-500" : "bg-red-500";
+  const dims = size === "lg" ? { w: 80, h: 80, stroke: 6 } : size === "md" ? { w: 56, h: 56, stroke: 5 } : { w: 40, h: 40, stroke: 4 };
+  const r = (dims.w - dims.stroke) / 2;
+  const circ = 2 * Math.PI * r;
+  const offset = circ - (score / 100) * circ;
+  return (
+    <svg width={dims.w} height={dims.h} viewBox={`0 0 ${dims.w} ${dims.h}`} className="shrink-0">
+      <circle cx={dims.w/2} cy={dims.h/2} r={r} fill="none" stroke="#f1e4e8" strokeWidth={dims.stroke} />
+      <circle cx={dims.w/2} cy={dims.h/2} r={r} fill="none" stroke="currentColor" strokeWidth={dims.stroke}
+        strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round" className={barColor.replace("bg-", "text-")}
+        transform={`rotate(-90 ${dims.w/2} ${dims.h/2})`} style={{ transition: "stroke-dashoffset 0.5s ease" }} />
+      <text x={dims.w/2} y={dims.h/2} textAnchor="middle" dominantBaseline="central"
+        className={`${color} font-bold`} fontSize={size === "lg" ? 22 : size === "md" ? 16 : 12}>
+        {score}
+      </text>
+    </svg>
+  );
+}
 
-  const load = useCallback(async () => {
+function MiniSparkline({ data, color = "bg-sakura-400", height = 28 }: { data: { ts: number; score: number }[]; color?: string; height?: number }) {
+  if (!data || data.length < 2) return <div className="text-[8px] text-sakura-300 h-7 flex items-center">数据不足</div>;
+  const scores = data.map(d => d.score);
+  const min = Math.min(...scores);
+  const max = Math.max(...scores);
+  const range = max - min || 1;
+  const bars = 40;
+  const step = Math.max(1, Math.floor(scores.length / bars));
+  const sampled = [];
+  for (let i = 0; i < scores.length && sampled.length < bars; i += step) sampled.push(scores[i]);
+  if (sampled.length < 2) return null;
+  const w = 100 / sampled.length;
+  return (
+    <div className="flex items-end gap-[1px]" style={{ height }}>
+      {sampled.map((v, i) => {
+        const pct = ((v - min) / range * 100);
+        return <div key={i} className={`${color} rounded-t shrink-0`}
+          style={{ width: `calc(${w}% - 1px)`, height: `${Math.max(3, pct)}%`, minWidth: 2 }} title={`${v}分`} />;
+      })}
+    </div>
+  );
+}
+
+function OpsPage({ errors }: { errors: { msg: string; stack: string; time: number }[] }) {
+  const [health, setHealth] = useState<any>(null);
+  const [incidents, setIncidents] = useState<any[]>([]);
+  const [incidentHistory, setIncidentHistory] = useState<any[]>([]);
+  const [inspections, setInspections] = useState<any[]>([]);
+  const [heals, setHeals] = useState<any[]>([]);
+  const [changelog, setChangelog] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [healing, setHealing] = useState(false);
+  const [inspecting, setInspecting] = useState(false);
+  const [maintaining, setMaintaining] = useState(false);
+  const [maintResult, setMaintResult] = useState<any>(null);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({ incidents: true, inspection: false, heal: true, maintenance: false, changelog: false });
+
+  const loadAll = useCallback(async () => {
+    setLoading(true);
     try {
-      const d = await apiGet<any>("/api/stats");
-      setData(d);
-    } catch {}
+      const [d, inc, insp, he, cl] = await Promise.all([
+        apiGet<any>("/api/ops/dashboard"),
+        apiGet<any>("/api/ops/incidents"),
+        apiGet<any>("/api/ops/inspections?limit=5"),
+        apiGet<any>("/api/ops/self-heals?limit=10"),
+        apiGet<any>("/api/ops/changelog?limit=20"),
+      ]);
+      if (d) setHealth(d);
+      if (inc) { setIncidents(inc.active || []); setIncidentHistory(inc.history || []); }
+      if (insp) setInspections(insp.inspections || []);
+      if (he) setHeals(he.heals || []);
+      if (cl) setChangelog(cl.changelog || []);
+    } catch (e) { console.error("运维加载失败", e); }
     setLoading(false);
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadAll(); }, [loadAll]);
 
-  // 判断系统健康状态
-  const backendOk = data?.backend?.pid != null;
-  const services = data?.services || {};
-  const depOk = Object.values(services).filter(Boolean).length;
-  const hasKey = (data?.providers?.with_key ?? 0) > 0;
-  const totalServices = Object.keys(services).length;
+  // 自动刷新
+  useEffect(() => {
+    const t = setInterval(() => {
+      apiGet<any>("/api/ops/dashboard").then(d => { if (d) setHealth(d); }).catch(() => {});
+    }, 30000);
+    return () => clearInterval(t);
+  }, []);
 
-  let status: "healthy" | "warning" | "critical" = "healthy";
-  const issues: string[] = [];
-  if (!backendOk) { status = "critical"; issues.push("后端进程未响应"); }
-  if (depOk === 0 && totalServices > 0) { status = "critical"; issues.push("所有依赖服务离线"); }
-  else if (depOk < totalServices) { status = "warning"; issues.push(`${totalServices - depOk} 个依赖服务离线`); }
-  if (!hasKey) { status = "warning"; issues.push("未配置有效的 API Key"); }
-  if (errors.length > 5) { status = "warning"; issues.push(`近期有 ${errors.length} 个错误`); }
+  const handleHeal = async () => {
+    setHealing(true);
+    const r = await apiPost<any>("/api/ops/self-heal", {});
+    if (r) { await loadAll(); }
+    setHealing(false);
+  };
 
-  const statusLabel = { healthy: "系统运行正常", warning: "系统运行异常", critical: "系统严重故障" };
-  const statusColor = { healthy: "bg-green-500", warning: "bg-yellow-500", critical: "bg-red-500" };
-  const statusBg = { healthy: "bg-green-50 border-green-200 text-green-700", warning: "bg-yellow-50 border-yellow-200 text-yellow-700", critical: "bg-red-50 border-red-200 text-red-700" };
+  const handleInspect = async () => {
+    setInspecting(true);
+    const r = await apiPost<any>("/api/ops/inspect", {});
+    if (r) { await loadAll(); }
+    setInspecting(false);
+  };
 
+  const handleMaintenance = async (actions?: string[]) => {
+    setMaintaining(true);
+    const r = await apiPost<any>("/api/ops/maintenance", { actions: actions || null });
+    setMaintResult(r);
+    if (r?.ok) { await loadAll(); }
+    setMaintaining(false);
+  };
+
+  const score = health?.health_score ?? 0;
+  const uptime = health?.uptime_24h ?? 100;
+  const activeIncidents = health?.active_incidents ?? 0;
+  const uptimeSec = health?.backend?.uptime_seconds ?? 0;
+  const fmtUptime = uptimeSec > 86400 ? `${Math.floor(uptimeSec/86400)}天${Math.floor((uptimeSec%86400)/3600)}时`
+    : uptimeSec > 3600 ? `${Math.floor(uptimeSec/3600)}时${Math.floor((uptimeSec%3600)/60)}分`
+    : `${Math.floor(uptimeSec/60)}分`;
+
+  // 最近错误（从外部传入的全局错误）
   const recentErrors = errors.slice(-8).reverse();
+
+  const toggleSection = (key: string) => setExpanded(prev => ({ ...prev, [key]: !prev[key] }));
+
+  if (loading && !health) {
+    return (
+      <div className="space-y-3">
+        <p className="text-sm font-semibold text-sakura-600">运维</p>
+        <div className="flex items-center justify-center py-12">
+          <Loader2 size={20} className="animate-spin text-sakura-400" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-3">
-      <p className="text-sm font-semibold text-sakura-600">运维</p>
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-sakura-600">运维</p>
+        <button onClick={loadAll} className="p-1 rounded hover:bg-sakura-50 text-sakura-400" title="刷新">
+          <RefreshCw size={12} />
+        </button>
+      </div>
 
-      {/* 1. 全局状态 - 一眼看出系统正常吗 */}
-      <div className={`rounded-xl p-3 border ${statusBg[status]}`}>
-        <div className="flex items-center gap-2">
-          <div className={`w-3 h-3 rounded-full ${statusColor[status]}`} />
-          <p className={`text-xs font-semibold ${status === "healthy" ? "text-green-700" : status === "warning" ? "text-yellow-700" : "text-red-700"}`}>
-            {statusLabel[status]}
-          </p>
-          <button onClick={load} className="ml-auto p-1 rounded hover:bg-white/50 text-current opacity-60 hover:opacity-100" title="刷新">
-            <RefreshCw size={11} />
-          </button>
+      {/* ═══ 1. 健康仪表盘 — 四指标 ═══ */}
+      <div className="grid grid-cols-4 gap-2">
+        <div className="bg-white border border-sakura-100 rounded-xl p-2.5 flex items-center gap-2.5">
+          <HealthGauge score={score} size="sm" />
+          <div>
+            <p className="text-[8px] text-sakura-400">健康评分</p>
+            <p className={`text-[10px] font-bold ${score >= 80 ? "text-green-600" : score >= 60 ? "text-yellow-600" : "text-red-600"}`}>
+              {score >= 80 ? "良好" : score >= 60 ? "异常" : "严重"}
+            </p>
+          </div>
         </div>
-        {issues.length > 0 && (
-          <ul className="mt-1.5 space-y-0.5">
-            {issues.map((s, i) => <li key={i} className="text-[10px] opacity-80">• {s}</li>)}
-          </ul>
+        <div className="bg-white border border-sakura-100 rounded-xl p-2.5">
+          <p className="text-[8px] text-sakura-400">24h 可用性</p>
+          <p className={`text-xs font-bold ${uptime >= 99.9 ? "text-green-600" : uptime >= 99 ? "text-yellow-600" : "text-red-600"}`}>
+            {uptime}%
+          </p>
+          <p className="text-[7px] text-sakura-300">SLO ≥99.9%</p>
+        </div>
+        <div className="bg-white border border-sakura-100 rounded-xl p-2.5">
+          <p className="text-[8px] text-sakura-400">运行时长</p>
+          <p className="text-xs font-bold text-sakura-700">{fmtUptime}</p>
+          <p className="text-[7px] text-sakura-300">PID {health?.backend?.pid}</p>
+        </div>
+        <div className="bg-white border border-sakura-100 rounded-xl p-2.5">
+          <p className="text-[8px] text-sakura-400">活跃告警</p>
+          <p className={`text-xs font-bold ${activeIncidents > 0 ? "text-red-600" : "text-green-600"}`}>
+            {activeIncidents > 0 ? `${activeIncidents} 个` : "无"}
+          </p>
+          <p className="text-[7px] text-sakura-300">{health?.services_ok ?? 0}/{health?.services_total ?? 0} 服务在线</p>
+        </div>
+      </div>
+
+      {/* ═══ 2. 评分趋势 ═══ */}
+      {health?.score_trend && health.score_trend.length > 1 && (
+        <div className="bg-white border border-sakura-100 rounded-xl p-2.5">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[9px] font-medium text-sakura-500">评分趋势（近24h）</span>
+            <span className="text-[8px] text-sakura-400">
+              最高{Math.max(...health.score_trend.map((d: any) => d.score))}
+              ·最低{Math.min(...health.score_trend.map((d: any) => d.score))}
+              ·平均{Math.round(health.score_trend.reduce((a: number, d: any) => a + d.score, 0) / health.score_trend.length)}
+            </span>
+          </div>
+          <MiniSparkline data={health.score_trend} color={score >= 80 ? "bg-green-400" : score >= 60 ? "bg-yellow-400" : "bg-red-400"} height={30} />
+        </div>
+      )}
+
+      {/* ═══ 3. 告警中心 ═══ */}
+      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+        <button onClick={() => toggleSection("incidents")} className="w-full px-3 py-2 border-b border-sakura-100 flex items-center justify-between hover:bg-sakura-50/50">
+          <span className="text-[10px] font-medium text-sakura-500">
+            告警中心
+            {activeIncidents > 0 && <span className="ml-1.5 text-red-500">({activeIncidents} 个未处理)</span>}
+          </span>
+          {expanded.incidents ? <ChevronUp size={11} className="text-sakura-400" /> : <ChevronDown size={11} className="text-sakura-400" />}
+        </button>
+        {expanded.incidents && (
+          <div className="max-h-[180px] overflow-y-auto divide-y divide-sakura-50">
+            {incidents.length === 0 && incidentHistory.length === 0 ? (
+              <div className="px-3 py-4 text-center text-[10px] text-sakura-300">暂无告警记录，系统运行稳定</div>
+            ) : (
+              <>
+                {incidents.map((inc: any) => (
+                  <div key={inc.id} className="px-3 py-2 flex items-start gap-2 bg-red-50/30">
+                    <CircleAlert size={12} className="text-red-500 mt-0.5 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[9px] font-medium text-red-700">{inc.title}</p>
+                      <p className="text-[8px] text-sakura-400 truncate">{inc.message}</p>
+                      <p className="text-[7px] text-sakura-300 mt-0.5">{new Date(inc.ts * 1000).toLocaleString("zh-CN")}</p>
+                    </div>
+                  </div>
+                ))}
+                {incidentHistory.filter((h: any) => h.status === "resolved").slice(0, 5).map((inc: any) => (
+                  <div key={inc.id} className="px-3 py-1.5 flex items-start gap-2 opacity-60">
+                    <CheckCircle size={10} className="text-green-500 mt-0.5 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[8px] text-sakura-500 line-through">{inc.title}</p>
+                      <p className="text-[7px] text-sakura-300">
+                        {new Date(inc.ts * 1000).toLocaleString("zh-CN")}
+                        {inc.auto_healed ? " · 已自愈" : " · 已处理"}
+                        {inc.duration_seconds > 0 && ` · ${inc.duration_seconds}秒恢复`}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
         )}
       </div>
 
-      {/* 2. 关键服务 - 每个服务一张卡片 */}
-      <div className="grid grid-cols-2 gap-2">
-        {Object.entries(services).map(([k, v]) => (
-          <div key={k} className="bg-white border border-sakura-100 rounded-xl p-2.5">
-            <div className="flex items-center gap-1.5 mb-1">
-              <div className={`w-2 h-2 rounded-full ${v ? "bg-green-500" : "bg-red-500"}`} />
-              <span className="text-[10px] font-medium text-sakura-600">{k}</span>
-            </div>
-            <p className="text-[9px] text-sakura-400">{v ? "在线" : "离线"}</p>
+      {/* ═══ 4. 巡检报告 ═══ */}
+      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+        <button onClick={() => toggleSection("inspection")} className="w-full px-3 py-2 border-b border-sakura-100 flex items-center justify-between hover:bg-sakura-50/50">
+          <span className="text-[10px] font-medium text-sakura-500">巡检报告</span>
+          <div className="flex items-center gap-2">
+            {inspecting && <Loader2 size={10} className="animate-spin text-sakura-400" />}
+            {expanded.inspection ? <ChevronUp size={11} className="text-sakura-400" /> : <ChevronDown size={11} className="text-sakura-400" />}
           </div>
-        ))}
-      </div>
+        </button>
+        {expanded.inspection && (
+          <div className="p-3 space-y-2">
+            {/* 上次巡检 */}
+            {inspections.length > 0 ? (
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${
+                    inspections[0].result === "pass" ? "bg-green-500" :
+                    inspections[0].result === "warning" ? "bg-yellow-500" : "bg-red-500"
+                  }`} />
+                  <span className="text-[9px] text-sakura-600">
+                    上次巡检：评分 {inspections[0].score}/100
+                    {inspections[0].issues_found > 0 && ` · ${inspections[0].issues_found} 个问题`}
+                  </span>
+                </div>
+                <span className="text-[7px] text-sakura-400">
+                  {new Date(inspections[0].ts * 1000).toLocaleString("zh-CN")}
+                </span>
+              </div>
+            ) : (
+              <p className="text-[9px] text-sakura-400">尚未执行过巡检</p>
+            )}
 
-      {/* 3. API 提供商 */}
-      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-        <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
-          <span className="text-[10px] font-medium text-sakura-500">API 提供商</span>
-          <span className="text-[8px] text-sakura-400">{data?.providers?.with_key ?? 0}/{data?.providers?.total ?? 0} 有效</span>
-        </div>
-        <div className="max-h-[140px] overflow-y-auto divide-y divide-sakura-50">
-          {(data?.providers?.list || []).length === 0 ? (
-            <div className="px-3 py-3 text-center text-[10px] text-sakura-300">未配置 API 提供商</div>
-          ) : (data?.providers?.list || []).map((p: any, i: number) => (
-            <div key={i} className="flex items-center gap-2 px-3 py-1.5">
-              <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${p.has_key ? "bg-green-500" : "bg-sakura-300"}`} />
-              <span className="text-[9px] font-mono text-sakura-600 flex-1 truncate">{p.name}</span>
-              <span className="text-[8px] text-sakura-400">{p.model}</span>
+            {/* 巡检详情 */}
+            {inspections.length > 0 && inspections[0].details?.system && (
+              <div className="grid grid-cols-3 gap-1.5">
+                {Object.entries(inspections[0].details.system).map(([k, v]: [string, any]) => (
+                  <div key={k} className="bg-sakura-50/50 rounded-lg p-1.5 text-center">
+                    <p className="text-[7px] text-sakura-400">{k === "cpu" ? "CPU" : k === "memory" ? "内存" : "磁盘"}</p>
+                    <p className={`text-[9px] font-mono font-bold ${
+                      v > 90 ? "text-red-600" : v > 80 ? "text-yellow-600" : "text-sakura-700"
+                    }`}>{v}%</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* 巡检问题列表 */}
+            {inspections.length > 0 && (inspections[0] as any).issues && (inspections[0] as any).issues.length > 0 && (
+              <div className="max-h-[100px] overflow-y-auto space-y-1">
+                {(inspections[0] as any).issues.map((issue: any, i: number) => (
+                  <div key={i} className={`flex items-start gap-1.5 text-[8px] ${
+                    issue.severity === "critical" ? "text-red-600" :
+                    issue.severity === "warning" ? "text-yellow-700" : "text-sakura-500"
+                  }`}>
+                    <span className={`w-1.5 h-1.5 rounded-full mt-0.5 shrink-0 ${
+                      issue.severity === "critical" ? "bg-red-500" :
+                      issue.severity === "warning" ? "bg-yellow-500" : "bg-blue-400"
+                    }`} />
+                    <span>{issue.item}：{issue.value}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-1">
+              <button onClick={handleInspect} disabled={inspecting}
+                className="flex-1 py-1.5 rounded-lg bg-sakura-500 text-white text-[9px] font-medium hover:bg-sakura-600 disabled:opacity-50 flex items-center justify-center gap-1">
+                {inspecting ? <Loader2 size={10} className="animate-spin" /> : <Activity size={10} />}
+                {inspecting ? "巡检中..." : "执行全面巡检"}
+              </button>
             </div>
-          ))}
-        </div>
+          </div>
+        )}
       </div>
 
-      {/* 4. 数据库 + 养护 */}
+      {/* ═══ 5. 自愈历史 ═══ */}
       <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-        <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
-          <span className="text-[10px] font-medium text-sakura-500">数据库 ({data?.database?.size_mb ?? 0} MB)</span>
-        </div>
-        <div className="max-h-[150px] overflow-y-auto divide-y divide-sakura-50">
-          {(data?.database?.tables || []).slice(0, 10).map((t: any, i: number) => (
-            <div key={i} className="flex items-center justify-between px-3 py-1">
-              <span className="text-[8px] text-sakura-500 font-mono truncate">{t.name}</span>
-              <span className="text-[9px] text-sakura-600 font-medium">{t.count.toLocaleString()}</span>
+        <button onClick={() => toggleSection("heal")} className="w-full px-3 py-2 border-b border-sakura-100 flex items-center justify-between hover:bg-sakura-50/50">
+          <span className="text-[10px] font-medium text-sakura-500">自愈历史</span>
+          <div className="flex items-center gap-2">
+            {healing && <Loader2 size={10} className="animate-spin text-sakura-400" />}
+            {expanded.heal ? <ChevronUp size={11} className="text-sakura-400" /> : <ChevronDown size={11} className="text-sakura-400" />}
+          </div>
+        </button>
+        {expanded.heal && (
+          <div>
+            <div className="max-h-[140px] overflow-y-auto divide-y divide-sakura-50">
+              {heals.length === 0 ? (
+                <div className="px-3 py-3 text-center text-[10px] text-sakura-300">尚无自愈记录</div>
+              ) : heals.map((h: any) => (
+                <div key={h.id} className="px-3 py-1.5 flex items-start gap-2">
+                  <div className={`w-1.5 h-1.5 rounded-full mt-1 shrink-0 ${
+                    h.result === "success" ? "bg-green-500" : "bg-red-500"
+                  }`} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1">
+                      <span className="text-[8px] font-medium text-sakura-600">{h.action}</span>
+                      <span className={`text-[7px] px-1 rounded ${
+                        h.result === "success" ? "bg-green-50 text-green-600" : "bg-red-50 text-red-600"
+                      }`}>{h.result === "success" ? "成功" : "失败"}</span>
+                    </div>
+                    <p className="text-[7px] text-sakura-400 truncate">{h.message}</p>
+                    <p className="text-[7px] text-sakura-300">
+                      {new Date(h.ts * 1000).toLocaleString("zh-CN")}
+                      {h.duration_ms > 0 && ` · ${h.duration_ms}ms`}
+                    </p>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+            <div className="px-3 py-2 border-t border-sakura-100">
+              <button onClick={handleHeal} disabled={healing}
+                className="w-full py-1.5 rounded-lg border border-sakura-200 text-[9px] text-sakura-600 font-medium hover:bg-sakura-50 disabled:opacity-50 flex items-center justify-center gap-1">
+                {healing ? <Loader2 size={10} className="animate-spin" /> : <Zap size={10} />}
+                {healing ? "自愈执行中..." : "执行自动自愈"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* 5. 最近错误 */}
-      {recentErrors.length > 0 ? (
+      {/* ═══ 6. 系统养护 ═══ */}
+      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+        <button onClick={() => toggleSection("maintenance")} className="w-full px-3 py-2 border-b border-sakura-100 flex items-center justify-between hover:bg-sakura-50/50">
+          <span className="text-[10px] font-medium text-sakura-500">系统养护</span>
+          {expanded.maintenance ? <ChevronUp size={11} className="text-sakura-400" /> : <ChevronDown size={11} className="text-sakura-400" />}
+        </button>
+        {expanded.maintenance && (
+          <div className="p-3 space-y-2">
+            <div className="grid grid-cols-3 gap-1.5">
+              <button onClick={() => handleMaintenance(["log_cleanup"])} disabled={maintaining}
+                className="py-1.5 rounded-lg border border-sakura-200 text-[8px] text-sakura-600 hover:bg-sakura-50 disabled:opacity-50">
+                清理日志
+              </button>
+              <button onClick={() => handleMaintenance(["db_vacuum"])} disabled={maintaining}
+                className="py-1.5 rounded-lg border border-sakura-200 text-[8px] text-sakura-600 hover:bg-sakura-50 disabled:opacity-50">
+                压缩数据库
+              </button>
+              <button onClick={() => handleMaintenance(["cache_cleanup"])} disabled={maintaining}
+                className="py-1.5 rounded-lg border border-sakura-200 text-[8px] text-sakura-600 hover:bg-sakura-50 disabled:opacity-50">
+                清理缓存
+              </button>
+            </div>
+            <button onClick={() => handleMaintenance()} disabled={maintaining}
+              className="w-full py-1.5 rounded-lg bg-sakura-500 text-white text-[9px] font-medium hover:bg-sakura-600 disabled:opacity-50 flex items-center justify-center gap-1">
+              {maintaining ? <Loader2 size={10} className="animate-spin" /> : <Shield size={10} />}
+              {maintaining ? "养护执行中..." : "执行全部养护"}
+            </button>
+            {maintResult && (
+              <div className="bg-sakura-50 rounded-lg p-2 space-y-1">
+                <p className="text-[8px] font-medium text-sakura-600">养护结果：</p>
+                {Object.entries(maintResult.actions || {}).map(([k, v]: [string, any]) => (
+                  <p key={k} className={`text-[7px] ${v.ok ? "text-green-600" : "text-red-600"}`}>
+                    {v.ok ? "✓" : "✗"} {k}：{v.message}
+                  </p>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ═══ 7. 变更记录 ═══ */}
+      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+        <button onClick={() => toggleSection("changelog")} className="w-full px-3 py-2 border-b border-sakura-100 flex items-center justify-between hover:bg-sakura-50/50">
+          <span className="text-[10px] font-medium text-sakura-500">变更记录</span>
+          {expanded.changelog ? <ChevronUp size={11} className="text-sakura-400" /> : <ChevronDown size={11} className="text-sakura-400" />}
+        </button>
+        {expanded.changelog && (
+          <div className="max-h-[160px] overflow-y-auto divide-y divide-sakura-50">
+            {changelog.length === 0 ? (
+              <div className="px-3 py-3 text-center text-[10px] text-sakura-300">无变更记录</div>
+            ) : changelog.map((c: any) => (
+              <div key={c.id} className="px-3 py-1.5 flex items-start gap-2">
+                <div className={`w-1 h-1 rounded-full mt-1.5 shrink-0 ${
+                  c.result === "ok" ? "bg-green-500" :
+                  c.action === "巡检" ? "bg-blue-400" :
+                  c.action === "自愈" ? "bg-purple-400" : "bg-sakura-400"
+                }`} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1">
+                    <span className="text-[8px] font-medium text-sakura-600">{c.action}</span>
+                    <span className="text-[7px] text-sakura-500">{c.target}</span>
+                  </div>
+                  <p className="text-[7px] text-sakura-400 truncate">{c.detail}</p>
+                  <p className="text-[7px] text-sakura-300">{new Date(c.ts * 1000).toLocaleString("zh-CN")}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ═══ 8. 最近错误 ═══ */}
+      {recentErrors.length > 0 && (
         <div className="bg-white border border-red-200 rounded-xl overflow-hidden">
-          <div className="px-3 py-2 border-b border-red-100 bg-red-50/30 flex items-center justify-between">
+          <div className="px-3 py-2 border-b border-red-100 bg-red-50/30 flex items-center">
             <span className="text-[10px] font-medium text-red-500">最近错误 ({recentErrors.length})</span>
           </div>
-          <div className="max-h-[160px] overflow-y-auto divide-y divide-red-50">
+          <div className="max-h-[120px] overflow-y-auto divide-y divide-red-50">
             {recentErrors.map((e, i) => (
               <div key={i} className="px-3 py-1">
                 <p className="text-[8px] text-red-600 font-mono truncate">{e.msg}</p>
@@ -1647,10 +1969,6 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
               </div>
             ))}
           </div>
-        </div>
-      ) : (
-        <div className="bg-white border border-green-200 rounded-xl p-3 text-center">
-          <p className="text-[10px] text-green-600">无错误</p>
         </div>
       )}
     </div>
