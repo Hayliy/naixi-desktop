@@ -1428,7 +1428,7 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
                 const isConnected = isQQ ? napcatOk : !!config[p.id];
                 return (
                   <div key={p.id} className="flex items-center gap-2.5 px-3 py-2 hover:bg-sakura-50/30 transition-colors group">
-                    <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 bg-gradient-to-br from-sakura-400 to-sakura-500 text-white"><MessageCircle size={11} /></div>
+                    <MessageCircle size={13} className="text-sakura-400 shrink-0" />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
                         <span className="text-[11px] font-medium text-sakura-600">{p.name}</span>
@@ -1459,9 +1459,7 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
             <div className="divide-y divide-sakura-50">
               {platforms.filter(p => ["email","github","gitlab","generic"].includes(p.id)).map(p => (
                 <div key={p.id} className="flex items-center gap-2.5 px-3 py-2 hover:bg-sakura-50/30 transition-colors group">
-                  <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 bg-gradient-to-br from-sakura-400 to-sakura-500 text-white">
-                    {p.icon === "GitBranch" ? <GitBranch size={11} /> : p.icon === "Mail" ? <Server size={11} /> : <Globe size={11} />}
-                  </div>
+                    {p.icon === "GitBranch" ? <GitBranch size={13} className="text-sakura-400 shrink-0" /> : p.icon === "Mail" ? <Server size={13} className="text-sakura-400 shrink-0" /> : <Globe size={13} className="text-sakura-400 shrink-0" />}
                   <div className="flex-1 min-w-0">
                     <p className="text-[11px] font-medium text-sakura-600">{p.name}</p>
                     <p className="text-[8px] text-sakura-400 truncate">{p.description}</p>
@@ -1479,19 +1477,19 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
               <span className="text-[10px] font-medium text-sakura-500">基础设施</span>
             </div>
             <div className="divide-y divide-sakura-50">
-              <div className="flex items-center gap-2.5 px-3 py-2">
-                <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 bg-gradient-to-br from-sakura-400 to-sakura-500 text-white"><Server size={11} /></div>
+                <div className="flex items-center gap-2.5 px-3 py-2">
+                <Server size={13} className="text-sakura-400 shrink-0" />
                 <div className="flex-1"><p className="text-[11px] font-medium text-sakura-600">后端服务</p><p className="text-[8px] text-sakura-400">端口 9845</p></div>
                 <span className="px-2 py-0.5 rounded text-[8px] font-medium bg-sakura-100 text-sakura-600">运行中</span>
               </div>
               <div className="flex items-center gap-2.5 px-3 py-2">
-                <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 bg-gradient-to-br from-sakura-400 to-sakura-500 text-white"><Cpu size={11} /></div>
+                <Cpu size={13} className="text-sakura-400 shrink-0" />
                 <div className="flex-1"><p className="text-[11px] font-medium text-sakura-600">Ollama</p><p className="text-[8px] text-sakura-400">端口 11434</p></div>
                 <span className="px-2 py-0.5 rounded text-[8px] font-medium bg-sakura-50 text-sakura-400">未检测</span>
               </div>
               {srvKeys.length > 0 && (
                 <div className="flex items-center gap-2.5 px-3 py-2">
-                  <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 bg-gradient-to-br from-sakura-400 to-sakura-500 text-white"><Wifi size={11} /></div>
+                  <Wifi size={13} className="text-sakura-400 shrink-0" />
                   <div className="flex-1"><p className="text-[11px] font-medium text-sakura-600">MCP 服务器</p><p className="text-[8px] text-sakura-400 truncate">{srvKeys.join(" · ")}</p></div>
                   <button onClick={connectMcp} disabled={mcpLoading}
                     className="px-2 py-0.5 rounded text-[8px] font-medium bg-sakura-100 text-sakura-600 hover:bg-sakura-200 disabled:opacity-50 transition-colors">
