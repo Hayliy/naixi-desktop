@@ -160,6 +160,32 @@ class LiveEngine:
     def dict(self, **kwargs) -> bool:
         ...
 
+    async def _close_old_session(self):
+        """关闭上次残留的 B站 session（从数据库读取 game_id）"""
+        try:
+            from desktop_core.storage import meta_get
+            old_id = meta_get("live_game_id")
+            if not old_id or not self._access_key_id or not self._access_key_secret:
+                return
+            import aiohttp
+            from uuid import uuid4
+            end_body = json.dumps({"game_id": old_id, "app_id": int(self._app_id)}, separators=(",", ":"))
+            md5 = self._bili_md5(end_body)
+            ts, nonce = str(int(time.time())), uuid4().hex[:16]
+            hdrs = {"Content-Type":"application/json","Accept":"application/json",
+                "X-Bili-Timestamp":ts,"X-Bili-Signature-Method":"HMAC-SHA256",
+                "X-Bili-Signature-Nonce":nonce,"X-Bili-Signature-Version":"1.0","X-Bili-AccessKeyId":self._access_key_id,
+                "X-Bili-Content-MD5":md5}
+            hdrs["Authorization"] = self._bili_sign(self._access_key_secret, hdrs, md5)
+            async with aiohttp.ClientSession() as session:
+                async with session.post("https://live-open.biliapi.com/v2/app/end", data=end_body, headers=hdrs, timeout=5) as r:
+                    if r.status == 200:
+                        log.info(f"[直播] 已关闭旧 session: {old_id[:16]}...")
+            from desktop_core.storage import meta_set
+            meta_set("live_game_id", "")
+        except:
+            pass
+
     async def start(self) -> bool:
         """启动直播引擎 — 配置加载 + Agent 启动 + 自动连接"""
         self._load_config()
@@ -179,6 +205,9 @@ class LiveEngine:
         await self._start_agent("tts", self._agent_tts)
         await self._start_agent("avatar", self._agent_avatar)
         await self._start_agent("stream", self._agent_stream)
+
+        # 先关闭上次残留的 session（防止"同一房间启动数量超过配置上限"）
+        await self._close_old_session()
 
         # 自动连接 B站
         ok = await self.connect_bilibili()
@@ -337,6 +366,11 @@ class LiveEngine:
                     return False
                 info = resp["data"]
                 self._game_id = info["game_info"]["game_id"]
+                # 保存 game_id 到数据库，下次启动时先关旧 session
+                try:
+                    from desktop_core.storage import meta_set
+                    meta_set("live_game_id", self._game_id)
+                except: pass
                 auth_body_str = info["websocket_info"]["auth_body"]
                 wss_links = info["websocket_info"]["wss_link"]
 
