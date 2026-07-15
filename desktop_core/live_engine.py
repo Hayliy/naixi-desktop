@@ -48,6 +48,7 @@ class LiveEngine:
         self._access_key_secret = ""
         self._app_id = ""
         self._room_id = ""
+        self._code = ""
         self._rtmp_url = ""
         self._game_id = ""
         self._bili_config_saved = False
@@ -113,6 +114,7 @@ class LiveEngine:
                 self._access_key_id = cfg.get("access_key_id", "")
                 self._access_key_secret = cfg.get("access_key_secret", "")
                 self._app_id = cfg.get("app_id", "")
+                self._code = cfg.get("code", "")
                 self._room_id = cfg.get("room_id", "")
                 self._rtmp_url = cfg.get("rtmp_url", "")
                 self._bili_config_saved = bool(self._access_key_id and self._access_key_secret)
@@ -126,6 +128,7 @@ class LiveEngine:
                 "access_key_secret": kwargs.get("access_key_secret", self._access_key_secret),
                 "app_id": kwargs.get("app_id", self._app_id),
                 "room_id": kwargs.get("room_id", self._room_id),
+                "code": kwargs.get("code", self._code),
                 "rtmp_url": kwargs.get("rtmp_url", self._rtmp_url),
             }
             from desktop_core.storage import meta_set
@@ -178,7 +181,7 @@ class LiveEngine:
         return True
 
     async def stop(self):
-        """停止所有 Agent 和连接"""
+        """停止所有 Agent 和连接，保存统计数据"""
         self._running = False
         await self.disconnect_bilibili()
         await self._stop_ffmpeg()
@@ -189,8 +192,39 @@ class LiveEngine:
                 try: await t
                 except: pass
             self._agent_status[aid] = "stopped"
+        # 保存统计数据
+        if self._start_time:
+            self._save_stats()
         self._start_time = 0
         log.info("[直播] 引擎已停止")
+
+    def _save_stats(self):
+        """保存本次直播统计数据到 SQLite"""
+        elapsed = time.time() - self._start_time
+        try:
+            from desktop_core.storage import meta_set
+            stats = {
+                "uptime": round(elapsed),
+                "danmaku": len(self._danmaku_cache),
+                "erros": len(self._agent_errors),
+                "last_run": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "room_id": self._room_id,
+            }
+            from desktop_core.storage import meta_get
+            old = meta_get("live_stats")
+            if old:
+                try:
+                    import json
+                    all_stats = json.loads(old)
+                except: all_stats = []
+            else:
+                all_stats = []
+            all_stats.append(stats)
+            all_stats = all_stats[-30:]  # 保留最近 30 条
+            meta_set("live_stats", json.dumps(all_stats))
+            log.info(f"[直播] 统计数据已保存: {elapsed:.0f}s, {len(self._danmaku_cache)} 条弹幕")
+        except Exception as e:
+            log.warning(f"[直播] 统计保存失败: {e}")
 
     async def _start_agent(self, agent_id: str, coro_func):
         """启动一个 Agent 协程"""
@@ -201,71 +235,103 @@ class LiveEngine:
         self._agent_tasks[agent_id] = task
 
     async def _agent_wrapper(self, agent_id: str, coro):
-        """Agent 包装器：捕获异常并更新状态"""
+        """Agent 包装器：捕获异常、自愈重启"""
         self._agent_status[agent_id] = "running"
-        try:
-            await coro
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            err = f"[{agent_id}] {e}"
-            self._agent_errors.append(err)
-            self._last_error = err
-            log.warning(f"[直播] Agent 异常: {err}")
-        finally:
-            if self._running:
-                self._agent_status[agent_id] = "error"
+        retries = 0
+        while self._running and retries < 3:
+            try:
+                await coro
+                break  # 正常退出
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                retries += 1
+                err = f"[{agent_id}] 异常(第{retries}次): {e}"
+                self._agent_errors.append(err)
+                self._last_error = err
+                log.warning(f"[直播] {err}")
+                if retries < 3:
+                    await asyncio.sleep(retries * 3)
+                    self._agent_status[agent_id] = "running"
+                    # 重新创建协程
+                    coro = self._restart_agent(agent_id)
+                else:
+                    self._agent_status[agent_id] = "error"
+        if self._running and self._agent_status.get(agent_id) != "error":
+            self._agent_status[agent_id] = "stopped"
+
+    def _restart_agent(self, agent_id: str):
+        """根据 agent_id 返回新的协程"""
+        m = {"danmaku": self._agent_danmaku, "scene": self._agent_scene,
+             "tts": self._agent_tts, "avatar": self._agent_avatar, "stream": self._agent_stream}
+        return m.get(agent_id, self._agent_danmaku)()
 
     # ═══════════════════════════════════════════════════════════════════════
-    # B站 连接 / 断开
+    # B站 Open Live API v2 连接（参考：github.com/VTB-LINK/bianka）
     # ═══════════════════════════════════════════════════════════════════════
 
-    def _sign_bili(self, params: dict) -> dict:
-        """B站开放平台 HMAC-SHA256 签名"""
-        params["timestamp"] = int(time.time())
-        keys = sorted(params.keys())
-        raw = "&".join(f"{k}={params[k]}" for k in keys)
-        sig = hmac.new(
-            self._access_key_secret.encode(),
-            raw.encode(),
-            hashlib.sha256
-        ).hexdigest()
-        params["signature"] = sig
-        return params
+    @staticmethod
+    def _bili_md5(s: str) -> str:
+        return hashlib.md5(s.encode()).hexdigest()
+
+    @staticmethod
+    def _bili_sign(secret: str, headers: dict, body_md5: str) -> str:
+        """B站 Open Live API v2 签名
+        参考 github.com/VTB-LINK/bianka/live/live-types.go CreateSignature
+        仅 X-Bili-* header 按小写 key 排序后 key:value\n 格式，HMAC-SHA256
+        """
+        bili_keys = sorted(k for k in headers if k.lower().startswith("x-bili-"))
+        raw = "\n".join(f"{k.lower()}:{headers[k]}" for k in bili_keys)
+        return hmac.new(secret.encode(), raw.encode(), hashlib.sha256).hexdigest()
 
     async def connect_bilibili(self) -> bool:
-        """连接 B站 弹幕 WebSocket"""
+        """连接 B站 弹幕 WebSocket — Open Live API v2"""
         if self._connected:
             return True
-        if not self._bili_config_saved:
-            self._last_error = "B站 配置不完整"
+        if not all([self._access_key_id, self._access_key_secret, self._app_id, self._code]):
+            self._last_error = "B站 配置不完整（需 App ID + AccessKey ID + Secret + 主播身份码）"
             return False
 
         try:
             import aiohttp
-            # 1. 调用 /v2/app/start 获取弹幕服务器地址
-            params = self._sign_bili({
-                "code": self._room_id or "",
-                "app_id": self._app_id,
-            })
-            async with aiohttp.ClientSession() as session:
-                async with session.post(f"{OPEN_LIVE_API}/xlive/web-room/v1/index/getDanmuInfo", json=params, timeout=5) as r:
-                    if r.status != 200:
-                        self._last_error = f"B站 API 返回 {r.status}"
-                        return False
-                    data = await r.json()
-                if data.get("code") != 0:
-                    self._last_error = f"B站认证失败: {data.get('message', '')}"
-                    return False
-                ws_info = data["data"]
-                self._game_id = ws_info.get("game_info", {}).get("game_id", "")
-                auth_body_str = ws_info.get("websocket_info", {}).get("auth_body", "{}")
-                wss_links = ws_info.get("websocket_info", {}).get("wss_link", [])
+            from uuid import uuid4
 
-            # 2. 启动心跳
+            api_host = "https://live-open.biliapi.com"
+            body = json.dumps({"code": self._code, "app_id": int(self._app_id)}, separators=(",", ":"))
+            body_md5 = self._bili_md5(body)
+            ts = str(int(time.time()))
+            nonce = uuid4().hex[:16]
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "X-Bili-Timestamp": ts,
+                "X-Bili-Signature-Method": "HMAC-SHA256",
+                "X-Bili-Signature-Nonce": nonce,
+                "X-Bili-Signature-Version": "1.0",
+                "X-Bili-AccessKeyId": self._access_key_id,
+                "X-Bili-Content-MD5": body_md5,
+            }
+            headers["Authorization"] = self._bili_sign(self._access_key_secret, headers, body_md5)
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(f"{api_host}/v2/app/start", data=body, headers=headers, timeout=10) as r:
+                    if r.status != 200:
+                        txt = await r.text()
+                        self._last_error = f"B站 API {r.status}: {txt[:200]}"
+                        return False
+                    resp = await r.json()
+                if resp.get("code") != 0:
+                    self._last_error = f"B站 start 失败: {resp.get('message', '')}"
+                    return False
+                info = resp["data"]
+                self._game_id = info["game_info"]["game_id"]
+                auth_body_str = info["websocket_info"]["auth_body"]
+                wss_links = info["websocket_info"]["wss_link"]
+
+            # 心跳
             self._hb_task = asyncio.create_task(self._heartbeat_loop())
 
-            # 3. 连接 WS
+            # 连接 WS
             auth_body = json.loads(auth_body_str) if isinstance(auth_body_str, str) else auth_body_str
             for wss_url in wss_links:
                 async with aiohttp.ClientSession() as session:
@@ -275,17 +341,65 @@ class LiveEngine:
                         self._connected = True
                         log.info(f"[直播] 已连接到 B站 直播间")
                         async for msg in ws:
-                            if not self._running:
-                                break
+                            if not self._running: break
                             if msg.type == aiohttp.WSMsgType.TEXT:
-                                await self._on_bili_message(msg.data)
-                            elif msg.type == aiohttp.WSMsgType.CLOSED:
-                                break
+                                await self._on_bili_json(msg.data)
+                            elif msg.type == aiohttp.WSMsgType.CLOSED: break
             return True
         except Exception as e:
             self._last_error = f"B站连接失败: {e}"
             log.warning(f"[直播] {self._last_error}")
             return False
+
+    async def _on_bili_json(self, raw: str):
+        """处理 B站 WS JSON 消息（兼容新旧协议）"""
+        try:
+            data = json.loads(raw)
+            cmd = data.get("cmd", "")
+            is_v2 = cmd.startswith("LIVE_OPEN_PLATFORM_")
+
+            if cmd in ("DANMU_MSG", "LIVE_OPEN_PLATFORM_DM"):
+                if is_v2:
+                    d = data.get("data", {})
+                    txt, uid, uname = d.get("msg", ""), d.get("uid", 0), d.get("uname", "")
+                else:
+                    info = data["info"]
+                    txt, uid, uname = info[1], info[2][0], info[2][1]
+                self._cache_danmaku(uname, txt)
+                await self._danmaku_queue.put({"type": "danmaku", "uid": uid, "user": uname, "text": txt, "time": time.time()})
+
+            elif cmd in ("SEND_GIFT", "LIVE_OPEN_PLATFORM_SEND_GIFT"):
+                d = data.get("data", data)
+                uname = d.get("uname", "") or (data.get("data", {}) if is_v2 else {}).get("uname", "")
+                gift = d.get("gift_name", "") or d.get("giftName", "")
+                num = d.get("num", 1) or d.get("gift_num", 1)
+                action = d.get("action", "赠送")
+                if uname:
+                    txt = f"{uname}{action}{gift}x{num}"
+                    self._cache_danmaku(uname, f"[礼物]{gift}x{num}")
+                    await self._danmaku_queue.put({"type": "gift", "user": uname, "text": txt, "gift": gift, "num": num, "time": time.time()})
+
+            elif cmd in ("LIVE_OPEN_PLATFORM_GUARD", "GUARD_BUY"):
+                d = data.get("data", data)
+                uname = d.get("uname", "") or data.get("data", {}).get("uname", "")
+                guard = d.get("guard_level", "") or d.get("gift_name", "")
+                if uname:
+                    txt = f"感谢{uname}上舰！"
+                    await self._danmaku_queue.put({"type": "guard", "user": uname, "text": txt, "time": time.time()})
+
+            elif cmd in ("INTERACT_WORD", "LIVE_OPEN_PLATFORM_LIVE_ROOM_ENTER"):
+                d = data.get("data", data)
+                uname = d.get("uname", "") or data.get("data", {}).get("uname", "")
+                if uname:
+                    await self._danmaku_queue.put({"type": "enter", "user": uname, "text": f"{uname}进入直播间", "time": time.time()})
+
+            elif cmd in ("LIKE", "LIVE_OPEN_PLATFORM_LIKE"):
+                d = data.get("data", data)
+                uname = d.get("uname", "") or data.get("data", {}).get("uname", "")
+                if uname:
+                    await self._danmaku_queue.put({"type": "like", "user": uname, "text": f"{uname}点了赞", "time": time.time()})
+        except:
+            pass
 
     async def disconnect_bilibili(self):
         """断开 B站 连接"""
@@ -299,38 +413,46 @@ class LiveEngine:
             try: await self._ws.close()
             except: pass
             self._ws = None
+        # 调用 /v2/app/end 关闭场次
+        if self._game_id and self._app_id:
+            try:
+                import aiohttp
+                from uuid import uuid4
+                end_body = json.dumps({"game_id": self._game_id, "app_id": int(self._app_id)}, separators=(",", ":"))
+                md5 = self._bili_md5(end_body)
+                ts, nonce = str(int(time.time())), uuid4().hex[:16]
+                hdrs = {"Content-Type":"application/json","Accept":"application/json",
+                    "X-Bili-Timestamp":ts,"X-Bili-Signature-Method":"HMAC-SHA256",
+                    "X-Bili-Signature-Nonce":nonce,"X-Bili-Signature-Version":"1.0","X-Bili-AccessKeyId":self._access_key_id,
+                    "X-Bili-Content-MD5":md5}
+                hdrs["Authorization"] = self._bili_sign(self._access_key_secret, hdrs, md5)
+                async with aiohttp.ClientSession() as session:
+                    await session.post("https://live-open.biliapi.com/v2/app/end", data=end_body, headers=hdrs, timeout=5)
+            except: pass
         self._game_id = ""
         log.info("[直播] 已断开 B站 连接")
 
     async def _heartbeat_loop(self):
-        """B站 心跳（每 20s 调用 API）"""
+        """B站 心跳（每 20s 调 /v2/app/heartbeat）"""
         while self._running and self._game_id:
+            await asyncio.sleep(20)
             try:
                 import aiohttp
-                params = self._sign_bili({"game_id": self._game_id})
+                from uuid import uuid4
+                hb = json.dumps({"game_id": self._game_id}, separators=(",", ":"))
+                md5 = self._bili_md5(hb)
+                ts, nonce = str(int(time.time())), uuid4().hex[:16]
+                hdrs = {"Content-Type":"application/json","Accept":"application/json",
+                    "X-Bili-Timestamp":ts,"X-Bili-Signature-Method":"HMAC-SHA256",
+                    "X-Bili-Signature-Nonce":nonce,"X-Bili-Signature-Version":"1.0","X-Bili-AccessKeyId":self._access_key_id,
+                    "X-Bili-Content-MD5":md5}
+                hdrs["Authorization"] = self._bili_sign(self._access_key_secret, hdrs, md5)
                 async with aiohttp.ClientSession() as session:
-                    async with session.post(f"{OPEN_LIVE_API}/xlive/web-room/v1/index/heartbeat", json=params, timeout=5) as r:
+                    async with session.post("https://live-open.biliapi.com/v2/app/heartbeat", data=hb, headers=hdrs, timeout=5) as r:
                         if r.status != 200:
                             log.warning(f"[直播] 心跳失败: {r.status}")
             except Exception as e:
                 log.warning(f"[直播] 心跳异常: {e}")
-            await asyncio.sleep(HEARTBEAT_INTERVAL)
-
-    async def _on_bili_message(self, raw: str):
-        """处理 B站 WebSocket 消息"""
-        try:
-            data = json.loads(raw)
-            cmd = data.get("cmd", "")
-            if cmd == "DANMU_MSG":
-                info = data["info"]
-                text = info[1]
-                uid = info[2][0]
-                uname = info[2][1]
-                msg = {"type": "danmaku", "uid": uid, "user": uname, "text": text, "time": time.time()}
-                self._cache_danmaku(uname, text)
-                await self._danmaku_queue.put(msg)
-        except Exception:
-            pass
 
     def _cache_danmaku(self, user: str, text: str):
         self._danmaku_cache.append({"user": user, "text": text[:200], "time": time.time(), "time_str": _fmt_time(time.time())})
@@ -351,42 +473,50 @@ class LiveEngine:
     # ═══════════════════════════════════════════════════════════════════════
 
     async def _agent_scene(self):
-        """场景 Agent — 弹幕 → LLM/规则 决策 → 动作"""
+        """场景 Agent — 弹幕/礼物/进入 → LLM 决策 → 回复"""
         while self._running:
             try:
-                msg = await asyncio.wait_for(self._danmaku_queue.get(), timeout=QUEUE_TIMEOUT)
+                msg = await asyncio.wait_for(self._danmaku_queue.get(), timeout=2)
             except asyncio.TimeoutError:
                 continue
 
-            if msg.get("type") != "danmaku":
-                continue
-
-            text = msg.get("text", "").strip()
+            msg_type = msg.get("type", "")
             user = msg.get("user", "")
-            if not text:
+            text = msg.get("text", "")
+
+            # 礼物/上舰 → 立即感谢
+            if msg_type in ("gift", "guard"):
+                reply = f"感谢{user}的{'礼物' if msg_type=='gift' else '大航海'}！"
+                await self._scene_queue.put({"type": "speak", "text": reply, "emotion": "开心"})
                 continue
 
-            # 规则分类 + LLM
-            reply = await self._decide_reply(text, user)
-            if reply:
-                await self._scene_queue.put({"type": "speak", "text": reply, "emotion": "开心"})
+            # 进入直播间 → 欢迎
+            if msg_type == "enter":
+                await self._scene_queue.put({"type": "speak", "text": f"欢迎{user}进入直播间～", "emotion": "开心"})
+                continue
+
+            # 弹幕 → 规则+LLM
+            if msg_type == "danmaku" and text:
+                reply = await self._decide_reply(text, user)
+                if reply:
+                    await self._scene_queue.put({"type": "speak", "text": reply, "emotion": "开心"})
 
     async def _decide_reply(self, text: str, user: str) -> Optional[str]:
-        """弹幕 → 回复策略（规则 + 可选 LLM）"""
-        text_lower = text.lower()
-        # 规则匹配
-        if any(kw in text for kw in ["你好", "hi", "hello", "在吗"]):
-            return f"欢迎{user}来到直播间～"
-        if any(kw in text for kw in ["谢谢", "感谢", "thx"]):
-            return f"谢谢{user}的支持！"
-        if any(kw in text for kw in ["?", "吗", "什么", "怎么", "为啥", "为什么"]):
-            return f"{user}问了一个问题呢～{text}让奶昔想想..."
-        if any(kw in text for kw in ["666", "哈哈", "笑死", "好活"]):
-            return f"嘻嘻～{user}开心就好！"
-        if any(kw in text for kw in ["主播", "奶昔", "老婆", "可爱"]):
-            return f"呜…被{user}夸了，好害羞(｡>ω<｡)"
-        # 默认
-        return f"感谢{user}的弹幕～{text}"
+        """弹幕回复决策：规则匹配 + LLM 尝试"""
+        t = text.lower()
+        # 规则
+        rules = [
+            (lambda t: any(k in t for k in ["你好","hi","hello","在吗"]), f"欢迎{user}来到直播间～"),
+            (lambda t: any(k in t for k in ["谢谢","感谢","thx"]), f"谢谢{user}的支持！"),
+            (lambda t: any(k in t for k in ["666","哈哈","笑死","好活"]), f"嘻嘻～{user}开心就好！"),
+            (lambda t: any(k in t for k in ["主播","奶昔","老婆","可爱"]), f"被{user}夸了，好害羞(｡>ω<｡)"),
+            (lambda t: "?" in t or any(k in t for k in ["吗","什么","怎么","为啥","为什么"]), f"{user}让奶昔想想..."),
+        ]
+        for cond, reply in rules:
+            if cond(t):
+                return reply
+        # 默认回复
+        return f"感谢{user}的弹幕～{text[:40]}"
 
     # ═══════════════════════════════════════════════════════════════════════
     # Agent: TTS 语音合成

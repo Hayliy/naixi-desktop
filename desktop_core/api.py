@@ -3007,6 +3007,8 @@ async def api_live_connect(request):
         engine._access_key_secret = body["access_key_secret"]
     if body.get("app_id"):
         engine._app_id = body["app_id"]
+    if body.get("code"):
+        engine._code = body["code"]
     if body.get("room_id"):
         engine._room_id = body["room_id"]
     engine._bili_config_saved = bool(engine._access_key_id and engine._access_key_secret)
@@ -3026,6 +3028,7 @@ async def api_live_start(request):
     if body.get("access_key_id"): engine._access_key_id = body["access_key_id"]
     if body.get("access_key_secret"): engine._access_key_secret = body["access_key_secret"]
     if body.get("app_id"): engine._app_id = body["app_id"]
+    if body.get("code"): engine._code = body["code"]
     if body.get("room_id"): engine._room_id = body["room_id"]
     if body.get("rtmp_url"): engine._rtmp_url = body["rtmp_url"]
     engine.save_config()
@@ -3065,6 +3068,7 @@ async def api_live_config(request):
             "access_key_id": engine._access_key_id,
             "access_key_secret": engine._access_key_secret[:4]+"****" if engine._access_key_secret else "",
             "app_id": engine._app_id,
+            "code": engine._code,
             "room_id": engine._room_id,
             "rtmp_url": engine._rtmp_url,
         })

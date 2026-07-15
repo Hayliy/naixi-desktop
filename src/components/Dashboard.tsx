@@ -1927,7 +1927,10 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
 
 function LivePage() {
   const [status, setStatus] = useState<any>(null);
-  const [accessKey, setAccessKey] = useState('');
+  const [accessKeyId, setAccessKeyId] = useState('');
+  const [accessKeySecret, setAccessKeySecret] = useState('');
+  const [appId, setAppId] = useState('');
+  const [code, setCode] = useState('');
   const [roomId, setRoomId] = useState('');
   const [rtmpUrl, setRtmpUrl] = useState('');
   const [danmaku, setDanmaku] = useState<any[]>([]);
@@ -1935,11 +1938,18 @@ function LivePage() {
   const [showRtmp, setShowRtmp] = useState(false);
   const { notify } = useToast();
 
-  const pollStatus = useCallback(async () => {
-    try { const s = await apiGet<any>("/api/live/status"); setStatus(s); } catch {}
+  const loadConfig = useCallback(async () => {
+    try { const cfg = await apiGet<any>('/api/live/config');
+      setAccessKeyId(cfg.access_key_id||'');setAccessKeySecret(cfg.access_key_secret||'');
+      setAppId(cfg.app_id||'');setCode(cfg.code||'');setRoomId(cfg.room_id||'');setRtmpUrl(cfg.rtmp_url||'');
+    } catch {}
   }, []);
 
-  useEffect(() => { pollStatus(); const iv = setInterval(pollStatus, 3000); return () => clearInterval(iv); }, [pollStatus]);
+  const pollStatus = useCallback(async () => {
+    try { const s = await apiGet<any>('/api/live/status'); setStatus(s); } catch {}
+  }, []);
+
+  useEffect(() => { loadConfig(); pollStatus(); const iv = setInterval(pollStatus, 3000); return () => clearInterval(iv); }, [loadConfig, pollStatus]);
 
   useEffect(() => {
     if (!status?.connected) return;
@@ -1948,6 +1958,10 @@ function LivePage() {
     }, 2000);
     return () => clearInterval(iv);
   }, [status?.connected]);
+
+  const saveCfg = async () => {
+    try { const r = await apiPost('/api/live/save-config', {access_key_id:accessKeyId,access_key_secret:accessKeySecret,app_id:appId,code:code,room_id:roomId}); if (r) notify('配置已保存', 'success'); else notify('保存失败', 'error'); } catch { notify('保存失败', 'error'); }
+  };
 
   const act = async (url: string, body?: any, okMsg?: string) => {
     try {
@@ -1985,12 +1999,12 @@ function LivePage() {
 
         <div className="flex flex-col gap-1.5">
           {!s?.running ? (
-            <button onClick={()=>act("/api/live/start",{access_key:accessKey,room_id:roomId},"引擎已启动")} className="px-3 py-1.5 rounded-lg text-[10px] font-medium bg-sakura-500 text-white hover:bg-sakura-600">启动引擎</button>
+            <button onClick={()=>act("/api/live/start",{app_id:appId,code:code,access_key_id:accessKeyId,access_key_secret:accessKeySecret,room_id:roomId,rtmp_url:rtmpUrl},"引擎已启动")} className="px-3 py-1.5 rounded-lg text-[10px] font-medium bg-sakura-500 text-white hover:bg-sakura-600">启动引擎</button>
           ) : (
             <button onClick={()=>act("/api/live/stop",{},"已停止")} className="px-3 py-1.5 rounded-lg text-[10px] font-medium bg-red-500 text-white hover:bg-red-600">停止引擎</button>
           )}
           {s?.running && !s?.connected && (
-            <button onClick={()=>act("/api/live/connect",{access_key:accessKey,room_id:roomId},"已连接")} className="px-3 py-1.5 rounded-lg text-[10px] font-medium bg-blue-500 text-white hover:bg-blue-600">连接 B站</button>
+            <button onClick={()=>act("/api/live/connect",{app_id:appId,access_key_id:accessKeyId,access_key_secret:accessKeySecret,room_id:roomId},"已连接")} className="px-3 py-1.5 rounded-lg text-[10px] font-medium bg-blue-500 text-white hover:bg-blue-600">连接 B站</button>
           )}
           {s?.connected && (
             <button onClick={()=>act("/api/live/disconnect",{},"已断开")} className="px-3 py-1.5 rounded-lg text-[10px] font-medium bg-sakura-400 text-white hover:bg-sakura-500">断开 B站</button>
@@ -2007,33 +2021,65 @@ function LivePage() {
         </button>
       </div>
 
+      {/* B站配置侧边栏 */}
       {showConfig && (
-        <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-          <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30"><span className="text-[10px] font-medium text-sakura-500">B站 开放平台配置</span></div>
-          <div className="p-3 space-y-2.5">
-            <div>
-              <p className="text-[9px] text-sakura-500 mb-0.5">Access Key</p>
-              <input value={accessKey} onChange={e=>setAccessKey(e.target.value)} className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-sakura-50 text-sakura-600 font-mono" placeholder="从 B站 开放平台获取" />
-            </div>
-            <div>
-              <p className="text-[9px] text-sakura-500 mb-0.5">直播间 ID（可选）</p>
-              <input value={roomId} onChange={e=>setRoomId(e.target.value)} className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-sakura-50 text-sakura-600 font-mono" placeholder="留空自动检测" />
+        <div className="fixed inset-0 z-50 flex justify-end" onClick={() => setShowConfig(false)}>
+          <div className="absolute inset-0 bg-black/20" />
+          <div className="relative w-[420px] bg-white h-full shadow-2xl overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold text-sakura-600">B站 开放平台配置</p>
+                <button onClick={() => setShowConfig(false)} className="p-1 hover:bg-sakura-50 rounded text-sakura-400"><X size={14} /></button>
+              </div>
+              <div>
+                <label className="block text-[10px] text-sakura-500 font-medium mb-1">App ID</label>
+                <input value={appId} onChange={e=>setAppId(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white" placeholder="从 B站 开放平台获取" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-sakura-500 font-medium mb-1">Access Key ID</label>
+                <input value={accessKeyId} onChange={e=>setAccessKeyId(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="B站 Access Key ID" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-sakura-500 font-medium mb-1">Access Key Secret</label>
+                <input value={accessKeySecret} onChange={e=>setAccessKeySecret(e.target.value)} type="password" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="B站 Access Key Secret" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-sakura-500 font-medium mb-1">主播身份码</label>
+                <input value={code} onChange={e=>setCode(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white" placeholder="从直播中心获取" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-sakura-500 font-medium mb-1">直播间 ID（可选）</label>
+                <input value={roomId} onChange={e=>setRoomId(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white" placeholder="留空自动" />
+              </div>
+              <div className="flex items-center gap-2 pt-2">
+                <button onClick={() => setShowConfig(false)} className="flex-1 px-3 py-2 rounded-lg text-xs border border-sakura-100 text-sakura-400 hover:bg-sakura-50 transition-colors">取消</button>
+                <button onClick={() => { saveCfg(); act("/api/live/connect",{app_id:appId,code:code,access_key_id:accessKeyId,access_key_secret:accessKeySecret,room_id:roomId},"连接成功"); }} className="flex-1 px-3 py-2 rounded-lg text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 transition-colors">测试连接</button>
+                <button onClick={() => { saveCfg(); setShowConfig(false); }} className="flex-1 px-3 py-2 rounded-lg text-xs font-medium bg-sakura-500 text-white hover:bg-sakura-600 transition-colors">保存</button>
+              </div>
             </div>
           </div>
         </div>
       )}
 
+      {/* RTMP 推流侧边栏 */}
       {showRtmp && (
-        <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-          <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30"><span className="text-[10px] font-medium text-sakura-500">RTMP 推流配置</span></div>
-          <div className="p-3 space-y-2.5">
-            <div>
-              <p className="text-[9px] text-sakura-500 mb-0.5">RTMP 地址</p>
-              <input value={rtmpUrl} onChange={e=>setRtmpUrl(e.target.value)} className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-sakura-50 text-sakura-600 font-mono" placeholder="rtmp://..." />
-            </div>
-            <div className="flex gap-2">
-              <button onClick={()=>act("/api/live/start-stream",{rtmp_url:rtmpUrl},"推流已启动")} disabled={!s?.running} className="flex-1 px-3 py-1.5 rounded-lg text-[10px] font-medium bg-green-500 text-white hover:bg-green-600 disabled:opacity-50">开始推流</button>
-              <button onClick={()=>act("/api/live/stop-stream",{},"推流已停止")} className="flex-1 px-3 py-1.5 rounded-lg text-[10px] font-medium bg-red-500 text-white hover:bg-red-600">停止推流</button>
+        <div className="fixed inset-0 z-50 flex justify-end" onClick={() => setShowRtmp(false)}>
+          <div className="absolute inset-0 bg-black/20" />
+          <div className="relative w-[420px] bg-white h-full shadow-2xl overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold text-sakura-600">RTMP 推流配置</p>
+                <button onClick={() => setShowRtmp(false)} className="p-1 hover:bg-sakura-50 rounded text-sakura-400"><X size={14} /></button>
+              </div>
+              <div>
+                <label className="block text-[10px] text-sakura-500 font-medium mb-1">RTMP 地址</label>
+                <input value={rtmpUrl} onChange={e=>setRtmpUrl(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="rtmp://..." />
+              </div>
+              <div className="flex items-center gap-2 pt-2">
+                <button onClick={() => setShowRtmp(false)} className="flex-1 px-3 py-2 rounded-lg text-xs border border-sakura-100 text-sakura-400 hover:bg-sakura-50 transition-colors">取消</button>
+                <button onClick={() => { act("/api/live/start-stream",{rtmp_url:rtmpUrl},"推流已启动"); setShowRtmp(false); }} disabled={!s?.running} className="flex-1 px-3 py-2 rounded-lg text-xs font-medium bg-green-500 text-white hover:bg-green-600 disabled:opacity-50 transition-colors">开始推流</button>
+                <button onClick={() => { act("/api/live/stop-stream",{},"推流已停止"); setShowRtmp(false); }} className="flex-1 px-3 py-2 rounded-lg text-xs font-medium bg-red-500 text-white hover:bg-red-600 transition-colors">停止推流</button>
+              </div>
             </div>
           </div>
         </div>
