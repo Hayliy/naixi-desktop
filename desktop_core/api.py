@@ -3000,18 +3000,19 @@ async def api_live_status(request):
 async def api_live_connect(request):
     """连接 B站"""
     from desktop_core.live_engine import engine
+    engine._load_config()  # 从数据库加载配置
     body = await request.json() if request.can_read_body else {}
-    if body.get("access_key_id"):
+    if body.get("access_key_id") and "****" not in str(body.get("access_key_id","")):
         engine._access_key_id = body["access_key_id"]
-    if body.get("access_key_secret"):
+    if body.get("access_key_secret") and "****" not in str(body.get("access_key_secret","")):
         engine._access_key_secret = body["access_key_secret"]
-    if body.get("app_id"):
+    if body.get("app_id") and "****" not in str(body.get("app_id","")):
         engine._app_id = body["app_id"]
-    if body.get("code"):
+    if body.get("code") and "****" not in str(body.get("code","")):
         engine._code = body["code"]
     if body.get("room_id"):
         engine._room_id = body["room_id"]
-    engine._bili_config_saved = bool(engine._access_key_id and engine._access_key_secret)
+    engine._bili_config_saved = bool(engine._access_key_id and engine._access_key_secret and engine._app_id and engine._code)
     ok = await engine.connect_bilibili()
     return web.json_response({"ok": ok, "status": engine.status})
 
@@ -3024,11 +3025,17 @@ async def api_live_disconnect(request):
 async def api_live_start(request):
     """启动直播引擎"""
     from desktop_core.live_engine import engine
+    engine._load_config()  # 先从数据库加载已保存的配置
     body = await request.json() if request.can_read_body else {}
-    if body.get("access_key_id"): engine._access_key_id = body["access_key_id"]
-    if body.get("access_key_secret"): engine._access_key_secret = body["access_key_secret"]
-    if body.get("app_id"): engine._app_id = body["app_id"]
-    if body.get("code"): engine._code = body["code"]
+    # 防止前端把遮罩后的密钥（如 RtGe****）传回来覆盖真实密钥
+    if body.get("access_key_id") and "****" not in str(body.get("access_key_id","")):
+        engine._access_key_id = body["access_key_id"]
+    if body.get("access_key_secret") and "****" not in str(body.get("access_key_secret","")):
+        engine._access_key_secret = body["access_key_secret"]
+    if body.get("app_id") and "****" not in str(body.get("app_id","")):
+        engine._app_id = body["app_id"]
+    if body.get("code") and "****" not in str(body.get("code","")):
+        engine._code = body["code"]
     if body.get("room_id"): engine._room_id = body["room_id"]
     if body.get("rtmp_url"): engine._rtmp_url = body["rtmp_url"]
     engine.save_config()

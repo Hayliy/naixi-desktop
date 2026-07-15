@@ -25,7 +25,9 @@ pub fn run() {
 
             if script.exists() {
                 let shell = app.shell();
-                match shell.command("python")
+                // 使用 WorkBuddy 管理的 Python，替代系统 PATH 中的 python
+                let python_path = r"C:\Users\21222\.workbuddy\binaries\python\versions\3.13.12\python.exe";
+                match shell.command(python_path)
                     .arg(script.to_string_lossy().to_string())
                     .spawn()
                 {

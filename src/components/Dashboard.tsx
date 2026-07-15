@@ -1936,7 +1936,11 @@ function LivePage() {
   const [danmaku, setDanmaku] = useState<any[]>([]);
   const [showConfig, setShowConfig] = useState(false);
   const [showRtmp, setShowRtmp] = useState(false);
+  const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
+  const [nowTime, setNowTime] = useState(Date.now());
   const { notify } = useToast();
+
+  useEffect(() => { const iv = setInterval(() => setNowTime(Date.now()), 1000); return () => clearInterval(iv); }, []);
 
   const loadConfig = useCallback(async () => {
     try { const cfg = await apiGet<any>('/api/live/config');
@@ -1973,7 +1977,8 @@ function LivePage() {
   };
 
   const s = status;
-  const u = s?.uptime || 0;
+  const startTime = s?.start_time ? s.start_time * 1000 : 0;
+  const u = startTime ? Math.floor((nowTime - startTime) / 1000) : 0;
   const utxt = u > 3600 ? Math.floor(u/3600)+"h"+Math.floor((u%3600)/60)+"m" : u > 60 ? Math.floor(u/60)+"m"+u%60+"s" : u+"s";
 
   return (
@@ -2019,6 +2024,50 @@ function LivePage() {
         <button onClick={()=>setShowRtmp(!showRtmp)} className={"px-3 py-1.5 rounded-lg text-[10px] border "+(showRtmp?"bg-sakura-100 border-sakura-300 text-sakura-600":"bg-white border-sakura-100 text-sakura-500 hover:border-sakura-300")}>
           RTMP 推流
         </button>
+      </div>
+
+      {/* WebSocket 连接状态面板 */}
+      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+        <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
+          <span className="text-[10px] font-medium text-sakura-500">WebSocket 连接状态</span>
+          <div className="flex items-center gap-2">
+            <button onClick={()=>act("/api/live/connect",{app_id:appId,code:code,access_key_id:accessKeyId,access_key_secret:accessKeySecret,room_id:roomId},"连接成功")} disabled={!appId||!accessKeyId||!code} className="text-[8px] px-2 py-1 rounded bg-blue-500 text-white disabled:opacity-40 hover:bg-blue-600 transition-colors">测试连接</button>
+            {s?.connected && <span className="text-[8px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded">已连接</span>}
+            {!s?.connected && s?.running && <span className="text-[8px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded">等待连接</span>}
+            {!s?.connected && !s?.running && <span className="text-[8px] bg-sakura-100 text-sakura-500 px-1.5 py-0.5 rounded">未启动</span>}
+          </div>
+        </div>
+        <div className="p-3 grid grid-cols-2 gap-3 text-[10px]">
+          <div>
+            <span className="text-sakura-400">连接状态</span>
+            <p className="text-sakura-600 font-medium">{s?.connected ? "已连接到 B站" : s?.running ? "引擎运行中，等待连接..." : "未连接"}</p>
+          </div>
+          <div>
+            <span className="text-sakura-400">场次 ID</span>
+            <p className="text-sakura-600 font-medium font-mono text-[9px]">{s?.game_id || "—"}</p>
+          </div>
+          <div>
+            <span className="text-sakura-400">直播间</span>
+            <p className="text-sakura-600 font-medium">{s?.room_id || "—"}</p>
+          </div>
+          <div>
+            <span className="text-sakura-400">运行时间</span>
+            <p className="text-sakura-600 font-medium">{utxt || "—"}</p>
+          </div>
+          <div>
+            <span className="text-sakura-400">弹幕总数</span>
+            <p className="text-sakura-600 font-medium">{s?.danmaku_count || 0}</p>
+          </div>
+          <div>
+            <span className="text-sakura-400">弹幕速率</span>
+            <p className="text-sakura-600 font-medium">{s?.danmaku_rate || 0}/s</p>
+          </div>
+        </div>
+        {s?.last_error && (
+          <div className="px-3 py-2 border-t border-red-100 bg-red-50">
+            <p className="text-[9px] text-red-500">错误: {s.last_error}</p>
+          </div>
+        )}
       </div>
 
       {/* B站配置侧边栏 */}
@@ -2092,16 +2141,30 @@ function LivePage() {
         </div>
         <div className="divide-y divide-sakura-50">
           {s?.agents && Object.entries(s.agents).map(([id,a]:[string,any],i:number,arr:any[])=>(
-            <div key={id} className="flex items-center gap-3 px-3 py-2.5 hover:bg-sakura-50/30">
-              <div className={"w-2 h-2 rounded-full shrink-0 "+(a.status==="running"?"bg-green-500 animate-pulse":a.status==="ready"?"bg-blue-400":"bg-sakura-300")} />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] font-medium text-sakura-600">{a.name}</span>
-                  <span className={"text-[8px] px-1 py-0.5 rounded "+(a.status==="running"?"bg-green-50 text-green-600":a.status==="ready"?"bg-blue-50 text-blue-500":"bg-sakura-100 text-sakura-500")}>{a.status==="running"?"运行中":a.status==="ready"?"就绪":"停止"}</span>
+            <div key={id}>
+              <div className="flex items-center gap-3 px-3 py-2.5 hover:bg-sakura-50/30 transition-colors cursor-pointer" onClick={()=>setExpandedAgent(expandedAgent===id?null:id)}>
+                <div className={"w-2 h-2 rounded-full shrink-0 "+(a.status==="running"?"bg-green-500 animate-pulse":a.status==="ready"?"bg-blue-400":a.status==="error"?"bg-red-400":"bg-sakura-300")} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-medium text-sakura-600">{a.name}</span>
+                    <span className={"text-[8px] px-1 py-0.5 rounded "+(a.status==="running"?"bg-green-50 text-green-600":a.status==="ready"?"bg-blue-50 text-blue-500":a.status==="error"?"bg-red-50 text-red-500":"bg-sakura-100 text-sakura-500")}>{a.status==="running"?"运行中":a.status==="ready"?"就绪":a.status==="error"?"异常":"停止"}</span>
+                  </div>
+                  <p className="text-[8px] text-sakura-400 mt-0.5">{a.desc}</p>
                 </div>
-                <p className="text-[8px] text-sakura-400 mt-0.5">{a.desc}</p>
+                {i<arr.length-1 && <div className={"transition-transform "+(expandedAgent===id?"rotate-180":"")}><ChevronDown size={10} className="text-sakura-300 shrink-0" /></div>}
               </div>
-              {i<arr.length-1 && <ChevronDown size={10} className="text-sakura-300 shrink-0" />}
+              {/* 展开详情 */}
+              {expandedAgent===id && (
+                <div className="px-8 pb-2.5 pt-1 space-y-1 bg-sakura-50/30">
+                  <div className="flex items-center gap-3 text-[9px] text-sakura-400">
+                    <span>状态: <strong className={a.status==="running"?"text-green-600":a.status==="error"?"text-red-500":"text-sakura-500"}>{a.status==="running"?"运行中":a.status==="ready"?"就绪":a.status==="error"?"异常":"停止"}</strong></span>
+                    <span>功能: {a.desc}</span>
+                  </div>
+                  {a.status==="error" && s?.errors?.slice(-1).map((e:string,i:number)=>(
+                    <p key={i} className="text-[8px] text-red-400 break-all">{e}</p>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>

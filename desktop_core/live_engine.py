@@ -56,6 +56,8 @@ class LiveEngine:
         # B站连接
         self._connected = False
         self._ws = None
+        self._ws_session = None
+        self._ws_task: Optional[asyncio.Task] = None
         self._hb_task: Optional[asyncio.Task] = None
 
         # Agent 状态: stopped/ready/running/error
@@ -94,6 +96,7 @@ class LiveEngine:
             "danmaku_count": len(self._danmaku_cache),
             "danmaku_rate": danmaku_rate,
             "uptime": round(elapsed),
+            "start_time": self._start_time,
             "last_error": self._last_error,
             "errors": self._agent_errors[-10:],
         }
@@ -123,12 +126,17 @@ class LiveEngine:
     def save_config(self, **kwargs) -> bool:
         """保存直播配置到 SQLite"""
         try:
+            # 防止前端把遮罩后的密钥传回来覆盖真实密钥
+            def _real(v, cur):
+                if v is None or (isinstance(v, str) and "****" in v):
+                    return cur
+                return v
             cfg = {
-                "access_key_id": kwargs.get("access_key_id", self._access_key_id),
-                "access_key_secret": kwargs.get("access_key_secret", self._access_key_secret),
-                "app_id": kwargs.get("app_id", self._app_id),
+                "access_key_id": _real(kwargs.get("access_key_id"), self._access_key_id),
+                "access_key_secret": _real(kwargs.get("access_key_secret"), self._access_key_secret),
+                "app_id": _real(kwargs.get("app_id"), self._app_id),
                 "room_id": kwargs.get("room_id", self._room_id),
-                "code": kwargs.get("code", self._code),
+                "code": _real(kwargs.get("code"), self._code),
                 "rtmp_url": kwargs.get("rtmp_url", self._rtmp_url),
             }
             from desktop_core.storage import meta_set
@@ -277,11 +285,12 @@ class LiveEngine:
     @staticmethod
     def _bili_sign(secret: str, headers: dict, body_md5: str) -> str:
         """B站 Open Live API v2 签名
-        参考 github.com/VTB-LINK/bianka/live/live-types.go CreateSignature
-        仅 X-Bili-* header 按小写 key 排序后 key:value\n 格式，HMAC-SHA256
+        X-Bili-* header 按小写 key 排序后 key:value\n 格式，HMAC-SHA256
         """
-        bili_keys = sorted(k for k in headers if k.lower().startswith("x-bili-"))
-        raw = "\n".join(f"{k.lower()}:{headers[k]}" for k in bili_keys)
+        # 构建小写 headers 映射
+        lower_headers = {k.lower(): v for k, v in headers.items() if k.lower().startswith("x-bili-")}
+        keys = sorted(lower_headers.keys())
+        raw = "\n".join(f"{k}:{lower_headers[k]}" for k in keys)
         return hmac.new(secret.encode(), raw.encode(), hashlib.sha256).hexdigest()
 
     async def connect_bilibili(self) -> bool:
@@ -317,11 +326,14 @@ class LiveEngine:
                 async with session.post(f"{api_host}/v2/app/start", data=body, headers=headers, timeout=10) as r:
                     if r.status != 200:
                         txt = await r.text()
+                        log.warning(f"[直播] B站 API {r.status}: {txt[:300]}")
                         self._last_error = f"B站 API {r.status}: {txt[:200]}"
                         return False
                     resp = await r.json()
                 if resp.get("code") != 0:
-                    self._last_error = f"B站 start 失败: {resp.get('message', '')}"
+                    msg = resp.get('message', '')
+                    log.warning(f"[直播] B站 返回错误: code={resp.get('code')} msg={msg}")
+                    self._last_error = f"B站 start 失败: {msg}"
                     return False
                 info = resp["data"]
                 self._game_id = info["game_info"]["game_id"]
@@ -333,18 +345,23 @@ class LiveEngine:
 
             # 连接 WS
             auth_body = json.loads(auth_body_str) if isinstance(auth_body_str, str) else auth_body_str
-            for wss_url in wss_links:
-                async with aiohttp.ClientSession() as session:
-                    async with session.ws_connect(wss_url, heartbeat=30) as ws:
-                        self._ws = ws
-                        await ws.send_json(auth_body)
-                        self._connected = True
-                        log.info(f"[直播] 已连接到 B站 直播间")
-                        async for msg in ws:
-                            if not self._running: break
-                            if msg.type == aiohttp.WSMsgType.TEXT:
-                                await self._on_bili_json(msg.data)
-                            elif msg.type == aiohttp.WSMsgType.CLOSED: break
+            auth_str = json.dumps(auth_body, separators=(",", ":"))
+            
+            # 保持 session 和 ws 长期存活（不退出 async with）
+            ws_session = aiohttp.ClientSession()
+            try:
+                wss_url = wss_links[0]
+                ws = await ws_session.ws_connect(wss_url, heartbeat=30)
+                self._ws = ws
+                await ws.send_bytes(self._build_ws_packet(7, auth_str.encode()))
+                self._connected = True
+                self._ws_session = ws_session
+                log.info(f"[直播] 已连接到 B站 直播间")
+                self._ws_task = asyncio.create_task(self._ws_read_loop(ws))
+            except:
+                await ws_session.close()
+                raise
+            self._connected = True
             return True
         except Exception as e:
             self._last_error = f"B站连接失败: {e}"
@@ -401,9 +418,78 @@ class LiveEngine:
         except:
             pass
 
+    async def _on_bili_binary(self, raw: bytes):
+        """处理 B站 WS 二进制包"""
+        try:
+            if len(raw) < 16:
+                return
+            import struct, zlib
+            
+            # 可能一个 frame 包含多个包，循环解析
+            offset = 0
+            while offset + 16 <= len(raw):
+                total_len = struct.unpack(">I", raw[offset:offset+4])[0]
+                header_len = struct.unpack(">H", raw[offset+4:offset+6])[0]
+                ver = struct.unpack(">H", raw[offset+6:offset+8])[0]
+                op = struct.unpack(">I", raw[offset+8:offset+12])[0]
+                
+                if total_len < header_len or total_len > len(raw) - offset:
+                    break
+                
+                body = raw[offset+header_len:offset+total_len]
+                
+                # 对 op=5（消息数据）或 op=8（认证回复）处理
+                if op in (5, 8):
+                    # 尝试解压
+                    try:
+                        body = zlib.decompress(body)
+                    except:
+                        pass
+                    
+                    text = body.decode("utf-8", errors="replace")
+                    for line in text.split("\0"):
+                        line = line.strip()
+                        if line:
+                            await self._on_bili_json(line)
+                
+                offset += total_len
+        except:
+            pass
+
+    @staticmethod
+    def _build_ws_packet(op: int, body: bytes, ver: int = 1) -> bytes:
+        """构建 B站 WS 二进制协议包"""
+        import struct
+        header_len = 16
+        total_len = header_len + len(body)
+        return struct.pack(">IHHII", total_len, header_len, ver, op, 1) + body
+
+    async def _ws_read_loop(self, ws):
+        """WS 消息读取循环（后台任务）"""
+        try:
+            async for msg in ws:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    log.info(f"[直播] WS TEXT: {msg.data[:200]}")
+                    await self._on_bili_json(msg.data)
+                elif msg.type == aiohttp.WSMsgType.BINARY:
+                    log.info(f"[直播] WS BINARY: {len(msg.data)}B")
+                    await self._on_bili_binary(msg.data)
+                elif msg.type == aiohttp.WSMsgType.CLOSED:
+                    break
+        except Exception as e:
+            log.warning(f"[直播] WS 读取异常: {e}")
+        finally:
+            self._connected = False
+            log.info("[直播] WS 连接已断开")
+
     async def disconnect_bilibili(self):
         """断开 B站 连接"""
         self._connected = False
+        if self._ws_task and not self._ws_task.done():
+            self._ws_task.cancel()
+            try: await self._ws_task
+            except: pass
+        self._ws_task = None
         if self._hb_task and not self._hb_task.done():
             self._hb_task.cancel()
             try: await self._hb_task
@@ -413,6 +499,10 @@ class LiveEngine:
             try: await self._ws.close()
             except: pass
             self._ws = None
+        if self._ws_session:
+            try: await self._ws_session.close()
+            except: pass
+            self._ws_session = None
         # 调用 /v2/app/end 关闭场次
         if self._game_id and self._app_id:
             try:
