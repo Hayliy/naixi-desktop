@@ -2921,6 +2921,9 @@ def setup_routes(app):
     app.router.add_post("/api/live/disconnect", api_live_disconnect)
     app.router.add_post("/api/live/start-stream", api_live_start_stream)
     app.router.add_post("/api/live/stop-stream", api_live_stop_stream)
+    app.router.add_route("GET", "/api/live/config", api_live_config)
+    app.router.add_route("POST", "/api/live/config", api_live_config)
+    app.router.add_post("/api/live/save-config", api_live_save_config)
 
     # 启动时连接 MCP 服务器
     app.on_startup.append(_on_startup_mcp)
@@ -2998,12 +3001,15 @@ async def api_live_connect(request):
     """连接 B站"""
     from desktop_core.live_engine import engine
     body = await request.json() if request.can_read_body else {}
-    ak = body.get("access_key", "")
-    rid = body.get("room_id", "")
-    if ak:
-        engine._access_key = ak
-    if rid:
-        engine._room_id = rid
+    if body.get("access_key_id"):
+        engine._access_key_id = body["access_key_id"]
+    if body.get("access_key_secret"):
+        engine._access_key_secret = body["access_key_secret"]
+    if body.get("app_id"):
+        engine._app_id = body["app_id"]
+    if body.get("room_id"):
+        engine._room_id = body["room_id"]
+    engine._bili_config_saved = bool(engine._access_key_id and engine._access_key_secret)
     ok = await engine.connect_bilibili()
     return web.json_response({"ok": ok, "status": engine.status})
 
@@ -3017,15 +3023,13 @@ async def api_live_start(request):
     """启动直播引擎"""
     from desktop_core.live_engine import engine
     body = await request.json() if request.can_read_body else {}
-    ak = body.get("access_key", "")
-    rid = body.get("room_id", "")
-    if ak:
-        engine._access_key = ak
-    if rid:
-        engine._room_id = rid
-    ok = await engine.start(engine._access_key, engine._room_id)
-    if ok and engine._access_key:
-        await engine.connect_bilibili()
+    if body.get("access_key_id"): engine._access_key_id = body["access_key_id"]
+    if body.get("access_key_secret"): engine._access_key_secret = body["access_key_secret"]
+    if body.get("app_id"): engine._app_id = body["app_id"]
+    if body.get("room_id"): engine._room_id = body["room_id"]
+    if body.get("rtmp_url"): engine._rtmp_url = body["rtmp_url"]
+    engine.save_config()
+    ok = await engine.start()
     return web.json_response({"ok": ok, "status": engine.status})
 
 async def api_live_stop(request):
@@ -3043,7 +3047,7 @@ async def api_live_start_stream(request):
     """启动 RTMP 推流"""
     from desktop_core.live_engine import engine
     body = await request.json() if request.can_read_body else {}
-    rtmp_url = body.get("rtmp_url", "")
+    rtmp_url = body.get("rtmp_url", "") or engine._rtmp_url
     ok = await engine.start_stream(rtmp_url)
     return web.json_response({"ok": ok, "status": engine.status})
 
@@ -3052,6 +3056,28 @@ async def api_live_stop_stream(request):
     from desktop_core.live_engine import engine
     await engine.stop_stream()
     return web.json_response({"ok": True, "status": engine.status})
+
+async def api_live_config(request):
+    """获取/保存直播配置"""
+    from desktop_core.live_engine import engine
+    if request.method == "GET":
+        return web.json_response({
+            "access_key_id": engine._access_key_id,
+            "access_key_secret": engine._access_key_secret[:4]+"****" if engine._access_key_secret else "",
+            "app_id": engine._app_id,
+            "room_id": engine._room_id,
+            "rtmp_url": engine._rtmp_url,
+        })
+    body = await request.json()
+    ok = engine.save_config(**body)
+    return web.json_response({"ok": ok})
+
+async def api_live_save_config(request):
+    """保存直播配置"""
+    from desktop_core.live_engine import engine
+    body = await request.json()
+    ok = engine.save_config(**body)
+    return web.json_response({"ok": ok})
 
 # ── MCP 管理 API ──
 
