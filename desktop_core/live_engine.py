@@ -393,7 +393,7 @@ class LiveEngine:
             # 心跳
             self._hb_task = asyncio.create_task(self._heartbeat_loop())
 
-            # 连接 WS（B站 v2 API 的 auth_body 按 TEXT 发送）
+            # 连接 WS（B站二进制协议包: op=7认证, ver=0原始数据）
             auth_body = json.loads(auth_body_str) if isinstance(auth_body_str, str) else auth_body_str
             auth_str = json.dumps(auth_body, separators=(",", ":"))
             ws_session = aiohttp.ClientSession()
@@ -401,8 +401,8 @@ class LiveEngine:
                 wss_url = wss_links[0]
                 ws = await ws_session.ws_connect(wss_url, heartbeat=30)
                 self._ws = ws
-                # auth_body 作为纯文本发送（参考 VTB-LINK/bianka live/auth.go）
-                await ws.send_str(auth_str)
+                # 发送认证协议包（二进制, op=7, ver=0）
+                await ws.send_bytes(self._build_ws_packet(7, auth_str.encode(), 0))
                 self._connected = True
                 self._ws_session = ws_session
                 log.info(f"[直播] 已连接到 B站 直播间")
@@ -506,8 +506,10 @@ class LiveEngine:
             pass
 
     @staticmethod
-    def _build_ws_packet(op: int, body: bytes, ver: int = 1) -> bytes:
-        """构建 B站 WS 二进制协议包"""
+    def _build_ws_packet(op: int, body: bytes, ver: int = 0) -> bytes:
+        """构建 B站 WS 二进制协议包（官方文档: 大端对齐）
+        ver=0 原始数据, ver=2 zlib压缩"""
+        import struct
         import struct
         header_len = 16
         total_len = header_len + len(body)
