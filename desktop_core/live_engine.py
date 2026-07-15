@@ -209,10 +209,16 @@ class LiveEngine:
         # 先关闭上次残留的 session（防止"同一房间启动数量超过配置上限"）
         await self._close_old_session()
 
-        # 自动连接 B站
-        ok = await self.connect_bilibili()
+        # 自动连接 B站（失败则等 5 秒重试一次）
+        for attempt in range(2):
+            ok = await self.connect_bilibili()
+            if ok:
+                break
+            if attempt == 0:
+                log.info("[直播] 首次连接失败，等 5 秒重试...")
+                await asyncio.sleep(5)
         if not ok:
-            log.warning(f"[直播] B站 自动连接失败: {self._last_error}")
+            log.warning(f"[直播] B站 连接失败: {self._last_error}")
 
         log.info("[直播] 引擎已启动")
         return True
@@ -330,6 +336,9 @@ class LiveEngine:
             self._last_error = "B站 配置不完整（需 App ID + AccessKey ID + Secret + 主播身份码）"
             return False
 
+        # 先关掉之前可能残留的 session
+        await self._close_old_session()
+
         try:
             import aiohttp
             from uuid import uuid4
@@ -363,6 +372,12 @@ class LiveEngine:
                     msg = resp.get('message', '')
                     log.warning(f"[直播] B站 返回错误: code={resp.get('code')} msg={msg}")
                     self._last_error = f"B站 start 失败: {msg}"
+                    # 如果 B站 说"超过配置上限"，等5秒清理旧 session 重试一次
+                    if "超过配置上限" in msg:
+                        log.info("[直播] 等待 5 秒后重试...")
+                        await asyncio.sleep(5)
+                        await self._close_old_session()
+                        return False  # 让调用方可以检查 last_error 后重试
                     return False
                 info = resp["data"]
                 self._game_id = info["game_info"]["game_id"]
