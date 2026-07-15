@@ -5,6 +5,7 @@
 import asyncio, hashlib, hmac, json, logging, os, re, subprocess, tempfile, time
 from datetime import datetime
 from typing import Optional
+from aiohttp import WSMsgType
 
 log = logging.getLogger("live_engine")
 
@@ -392,17 +393,16 @@ class LiveEngine:
             # 心跳
             self._hb_task = asyncio.create_task(self._heartbeat_loop())
 
-            # 连接 WS
+            # 连接 WS（B站 v2 API 的 auth_body 按 TEXT 发送）
             auth_body = json.loads(auth_body_str) if isinstance(auth_body_str, str) else auth_body_str
             auth_str = json.dumps(auth_body, separators=(",", ":"))
-            
-            # 保持 session 和 ws 长期存活（不退出 async with）
             ws_session = aiohttp.ClientSession()
             try:
                 wss_url = wss_links[0]
                 ws = await ws_session.ws_connect(wss_url, heartbeat=30)
                 self._ws = ws
-                await ws.send_bytes(self._build_ws_packet(7, auth_str.encode()))
+                # auth_body 作为纯文本发送（参考 VTB-LINK/bianka live/auth.go）
+                await ws.send_str(auth_str)
                 self._connected = True
                 self._ws_session = ws_session
                 log.info(f"[直播] 已连接到 B站 直播间")
@@ -517,13 +517,13 @@ class LiveEngine:
         """WS 消息读取循环（后台任务）"""
         try:
             async for msg in ws:
-                if msg.type == aiohttp.WSMsgType.TEXT:
+                if msg.type == WSMsgType.TEXT:
                     log.info(f"[直播] WS TEXT: {msg.data[:200]}")
                     await self._on_bili_json(msg.data)
-                elif msg.type == aiohttp.WSMsgType.BINARY:
+                elif msg.type == WSMsgType.BINARY:
                     log.info(f"[直播] WS BINARY: {len(msg.data)}B")
                     await self._on_bili_binary(msg.data)
-                elif msg.type == aiohttp.WSMsgType.CLOSED:
+                elif msg.type == WSMsgType.CLOSED:
                     break
         except Exception as e:
             log.warning(f"[直播] WS 读取异常: {e}")
