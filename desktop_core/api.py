@@ -2912,6 +2912,16 @@ def setup_routes(app):
     app.router.add_post("/api/mcp/test", api_mcp_test)
     app.router.add_post("/api/platform/test", api_platform_test)
 
+    # 直播管理
+    app.router.add_get("/api/live/status", api_live_status)
+    app.router.add_post("/api/live/start", api_live_start)
+    app.router.add_post("/api/live/stop", api_live_stop)
+    app.router.add_get("/api/live/danmaku", api_live_danmaku)
+    app.router.add_post("/api/live/connect", api_live_connect)
+    app.router.add_post("/api/live/disconnect", api_live_disconnect)
+    app.router.add_post("/api/live/start-stream", api_live_start_stream)
+    app.router.add_post("/api/live/stop-stream", api_live_stop_stream)
+
     # 启动时连接 MCP 服务器
     app.on_startup.append(_on_startup_mcp)
 
@@ -2976,6 +2986,72 @@ async def _on_startup_mcp(app):
     except Exception as e:
         log.warning(f"[MCP] 启动连接失败: {e}")
 
+
+# ── 直播管理 API ──
+
+async def api_live_status(request):
+    """直播引擎状态"""
+    from desktop_core.live_engine import engine
+    return web.json_response(engine.status)
+
+async def api_live_connect(request):
+    """连接 B站"""
+    from desktop_core.live_engine import engine
+    body = await request.json() if request.can_read_body else {}
+    ak = body.get("access_key", "")
+    rid = body.get("room_id", "")
+    if ak:
+        engine._access_key = ak
+    if rid:
+        engine._room_id = rid
+    ok = await engine.connect_bilibili()
+    return web.json_response({"ok": ok, "status": engine.status})
+
+async def api_live_disconnect(request):
+    """断开 B站"""
+    from desktop_core.live_engine import engine
+    await engine.disconnect_bilibili()
+    return web.json_response({"ok": True, "status": engine.status})
+
+async def api_live_start(request):
+    """启动直播引擎"""
+    from desktop_core.live_engine import engine
+    body = await request.json() if request.can_read_body else {}
+    ak = body.get("access_key", "")
+    rid = body.get("room_id", "")
+    if ak:
+        engine._access_key = ak
+    if rid:
+        engine._room_id = rid
+    ok = await engine.start(engine._access_key, engine._room_id)
+    if ok and engine._access_key:
+        await engine.connect_bilibili()
+    return web.json_response({"ok": ok, "status": engine.status})
+
+async def api_live_stop(request):
+    """停止直播引擎"""
+    from desktop_core.live_engine import engine
+    await engine.stop()
+    return web.json_response({"ok": True, "status": engine.status})
+
+async def api_live_danmaku(request):
+    """获取弹幕列表"""
+    from desktop_core.live_engine import engine
+    return web.json_response({"danmaku": engine.danmaku_list})
+
+async def api_live_start_stream(request):
+    """启动 RTMP 推流"""
+    from desktop_core.live_engine import engine
+    body = await request.json() if request.can_read_body else {}
+    rtmp_url = body.get("rtmp_url", "")
+    ok = await engine.start_stream(rtmp_url)
+    return web.json_response({"ok": ok, "status": engine.status})
+
+async def api_live_stop_stream(request):
+    """停止 RTMP 推流"""
+    from desktop_core.live_engine import engine
+    await engine.stop_stream()
+    return web.json_response({"ok": True, "status": engine.status})
 
 # ── MCP 管理 API ──
 

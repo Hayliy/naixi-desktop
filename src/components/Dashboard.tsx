@@ -1926,134 +1926,168 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
 }
 
 function LivePage() {
-  const [biliCfg, setBiliCfg] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [accessKey, setAccessKey] = useState("");
-  const [roomId, setRoomId] = useState("");
+  const [status, setStatus] = useState<any>(null);
+  const [accessKey, setAccessKey] = useState('');
+  const [roomId, setRoomId] = useState('');
+  const [rtmpUrl, setRtmpUrl] = useState('');
+  const [danmaku, setDanmaku] = useState<any[]>([]);
   const [showConfig, setShowConfig] = useState(false);
+  const [showRtmp, setShowRtmp] = useState(false);
   const { notify } = useToast();
 
-  useEffect(() => {
-    apiGet<any>("/api/desktop/config").then(d => {
-      const p = d?.platform_configs?.bilibili || {};
-      setBiliCfg(p);
-      setAccessKey(p.access_key || "");
-      setRoomId(p.room_id || "");
-    }).catch(() => {}).finally(() => setLoading(false));
+  const pollStatus = useCallback(async () => {
+    try { const s = await apiGet<any>("/api/live/status"); setStatus(s); } catch {}
   }, []);
 
-  const saveConfig = async () => {
+  useEffect(() => { pollStatus(); const iv = setInterval(pollStatus, 3000); return () => clearInterval(iv); }, [pollStatus]);
+
+  useEffect(() => {
+    if (!status?.connected) return;
+    const iv = setInterval(async () => {
+      try { const d = await apiGet<any>("/api/live/danmaku"); setDanmaku(d.danmaku || []); } catch {}
+    }, 2000);
+    return () => clearInterval(iv);
+  }, [status?.connected]);
+
+  const act = async (url: string, body?: any, okMsg?: string) => {
     try {
-      const cfg = await apiGet<any>("/api/desktop/config");
-      const platform_configs = cfg.platform_configs || {};
-      platform_configs.bilibili = { access_key: accessKey, room_id: roomId, enabled: true };
-      await apiPost("/api/desktop/config", { platform_configs });
-      notify("已保存", "success");
-      setShowConfig(false);
-      setBiliCfg({ access_key: accessKey, room_id: roomId });
-    } catch { notify("保存失败", "error"); }
+      const r = await apiPost(url, body);
+      if (r.ok) { if (okMsg) notify(okMsg, "success"); }
+      else notify(r.status?.last_error || "失败", "error");
+      pollStatus();
+    } catch { notify("请求失败", "error"); }
   };
 
-  const connected = !!(biliCfg?.access_key);
-
-  const pipeline = [
-    { name: "弹幕监听", agent: "danmaku_agent", desc: "B站开放平台 WebSocket", status: connected ? "就绪" : "未配置", icon: <MessageCircle size={14} /> },
-    { name: "场景决策", agent: "scene_agent", desc: "LLM 弹幕→场景判断", status: "等待上游", icon: <Brain size={14} /> },
-    { name: "语音合成", agent: "tts_agent", desc: "CosyVoice / Edge-TTS", status: "等待上游", icon: <Activity size={14} /> },
-    { name: "虚拟角色", agent: "avatar_agent", desc: "Live2D 立绘渲染", status: "等待上游", icon: <Film size={14} /> },
-    { name: "推流输出", agent: "stream_agent", desc: "ffmpeg RTMP 推流", status: "等待上游", icon: <Zap size={14} /> },
-  ];
+  const s = status;
+  const u = s?.uptime || 0;
+  const utxt = u > 3600 ? Math.floor(u/3600)+"h"+Math.floor((u%3600)/60)+"m" : u > 60 ? Math.floor(u/60)+"m"+u%60+"s" : u+"s";
 
   return (
     <div className="space-y-3">
       <p className="text-sm font-semibold text-sakura-600">虚拟主播</p>
 
-      {/* 状态卡片 */}
-      <div className={`rounded-xl p-3 border ${connected ? "bg-green-50 border-green-200" : "bg-sakura-50 border-sakura-100"}`}>
-        <div className="flex items-center gap-2.5">
-          <div className={`w-8 h-8 rounded-full flex items-center justify-center ${connected ? "bg-green-100" : "bg-sakura-100"}`}>
-            <Film size={16} className={connected ? "text-green-500" : "text-sakura-400"} />
+      <div className="flex items-center gap-2">
+        <div className={"flex-1 rounded-xl p-3 border "+(s?.running?s?.connected?"bg-green-50 border-green-200":"bg-amber-50 border-amber-200":"bg-sakura-50 border-sakura-100")}>
+          <div className="flex items-center gap-2.5">
+            <div className={"w-8 h-8 rounded-full flex items-center justify-center "+(s?.connected?"bg-green-100":s?.running?"bg-amber-100":"bg-sakura-100")}>
+              <div className={"w-2.5 h-2.5 rounded-full "+(s?.connected?"bg-green-500 animate-pulse":s?.running?"bg-amber-500":"bg-sakura-400")} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className={"text-[13px] font-bold "+(s?.connected?"text-green-700":s?.running?"text-amber-700":"text-sakura-600")}>
+                {s?.connected ? "直播中" : s?.running ? "引擎运行中" : "未启动"}
+              </p>
+              <p className="text-[10px] text-sakura-400 mt-0.5">
+                {s?.connected ? "直播间 "+s?.room_id+" · 运行 "+utxt : s?.running ? "等待 B站 连接" : "启动引擎后开始直播"}
+              </p>
+            </div>
           </div>
-          <div className="flex-1 min-w-0">
-            <p className={`text-[13px] font-bold ${connected ? "text-green-700" : "text-sakura-600"}`}>
-              {connected ? "B站已接入" : "未接入直播间"}
-            </p>
-            <p className="text-[10px] text-sakura-400 mt-0.5">
-              {connected ? `直播间 ${biliCfg.room_id || "未设置"}` : "配置 B站 开放平台凭证后启用"}
-            </p>
-          </div>
-          <button onClick={() => setShowConfig(!showConfig)}
-            className="px-3 py-1.5 rounded-lg text-[10px] font-medium bg-white border border-sakura-100 text-sakura-500 hover:text-sakura-600 hover:border-sakura-300 transition-colors shrink-0">
-            {showConfig ? "收起" : "配置"}
-          </button>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          {!s?.running ? (
+            <button onClick={()=>act("/api/live/start",{access_key:accessKey,room_id:roomId},"引擎已启动")} className="px-3 py-1.5 rounded-lg text-[10px] font-medium bg-sakura-500 text-white hover:bg-sakura-600">启动引擎</button>
+          ) : (
+            <button onClick={()=>act("/api/live/stop",{},"已停止")} className="px-3 py-1.5 rounded-lg text-[10px] font-medium bg-red-500 text-white hover:bg-red-600">停止引擎</button>
+          )}
+          {s?.running && !s?.connected && (
+            <button onClick={()=>act("/api/live/connect",{access_key:accessKey,room_id:roomId},"已连接")} className="px-3 py-1.5 rounded-lg text-[10px] font-medium bg-blue-500 text-white hover:bg-blue-600">连接 B站</button>
+          )}
+          {s?.connected && (
+            <button onClick={()=>act("/api/live/disconnect",{},"已断开")} className="px-3 py-1.5 rounded-lg text-[10px] font-medium bg-sakura-400 text-white hover:bg-sakura-500">断开 B站</button>
+          )}
         </div>
       </div>
 
-      {/* 配置面板 */}
+      <div className="flex items-center gap-2">
+        <button onClick={()=>setShowConfig(!showConfig)} className={"px-3 py-1.5 rounded-lg text-[10px] border "+(showConfig?"bg-sakura-100 border-sakura-300 text-sakura-600":"bg-white border-sakura-100 text-sakura-500 hover:border-sakura-300")}>
+          B站配置
+        </button>
+        <button onClick={()=>setShowRtmp(!showRtmp)} className={"px-3 py-1.5 rounded-lg text-[10px] border "+(showRtmp?"bg-sakura-100 border-sakura-300 text-sakura-600":"bg-white border-sakura-100 text-sakura-500 hover:border-sakura-300")}>
+          RTMP 推流
+        </button>
+      </div>
+
       {showConfig && (
         <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-          <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30">
-            <span className="text-[10px] font-medium text-sakura-500">B站 开放平台配置</span>
-          </div>
+          <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30"><span className="text-[10px] font-medium text-sakura-500">B站 开放平台配置</span></div>
           <div className="p-3 space-y-2.5">
             <div>
               <p className="text-[9px] text-sakura-500 mb-0.5">Access Key</p>
-              <input value={accessKey} onChange={e => setAccessKey(e.target.value)}
-                className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-sakura-50 text-sakura-600 font-mono"
-                placeholder="从 B站 开放平台获取" />
+              <input value={accessKey} onChange={e=>setAccessKey(e.target.value)} className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-sakura-50 text-sakura-600 font-mono" placeholder="从 B站 开放平台获取" />
             </div>
             <div>
               <p className="text-[9px] text-sakura-500 mb-0.5">直播间 ID（可选）</p>
-              <input value={roomId} onChange={e => setRoomId(e.target.value)}
-                className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-sakura-50 text-sakura-600 font-mono"
-                placeholder="留空自动检测" />
-            </div>
-            <div className="flex gap-2 pt-1">
-              <button onClick={() => setShowConfig(false)}
-                className="px-3 py-1.5 rounded text-[9px] text-sakura-400 hover:bg-sakura-50 border border-sakura-100 transition-colors">取消</button>
-              <button onClick={saveConfig}
-                className="px-3 py-1.5 rounded text-[9px] font-medium bg-sakura-500 text-white hover:bg-sakura-600 transition-colors">保存</button>
+              <input value={roomId} onChange={e=>setRoomId(e.target.value)} className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-sakura-50 text-sakura-600 font-mono" placeholder="留空自动检测" />
             </div>
           </div>
         </div>
       )}
 
-      {/* 流水线状态 */}
+      {showRtmp && (
+        <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+          <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30"><span className="text-[10px] font-medium text-sakura-500">RTMP 推流配置</span></div>
+          <div className="p-3 space-y-2.5">
+            <div>
+              <p className="text-[9px] text-sakura-500 mb-0.5">RTMP 地址</p>
+              <input value={rtmpUrl} onChange={e=>setRtmpUrl(e.target.value)} className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-sakura-50 text-sakura-600 font-mono" placeholder="rtmp://..." />
+            </div>
+            <div className="flex gap-2">
+              <button onClick={()=>act("/api/live/start-stream",{rtmp_url:rtmpUrl},"推流已启动")} disabled={!s?.running} className="flex-1 px-3 py-1.5 rounded-lg text-[10px] font-medium bg-green-500 text-white hover:bg-green-600 disabled:opacity-50">开始推流</button>
+              <button onClick={()=>act("/api/live/stop-stream",{},"推流已停止")} className="flex-1 px-3 py-1.5 rounded-lg text-[10px] font-medium bg-red-500 text-white hover:bg-red-600">停止推流</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-        <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30">
+        <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
           <span className="text-[10px] font-medium text-sakura-500">Agent 流水线</span>
+          {s?.connected && <span className="text-[8px] text-green-500 flex items-center gap-1"><div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />运行中</span>}
         </div>
         <div className="divide-y divide-sakura-50">
-          {pipeline.map((p, i) => (
-            <div key={p.agent} className="flex items-center gap-3 px-3 py-2.5 hover:bg-sakura-50/30 transition-colors">
-              <div className="w-6 h-6 rounded-full bg-sakura-100 flex items-center justify-center shrink-0">{p.icon}</div>
+          {s?.agents && Object.entries(s.agents).map(([id,a]:[string,any],i:number,arr:any[])=>(
+            <div key={id} className="flex items-center gap-3 px-3 py-2.5 hover:bg-sakura-50/30">
+              <div className={"w-2 h-2 rounded-full shrink-0 "+(a.status==="running"?"bg-green-500 animate-pulse":a.status==="ready"?"bg-blue-400":"bg-sakura-300")} />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] font-medium text-sakura-600">{p.name}</span>
-                  <span className={`text-[8px] px-1 py-0.5 rounded ${p.status === "就绪" ? "bg-green-50 text-green-600" : p.status === "等待上游" ? "bg-sakura-100 text-sakura-500" : "bg-sakura-50 text-sakura-400"}`}>{p.status}</span>
+                  <span className="text-[11px] font-medium text-sakura-600">{a.name}</span>
+                  <span className={"text-[8px] px-1 py-0.5 rounded "+(a.status==="running"?"bg-green-50 text-green-600":a.status==="ready"?"bg-blue-50 text-blue-500":"bg-sakura-100 text-sakura-500")}>{a.status==="running"?"运行中":a.status==="ready"?"就绪":"停止"}</span>
                 </div>
-                <p className="text-[8px] text-sakura-400 mt-0.5">{p.desc}</p>
+                <p className="text-[8px] text-sakura-400 mt-0.5">{a.desc}</p>
               </div>
-              {i < pipeline.length - 1 && (
-                <div className="w-4 flex-shrink-0 flex flex-col items-center text-sakura-300">
-                  <ChevronDown size={10} />
-                </div>
-              )}
+              {i<arr.length-1 && <ChevronDown size={10} className="text-sakura-300 shrink-0" />}
             </div>
           ))}
         </div>
       </div>
 
-      {/* 说明 */}
-      <div className="bg-sakura-50 border border-sakura-100 rounded-xl p-3">
-        <p className="text-[9px] text-sakura-500 font-medium mb-1">数据流</p>
-        <p className="text-[9px] text-sakura-400">弹幕 → LLM(场景决策) → TTS(语音合成) → 立绘(角色动画) → RTMP(推流)</p>
-        <p className="text-[8px] text-sakura-300 mt-1">B站开放平台个人开发者认证审核中，通过后配置 Access Key 即可上线</p>
-      </div>
+      {s?.connected && (
+        <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+          <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
+            <span className="text-[10px] font-medium text-sakura-500">弹幕预览</span>
+            <div className="text-[8px] text-sakura-400">{s?.danmaku_count||0} 条 ({s?.danmaku_rate||0}/s)</div>
+          </div>
+          <div className="max-h-[160px] overflow-y-auto p-2 space-y-1">
+            {danmaku.length===0 ? <p className="text-[9px] text-sakura-300 text-center py-4">暂无弹幕</p> : danmaku.slice(-30).reverse().map((d:any,i:number)=>(
+              <div key={i} className="flex items-start gap-2 text-[9px]">
+                <span className="text-sakura-300 shrink-0 w-12">{d.time_str}</span>
+                <span className="text-sakura-500 font-medium shrink-0">{d.user}</span>
+                <span className="text-sakura-600 break-all">{d.text}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {s?.last_error && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+          <p className="text-[9px] text-red-500 font-medium">错误</p>
+          <p className="text-[9px] text-red-400 mt-0.5">{s.last_error}</p>
+        </div>
+      )}
     </div>
   );
 }
-
 function SchedulerPage() {
   const safeParse = (s: any, fallback: any = {}) => {
     if (typeof s === "string") { try { return JSON.parse(s); } catch { return fallback; } }
