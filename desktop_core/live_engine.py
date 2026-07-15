@@ -569,6 +569,11 @@ class LiveEngine:
                     await session.post("https://live-open.biliapi.com/v2/app/end", data=end_body, headers=hdrs, timeout=5)
             except: pass
         self._game_id = ""
+        # 清理数据库中的 game_id
+        try:
+            from desktop_core.storage import meta_set
+            meta_set("live_game_id", "")
+        except: pass
         log.info("[直播] 已断开 B站 连接")
 
     async def _heartbeat_loop(self):
