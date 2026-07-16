@@ -2926,6 +2926,8 @@ def setup_routes(app):
     app.router.add_route("POST", "/api/live/config", api_live_config)
     app.router.add_post("/api/live/save-config", api_live_save_config)
     app.router.add_get("/api/live/audio-devices", api_live_audio_devices)
+    app.router.add_get("/api/live/live2d-stream", api_live2d_stream)
+    app.router.add_get("/api/live2d-model/{path:.*}", api_live2d_model)
 
     # 启动时连接 MCP 服务器
     app.on_startup.append(_on_startup_mcp)
@@ -3110,6 +3112,42 @@ async def api_live_audio_devices(request):
     """列出系统音频设备"""
     from desktop_core.live_engine import engine
     return web.json_response(engine.list_audio_devices())
+
+async def api_live2d_stream(request):
+    """WebSocket: 推送 Live2D 参数（MouthOpen/表情）到桌宠窗口"""
+    from desktop_core.live_engine import engine
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+    # 注册到引擎
+    engine._live2d_ws = ws
+    try:
+        async for msg in ws:
+            if msg.type == aiohttp.WSMsgType.CLOSED:
+                break
+    finally:
+        if engine._live2d_ws is ws:
+            engine._live2d_ws = None
+    return ws
+
+async def api_live2d_model(request):
+    """代理 Live2D 模型文件（从本地 VTube Studio 目录或 data/models 读取）"""
+    path = request.match_info.get("path", "")
+    if not path:
+        return web.json_response({"error": "no path"}, status=400)
+    # 搜索路径
+    search_dirs = [
+        os.path.join(DESKTOP_DIR, "data", "models"),
+        r"D:\Program Files\Steam\steamapps\common\VTube Studio\VTube Studio_Data\StreamingAssets\Live2DModels",
+    ]
+    for base in search_dirs:
+        fp = os.path.join(base, path)
+        if os.path.exists(fp):
+            # 设置正确 Content-Type
+            ext = os.path.splitext(fp)[1].lower()
+            mime = {"png": "image/png", "json": "application/json", "moc3": "application/octet-stream",
+                    "physics3": "application/json", "exp3": "application/json", "cdi3": "application/json"}.get(ext, "application/octet-stream")
+            return web.FileResponse(fp, headers={"Content-Type": mime, "Access-Control-Allow-Origin": "*"})
+    return web.json_response({"error": "not found"}, status=404)
 
 # ── MCP 管理 API ──
 

@@ -98,6 +98,8 @@ class LiveEngine:
         self._vts_authenticated: bool = False
         self._vts_host: str = "127.0.0.1"
         self._vts_port: int = 8001
+        # 桌宠 WebSocket（前端 Live2D 窗口）
+        self._live2d_ws: Optional[aiohttp.WebSocketResponse] = None
         # 场景历史（全部保留，过长时压缩）
         self._scene_history: list[dict] = []
         self._live_prompt: str = DEFAULT_LIVE_PROMPT
@@ -1088,24 +1090,30 @@ class LiveEngine:
             return [0.0]
 
     async def _vts_speak(self, audio_bytes: bytes, text: str = ""):
-        """TTS 音频播放 + VTube Studio 口型同步"""
-        if not self._sd_available and not self._vts_ws:
-            return
-        # 生成口型数据
+        """TTS 音频播放 + 口型同步（VTS + 桌宠双通道）"""
         mouth_data = self._audio_to_mouth_data(audio_bytes)
         if not mouth_data:
             return
-        # 启动播放（非阻塞）
+        # 播放音频
         self.play_audio(audio_bytes)
-        # 逐帧发送口型参数到 VTS
-        frame_interval = 0.08  # 80ms 一帧
+        # 发送口型给桌宠窗口（前端 Live2D）
+        if self._live2d_ws and not self._live2d_ws.closed:
+            try:
+                await self._live2d_ws.send_json({
+                    "type": "speak",
+                    "mouth": mouth_data,
+                    "frame_ms": 80,
+                    "text": text,
+                })
+            except:
+                pass
+        # 逐帧发送口型参数到 VTube Studio（80ms/帧）
+        frame_interval = 0.08
         for mouth in mouth_data:
             if not self._running:
                 break
             await self._vts_send_parameters({"MouthOpen": mouth})
             await asyncio.sleep(frame_interval)
-        # 闭嘴
-        await self._vts_send_parameters({"MouthOpen": 0.0})
 
     # ═══════════════════════════════════════════════════════════════════════
     # Agent: TTS 语音合成
