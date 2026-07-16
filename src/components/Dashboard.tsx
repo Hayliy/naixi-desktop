@@ -1933,6 +1933,7 @@ function LivePage() {
   const [code, setCode] = useState('');
   const [roomId, setRoomId] = useState('');
   const [rtmpUrl, setRtmpUrl] = useState('');
+  const [dashscopeKey, setDashscopeKey] = useState('');
   const [danmaku, setDanmaku] = useState<any[]>([]);
   const [showConfig, setShowConfig] = useState(false);
   const [showRtmp, setShowRtmp] = useState(false);
@@ -1945,7 +1946,7 @@ function LivePage() {
   const loadConfig = useCallback(async () => {
     try { const cfg = await apiGet<any>('/api/live/config');
       setAccessKeyId(cfg.access_key_id||'');setAccessKeySecret(cfg.access_key_secret||'');
-      setAppId(cfg.app_id||'');setCode(cfg.code||'');setRoomId(cfg.room_id||'');setRtmpUrl(cfg.rtmp_url||'');
+      setAppId(cfg.app_id||'');setCode(cfg.code||'');setRoomId(cfg.room_id||'');setRtmpUrl(cfg.rtmp_url||'');setDashscopeKey(cfg.dashscope_api_key||'');
     } catch {}
   }, []);
 
@@ -1964,7 +1965,7 @@ function LivePage() {
   }, [status?.connected]);
 
   const saveCfg = async () => {
-    try { const r = await apiPost('/api/live/save-config', {access_key_id:accessKeyId,access_key_secret:accessKeySecret,app_id:appId,code:code,room_id:roomId}); if (r) notify('配置已保存', 'success'); else notify('保存失败', 'error'); } catch { notify('保存失败', 'error'); }
+    try { const r = await apiPost('/api/live/save-config', {access_key_id:accessKeyId,access_key_secret:accessKeySecret,app_id:appId,code:code,room_id:roomId,dashscope_api_key:dashscopeKey}); if (r) notify('配置已保存', 'success'); else notify('保存失败', 'error'); } catch { notify('保存失败', 'error'); }
   };
 
   const act = async (url: string, body?: any, okMsg?: string) => {
@@ -2004,7 +2005,7 @@ function LivePage() {
 
         <div className="flex flex-col gap-1.5">
           {!s?.running ? (
-            <button onClick={()=>act("/api/live/start",{app_id:appId,code:code,access_key_id:accessKeyId,access_key_secret:accessKeySecret,room_id:roomId,rtmp_url:rtmpUrl},"引擎已启动")} className="px-3 py-1.5 rounded-lg text-[10px] font-medium bg-sakura-500 text-white hover:bg-sakura-600">启动引擎</button>
+            <button onClick={()=>act("/api/live/start",{app_id:appId,code:code,access_key_id:accessKeyId,access_key_secret:accessKeySecret,room_id:roomId,rtmp_url:rtmpUrl,dashscope_api_key:dashscopeKey},"引擎已启动")} className="px-3 py-1.5 rounded-lg text-[10px] font-medium bg-sakura-500 text-white hover:bg-sakura-600">启动引擎</button>
           ) : (
             <button onClick={()=>act("/api/live/stop",{},"已停止")} className="px-3 py-1.5 rounded-lg text-[10px] font-medium bg-red-500 text-white hover:bg-red-600">停止引擎</button>
           )}
@@ -2095,6 +2096,10 @@ function LivePage() {
               <div>
                 <label className="block text-[10px] text-sakura-500 font-medium mb-1">主播身份码</label>
                 <input value={code} onChange={e=>setCode(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white" placeholder="从直播中心获取" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-sakura-500 font-medium mb-1">百炼 API Key（TTS 语音用）</label>
+                <input value={dashscopeKey} onChange={e=>setDashscopeKey(e.target.value)} type="password" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="选填，不填则用 Edge-TTS" />
               </div>
               <div>
                 <label className="block text-[10px] text-sakura-500 font-medium mb-1">直播间 ID（可选）</label>

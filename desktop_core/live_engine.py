@@ -52,6 +52,7 @@ class LiveEngine:
         self._code = ""
         self._rtmp_url = ""
         self._game_id = ""
+        self._dashscope_api_key = ""
         self._bili_config_saved = False
 
         # B站连接
@@ -121,6 +122,7 @@ class LiveEngine:
                 self._code = cfg.get("code", "")
                 self._room_id = cfg.get("room_id", "")
                 self._rtmp_url = cfg.get("rtmp_url", "")
+                self._dashscope_api_key = cfg.get("dashscope_api_key", "")
                 self._bili_config_saved = bool(self._access_key_id and self._access_key_secret)
         except: pass
 
@@ -139,6 +141,7 @@ class LiveEngine:
                 "room_id": kwargs.get("room_id", self._room_id),
                 "code": _real(kwargs.get("code"), self._code),
                 "rtmp_url": kwargs.get("rtmp_url", self._rtmp_url),
+                "dashscope_api_key": _real(kwargs.get("dashscope_api_key"), self._dashscope_api_key),
             }
             from desktop_core.storage import meta_set
             meta_set("live_config", json.dumps(cfg))
@@ -147,6 +150,7 @@ class LiveEngine:
             self._app_id = cfg["app_id"]
             self._room_id = cfg["room_id"]
             self._rtmp_url = cfg["rtmp_url"]
+            self._dashscope_api_key = cfg["dashscope_api_key"]
             self._bili_config_saved = bool(self._access_key_id and self._access_key_secret)
             log.info("[直播] 配置已保存")
             return True
@@ -695,7 +699,7 @@ class LiveEngine:
             # 尝试 CosyVoice (百炼)
             from aiohttp import ClientSession
             cosy_api = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2audio/cosyvoice"
-            headers = {"Authorization": f"Bearer {os.environ.get('DASHSCOPE_API_KEY', '')}",
+            headers = {"Authorization": f"Bearer {self._dashscope_api_key or os.environ.get('DASHSCOPE_API_KEY', '')}",
                        "Content-Type": "application/json"}
             body = {"model": "cosyvoice-v3-flash", "input": {"text": text[:300]},
                     "parameters": {"voice": os.environ.get("COSYVOICE_VOICE", "longfeifei_v3")}}

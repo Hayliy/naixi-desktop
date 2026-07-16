@@ -3038,6 +3038,8 @@ async def api_live_start(request):
         engine._code = body["code"]
     if body.get("room_id"): engine._room_id = body["room_id"]
     if body.get("rtmp_url"): engine._rtmp_url = body["rtmp_url"]
+    if body.get("dashscope_api_key") and "****" not in str(body.get("dashscope_api_key","")):
+        engine._dashscope_api_key = body["dashscope_api_key"]
     engine.save_config()
     ok = await engine.start()
     return web.json_response({"ok": ok, "status": engine.status})
@@ -3078,6 +3080,7 @@ async def api_live_config(request):
             "code": engine._code,
             "room_id": engine._room_id,
             "rtmp_url": engine._rtmp_url,
+            "dashscope_api_key": engine._dashscope_api_key[:4]+"****" if engine._dashscope_api_key else "",
         })
     body = await request.json()
     ok = engine.save_config(**body)
