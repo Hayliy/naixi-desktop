@@ -998,7 +998,7 @@ class LiveEngine:
         tts = self._resolve_tts_config()
         if not tts["api_key"]:
             return None
-        is_dashscope = "dashscope" in tts["api_url"] or ("aliyuncs" in tts["api_url"] and "compatible-mode" not in tts["api_url"])
+        is_dashscope = "dashscope" in tts["api_url"] or "aliyuncs" in tts["api_url"]
         try:
             if is_dashscope:
                 # 百炼 WebSocket 流式合成（返回完整音频字节，无临时文件）
@@ -1032,7 +1032,7 @@ class LiveEngine:
         tts = self._resolve_tts_config()
         if not tts["api_key"]:
             return "未配置 API Key"
-        is_dashscope = "dashscope" in tts["api_url"] or ("aliyuncs" in tts["api_url"] and "compatible-mode" not in tts["api_url"])
+        is_dashscope = "dashscope" in tts["api_url"] or "aliyuncs" in tts["api_url"]
         try:
             from aiohttp import ClientSession
             headers = {"Authorization": f"Bearer {tts['api_key']}", "Content-Type": "application/json"}
