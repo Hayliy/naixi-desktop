@@ -96,6 +96,10 @@ class LiveEngine:
         # 场景历史（全部保留，过长时压缩）
         self._scene_history: list[dict] = []
         self._live_prompt: str = DEFAULT_LIVE_PROMPT
+        # 高并发防护
+        self._last_process_time: float = 0.0      # 上次处理弹幕时间
+        self._process_interval: float = 2.0        # 最小处理间隔（秒）
+        self._danmaku_batch: list[dict] = []       # 批量缓冲
         # LLM 聊天配置缓存
         self._chat_cfg: dict = {}
         self._chat_cfg_ts: float = 0
@@ -825,33 +829,79 @@ class LiveEngine:
     # ═══════════════════════════════════════════════════════════════════════
 
     async def _agent_scene(self):
-        """场景 Agent — 弹幕/礼物/进入 → LLM 决策 → 回复"""
+        """场景 Agent — 弹幕/礼物/进入 → LLM → 回复（含高并发削峰）"""
         while self._running:
             try:
-                msg = await asyncio.wait_for(self._danmaku_queue.get(), timeout=2)
+                msg = await asyncio.wait_for(self._danmaku_queue.get(), timeout=QUEUE_TIMEOUT)
             except asyncio.TimeoutError:
+                # 超时：处理积压的批量缓冲
+                if self._danmaku_batch:
+                    await self._process_batch()
                 continue
 
             msg_type = msg.get("type", "")
-            user = msg.get("user", "")
-            text = msg.get("text", "")
 
-            # 礼物/上舰 → 立即感谢
-            if msg_type in ("gift", "guard"):
-                reply = f"感谢{user}的{'礼物' if msg_type=='gift' else '大航海'}！"
+            # 高优：礼物/上舰/SC → 立即处理，不排队
+            if msg_type in ("gift", "guard", "super_chat", "enter"):
+                if msg_type in ("gift", "guard"):
+                    reply = f"感谢{msg['user']}的{'礼物' if msg_type=='gift' else '大航海'}！"
+                elif msg_type == "super_chat":
+                    reply = f"感谢{msg['user']}的醒目留言！"
+                else:
+                    reply = f"欢迎{msg['user']}进入直播间～"
                 await self._scene_queue.put({"type": "speak", "text": reply, "emotion": "开心"})
                 continue
 
-            # 进入直播间 → 欢迎
-            if msg_type == "enter":
-                await self._scene_queue.put({"type": "speak", "text": f"欢迎{user}进入直播间～", "emotion": "开心"})
+            # 弹幕：削峰 + 批量
+            if msg_type != "danmaku" or not msg.get("text"):
                 continue
 
-            # 弹幕 → 规则+LLM
-            if msg_type == "danmaku" and text:
-                reply = await self._decide_reply(text, user)
-                if reply:
-                    await self._scene_queue.put({"type": "speak", "text": reply, "emotion": "开心"})
+            now = time.time()
+            batch_window = 1.0  # 1 秒内的弹幕合并处理
+
+            # 如果距离上次处理不足间隔，加入批量缓冲
+            if now - self._last_process_time < self._process_interval:
+                self._danmaku_batch.append(msg)
+                if len(self._danmaku_batch) > 20:  # 缓冲上限，太多就丢最早的
+                    self._danmaku_batch.pop(0)
+                continue
+
+            # 到了处理窗口：合并缓冲+当前弹幕
+            batch = list(self._danmaku_batch)
+            batch.append(msg)
+            self._danmaku_batch.clear()
+            self._last_process_time = now
+
+            # 采样：弹幕太多时只取前 N 条 + 统计
+            if len(batch) > 5:
+                # 统计高频词
+                from collections import Counter
+                words = []
+                for b in batch:
+                    words.extend(b.get("text", "")[:20])
+                top_words = Counter(words).most_common(3)
+                # 取前 3 条代表性的 + 统计数据
+                samples = batch[:3]
+                summary = f"（共{len(batch)}条弹幕，高频词:{' '.join(w for w,_ in top_words)}）"
+                prompt = summary + "\n".join(f"[弹幕] {b['user']}: {b['text'][:60]}" for b in samples)
+            else:
+                prompt = "\n".join(f"[弹幕] {b['user']}: {b['text'][:60]}" for b in batch)
+
+            reply = await self._decide_reply(prompt, "")
+            if reply:
+                await self._scene_queue.put({"type": "speak", "text": reply, "emotion": "开心"})
+
+    async def _process_batch(self):
+        """处理积压的批量缓冲"""
+        batch = list(self._danmaku_batch)
+        self._danmaku_batch.clear()
+        if not batch:
+            return
+        samples = batch[:3]
+        prompt = f"（共{len(batch)}条弹幕）\n" + "\n".join(f"[弹幕] {b['user']}: {b['text'][:60]}" for b in samples)
+        reply = await self._decide_reply(prompt, "")
+        if reply:
+            await self._scene_queue.put({"type": "speak", "text": reply, "emotion": "开心"})
 
     # ── 音频设备管理（sounddevice + VB-Cable） ──────────────────────────
 
