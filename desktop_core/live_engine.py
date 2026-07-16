@@ -885,24 +885,36 @@ class LiveEngine:
         return out_id, in_id
 
     def play_audio(self, audio_bytes: bytes, sample_rate: int = 24000):
-        """播放音频 bytes 到输出设备（非阻塞）"""
+        """播放音频 bytes 到输出设备（非阻塞，排队不重叠）"""
         if not self._sd_available or not audio_bytes:
             return
         try:
             import sounddevice as sd
             import numpy as np
-            import threading
+            import threading, io
+
+            # 检测格式：WAV 有 RIFF 头，否则当原始 PCM
+            if audio_bytes[:4] == b'RIFF':
+                import wave
+                with io.BytesIO(audio_bytes) as buf:
+                    with wave.open(buf, 'rb') as wf:
+                        frames = wf.readframes(wf.getnframes())
+                        data = np.frombuffer(frames, dtype=np.int16)
+                        rate = wf.getframerate()
+            else:
+                # MP3 或裸 PCM：直接作为 int16 播放
+                data = np.frombuffer(audio_bytes, dtype=np.int16)
+                rate = sample_rate
+
             out_id, _ = self._get_audio_devices()
-            # 将 WAV bytes 转为 numpy array
-            import io
-            import wave
-            with io.BytesIO(audio_bytes) as buf:
-                with wave.open(buf, 'rb') as wf:
-                    frames = wf.readframes(wf.getnframes())
-                    data = np.frombuffer(frames, dtype=np.int16)
-                    rate = wf.getframerate()
-            # 非阻塞播放
-            threading.Thread(target=sd.play, args=(data, rate), kwargs={'device': out_id}, daemon=True).start()
+            # 等待上一段播完再播新的（避免重叠）
+            if hasattr(self, '_play_thread') and self._play_thread and self._play_thread.is_alive():
+                self._play_thread.join(timeout=3)
+            self._play_thread = threading.Thread(
+                target=lambda: (sd.wait(), sd.play(data, rate, device=out_id), sd.wait()),
+                daemon=True
+            )
+            self._play_thread.start()
         except:
             pass
 
@@ -911,7 +923,7 @@ class LiveEngine:
     # ═══════════════════════════════════════════════════════════════════════
 
     async def _agent_tts(self):
-        """TTS Agent — 文本 → 语音合成 → 播放到音频设备"""
+        """TTS Agent — 文本 → 语音合成 → 播放 + 推流"""
         while self._running:
             try:
                 action = await asyncio.wait_for(self._scene_queue.get(), timeout=QUEUE_TIMEOUT)
@@ -929,7 +941,17 @@ class LiveEngine:
             if audio_bytes:
                 # 播放到音频设备（VB-Cable / 默认输出）
                 self.play_audio(audio_bytes)
-                await self._tts_queue.put({"type": "audio", "path": "", "text": text, "emotion": action.get("emotion", "开心")})
+                # 保存临时文件供推流使用（ffmpeg 需要文件路径）
+                tmp = os.path.join(tempfile.gettempdir(), f"live_push_{int(time.time()*1000)}.wav")
+                try:
+                    with open(tmp, "wb") as f:
+                        f.write(audio_bytes)
+                except:
+                    tmp = ""
+                await self._tts_queue.put({
+                    "type": "audio", "audio_path": tmp, "text": text,
+                    "emotion": action.get("emotion", "开心")
+                })
 
     def _resolve_tts_config(self) -> dict:
         """解析 TTS 配置（api_key/api_url/model），优先对话页audio供应商"""
@@ -1079,9 +1101,13 @@ class LiveEngine:
                 continue
 
             text = meta.get("text", "")
+            audio_path = meta.get("audio_path", "")
             log.info(f"[推流] 推送语音 ({len(text)}字): {text[:30]}...")
-            if self._rtmp_url:
-                    await self._composite_and_push(audio_path, text)
+            if self._rtmp_url and audio_path and os.path.exists(audio_path):
+                await self._composite_and_push(audio_path, text)
+                # 用完删除临时文件
+                try: os.remove(audio_path)
+                except: pass
 
     async def _composite_and_push(self, audio_path: str, text: str):
         """合成音视频并推流"""
