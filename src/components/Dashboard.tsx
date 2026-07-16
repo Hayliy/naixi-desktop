@@ -2112,7 +2112,7 @@ function LivePage() {
               <div>
                 <details className="text-[10px]">
                   <summary className="text-sakura-500 font-medium cursor-pointer hover:text-sakura-600">直播互动提示词（点击展开编辑）</summary>
-                  <textarea value={livePrompt} onChange={e=>setLivePrompt(e.target.value)} className="w-full mt-2 px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white resize-none font-mono leading-relaxed" rows={8} placeholder="默认提示词会在保存后从后端加载" />
+                  <textarea value={livePrompt} onChange={e=>setLivePrompt(e.target.value)} className="w-full mt-2 px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white resize-none font-mono leading-relaxed" rows={8} placeholder="修改这里的提示词可自定义主播人设..." />
                 </details>
               </div>
               <div className="flex items-center gap-2 pt-2">

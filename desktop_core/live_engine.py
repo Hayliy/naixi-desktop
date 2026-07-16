@@ -142,7 +142,7 @@ class LiveEngine:
                 self._room_id = cfg.get("room_id", "")
                 self._rtmp_url = cfg.get("rtmp_url", "")
                 self._dashscope_api_key = cfg.get("dashscope_api_key", "")
-                self._live_prompt = cfg.get("live_prompt", DEFAULT_LIVE_PROMPT)
+                self._live_prompt = cfg.get("live_prompt") or DEFAULT_LIVE_PROMPT
                 self._bili_config_saved = bool(self._access_key_id and self._access_key_secret)
         except: pass
 
