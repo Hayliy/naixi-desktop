@@ -3,6 +3,9 @@ import json, os, sys, time, logging, asyncio
 from aiohttp import web
 from datetime import datetime
 
+# 项目根目录（兼容直接 import 和通过 sidecar 运行）
+_DESKTOP_DIR = os.environ.get("DESKTOP_DIR") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # 权限确认：等待用户批准的高危工具
 _PENDING_PERMISSIONS: dict[str, dict] = {}
 # 会话级信任：{conv_key: {tool_name, ...}} — 用户勾选"始终允许"后不再对该工具弹出确认
@@ -3130,24 +3133,28 @@ async def api_live2d_stream(request):
     return ws
 
 async def api_live2d_model(request):
-    """代理 Live2D 模型文件（从本地 VTube Studio 目录或 data/models 读取）"""
-    path = request.match_info.get("path", "")
-    if not path:
-        return web.json_response({"error": "no path"}, status=400)
-    # 搜索路径
-    search_dirs = [
-        os.path.join(DESKTOP_DIR, "data", "models"),
+    """代理 Live2D 模型文件（递归搜索本地 VTube Studio / data/models 目录）"""
+    sub_path = request.match_info.get("path", "")
+    if not sub_path or ".." in sub_path:
+        return web.json_response({"error": "invalid path"}, status=400)
+    search_roots = [
+        os.path.join(_DESKTOP_DIR, "data", "models"),
         r"D:\Program Files\Steam\steamapps\common\VTube Studio\VTube Studio_Data\StreamingAssets\Live2DModels",
     ]
-    for base in search_dirs:
-        fp = os.path.join(base, path)
-        if os.path.exists(fp):
-            # 设置正确 Content-Type
-            ext = os.path.splitext(fp)[1].lower()
-            mime = {"png": "image/png", "json": "application/json", "moc3": "application/octet-stream",
-                    "physics3": "application/json", "exp3": "application/json", "cdi3": "application/json"}.get(ext, "application/octet-stream")
-            return web.FileResponse(fp, headers={"Content-Type": mime, "Access-Control-Allow-Origin": "*"})
-    return web.json_response({"error": "not found"}, status=404)
+    # 递归查找文件（处理 model3.json / 纹理 / 物理 / moc3 等）
+    for base in search_roots:
+        if not os.path.exists(base):
+            continue
+        for root, _, files in os.walk(base):
+            if sub_path in files:
+                return _model_response(os.path.join(root, sub_path))
+    return web.json_response({"error": "not found: " + sub_path}, status=404)
+
+def _model_response(fp: str):
+    ext = os.path.splitext(fp)[1].lower()
+    mime = {"png": "image/png", "json": "application/json", "moc3": "application/octet-stream",
+            "physics3": "application/json", "exp3": "application/json", "cdi3": "application/json"}.get(ext, "application/octet-stream")
+    return web.FileResponse(fp, headers={"Content-Type": mime, "Access-Control-Allow-Origin": "*"})
 
 # ── MCP 管理 API ──
 

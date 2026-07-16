@@ -37,7 +37,7 @@ export default function PetWindow() {
       appRef.current = app;
 
       // 3. 加载模型（从 VTube Studio 目录读取）
-      const modelPath = "/api/live2d-model/model3.json"; // 后端代理
+      const modelPath = "/api/live2d-model/绒E_正式版.model3.json"; // 后端代理
       const sprite = new Live2DSprite();
       await sprite.init({ modelPath, ticker: app.ticker });
       sprite.width = window.innerWidth * window.devicePixelRatio;
