@@ -2098,8 +2098,8 @@ function LivePage() {
                 <input value={code} onChange={e=>setCode(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white" placeholder="从直播中心获取" />
               </div>
               <div>
-                <label className="block text-[10px] text-sakura-500 font-medium mb-1">百炼 API Key（TTS 语音用）</label>
-                <input value={dashscopeKey} onChange={e=>setDashscopeKey(e.target.value)} type="password" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="选填，不填则用 Edge-TTS" />
+                <label className="block text-[10px] text-sakura-500 font-medium mb-1">语言模型 API Key（TTS 语音用）</label>
+                <input value={dashscopeKey} onChange={e=>setDashscopeKey(e.target.value)} type="password" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="留空则用对话页面的音频供应商或 Edge-TTS" />
               </div>
               <div>
                 <label className="block text-[10px] text-sakura-500 font-medium mb-1">直播间 ID（可选）</label>

@@ -693,25 +693,48 @@ class LiveEngine:
                 await self._tts_queue.put({"type": "audio", "path": audio_path, "text": text, "emotion": action.get("emotion", "开心")})
 
     async def _synthesize(self, text: str) -> Optional[str]:
-        """语音合成 — 优先 CosyVoice，降级 Edge-TTS"""
+        """语音合成 — 优先读取对话页面的音频供应商 API Key → 本地配置 → Edge-TTS"""
         tmp = os.path.join(tempfile.gettempdir(), f"live_tts_{int(time.time()*1000)}.mp3")
+
+        # 1. 从对话页面的供应商配置中获取音频模型的 API Key
+        api_key = ""
         try:
-            # 尝试 CosyVoice (百炼)
-            from aiohttp import ClientSession
-            cosy_api = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2audio/cosyvoice"
-            headers = {"Authorization": f"Bearer {self._dashscope_api_key or os.environ.get('DASHSCOPE_API_KEY', '')}",
-                       "Content-Type": "application/json"}
-            body = {"model": "cosyvoice-v3-flash", "input": {"text": text[:300]},
-                    "parameters": {"voice": os.environ.get("COSYVOICE_VOICE", "longfeifei_v3")}}
-            async with ClientSession() as s:
-                async with s.post(cosy_api, json=body, headers=headers, timeout=30) as r:
-                    if r.status == 200:
-                        result = await r.read()
-                        with open(tmp, "wb") as f:
-                            f.write(result)
-                        return tmp
-        except Exception:
+            from desktop_core.storage import meta_get
+            raw = meta_get("desktop_config")
+            if raw:
+                cfg = json.loads(raw)
+                for pid, pcfg in cfg.get("api_providers", {}).items():
+                    if pcfg.get("type", "chat") == "audio":
+                        api_key = pcfg.get("api_key", "")
+                        break
+        except:
             pass
+
+        # 2. 降级到直播模块自身配置
+        if not api_key:
+            api_key = self._dashscope_api_key
+        # 3. 降级到环境变量
+        if not api_key:
+            api_key = os.environ.get("DASHSCOPE_API_KEY", "")
+
+        # 尝试 CosyVoice (百炼)
+        if api_key:
+            try:
+                from aiohttp import ClientSession
+                cosy_api = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2audio/cosyvoice"
+                headers = {"Authorization": f"Bearer {api_key}",
+                           "Content-Type": "application/json"}
+                body = {"model": "cosyvoice-v3-flash", "input": {"text": text[:300]},
+                        "parameters": {"voice": os.environ.get("COSYVOICE_VOICE", "longfeifei_v3")}}
+                async with ClientSession() as s:
+                    async with s.post(cosy_api, json=body, headers=headers, timeout=30) as r:
+                        if r.status == 200:
+                            result = await r.read()
+                            with open(tmp, "wb") as f:
+                                f.write(result)
+                            return tmp
+            except Exception:
+                pass
 
         # 降级 Edge-TTS
         try:
