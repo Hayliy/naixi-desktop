@@ -93,6 +93,11 @@ class LiveEngine:
         self._current_text = ""
         self._current_emotion = "开心"
         self._audio_playlist: list[str] = []
+        # VTube Studio 连接
+        self._vts_ws: Optional[aiohttp.ClientWebSocketResponse] = None
+        self._vts_authenticated: bool = False
+        self._vts_host: str = "127.0.0.1"
+        self._vts_port: int = 8001
         # 场景历史（全部保留，过长时压缩）
         self._scene_history: list[dict] = []
         self._live_prompt: str = DEFAULT_LIVE_PROMPT
@@ -132,6 +137,7 @@ class LiveEngine:
             "uptime": round(elapsed),
             "start_time": self._start_time,
             "last_error": self._last_error,
+            "vts_connected": self._vts_ws is not None and not self._vts_ws.closed,
             "errors": self._agent_errors[-10:],
         }
 
@@ -263,6 +269,9 @@ class LiveEngine:
         await self._start_agent("avatar", self._agent_avatar)
         await self._start_agent("stream", self._agent_stream)
 
+        # 尝试连接 VTube Studio（非阻塞，失败不影响直播）
+        asyncio.create_task(self._vts_connect())
+
         # 先关闭上次残留的 session（防止"同一房间启动数量超过配置上限"）
         await self._close_old_session()
 
@@ -284,6 +293,7 @@ class LiveEngine:
         """停止所有 Agent 和连接，保存统计数据"""
         self._running = False
         await self.disconnect_bilibili()
+        await self._vts_disconnect()
         await self._stop_ffmpeg()
         for aid in list(self._agent_tasks.keys()):
             t = self._agent_tasks.pop(aid, None)
@@ -1005,6 +1015,98 @@ class LiveEngine:
         except:
             pass
 
+    # ── VTube Studio 控制（WebSocket API） ───────────────────────────────
+
+    async def _vts_connect(self):
+        """连接 VTube Studio WebSocket API"""
+        if self._vts_ws and not self._vts_ws.closed:
+            return True
+        try:
+            ws = await aiohttp.ClientSession().ws_connect(f"ws://{self._vts_host}:{self._vts_port}", heartbeat=10)
+            self._vts_ws = ws
+            # 认证
+            auth_req = json.dumps({
+                "apiName": "VTubeStudioPublicAPI", "apiVersion": "1.0",
+                "messageType": "AuthenticationRequest",
+                "data": {"pluginName": "奶昔直播", "pluginDeveloper": "Naixi", "authenticationToken": ""}
+            })
+            await ws.send_str(auth_req)
+            resp = json.loads(await ws.receive_str())
+            if resp.get("data", {}).get("authenticated"):
+                self._vts_authenticated = True
+                log.info("[VTS] 已连接并认证")
+                return True
+            log.info("[VTS] 已连接（未认证，需在 VTS 中点击确认）")
+            return True
+        except Exception as e:
+            log.warning(f"[VTS] 连接失败: {e}")
+            return False
+
+    async def _vts_disconnect(self):
+        """断开 VTube Studio 连接"""
+        if self._vts_ws:
+            try: await self._vts_ws.close()
+            except: pass
+            self._vts_ws = None
+            self._vts_authenticated = False
+
+    async def _vts_send_parameters(self, params: dict):
+        """发送参数到 VTube Studio（如 MouthOpen, FaceAngleX 等）"""
+        if not self._vts_ws or self._vts_ws.closed:
+            return
+        try:
+            req = json.dumps({
+                "apiName": "VTubeStudioPublicAPI", "apiVersion": "1.0",
+                "messageType": "InjectParameterDataRequest",
+                "data": {"parameterValues": [{"id": k, "value": v} for k, v in params.items()]}
+            })
+            await self._vts_ws.send_str(req)
+        except:
+            pass
+
+    def _audio_to_mouth_data(self, audio_bytes: bytes, frame_ms: int = 80) -> list[float]:
+        """分析音频 bytes 生成 MouthOpen 值序列（0.0~1.0）"""
+        import numpy as np, io, wave
+        try:
+            with io.BytesIO(audio_bytes) as buf:
+                with wave.open(buf, 'rb') as wf:
+                    frames = wf.readframes(wf.getnframes())
+                    data = np.frombuffer(frames, dtype=np.int16).astype(np.float32)
+                    rate = wf.getframerate()
+            frame_size = int(rate * frame_ms / 1000)
+            mouth_values = []
+            for i in range(0, len(data), frame_size):
+                chunk = data[i:i + frame_size]
+                if len(chunk) == 0:
+                    break
+                rms = float(np.sqrt(np.mean(chunk ** 2)))
+                # 映射到 0.0~1.0（阈值 500~8000）
+                mouth = min(1.0, max(0.0, (rms - 500) / 8000))
+                mouth_values.append(mouth)
+            return mouth_values if mouth_values else [0.0]
+        except:
+            return [0.0]
+
+    async def _vts_speak(self, audio_bytes: bytes, text: str = ""):
+        """TTS 音频播放 + VTube Studio 口型同步"""
+        if not self._sd_available and not self._vts_ws:
+            return
+        # 生成口型数据
+        mouth_data = self._audio_to_mouth_data(audio_bytes)
+        if not mouth_data:
+            return
+        # 启动播放（非阻塞）
+        self.play_audio(audio_bytes)
+        # 逐帧发送口型参数到 VTS
+        frame_interval = 0.08  # 80ms 一帧
+        for mouth in mouth_data:
+            if not self._running:
+                break
+            await self._vts_send_parameters({"MouthOpen": mouth})
+            await asyncio.sleep(frame_interval)
+        # 闭嘴
+        await self._vts_send_parameters({"MouthOpen": 0.0})
+
     # ═══════════════════════════════════════════════════════════════════════
     # Agent: TTS 语音合成
     # ═══════════════════════════════════════════════════════════════════════
@@ -1026,8 +1128,8 @@ class LiveEngine:
 
             audio_bytes = await self._synthesize(text)
             if audio_bytes:
-                # 播放到音频设备（VB-Cable / 默认输出）
-                self.play_audio(audio_bytes)
+                # VTube Studio 口型同步播放（含音频输出）
+                await self._vts_speak(audio_bytes, text)
                 # 保存临时文件供推流使用（ffmpeg 需要文件路径）
                 tmp = os.path.join(tempfile.gettempdir(), f"live_push_{int(time.time()*1000)}.wav")
                 try:
