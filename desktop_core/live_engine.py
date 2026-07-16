@@ -501,8 +501,44 @@ class LiveEngine:
                 uname = d.get("uname", "") or data.get("data", {}).get("uname", "")
                 if uname:
                     await self._danmaku_queue.put({"type": "like", "user": uname, "text": f"{uname}点了赞", "time": time.time()})
-        except:
-            pass
+
+            # 新增事件处理
+            elif cmd in ("LIVE_OPEN_PLATFORM_SUPER_CHAT", "SUPER_CHAT"):
+                # 醒目留言/SC
+                d = data.get("data", data)
+                uname = d.get("uname", "") or d.get("user", {}).get("uname", "")
+                msg = d.get("message", "") or d.get("msg", "")
+                rmb = d.get("rmb", 0) or d.get("price", 0)
+                if uname:
+                    txt = f"SC({rmb}元) {uname}: {msg}"
+                    self._cache_danmaku(uname, f"[SC]{msg}")
+                    await self._danmaku_queue.put({"type": "super_chat", "user": uname, "text": txt, "rmb": rmb, "time": time.time()})
+
+            elif cmd == "LIVE_OPEN_PLATFORM_SUPER_CHAT_DEL":
+                # SC 被删除
+                log.info(f"[直播] SC 被删除: {data.get('data', {}).get('messageIds', '')}")
+
+            elif cmd in ("LIVE_OPEN_PLATFORM_LIVE",):
+                # 开播通知
+                d = data.get("data", {})
+                log.info(f"[直播] 直播已开始: room={d.get('roomId','')} title={d.get('title','')}")
+
+            elif cmd in ("LIVE_OPEN_PLATFORM_LIVE_OFF",):
+                # 下播通知
+                d = data.get("data", {})
+                log.info(f"[直播] 直播已结束: room={d.get('roomId','')}")
+
+            elif cmd in ("LIVE_OPEN_PLATFORM_GAME_START",):
+                # 场次开始
+                d = data.get("data", {})
+                log.info(f"[直播] 场次开始: game={d.get('gameId','')}")
+
+            elif cmd in ("LIVE_OPEN_PLATFORM_GAME_END", "LIVE_OPEN_PLATFORM_INTERACTION_END"):
+                # 场次结束 / 交互结束
+                log.info(f"[直播] 场次/交互结束")
+
+        except Exception as e:
+            log.warning(f"[直播] 消息解析异常: {e}")
 
     async def _on_bili_binary(self, raw: bytes):
         """处理 B站 WS 二进制包"""
