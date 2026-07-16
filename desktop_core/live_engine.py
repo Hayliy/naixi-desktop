@@ -885,29 +885,38 @@ class LiveEngine:
         return out_id, in_id
 
     def play_audio(self, audio_bytes: bytes, sample_rate: int = 24000):
-        """播放音频 bytes 到输出设备（非阻塞，排队不重叠）"""
+        """播放音频 bytes 到输出设备（用 ffmpeg 统一转 WAV）"""
         if not self._sd_available or not audio_bytes:
             return
         try:
             import sounddevice as sd
             import numpy as np
-            import threading, io
+            import threading, io, wave, subprocess, tempfile, os
 
-            # 检测格式：WAV 有 RIFF 头，否则当原始 PCM
-            if audio_bytes[:4] == b'RIFF':
-                import wave
-                with io.BytesIO(audio_bytes) as buf:
-                    with wave.open(buf, 'rb') as wf:
-                        frames = wf.readframes(wf.getnframes())
-                        data = np.frombuffer(frames, dtype=np.int16)
-                        rate = wf.getframerate()
-            else:
-                # MP3 或裸 PCM：直接作为 int16 播放
-                data = np.frombuffer(audio_bytes, dtype=np.int16)
-                rate = sample_rate
+            # 写临时文件，用 ffmpeg 转成标准 WAV（支持任何输入格式）
+            tmp_in = os.path.join(tempfile.gettempdir(), f"play_in_{int(time.time()*1000)}")
+            tmp_out = os.path.join(tempfile.gettempdir(), f"play_out_{int(time.time()*1000)}.wav")
+            with open(tmp_in, "wb") as f:
+                f.write(audio_bytes)
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", tmp_in, "-ar", "24000", "-ac", "1",
+                 "-sample_fmt", "s16", "-f", "wav", tmp_out],
+                capture_output=True, timeout=10
+            )
+            try: os.remove(tmp_in)
+            except: pass
+
+            if not os.path.exists(tmp_out):
+                return
+
+            with wave.open(tmp_out, 'rb') as wf:
+                frames = wf.readframes(wf.getnframes())
+                data = np.frombuffer(frames, dtype=np.int16)
+                rate = wf.getframerate()
+            try: os.remove(tmp_out)
+            except: pass
 
             out_id, _ = self._get_audio_devices()
-            # 等待上一段播完再播新的（避免重叠）
             if hasattr(self, '_play_thread') and self._play_thread and self._play_thread.is_alive():
                 self._play_thread.join(timeout=3)
             self._play_thread = threading.Thread(
