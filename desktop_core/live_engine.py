@@ -598,13 +598,12 @@ class LiveEngine:
         """构建 B站 WS 二进制协议包（官方文档: 大端对齐）
         ver=0 原始数据, ver=2 zlib压缩"""
         import struct
-        import struct
         header_len = 16
         total_len = header_len + len(body)
         return struct.pack(">IHHII", total_len, header_len, ver, op, 1) + body
 
     async def _ws_read_loop(self, ws):
-        """WS 消息读取循环（后台任务）"""
+        """WS 消息读取循环（后台任务），断开后自动重连"""
         try:
             async for msg in ws:
                 if msg.type == WSMsgType.TEXT:
@@ -620,6 +619,24 @@ class LiveEngine:
         finally:
             self._connected = False
             log.info("[直播] WS 连接已断开")
+            # 自动重连（引擎仍在运行）
+            if self._running:
+                log.info("[直播] 尝试自动重连...")
+                asyncio.create_task(self._auto_reconnect())
+
+    async def _auto_reconnect(self):
+        """自动重连 B站，最多 3 次"""
+        for i in range(3):
+            await asyncio.sleep(5 * (i + 1))
+            if not self._running or self._connected:
+                return
+            log.info(f"[直播] 重连第 {i+1} 次...")
+            self._load_config()
+            ok = await self.connect_bilibili()
+            if ok:
+                log.info("[直播] 重连成功")
+                return
+        log.warning("[直播] 自动重连失败")
 
     async def disconnect_bilibili(self):
         """断开 B站 连接"""
@@ -667,9 +684,20 @@ class LiveEngine:
         log.info("[直播] 已断开 B站 连接")
 
     async def _heartbeat_loop(self):
-        """B站 心跳（每 20s 调 /v2/app/heartbeat）"""
+        """B站 心跳：HTTP 项目心跳(20s) + WS 协议心跳(30s)"""
+        ws_hb_count = 0
         while self._running and self._game_id:
             await asyncio.sleep(20)
+
+            # WS 协议心跳（op=2，每 30s 一次，但配合 20s 周期每 2 次发一次）
+            ws_hb_count += 1
+            if ws_hb_count % 2 == 1 and self._ws and not self._ws.closed:
+                try:
+                    await self._ws.send_bytes(self._build_ws_packet(2, b"", 0))
+                except:
+                    pass
+
+            # HTTP 项目心跳（保持 game 存活）
             try:
                 import aiohttp
                 from uuid import uuid4
