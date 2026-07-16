@@ -127,21 +127,32 @@ class LiveEngine:
         except: pass
 
     def save_config(self, **kwargs) -> bool:
-        """保存直播配置到 SQLite"""
+        """保存直播配置到 SQLite（自动合并旧配置，防止部分更新覆盖）"""
         try:
+            # 先从 DB 加载已有配置作为基础
+            base = {}
+            try:
+                from desktop_core.storage import meta_get
+                raw = meta_get("live_config")
+                if raw:
+                    base = json.loads(raw)
+            except:
+                pass
+
             # 防止前端把遮罩后的密钥传回来覆盖真实密钥
             def _real(v, cur):
                 if v is None or (isinstance(v, str) and "****" in v):
                     return cur
                 return v
+
             cfg = {
-                "access_key_id": _real(kwargs.get("access_key_id"), self._access_key_id),
-                "access_key_secret": _real(kwargs.get("access_key_secret"), self._access_key_secret),
-                "app_id": _real(kwargs.get("app_id"), self._app_id),
-                "room_id": kwargs.get("room_id", self._room_id),
-                "code": _real(kwargs.get("code"), self._code),
-                "rtmp_url": kwargs.get("rtmp_url", self._rtmp_url),
-                "dashscope_api_key": _real(kwargs.get("dashscope_api_key"), self._dashscope_api_key),
+                "access_key_id": _real(kwargs.get("access_key_id"), base.get("access_key_id", self._access_key_id)),
+                "access_key_secret": _real(kwargs.get("access_key_secret"), base.get("access_key_secret", self._access_key_secret)),
+                "app_id": _real(kwargs.get("app_id"), base.get("app_id", self._app_id)),
+                "room_id": kwargs.get("room_id", base.get("room_id", self._room_id)),
+                "code": _real(kwargs.get("code"), base.get("code", self._code)),
+                "rtmp_url": kwargs.get("rtmp_url", base.get("rtmp_url", self._rtmp_url)),
+                "dashscope_api_key": _real(kwargs.get("dashscope_api_key"), base.get("dashscope_api_key", self._dashscope_api_key)),
             }
             from desktop_core.storage import meta_set
             meta_set("live_config", json.dumps(cfg))
@@ -863,3 +874,4 @@ class LiveEngine:
 
 # 全局单例
 engine = LiveEngine()
+engine._load_config()  # 启动时从数据库加载配置

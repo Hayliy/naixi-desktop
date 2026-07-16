@@ -3072,6 +3072,7 @@ async def api_live_stop_stream(request):
 async def api_live_config(request):
     """获取/保存直播配置"""
     from desktop_core.live_engine import engine
+    engine._load_config()
     if request.method == "GET":
         return web.json_response({
             "access_key_id": engine._access_key_id,
