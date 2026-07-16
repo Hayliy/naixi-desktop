@@ -703,11 +703,8 @@ class LiveEngine:
                 self._audio_playlist.append(audio_path)
                 await self._tts_queue.put({"type": "audio", "path": audio_path, "text": text, "emotion": action.get("emotion", "开心")})
 
-    async def _synthesize(self, text: str) -> Optional[str]:
-        """语音合成 — 优先读取对话页面的音频供应商 API Key → 本地配置 → Edge-TTS"""
-        tmp = os.path.join(tempfile.gettempdir(), f"live_tts_{int(time.time()*1000)}.mp3")
-
-        # 1. 从对话页面的供应商配置中获取音频模型的 API Key
+    def _resolve_tts_api_key(self) -> str:
+        """解析 TTS API Key：对话页audio供应商 → 直播页配置 → 环境变量"""
         api_key = ""
         try:
             from desktop_core.storage import meta_get
@@ -720,13 +717,37 @@ class LiveEngine:
                         break
         except:
             pass
-
-        # 2. 降级到直播模块自身配置
         if not api_key:
             api_key = self._dashscope_api_key
-        # 3. 降级到环境变量
         if not api_key:
             api_key = os.environ.get("DASHSCOPE_API_KEY", "")
+        return api_key
+
+    async def test_tts(self) -> str:
+        """测试 TTS API Key 是否可用，返回空字符串=成功，否则返回错误信息"""
+        api_key = self._resolve_tts_api_key()
+        if not api_key:
+            return "未配置 API Key"
+        try:
+            from aiohttp import ClientSession
+            cosy_api = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2audio/cosyvoice"
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            body = {"model": "cosyvoice-v3-flash", "input": {"text": "测试"},
+                    "parameters": {"voice": os.environ.get("COSYVOICE_VOICE", "longfeifei_v3")}}
+            async with ClientSession() as s:
+                async with s.post(cosy_api, json=body, headers=headers, timeout=10) as r:
+                    if r.status == 200:
+                        return ""
+                    txt = (await r.text())[:100]
+                    return f"API 返回 {r.status}: {txt}"
+        except Exception as e:
+            return f"请求失败: {e}"
+
+    async def _synthesize(self, text: str) -> Optional[str]:
+        """语音合成 — 优先读取对话页面的音频供应商 API Key → 本地配置 → Edge-TTS"""
+        tmp = os.path.join(tempfile.gettempdir(), f"live_tts_{int(time.time()*1000)}.mp3")
+
+        api_key = self._resolve_tts_api_key()
 
         # 尝试 CosyVoice (百炼)
         if api_key:

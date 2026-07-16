@@ -2099,7 +2099,10 @@ function LivePage() {
               </div>
               <div>
                 <label className="block text-[10px] text-sakura-500 font-medium mb-1">语言模型 API Key（TTS 语音用）</label>
-                <input value={dashscopeKey} onChange={e=>setDashscopeKey(e.target.value)} type="password" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="留空则用对话页面的音频供应商或 Edge-TTS" />
+                <div className="flex gap-1.5">
+                  <input value={dashscopeKey} onChange={e=>setDashscopeKey(e.target.value)} type="password" className="flex-1 px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="留空则用对话页面的音频供应商或 Edge-TTS" />
+                  <button onClick={async ()=>{ try { const r = await apiPost('/api/live/test-tts',{}); notify(r.ok?'TTS 连接成功':'TTS 失败: '+r.error, r.ok?'success':'error'); } catch { notify('请求失败','error'); }}} disabled={!dashscopeKey} className="px-3 py-2 rounded-lg text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-40 transition-colors shrink-0">测试</button>
+                </div>
               </div>
               <div>
                 <label className="block text-[10px] text-sakura-500 font-medium mb-1">直播间 ID（可选）</label>

@@ -2919,6 +2919,7 @@ def setup_routes(app):
     app.router.add_get("/api/live/danmaku", api_live_danmaku)
     app.router.add_post("/api/live/connect", api_live_connect)
     app.router.add_post("/api/live/disconnect", api_live_disconnect)
+    app.router.add_post("/api/live/test-tts", api_live_test_tts)
     app.router.add_post("/api/live/start-stream", api_live_start_stream)
     app.router.add_post("/api/live/stop-stream", api_live_stop_stream)
     app.router.add_route("GET", "/api/live/config", api_live_config)
@@ -3054,6 +3055,13 @@ async def api_live_danmaku(request):
     """获取弹幕列表"""
     from desktop_core.live_engine import engine
     return web.json_response({"danmaku": engine.danmaku_list})
+
+async def api_live_test_tts(request):
+    """测试 TTS API Key 是否可用"""
+    from desktop_core.live_engine import engine
+    engine._load_config()
+    err = await engine.test_tts()
+    return web.json_response({"ok": not err, "error": err or ""})
 
 async def api_live_start_stream(request):
     """启动 RTMP 推流"""
