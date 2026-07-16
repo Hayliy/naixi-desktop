@@ -2925,6 +2925,7 @@ def setup_routes(app):
     app.router.add_route("GET", "/api/live/config", api_live_config)
     app.router.add_route("POST", "/api/live/config", api_live_config)
     app.router.add_post("/api/live/save-config", api_live_save_config)
+    app.router.add_get("/api/live/audio-devices", api_live_audio_devices)
 
     # 启动时连接 MCP 服务器
     app.on_startup.append(_on_startup_mcp)
@@ -3091,6 +3092,8 @@ async def api_live_config(request):
             "rtmp_url": engine._rtmp_url,
             "dashscope_api_key": engine._dashscope_api_key[:4]+"****" if engine._dashscope_api_key else "",
             "live_prompt": engine._live_prompt,
+            "audio_out_device": engine._audio_out_device,
+            "audio_in_device": engine._audio_in_device,
         })
     body = await request.json()
     ok = engine.save_config(**body)
@@ -3102,6 +3105,11 @@ async def api_live_save_config(request):
     body = await request.json()
     ok = engine.save_config(**body)
     return web.json_response({"ok": ok})
+
+async def api_live_audio_devices(request):
+    """列出系统音频设备"""
+    from desktop_core.live_engine import engine
+    return web.json_response(engine.list_audio_devices())
 
 # ── MCP 管理 API ──
 

@@ -99,6 +99,15 @@ class LiveEngine:
         # LLM 聊天配置缓存
         self._chat_cfg: dict = {}
         self._chat_cfg_ts: float = 0
+        # 音频设备
+        self._audio_out_device: str = ""  # 输出设备名称（VB-Cable 或默认）
+        self._audio_in_device: str = ""   # 输入设备名称
+        self._sd_available: bool = False
+        try:
+            import sounddevice
+            self._sd_available = True
+        except:
+            pass
 
     # ── 状态快照 ──────────────────────────────────────────────────────────
 
@@ -143,6 +152,8 @@ class LiveEngine:
                 self._rtmp_url = cfg.get("rtmp_url", "")
                 self._dashscope_api_key = cfg.get("dashscope_api_key", "")
                 self._live_prompt = cfg.get("live_prompt") or DEFAULT_LIVE_PROMPT
+                self._audio_out_device = cfg.get("audio_out_device", "")
+                self._audio_in_device = cfg.get("audio_in_device", "")
                 self._bili_config_saved = bool(self._access_key_id and self._access_key_secret)
         except: pass
 
@@ -174,6 +185,8 @@ class LiveEngine:
                 "rtmp_url": kwargs.get("rtmp_url", base.get("rtmp_url", self._rtmp_url)),
                 "dashscope_api_key": _real(kwargs.get("dashscope_api_key"), base.get("dashscope_api_key", self._dashscope_api_key)),
                 "live_prompt": kwargs.get("live_prompt", base.get("live_prompt", self._live_prompt)),
+                "audio_out_device": kwargs.get("audio_out_device", base.get("audio_out_device", self._audio_out_device)),
+                "audio_in_device": kwargs.get("audio_in_device", base.get("audio_in_device", self._audio_in_device)),
             }
             from desktop_core.storage import meta_set
             meta_set("live_config", json.dumps(cfg))
@@ -184,6 +197,8 @@ class LiveEngine:
             self._rtmp_url = cfg["rtmp_url"]
             self._dashscope_api_key = cfg["dashscope_api_key"]
             self._live_prompt = cfg["live_prompt"]
+            self._audio_out_device = cfg.get("audio_out_device", "")
+            self._audio_in_device = cfg.get("audio_in_device", "")
             self._bili_config_saved = bool(self._access_key_id and self._access_key_secret)
             log.info("[直播] 配置已保存")
             return True
@@ -810,12 +825,93 @@ class LiveEngine:
                 if reply:
                     await self._scene_queue.put({"type": "speak", "text": reply, "emotion": "开心"})
 
+    # ── 音频设备管理（sounddevice + VB-Cable） ──────────────────────────
+
+    def list_audio_devices(self) -> dict:
+        """列出所有音频设备，标记输入/输出/VB-Cable"""
+        result = {"outputs": [], "inputs": [], "vb_cable": None, "available": self._sd_available}
+        if not self._sd_available:
+            return result
+        try:
+            import sounddevice as sd
+            for i, d in enumerate(sd.query_devices()):
+                info = {"index": i, "name": d["name"], "channels": d["max_output_channels"] if d["max_output_channels"] > 0 else d["max_input_channels"]}
+                if "VB" in d["name"] or "Cable" in d["name"]:
+                    result["vb_cable"] = info
+                if d["max_output_channels"] > 0:
+                    result["outputs"].append(info)
+                if d["max_input_channels"] > 0:
+                    result["inputs"].append(info)
+        except:
+            pass
+        return result
+
+    def _get_audio_devices(self) -> tuple:
+        """获取实际使用的输出/输入设备ID，自动检测 VB-Cable"""
+        out_id, in_id = None, None
+        if not self._sd_available:
+            return out_id, in_id
+        try:
+            import sounddevice as sd
+            devices = sd.query_devices()
+            # 输出：优先 VB-Cable，其次默认
+            if self._audio_out_device:
+                for i, d in enumerate(devices):
+                    if self._audio_out_device in d["name"] and d["max_output_channels"] > 0:
+                        out_id = i
+                        break
+            if out_id is None:
+                for i, d in enumerate(devices):
+                    if ("VB" in d["name"] or "Cable" in d["name"]) and d["max_output_channels"] > 0:
+                        out_id = i
+                        break
+            if out_id is None:
+                out_id = sd.default.device[1]  # 系统默认输出
+            # 输入：优先 VB-Cable，其次默认
+            if self._audio_in_device:
+                for i, d in enumerate(devices):
+                    if self._audio_in_device in d["name"] and d["max_input_channels"] > 0:
+                        in_id = i
+                        break
+            if in_id is None:
+                for i, d in enumerate(devices):
+                    if ("VB" in d["name"] or "Cable" in d["name"]) and d["max_input_channels"] > 0:
+                        in_id = i
+                        break
+            if in_id is None:
+                in_id = sd.default.device[0]
+        except:
+            pass
+        return out_id, in_id
+
+    def play_audio(self, audio_bytes: bytes, sample_rate: int = 24000):
+        """播放音频 bytes 到输出设备（非阻塞）"""
+        if not self._sd_available or not audio_bytes:
+            return
+        try:
+            import sounddevice as sd
+            import numpy as np
+            import threading
+            out_id, _ = self._get_audio_devices()
+            # 将 WAV bytes 转为 numpy array
+            import io
+            import wave
+            with io.BytesIO(audio_bytes) as buf:
+                with wave.open(buf, 'rb') as wf:
+                    frames = wf.readframes(wf.getnframes())
+                    data = np.frombuffer(frames, dtype=np.int16)
+                    rate = wf.getframerate()
+            # 非阻塞播放
+            threading.Thread(target=sd.play, args=(data, rate), kwargs={'device': out_id}, daemon=True).start()
+        except:
+            pass
+
     # ═══════════════════════════════════════════════════════════════════════
     # Agent: TTS 语音合成
     # ═══════════════════════════════════════════════════════════════════════
 
     async def _agent_tts(self):
-        """TTS Agent — 文本 → 语音文件"""
+        """TTS Agent — 文本 → 语音合成 → 播放到音频设备"""
         while self._running:
             try:
                 action = await asyncio.wait_for(self._scene_queue.get(), timeout=QUEUE_TIMEOUT)
@@ -829,10 +925,11 @@ class LiveEngine:
             if not text:
                 continue
 
-            audio_path = await self._synthesize(text)
-            if audio_path:
-                self._audio_playlist.append(audio_path)
-                await self._tts_queue.put({"type": "audio", "path": audio_path, "text": text, "emotion": action.get("emotion", "开心")})
+            audio_bytes = await self._synthesize(text)
+            if audio_bytes:
+                # 播放到音频设备（VB-Cable / 默认输出）
+                self.play_audio(audio_bytes)
+                await self._tts_queue.put({"type": "audio", "path": "", "text": text, "emotion": action.get("emotion", "开心")})
 
     def _resolve_tts_config(self) -> dict:
         """解析 TTS 配置（api_key/api_url/model），优先对话页audio供应商"""
@@ -923,26 +1020,23 @@ class LiveEngine:
         except Exception as e:
             return f"请求失败: {e}"
 
-    async def _synthesize(self, text: str) -> Optional[str]:
-        """语音合成 — 对话页audio供应商 → 直播页配置 → Edge-TTS"""
-        tmp = os.path.join(tempfile.gettempdir(), f"live_tts_{int(time.time()*1000)}.mp3")
-
-        # 尝试 CosyVoice
+    async def _synthesize(self, text: str) -> Optional[bytes]:
+        """语音合成 — 对话页audio供应商 → 直播页配置 → Edge-TTS，返回音频 bytes"""
+        # 尝试 CosyVoice（百炼 WebSocket 流式，直接返回 bytes）
         data = await self._cosyvoice_request(text)
         if data:
-            try:
-                with open(tmp, "wb") as f:
-                    f.write(data)
-                return tmp
-            except:
-                pass
-
-        # 降级 Edge-TTS
+            return data
+        # 降级 Edge-TTS（仍需临时文件，返回后清理）
+        tmp = os.path.join(tempfile.gettempdir(), f"live_tts_{int(time.time()*1000)}.mp3")
         try:
             import edge_tts
             communicate = edge_tts.Communicate(text, "zh-CN-XiaoxiaoNeural")
             await communicate.save(tmp)
-            return tmp
+            with open(tmp, "rb") as f:
+                data = f.read()
+            try: os.remove(tmp)
+            except: pass
+            return data
         except Exception:
             return None
 
@@ -967,7 +1061,6 @@ class LiveEngine:
                     "type": "frame_meta",
                     "text": text,
                     "emotion": emotion,
-                    "audio_path": action.get("path", ""),
                 })
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -986,10 +1079,8 @@ class LiveEngine:
                 continue
 
             text = meta.get("text", "")
-            audio_path = meta.get("audio_path", "")
-            if audio_path and os.path.exists(audio_path):
-                log.info(f"[推流] 推送语音 ({len(text)}字): {text[:30]}...")
-                if self._rtmp_url:
+            log.info(f"[推流] 推送语音 ({len(text)}字): {text[:30]}...")
+            if self._rtmp_url:
                     await self._composite_and_push(audio_path, text)
 
     async def _composite_and_push(self, audio_path: str, text: str):
