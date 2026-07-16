@@ -866,35 +866,29 @@ class LiveEngine:
         return cfg
 
     async def _cosyvoice_request(self, text: str, timeout: int = 30) -> Optional[bytes]:
-        """调用 TTS（百炼 CosyVoice / OpenAI 兼容模式），成功返回音频 bytes"""
+        """调用 TTS，返回音频 bytes（内存流式，不存文件）"""
         tts = self._resolve_tts_config()
         if not tts["api_key"]:
             return None
         is_dashscope = "dashscope" in tts["api_url"] or ("aliyuncs" in tts["api_url"] and "compatible-mode" not in tts["api_url"])
         try:
-            from aiohttp import ClientSession
-            headers = {"Authorization": f"Bearer {tts['api_key']}", "Content-Type": "application/json"}
-
             if is_dashscope:
-                url = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"
-                payload = {
-                    "model": tts["model"],
-                    "input": {"text": text, "voice": os.environ.get("COSYVOICE_VOICE", "longfeifei_v3"),
-                              "format": "wav", "sample_rate": 24000},
-                }
-                async with ClientSession() as s:
-                    async with s.post(url, json=payload, headers=headers, timeout=timeout) as r:
-                        if r.status != 200:
-                            return None
-                        result = await r.json()
-                        audio_url = result.get("output", {}).get("audio", {}).get("url", "")
-                        if not audio_url:
-                            return None
-                        async with ClientSession() as dl:
-                            async with dl.get(audio_url, timeout=timeout) as ar:
-                                if ar.status == 200:
-                                    return await ar.read()
+                # 百炼 WebSocket 流式合成（返回完整音频字节，无临时文件）
+                import dashscope
+                from dashscope.audio.tts_v2 import SpeechSynthesizer
+                dashscope.api_key = tts["api_key"]
+                voice = os.environ.get("COSYVOICE_VOICE", "longfeifei_v3")
+                # SpeechSynthesizer 是同步的，放线程池跑
+                def _sync_synth():
+                    synth = SpeechSynthesizer(model=tts["model"], voice=voice)
+                    return synth.call(text)
+                loop = asyncio.get_event_loop()
+                audio = await loop.run_in_executor(None, _sync_synth)
+                return audio if audio else None
             else:
+                # OpenAI 兼容模式：HTTP 直接返回音频字节
+                from aiohttp import ClientSession
+                headers = {"Authorization": f"Bearer {tts['api_key']}", "Content-Type": "application/json"}
                 url = tts["api_url"].rstrip("/") + "/audio/speech"
                 payload = {"model": tts["model"], "input": text, "voice": "alloy", "response_format": "wav"}
                 async with ClientSession() as s:
