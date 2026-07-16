@@ -1979,18 +1979,21 @@ function LivePage() {
   };
 
   const openPetWindow = async () => {
-    try {
-      // Tauri 模式
-      const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-      const pet = new WebviewWindow("pet", { url: "/pet", width: 400, height: 500 });
-      pet.once("tauri://created", () => notify("桌宠已打开", "success"));
-      pet.once("tauri://error", () => notify("桌宠打开失败，请检查 Tauri 配置", "error"));
-    } catch {
-      // 浏览器模式：弹出新窗口
-      const w = window.open("/pet", "naixi_pet", "width=400,height=500,menubar=no,toolbar=no,location=no");
-      if (w) notify("桌宠已打开（浏览器窗口）", "success");
-      else notify("弹窗被拦截，请允许弹窗", "error");
+    // 检测 Tauri 环境
+    const isTauri = typeof window !== "undefined" && "__TAURI__" in window;
+    if (isTauri) {
+      try {
+        const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+        const pet = new WebviewWindow("pet", { url: "/pet", width: 400, height: 500 });
+        pet.once("tauri://created", () => notify("桌宠已打开", "success"));
+        pet.once("tauri://error", () => notify("桌宠窗口创建失败，请重新编译 Tauri", "error"));
+        return;
+      } catch {}
     }
+    // 浏览器兜底
+    const w = window.open("/pet", "naixi_pet", "width=400,height=500,menubar=no,toolbar=no,location=no");
+    if (w) notify("桌宠已打开", "success");
+    else notify("弹窗被拦截，请允许弹窗", "error");
   };
 
   const s = status;
