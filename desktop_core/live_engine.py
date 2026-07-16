@@ -703,39 +703,94 @@ class LiveEngine:
                 self._audio_playlist.append(audio_path)
                 await self._tts_queue.put({"type": "audio", "path": audio_path, "text": text, "emotion": action.get("emotion", "开心")})
 
-    def _resolve_tts_api_key(self) -> str:
-        """解析 TTS API Key：对话页audio供应商 → 直播页配置 → 环境变量"""
-        api_key = ""
+    def _resolve_tts_config(self) -> dict:
+        """解析 TTS 配置（api_key/api_url/model），优先对话页audio供应商"""
+        cfg = {"api_key": "", "api_url": "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2audio/cosyvoice", "model": "cosyvoice-v3-flash"}
         try:
-            from desktop_core.storage import meta_get
+            from desktop_core.storage import meta_get, decrypt_api_key
             raw = meta_get("desktop_config")
             if raw:
-                cfg = json.loads(raw)
-                for pid, pcfg in cfg.get("api_providers", {}).items():
+                dc = json.loads(raw)
+                for pid, pcfg in dc.get("api_providers", {}).items():
                     if pcfg.get("type", "chat") == "audio":
-                        api_key = pcfg.get("api_key", "")
-                        break
+                        raw_key = pcfg.get("api_key", "")
+                        if raw_key.startswith("enc:"):
+                            try:
+                                cfg["api_key"] = decrypt_api_key(raw_key)
+                            except:
+                                cfg["api_key"] = raw_key
+                        else:
+                            cfg["api_key"] = raw_key
+                        if pcfg.get("api_url"):
+                            cfg["api_url"] = pcfg["api_url"]
+                        if pcfg.get("model"):
+                            cfg["model"] = pcfg["model"]
+                        return cfg
         except:
             pass
-        if not api_key:
-            api_key = self._dashscope_api_key
-        if not api_key:
-            api_key = os.environ.get("DASHSCOPE_API_KEY", "")
-        return api_key
+        if not cfg["api_key"]:
+            cfg["api_key"] = self._dashscope_api_key
+        if not cfg["api_key"]:
+            cfg["api_key"] = os.environ.get("DASHSCOPE_API_KEY", "")
+        return cfg
 
-    async def test_tts(self) -> str:
-        """测试 TTS API Key 是否可用，返回空字符串=成功，否则返回错误信息"""
-        api_key = self._resolve_tts_api_key()
-        if not api_key:
-            return "未配置 API Key"
+    async def _cosyvoice_request(self, text: str, timeout: int = 30) -> Optional[bytes]:
+        """调用 TTS（百炼 CosyVoice / OpenAI 兼容模式），成功返回音频 bytes"""
+        tts = self._resolve_tts_config()
+        if not tts["api_key"]:
+            return None
+        is_dashscope = "dashscope" in tts["api_url"] or ("aliyuncs" in tts["api_url"] and "compatible-mode" not in tts["api_url"])
         try:
             from aiohttp import ClientSession
-            cosy_api = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2audio/cosyvoice"
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            body = {"model": "cosyvoice-v3-flash", "input": {"text": "测试"},
-                    "parameters": {"voice": os.environ.get("COSYVOICE_VOICE", "longfeifei_v3")}}
+            headers = {"Authorization": f"Bearer {tts['api_key']}", "Content-Type": "application/json"}
+
+            if is_dashscope:
+                url = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"
+                payload = {
+                    "model": tts["model"],
+                    "input": {"text": text, "voice": os.environ.get("COSYVOICE_VOICE", "longfeifei_v3"),
+                              "format": "wav", "sample_rate": 24000},
+                }
+                async with ClientSession() as s:
+                    async with s.post(url, json=payload, headers=headers, timeout=timeout) as r:
+                        if r.status != 200:
+                            return None
+                        result = await r.json()
+                        audio_url = result.get("output", {}).get("audio", {}).get("url", "")
+                        if not audio_url:
+                            return None
+                        async with ClientSession() as dl:
+                            async with dl.get(audio_url, timeout=timeout) as ar:
+                                if ar.status == 200:
+                                    return await ar.read()
+            else:
+                url = tts["api_url"].rstrip("/") + "/audio/speech"
+                payload = {"model": tts["model"], "input": text, "voice": "alloy", "response_format": "wav"}
+                async with ClientSession() as s:
+                    async with s.post(url, json=payload, headers=headers, timeout=timeout) as r:
+                        if r.status == 200:
+                            return await r.read()
+        except:
+            pass
+        return None
+
+    async def test_tts(self) -> str:
+        """测试 TTS 配置是否可用"""
+        tts = self._resolve_tts_config()
+        if not tts["api_key"]:
+            return "未配置 API Key"
+        is_dashscope = "dashscope" in tts["api_url"] or ("aliyuncs" in tts["api_url"] and "compatible-mode" not in tts["api_url"])
+        try:
+            from aiohttp import ClientSession
+            headers = {"Authorization": f"Bearer {tts['api_key']}", "Content-Type": "application/json"}
+            if is_dashscope:
+                url = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"
+                payload = {"model": tts["model"], "input": {"text": "测试", "voice": "longfeifei_v3", "format": "wav", "sample_rate": 24000}}
+            else:
+                url = tts["api_url"].rstrip("/") + "/audio/speech"
+                payload = {"model": tts["model"], "input": "测试", "voice": "alloy", "response_format": "wav"}
             async with ClientSession() as s:
-                async with s.post(cosy_api, json=body, headers=headers, timeout=10) as r:
+                async with s.post(url, json=payload, headers=headers, timeout=10) as r:
                     if r.status == 200:
                         return ""
                     txt = (await r.text())[:100]
@@ -744,28 +799,17 @@ class LiveEngine:
             return f"请求失败: {e}"
 
     async def _synthesize(self, text: str) -> Optional[str]:
-        """语音合成 — 优先读取对话页面的音频供应商 API Key → 本地配置 → Edge-TTS"""
+        """语音合成 — 对话页audio供应商 → 直播页配置 → Edge-TTS"""
         tmp = os.path.join(tempfile.gettempdir(), f"live_tts_{int(time.time()*1000)}.mp3")
 
-        api_key = self._resolve_tts_api_key()
-
-        # 尝试 CosyVoice (百炼)
-        if api_key:
+        # 尝试 CosyVoice
+        data = await self._cosyvoice_request(text)
+        if data:
             try:
-                from aiohttp import ClientSession
-                cosy_api = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2audio/cosyvoice"
-                headers = {"Authorization": f"Bearer {api_key}",
-                           "Content-Type": "application/json"}
-                body = {"model": "cosyvoice-v3-flash", "input": {"text": text[:300]},
-                        "parameters": {"voice": os.environ.get("COSYVOICE_VOICE", "longfeifei_v3")}}
-                async with ClientSession() as s:
-                    async with s.post(cosy_api, json=body, headers=headers, timeout=30) as r:
-                        if r.status == 200:
-                            result = await r.read()
-                            with open(tmp, "wb") as f:
-                                f.write(result)
-                            return tmp
-            except Exception:
+                with open(tmp, "wb") as f:
+                    f.write(data)
+                return tmp
+            except:
                 pass
 
         # 降级 Edge-TTS
