@@ -80,6 +80,11 @@ class LiveEngine:
         self._current_text = ""
         self._current_emotion = "开心"
         self._audio_playlist: list[str] = []
+        # 场景历史（最近 10 条弹幕+回复）
+        self._scene_history: list[dict] = []
+        # LLM 聊天配置缓存
+        self._chat_cfg: dict = {}
+        self._chat_cfg_ts: float = 0
 
     # ── 状态快照 ──────────────────────────────────────────────────────────
 
@@ -620,9 +625,101 @@ class LiveEngine:
         if len(self._danmaku_cache) > MAX_DANMAKU:
             self._danmaku_cache = self._danmaku_cache[-MAX_DANMAKU:]
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # Agent: 弹幕监听（由 connect_bilibili 的回调驱动）
-    # ═══════════════════════════════════════════════════════════════════════
+    # ── LLM 直播互动 ──────────────────────────────────────────────────────
+
+    LIVE_SYSTEM_PROMPT = """你是奶昔，一个虚拟主播。你正在B站直播，以下是你的设定：
+
+性格：可爱、活泼、有点傲娇。语气自然口语化，像在和朋友聊天。
+回复要求：简短（20字以内），偶尔带一点点语气词，不要说教或长篇大论。
+互动规则：
+- 观众发弹幕→根据内容自然回应
+- 有人送礼物→感谢
+- 有人进入直播间→简单欢迎
+- 被问到敏感/不知道的问题→诚实说不知道，转移话题
+- 保持直播氛围轻松愉快
+
+注意：不要念出弹幕内容，直接回应即可。不要说“感谢xxx的弹幕”这种机械的回复。"""
+
+    def _resolve_chat_config(self) -> dict:
+        """获取聊天LLM配置（对话页的 chat 供应商）"""
+        now = time.time()
+        if self._chat_cfg and now - self._chat_cfg_ts < 60:
+            return self._chat_cfg
+        cfg = {"api_key": "", "api_url": "", "model": ""}
+        try:
+            from desktop_core.storage import meta_get, decrypt_config
+            raw = meta_get("desktop_config")
+            if raw:
+                dc = json.loads(raw)
+                decrypt_config(dc)
+                for pid, pcfg in dc.get("api_providers", {}).items():
+                    if pcfg.get("type", "chat") in ("chat", "default"):
+                        cfg = {"api_key": pcfg.get("api_key", ""), "api_url": pcfg.get("api_url", ""), "model": pcfg.get("model", "")}
+                        break
+        except:
+            pass
+        self._chat_cfg = cfg
+        self._chat_cfg_ts = now
+        return cfg
+
+    async def _call_llm(self, prompt: str) -> Optional[str]:
+        """调用配置的聊天 LLM，返回回复文本"""
+        cfg = self._resolve_chat_config()
+        if not cfg["api_key"] or not cfg["api_url"]:
+            return None
+        try:
+            from aiohttp import ClientSession
+            import json as _json
+            is_dashscope = "dashscope" in cfg["api_url"] or ("aliyuncs" in cfg["api_url"] and "compatible-mode" not in cfg["api_url"])
+            messages = [{"role": "system", "content": self.LIVE_SYSTEM_PROMPT}]
+            # 带上最近上下文（最多6条）
+            for h in self._scene_history[-6:]:
+                messages.append({"role": h["role"], "content": h["content"]})
+            messages.append({"role": "user", "content": prompt})
+
+            if is_dashscope:
+                url = cfg["api_url"].rstrip("chat/completions").rstrip("/") + "/chat/completions"
+            else:
+                url = cfg["api_url"].rstrip("/") + ("/chat/completions" if "/chat/completions" not in cfg["api_url"] else "")
+            headers = {"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"}
+            payload = {"model": cfg["model"] or "qwen-plus", "messages": messages,
+                       "max_tokens": 100, "temperature": 0.8}
+
+            async with ClientSession() as s:
+                async with s.post(url, json=payload, headers=headers, timeout=10) as r:
+                    if r.status != 200:
+                        return None
+                    data = await r.json()
+                    reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    if reply:
+                        # 记录到上下文
+                        self._scene_history.append({"role": "user", "content": prompt})
+                        self._scene_history.append({"role": "assistant", "content": reply})
+                        if len(self._scene_history) > 20:
+                            self._scene_history = self._scene_history[-20:]
+                        return reply.strip()
+        except:
+            pass
+        return None
+
+    async def _decide_reply(self, text: str, user: str) -> Optional[str]:
+        """弹幕回复：LLM → 规则降级"""
+        # 先试 LLM
+        llm_reply = await self._call_llm(f"[弹幕] {user}: {text[:100]}")
+        if llm_reply:
+            return llm_reply
+        # LLM 不可用 → 规则降级
+        t = text.lower()
+        rules = [
+            (lambda t: any(k in t for k in ["你好","hi","hello","在吗"]), f"欢迎{user}来到直播间～"),
+            (lambda t: any(k in t for k in ["谢谢","感谢","thx"]), f"谢谢{user}的支持！"),
+            (lambda t: any(k in t for k in ["666","哈哈","笑死","好活"]), f"嘻嘻～{user}开心就好！"),
+            (lambda t: any(k in t for k in ["主播","奶昔","老婆","可爱"]), f"被{user}夸了，好害羞(｡>ω<｡)"),
+        ]
+        for cond, reply in rules:
+            if cond(t):
+                return reply
+        return None  # 规则匹配不到就不回复
 
     async def _agent_danmaku(self):
         """弹幕 Agent — B站 WS 回调本身已驱动，此协程保持运行"""
@@ -661,23 +758,6 @@ class LiveEngine:
                 reply = await self._decide_reply(text, user)
                 if reply:
                     await self._scene_queue.put({"type": "speak", "text": reply, "emotion": "开心"})
-
-    async def _decide_reply(self, text: str, user: str) -> Optional[str]:
-        """弹幕回复决策：规则匹配 + LLM 尝试"""
-        t = text.lower()
-        # 规则
-        rules = [
-            (lambda t: any(k in t for k in ["你好","hi","hello","在吗"]), f"欢迎{user}来到直播间～"),
-            (lambda t: any(k in t for k in ["谢谢","感谢","thx"]), f"谢谢{user}的支持！"),
-            (lambda t: any(k in t for k in ["666","哈哈","笑死","好活"]), f"嘻嘻～{user}开心就好！"),
-            (lambda t: any(k in t for k in ["主播","奶昔","老婆","可爱"]), f"被{user}夸了，好害羞(｡>ω<｡)"),
-            (lambda t: "?" in t or any(k in t for k in ["吗","什么","怎么","为啥","为什么"]), f"{user}让奶昔想想..."),
-        ]
-        for cond, reply in rules:
-            if cond(t):
-                return reply
-        # 默认回复
-        return f"感谢{user}的弹幕～{text[:40]}"
 
     # ═══════════════════════════════════════════════════════════════════════
     # Agent: TTS 语音合成
