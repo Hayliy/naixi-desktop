@@ -1980,13 +1980,16 @@ function LivePage() {
 
   const openPetWindow = async () => {
     try {
+      // Tauri 模式
       const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-      const pet = new WebviewWindow("pet", { url: "/pet" });
+      const pet = new WebviewWindow("pet", { url: "/pet", width: 400, height: 500 });
       pet.once("tauri://created", () => notify("桌宠已打开", "success"));
-      pet.once("tauri://error", () => notify("打开桌宠失败", "error"));
+      pet.once("tauri://error", () => notify("桌宠打开失败，请检查 Tauri 配置", "error"));
     } catch {
-      // 浏览器模式：在新标签页打开
-      window.open("/pet", "naixi_pet", "width=400,height=500,menubar=no,toolbar=no,location=no");
+      // 浏览器模式：弹出新窗口
+      const w = window.open("/pet", "naixi_pet", "width=400,height=500,menubar=no,toolbar=no,location=no");
+      if (w) notify("桌宠已打开（浏览器窗口）", "success");
+      else notify("弹窗被拦截，请允许弹窗", "error");
     }
   };
 
