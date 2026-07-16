@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "奶昔 · Naixi 桌面伴侣",
         "width": 1180,
         "height": 760,
@@ -19,6 +20,18 @@
         "minHeight": 640,
         "resizable": true,
         "center": true
+      },
+      {
+        "label": "pet",
+        "title": "奶昔桌宠",
+        "width": 400,
+        "height": 500,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "center": true,
+        "url": "/pet"
       }
     ],
     "security": {

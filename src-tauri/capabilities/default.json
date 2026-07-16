@@ -1,13 +1,14 @@
 {
   "identifier": "default",
-  "description": "Default capability for the main window",
-  "windows": ["main"],
+  "description": "Default capability for all windows",
+  "windows": ["main", "pet"],
   "permissions": [
     "core:default",
     "core:window:default",
     "core:window:allow-set-size",
     "core:window:allow-set-title",
     "core:window:allow-show",
-    "core:window:allow-hide"
+    "core:window:allow-hide",
+    "core:window:allow-create"
   ]
 }

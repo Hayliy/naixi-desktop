@@ -1978,6 +1978,18 @@ function LivePage() {
     } catch { notify("请求失败", "error"); }
   };
 
+  const openPetWindow = async () => {
+    try {
+      const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+      const pet = new WebviewWindow("pet", { url: "/pet" });
+      pet.once("tauri://created", () => notify("桌宠已打开", "success"));
+      pet.once("tauri://error", () => notify("打开桌宠失败", "error"));
+    } catch {
+      // 浏览器模式：在新标签页打开
+      window.open("/pet", "naixi_pet", "width=400,height=500,menubar=no,toolbar=no,location=no");
+    }
+  };
+
   const s = status;
   const startTime = s?.start_time ? s.start_time * 1000 : 0;
   const u = startTime ? Math.floor((nowTime - startTime) / 1000) : 0;
@@ -2033,6 +2045,7 @@ function LivePage() {
         <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
           <span className="text-[10px] font-medium text-sakura-500">WebSocket 连接状态</span>
           <div className="flex items-center gap-2">
+            <button onClick={openPetWindow} className="text-[8px] px-2 py-1 rounded bg-purple-500 text-white hover:bg-purple-600 transition-colors">桌宠</button>
             <button onClick={()=>act("/api/live/connect",{app_id:appId,code:code,access_key_id:accessKeyId,access_key_secret:accessKeySecret,room_id:roomId},"连接成功")} disabled={!appId||!accessKeyId||!code} className="text-[8px] px-2 py-1 rounded bg-blue-500 text-white disabled:opacity-40 hover:bg-blue-600 transition-colors">测试连接</button>
             {s?.connected && <span className="text-[8px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded">已连接</span>}
             {!s?.connected && s?.running && <span className="text-[8px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded">等待连接</span>}
