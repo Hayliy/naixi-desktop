@@ -1934,6 +1934,7 @@ function LivePage() {
   const [roomId, setRoomId] = useState('');
   const [rtmpUrl, setRtmpUrl] = useState('');
   const [dashscopeKey, setDashscopeKey] = useState('');
+  const [livePrompt, setLivePrompt] = useState('');
   const [danmaku, setDanmaku] = useState<any[]>([]);
   const [showConfig, setShowConfig] = useState(false);
   const [showRtmp, setShowRtmp] = useState(false);
@@ -1946,7 +1947,7 @@ function LivePage() {
   const loadConfig = useCallback(async () => {
     try { const cfg = await apiGet<any>('/api/live/config');
       setAccessKeyId(cfg.access_key_id||'');setAccessKeySecret(cfg.access_key_secret||'');
-      setAppId(cfg.app_id||'');setCode(cfg.code||'');setRoomId(cfg.room_id||'');setRtmpUrl(cfg.rtmp_url||'');setDashscopeKey(cfg.dashscope_api_key||'');
+      setAppId(cfg.app_id||'');setCode(cfg.code||'');setRoomId(cfg.room_id||'');setRtmpUrl(cfg.rtmp_url||'');setDashscopeKey(cfg.dashscope_api_key||'');setLivePrompt(cfg.live_prompt||'');
     } catch {}
   }, []);
 
@@ -1965,7 +1966,7 @@ function LivePage() {
   }, [status?.connected]);
 
   const saveCfg = async () => {
-    try { const r = await apiPost('/api/live/save-config', {access_key_id:accessKeyId,access_key_secret:accessKeySecret,app_id:appId,code:code,room_id:roomId,dashscope_api_key:dashscopeKey}); if (r) notify('配置已保存', 'success'); else notify('保存失败', 'error'); } catch { notify('保存失败', 'error'); }
+    try { const r = await apiPost('/api/live/save-config', {access_key_id:accessKeyId,access_key_secret:accessKeySecret,app_id:appId,code:code,room_id:roomId,dashscope_api_key:dashscopeKey,live_prompt:livePrompt}); if (r) notify('配置已保存', 'success'); else notify('保存失败', 'error'); } catch { notify('保存失败', 'error'); }
   };
 
   const act = async (url: string, body?: any, okMsg?: string) => {
@@ -2107,6 +2108,12 @@ function LivePage() {
               <div>
                 <label className="block text-[10px] text-sakura-500 font-medium mb-1">直播间 ID（可选）</label>
                 <input value={roomId} onChange={e=>setRoomId(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white" placeholder="留空自动" />
+              </div>
+              <div>
+                <details className="text-[10px]">
+                  <summary className="text-sakura-500 font-medium cursor-pointer hover:text-sakura-600">直播互动提示词（点击展开编辑）</summary>
+                  <textarea value={livePrompt} onChange={e=>setLivePrompt(e.target.value)} className="w-full mt-2 px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white resize-none font-mono leading-relaxed" rows={8} placeholder="默认提示词会在保存后从后端加载" />
+                </details>
               </div>
               <div className="flex items-center gap-2 pt-2">
                 <button onClick={() => setShowConfig(false)} className="flex-1 px-3 py-2 rounded-lg text-xs border border-sakura-100 text-sakura-400 hover:bg-sakura-50 transition-colors">取消</button>

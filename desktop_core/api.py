@@ -3090,6 +3090,7 @@ async def api_live_config(request):
             "room_id": engine._room_id,
             "rtmp_url": engine._rtmp_url,
             "dashscope_api_key": engine._dashscope_api_key[:4]+"****" if engine._dashscope_api_key else "",
+            "live_prompt": engine._live_prompt,
         })
     body = await request.json()
     ok = engine.save_config(**body)

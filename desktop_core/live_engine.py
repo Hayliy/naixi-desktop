@@ -7,6 +7,19 @@ from datetime import datetime
 from typing import Optional
 from aiohttp import WSMsgType
 
+DEFAULT_LIVE_PROMPT = """你是奶昔，一个虚拟主播。你正在B站直播，以下是你的设定：
+
+性格：可爱、活泼、有点傲娇。语气自然口语化，像在和朋友聊天。
+回复要求：简短（30字以内），偶尔带一点点语气词，不要说教或长篇大论。
+互动规则：
+- 观众发弹幕→根据内容自然回应
+- 有人送礼物→感谢
+- 有人进入直播间→简单欢迎
+- 被问到敏感/不知道的问题→诚实说不知道，转移话题
+- 保持直播氛围轻松愉快
+
+注意：不要说"感谢xxx的弹幕"这种机械的回复，直接回应内容本身。"""
+
 log = logging.getLogger("live_engine")
 
 # ── 常量 ──────────────────────────────────────────────────────────────────
@@ -80,8 +93,9 @@ class LiveEngine:
         self._current_text = ""
         self._current_emotion = "开心"
         self._audio_playlist: list[str] = []
-        # 场景历史（最近 10 条弹幕+回复）
+        # 场景历史（全部保留，过长时压缩）
         self._scene_history: list[dict] = []
+        self._live_prompt: str = DEFAULT_LIVE_PROMPT
         # LLM 聊天配置缓存
         self._chat_cfg: dict = {}
         self._chat_cfg_ts: float = 0
@@ -128,6 +142,7 @@ class LiveEngine:
                 self._room_id = cfg.get("room_id", "")
                 self._rtmp_url = cfg.get("rtmp_url", "")
                 self._dashscope_api_key = cfg.get("dashscope_api_key", "")
+                self._live_prompt = cfg.get("live_prompt", DEFAULT_LIVE_PROMPT)
                 self._bili_config_saved = bool(self._access_key_id and self._access_key_secret)
         except: pass
 
@@ -158,6 +173,7 @@ class LiveEngine:
                 "code": _real(kwargs.get("code"), base.get("code", self._code)),
                 "rtmp_url": kwargs.get("rtmp_url", base.get("rtmp_url", self._rtmp_url)),
                 "dashscope_api_key": _real(kwargs.get("dashscope_api_key"), base.get("dashscope_api_key", self._dashscope_api_key)),
+                "live_prompt": kwargs.get("live_prompt", base.get("live_prompt", self._live_prompt)),
             }
             from desktop_core.storage import meta_set
             meta_set("live_config", json.dumps(cfg))
@@ -167,6 +183,7 @@ class LiveEngine:
             self._room_id = cfg["room_id"]
             self._rtmp_url = cfg["rtmp_url"]
             self._dashscope_api_key = cfg["dashscope_api_key"]
+            self._live_prompt = cfg["live_prompt"]
             self._bili_config_saved = bool(self._access_key_id and self._access_key_secret)
             log.info("[直播] 配置已保存")
             return True
@@ -627,19 +644,6 @@ class LiveEngine:
 
     # ── LLM 直播互动 ──────────────────────────────────────────────────────
 
-    LIVE_SYSTEM_PROMPT = """你是奶昔，一个虚拟主播。你正在B站直播，以下是你的设定：
-
-性格：可爱、活泼、有点傲娇。语气自然口语化，像在和朋友聊天。
-回复要求：简短（20字以内），偶尔带一点点语气词，不要说教或长篇大论。
-互动规则：
-- 观众发弹幕→根据内容自然回应
-- 有人送礼物→感谢
-- 有人进入直播间→简单欢迎
-- 被问到敏感/不知道的问题→诚实说不知道，转移话题
-- 保持直播氛围轻松愉快
-
-注意：不要念出弹幕内容，直接回应即可。不要说“感谢xxx的弹幕”这种机械的回复。"""
-
     def _resolve_chat_config(self) -> dict:
         """获取聊天LLM配置（对话页的 chat 供应商）"""
         now = time.time()
@@ -671,9 +675,22 @@ class LiveEngine:
             from aiohttp import ClientSession
             import json as _json
             is_dashscope = "dashscope" in cfg["api_url"] or ("aliyuncs" in cfg["api_url"] and "compatible-mode" not in cfg["api_url"])
-            messages = [{"role": "system", "content": self.LIVE_SYSTEM_PROMPT}]
-            # 带上最近上下文（最多6条）
-            for h in self._scene_history[-6:]:
+            messages = [{"role": "system", "content": self._live_prompt}]
+            # 构造上下文：全部历史，超长时压缩
+            ctx = list(self._scene_history)
+            total_chars = sum(len(h.get("content","")) for h in ctx)
+            if total_chars > 4000:
+                # 压缩旧消息：保留最近 20 条，前面的合并为一段摘要
+                recent = ctx[-20:]
+                old = ctx[:-20]
+                summary = "前面聊了: " + " | ".join(
+                    h["content"].replace("的弹幕","").strip()[:60]
+                    for h in old[-10:] if h["role"] == "user"
+                )
+                if len(summary) > 500:
+                    summary = summary[:500] + "..."
+                ctx = [{"role": "system", "content": f"[历史摘要] {summary}"}] + recent
+            for h in ctx:
                 messages.append({"role": h["role"], "content": h["content"]})
             messages.append({"role": "user", "content": prompt})
 
@@ -692,11 +709,9 @@ class LiveEngine:
                     data = await r.json()
                     reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
                     if reply:
-                        # 记录到上下文
+                        # 记录到上下文（不限量，_call_llm 内部会压缩）
                         self._scene_history.append({"role": "user", "content": prompt})
                         self._scene_history.append({"role": "assistant", "content": reply})
-                        if len(self._scene_history) > 20:
-                            self._scene_history = self._scene_history[-20:]
                         return reply.strip()
         except:
             pass
