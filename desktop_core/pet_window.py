@@ -11,10 +11,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "windows")
 os.environ.setdefault("QT_OPENGL", "angle")
 
 from OpenGL.GL import glViewport
-from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer, QPropertyAnimation
+from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer, QPropertyAnimation, QUrl
 from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont, QPainterPath
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QApplication, QMenu, QFileDialog, QWidget, QLineEdit, QLabel
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 
 from live2d import v3 as live2d
 
@@ -156,11 +157,9 @@ class PetWindow(QOpenGLWidget):
         # 语言气泡
         # 语言气泡
         self._bubble = BubbleWindow(self)
-        # 聊天轮询（固定 timer，不泄漏）
-        self._chat_result = None
-        self._chat_poll = QTimer(self)
-        self._chat_poll.timeout.connect(self._check_chat)
-        self._chat_poll.start(100)
+        # 聊天（Qt 原生异步 HTTP，零线程）
+        self._chat_nam = QNetworkAccessManager(self)
+        self._chat_nam.finished.connect(self._on_chat_reply)
         # 测试对话输入（默认隐藏，右键菜单打开）
         self._chat_input = QLineEdit(self)
         self._chat_input.setPlaceholderText("输入测试消息，回车发送...")
@@ -170,7 +169,7 @@ class PetWindow(QOpenGLWidget):
         self._chat_input.returnPressed.connect(self._send_chat)
 
         # 窗口属性：无边框 + 置顶 + 工具窗口 + 透明
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
         self.setMouseTracking(True)
@@ -309,32 +308,25 @@ class PetWindow(QOpenGLWidget):
         self._chat_input.clear()
         self._chat_input.hide()
         self._bubble.show_text("思考中...", 5000)
-        self._chat_result = None
-        import threading
-        threading.Thread(target=self._do_chat, args=(text,), daemon=True).start()
+        # Qt 原生异步 HTTP，不阻塞主线程、不依赖线程
+        import json as _json
+        req = QNetworkRequest(QUrl("http://127.0.0.1:9845/api/live/chat-test"))
+        req.setHeader(QNetworkRequest.ContentTypeHeader, "application/json")
+        body = _json.dumps({"text": text}).encode()
+        self._chat_nam.post(req, bytes(body))
 
-    def _do_chat(self, text: str):
-        import urllib.request, json as _json, logging
-        log = logging.getLogger("pet_window")
+    def _on_chat_reply(self, reply):
+        """QNetworkAccessManager 异步回调（主线程）"""
+        import json as _json
         try:
-            data = _json.dumps({"text": text}).encode()
-            req = urllib.request.Request("http://127.0.0.1:9845/api/live/chat-test", data=data,
-                                         headers={"Content-Type": "application/json"}, method="POST")
-            resp = urllib.request.urlopen(req, timeout=15).read().decode()
-            result = _json.loads(resp)
-            reply = result.get("reply") or result.get("error", "未知错误")
+            data = bytes(reply.readAll()).decode()
+            result = _json.loads(data)
             emotion = result.get("emotion", "开心")
-            self._chat_result = (emotion, reply)
+            reply_text = result.get("reply") or result.get("error", "错误")
+            self._bubble.show_text(f"[{emotion}] {reply_text}", 4000)
         except Exception as e:
-            log.warning(f"[聊天] 失败: {e}")
-            self._chat_result = ("无奈", "请求失败")
-
-    def _check_chat(self):
-        if self._chat_result is None:
-            return
-        emotion, reply = self._chat_result
-        self._chat_result = None  # 只处理一次
-        self._bubble.show_text(f"[{emotion}] {reply}", 4000)
+            log.warning(f"[聊天] 回复解析失败: {e}")
+            self._bubble.show_text("请求失败", 3000)
 
     def _show_models(self):
         """显示模型列表对话框"""
