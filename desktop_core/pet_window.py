@@ -11,11 +11,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "windows")
 os.environ.setdefault("QT_OPENGL", "angle")
 
 from OpenGL.GL import glViewport
-from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer, QPropertyAnimation, QUrl
+from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer, QPropertyAnimation
 from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont, QPainterPath
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QApplication, QMenu, QFileDialog, QWidget, QLineEdit, QLabel
-from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkProxy, QNetworkProxyFactory
 
 from live2d import v3 as live2d
 
@@ -156,13 +155,6 @@ class PetWindow(QOpenGLWidget):
 
         # 语言气泡
         self._bubble = BubbleWindow(self)
-        # 聊天（Qt 原生异步 HTTP，零线程）
-        # 禁用系统代理检测，避免 Windows WPAD 挂起
-        QNetworkProxyFactory.setUseSystemConfiguration(False)
-        QNetworkProxy.setApplicationProxy(QNetworkProxy(QNetworkProxy.NoProxy))
-        self._chat_nam = QNetworkAccessManager(self)
-        self._chat_nam = QNetworkAccessManager(self)
-        self._chat_nam.finished.connect(self._on_chat_reply)
         # 测试对话输入（默认隐藏，右键菜单打开）
         self._chat_input = QLineEdit(self)
         self._chat_input.setPlaceholderText("输入测试消息，回车发送...")
@@ -313,21 +305,7 @@ class PetWindow(QOpenGLWidget):
         self._chat_input.clear()
         self._chat_input.hide()
         self._bubble.show_text("思考中...", 5000)
-        req = QNetworkRequest(QUrl("http://127.0.0.1:9845/api/live/chat-test"))
-        req.setHeader(QNetworkRequest.ContentTypeHeader, "application/json")
-        body = json.dumps({"text": text}).encode()
-        self._chat_nam.post(req, bytes(body))
-
-    def _on_chat_reply(self, reply):
-        try:
-            data = bytes(reply.readAll()).decode()
-            result = json.loads(data)
-            emotion = result.get("emotion", "开心")
-            reply_text = result.get("reply") or result.get("error", "错误")
-            self._bubble.show_text(f"[{emotion}] {reply_text}", 4000)
-        except Exception as e:
-            log.warning(f"[聊天] 回复解析失败: {e}")
-            self._bubble.show_text("请求失败", 3000)
+        self._ws_send(json.dumps({"type": "chat", "text": text}))
 
     def _show_models(self):
         """显示模型列表对话框"""
@@ -408,11 +386,20 @@ class PetWindow(QOpenGLWidget):
 
     # ── WebSocket 口型 ──
 
+    def _ws_send(self, text: str):
+        """线程安全发送到后端 WebSocket"""
+        ws = getattr(self, '_ws', None)
+        if ws:
+            try:
+                ws.send(text)
+            except:
+                pass
+
     def _ws_loop(self):
         import websocket
         while self._running:
             try:
-                ws = websocket.create_connection("ws://127.0.0.1:9845/api/live/live2d-stream", timeout=5)
+                self._ws = websocket.create_connection("ws://127.0.0.1:9845/api/live/live2d-stream", timeout=5)
                 while self._running:
                     raw = ws.recv()
                     if not raw:
