@@ -420,25 +420,22 @@ class PetWindow(QOpenGLWidget):
                         break
                     d = json.loads(raw)
                     if d.get("type") == "speak":
-                        # 语言气泡
                         txt = d.get("text", "")
-                        if txt:
-                            self._bubble.show_text(txt)
-                        # 表情
                         expr = self._resolve_expression(d.get("emotion", ""))
-                        if expr:
-                            self.model.SetExpression(expr)
-                        # 动作
                         mg = d.get("motion_group", "")
                         mi = d.get("motion_index", -1)
-                        if mg and mi >= 0 and self.model:
-                            self.model.StartMotion(mg, mi, 3)
-                        # 口型
-                        for m in d.get("mouth", []):
+                        mouth = d.get("mouth", [])
+                        ms = d.get("frame_ms", 80)
+                        # 所有 Qt 调用必须通过 QTimer 投递到主线程
+                        QTimer.singleShot(0, lambda t=txt: t and self._bubble.show_text(t))
+                        QTimer.singleShot(0, lambda e=expr: e and self.model and self.model.SetExpression(e))
+                        if mg and mi >= 0:
+                            QTimer.singleShot(0, lambda g=mg, i=mi: self.model and self.model.StartMotion(g, i, 3))
+                        for m in mouth:
                             if not self._running:
                                 break
                             self.set_mouth(m)
-                            time.sleep(d.get("frame_ms", 80) / 1000)
+                            time.sleep(ms / 1000)
                         self.set_mouth(0.0)
             except:
                 if self._running:
