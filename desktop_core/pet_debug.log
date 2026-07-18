@@ -109,3 +109,67 @@
 1784389574 POSE play: started nod
 1784389598 POSE play: nod tmpl=nod concrete=4
 1784389599 POSE play: started nod
+1784390435 POSE scan: 373 params, cats: 12, ranges: 373
+1784390435 POSE   body_bow: ['ParamBodyAngleY']
+1784390435 POSE   body_lean: ['ParamBodyAngleX']
+1784390435 POSE   brow_l: ['ParamBrowLY', 'ParamBrowLX', 'ParamBrowLAngle', 'ParamBrowLForm']
+1784390435 POSE   brow_r: ['ParamBrowRY', 'ParamBrowRX', 'ParamBrowRAngle', 'ParamBrowRForm']
+1784390435 POSE   eye_l: ['ParamEyeLOpen']
+1784390435 POSE   eye_l_smile: ['ParamEyeLSmile']
+1784390435 POSE   eye_r: ['ParamEyeROpen']
+1784390435 POSE   eye_r_smile: ['ParamEyeRSmile']
+1784390435 POSE   head_nod: ['ParamAngleY', 'ParamBodyAngleY']
+1784390435 POSE   head_roll: ['ParamAngleZ', 'ParamBodyAngleZ']
+1784390435 POSE   head_tilt: ['ParamAngleX', 'ParamBodyAngleX']
+1784390435 POSE   mouth: ['ParamMouthForm', 'ParamMouthOpenY']
+1784390435 POSE gen motions: 14 files
+1784390436 POSE play: smile tmpl=smile concrete=8
+1784390436 POSE play: started smile
+1784390450 _send_chat: ws=OK text=你好
+1784390450 _ws_send: 已发送
+1784390453 POSE play: wave tmpl=wave concrete=4
+1784390453 POSE play: started wave
+1784390461 POSE play: nod tmpl=nod concrete=4
+1784390461 POSE play: started nod
+1784390476 _send_chat: ws=OK text=摇头
+1784390476 _ws_send: 已发送
+1784390478 POSE play: shake tmpl=shake concrete=4
+1784390478 POSE play: started shake
+1784390483 POSE play: tilt tmpl=tilt concrete=2
+1784390483 POSE play: started tilt
+1784390503 POSE play: tilt tmpl=tilt concrete=2
+1784390503 POSE play: started tilt
+1784390526 POSE play: tilt tmpl=tilt concrete=2
+1784390526 POSE play: started tilt
+1784390548 POSE play: nod tmpl=nod concrete=4
+1784390548 POSE play: started nod
+1784390565 POSE play: tilt tmpl=tilt concrete=2
+1784390565 POSE play: started tilt
+1784392405 POSE play: smile tmpl=smile concrete=8
+1784392405 POSE play: started smile
+1784392426 POSE play: tilt tmpl=tilt concrete=2
+1784392426 POSE play: started tilt
+1784392453 POSE play: smile tmpl=smile concrete=8
+1784392453 POSE play: started smile
+1784392479 POSE play: smile tmpl=smile concrete=8
+1784392479 POSE play: started smile
+1784392504 POSE play: smile tmpl=smile concrete=8
+1784392504 POSE play: started smile
+1784392519 POSE play: tilt tmpl=tilt concrete=2
+1784392519 POSE play: started tilt
+1784392536 _send_chat: ws=OK text=笑一个
+1784392536 _ws_send: 已发送
+1784392537 POSE play: nod tmpl=nod concrete=4
+1784392537 POSE play: started nod
+1784392537 POSE play: smile tmpl=smile concrete=8
+1784392537 POSE play: started smile
+1784392551 POSE play: nod tmpl=nod concrete=4
+1784392551 POSE play: started nod
+1784392569 POSE play: nod tmpl=nod concrete=4
+1784392569 POSE play: started nod
+1784392582 POSE play: smile tmpl=smile concrete=8
+1784392582 POSE play: started smile
+1784392604 POSE play: nod tmpl=nod concrete=4
+1784392604 POSE play: started nod
+1784392620 POSE play: tilt tmpl=tilt concrete=2
+1784392620 POSE play: started tilt

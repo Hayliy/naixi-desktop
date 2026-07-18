@@ -34,3 +34,7 @@ searxng/
 workspace/
 __pycache__/
 logs/
+_motions/
+logs/
+pet_debug.log
+pet_init.log
