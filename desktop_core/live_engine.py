@@ -989,39 +989,29 @@ class LiveEngine:
         return result
 
     def _get_audio_devices(self) -> tuple:
-        """获取实际使用的输出/输入设备ID，自动检测 VB-Cable"""
+        """获取实际使用的输出/输入设备ID"""
         out_id, in_id = None, None
         if not self._sd_available:
             return out_id, in_id
         try:
             import sounddevice as sd
             devices = sd.query_devices()
-            # 输出：优先 VB-Cable，其次默认
+            # 输出：仅当明确配置了输出设备才指定，否则用系统默认
             if self._audio_out_device:
                 for i, d in enumerate(devices):
                     if self._audio_out_device in d["name"] and d["max_output_channels"] > 0:
                         out_id = i
                         break
             if out_id is None:
-                for i, d in enumerate(devices):
-                    if ("VB" in d["name"] or "Cable" in d["name"]) and d["max_output_channels"] > 0:
-                        out_id = i
-                        break
-            if out_id is None:
                 out_id = sd.default.device[1]  # 系统默认输出
-            # 输入：优先 VB-Cable，其次默认
+            # 输入：仅当明确配置了输入设备才指定，否则用系统默认
             if self._audio_in_device:
                 for i, d in enumerate(devices):
                     if self._audio_in_device in d["name"] and d["max_input_channels"] > 0:
                         in_id = i
                         break
             if in_id is None:
-                for i, d in enumerate(devices):
-                    if ("VB" in d["name"] or "Cable" in d["name"]) and d["max_input_channels"] > 0:
-                        in_id = i
-                        break
-            if in_id is None:
-                in_id = sd.default.device[0]
+                in_id = sd.default.device[0]  # 系统默认输入
         except:
             pass
         return out_id, in_id
