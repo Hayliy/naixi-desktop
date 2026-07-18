@@ -1938,33 +1938,11 @@ function LivePage() {
   const [danmaku, setDanmaku] = useState<any[]>([]);
   const [showConfig, setShowConfig] = useState(false);
   const [showRtmp, setShowRtmp] = useState(false);
-  const [testText, setTestText] = useState('');
-  const [testReply, setTestReply] = useState<any>(null);
-  const [models, setModels] = useState<any[]>([]);
-
-  const loadModels = useCallback(async () => {
-    try { const r = await apiGet('/api/live/models'); setModels(r.models||[]); } catch {}
-  }, []);
-
-  const deleteModel = async (name: string) => {
-    try { await apiPost('/api/live/models/delete', {name}); loadModels(); } catch {}
-  };
-
-  const sendTest = async () => {
-    if (!testText) return;
-    try {
-      const r = await apiPost('/api/live/chat-test', {text: testText});
-      setTestReply(r);
-    } catch { setTestReply({reply: '请求失败', emotion: 'error'}); }
-  };
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   const [nowTime, setNowTime] = useState(Date.now());
   const { notify } = useToast();
 
   useEffect(() => { const iv = setInterval(() => setNowTime(Date.now()), 1000); return () => clearInterval(iv); }, []);
-
-  // 加载模型列表
-  useEffect(() => { loadModels(); }, [loadModels]);
 
   const loadConfig = useCallback(async () => {
     try { const cfg = await apiGet<any>('/api/live/config');
@@ -2016,6 +1994,24 @@ function LivePage() {
       } catch { notify("桌宠启动失败", "error"); }
     }
   };
+
+  const [testText, setTestText] = useState('');
+  const [testReply, setTestReply] = useState<any>(null);
+  const [models, setModels] = useState<any[]>([]);
+  const loadModels = useCallback(async () => {
+    try { const r = await apiGet('/api/live/models'); setModels(r.models||[]); } catch {}
+  }, []);
+  const deleteModel = async (name: string) => {
+    try { await apiPost('/api/live/models/delete', {name}); loadModels(); } catch {}
+  };
+  const sendTest = async () => {
+    if (!testText) return;
+    try { const r = await apiPost('/api/live/chat-test', {text: testText}); setTestReply(r); }
+    catch { setTestReply({reply: '请求失败', emotion: 'error'}); }
+  };
+
+  // 加载模型列表
+  useEffect(() => { loadModels(); }, [loadModels]);
 
   const s = status;
   const startTime = s?.start_time ? s.start_time * 1000 : 0;
@@ -2107,50 +2103,40 @@ function LivePage() {
         </div>
         {s?.last_error && (
           <div className="px-3 py-2 border-t border-red-100 bg-red-50">
-            <span className="text-[9px] text-red-500">{s.last_error}</span>
-          </div>
-        )}
-
-      {/* LLM 测试面板 */}
-      <details className="bg-white border border-sakura-100 rounded-xl overflow-hidden mt-2">
-        <summary className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 text-[10px] font-medium text-sakura-500 cursor-pointer hover:bg-sakura-50">LLM 测试</summary>
-          <div className="p-3 flex gap-2">
-            <input value={testText} onChange={e=>setTestText(e.target.value)}
-              onKeyDown={e=>e.key==='Enter'&&sendTest()}
-              className="flex-1 px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300" placeholder="输入测试消息..." />
-            <button onClick={sendTest} disabled={!testText}
-              className="px-3 py-2 rounded-lg text-xs font-medium bg-purple-500 text-white hover:bg-purple-600 disabled:opacity-40 transition-colors">发送</button>
-          </div>
-          {testReply && (
-            <div className="px-3 pb-3 text-[10px] text-sakura-600">
-              <span className="font-medium">{testReply.emotion}</span>: {testReply.reply}
-            </div>
-          )}
-        </details>
-      )}
-
-      {/* 模型管理面板 */}
-      <details className="bg-white border border-sakura-100 rounded-xl overflow-hidden mt-2">
-        <summary className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 text-[10px] font-medium text-sakura-500 cursor-pointer hover:bg-sakura-50">模型管理</summary>
-        <div className="p-3">
-          {models.length === 0 && <div className="text-[10px] text-sakura-400">暂无模型</div>}
-          {models.map(m => (
-            <div key={m.name} className="flex items-center justify-between py-1.5 border-b border-sakura-50 last:border-0">
-              <span className="text-[10px] text-sakura-600">{m.name}</span>
-              <div className="flex gap-1">
-                <button onClick={()=>{try{apiPost('/api/live/pet-start',{model_path:m.path});pollStatus();notify('已加载: '+m.name,'success');}catch{}}}
-                  className="text-[8px] px-2 py-0.5 rounded bg-purple-50 text-purple-500 hover:bg-purple-100 transition-colors">加载</button>
-                <button onClick={() => deleteModel(m.name)}
-                  className="text-[8px] px-2 py-0.5 rounded bg-red-50 text-red-500 hover:bg-red-100 transition-colors">删除</button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </details>
             <p className="text-[9px] text-red-500">错误: {s.last_error}</p>
           </div>
         )}
       </div>
+
+      <details style={{marginTop:8}} className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+        <summary className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 text-[10px] font-medium text-sakura-500 cursor-pointer hover:bg-sakura-50">LLM 测试</summary>
+        <div className="p-3 flex gap-2">
+          <input value={testText} onChange={e=>setTestText(e.target.value)}
+            onKeyDown={e=>{if(e.key==='Enter')sendTest()}}
+            className="flex-1 px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300" placeholder="输入测试消息..." />
+          <button onClick={sendTest} disabled={!testText}
+            className="px-3 py-2 rounded-lg text-xs font-medium bg-purple-500 text-white hover:bg-purple-600 disabled:opacity-40 transition-colors">发送</button>
+        </div>
+        {testReply && (
+          <div className="px-3 pb-3 text-[10px] text-sakura-600">
+            <span className="font-medium">{testReply.emotion}</span>: {testReply.reply}
+          </div>
+        )}
+      </details>
+
+      <details style={{marginTop:8}} className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+        <summary className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 text-[10px] font-medium text-sakura-500 cursor-pointer hover:bg-sakura-50">模型管理</summary>
+        <div className="p-3">
+          {models.length===0 && <div className="text-[10px] text-sakura-400">暂无模型</div>}
+          {models.map(m => (
+            <div key={m.name} className="flex items-center justify-between py-1.5 border-b border-sakura-50 last:border-0">
+              <span className="text-[10px] text-sakura-600">{m.name}</span>
+              <button onClick={()=>deleteModel(m.name)}
+                className="text-[8px] px-2 py-0.5 rounded bg-red-50 text-red-500 hover:bg-red-100 transition-colors">删除</button>
+            </div>
+          ))}
+        </div>
+      </details>
 
       {/* B站配置侧边栏 */}
       {showConfig && (
