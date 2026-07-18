@@ -304,6 +304,10 @@ class PetWindow(QOpenGLWidget):
             return
         self._chat_input.clear()
         self._chat_input.hide()
+        ws = getattr(self, "_ws", None)
+        if not ws or not getattr(ws, "connected", False):
+            self._bubble.show_text("等待连接...", 2000)
+            return
         self._bubble.show_text("思考中...", 5000)
         self._ws_send(json.dumps({"type": "chat", "text": text}))
 
@@ -387,9 +391,9 @@ class PetWindow(QOpenGLWidget):
     # ── WebSocket 口型 ──
 
     def _ws_send(self, text: str):
-        """线程安全发送到后端 WebSocket"""
+        """发送到后端 WebSocket（不阻塞主线程）"""
         ws = getattr(self, '_ws', None)
-        if ws:
+        if ws and getattr(ws, "connected", False):
             try:
                 ws.send(text)
             except:
