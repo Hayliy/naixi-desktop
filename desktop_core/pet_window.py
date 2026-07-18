@@ -210,6 +210,8 @@ class PetWindow(QOpenGLWidget):
                 else:
                     self._pose.model = self.model
                 self._pose.scan_model()
+                if hasattr(self._pose, '_available'):
+                    log.info(f"可用参数数: {len(self._pose._available)} 参数={list(self._pose._available)[:15]}")
                 log.info(f"模型加载成功: {self._model_path}")
             except Exception as e:
                 log.warning(f"模型加载失败: {e}")
@@ -507,8 +509,16 @@ class PetWindow(QOpenGLWidget):
                     mi = msg.get("motion_index", -1)
                     # 优先 Pose 引擎驱动
                     action = msg.get("action", "")
-                    if action and self._pose.play_action(action):
-                        pass
+                    if action:
+                        if not self._pose.play_action(action):
+                            # Pose 参数未匹配：尝试用 _motion_groups 里的动作组
+                            if self.model and self._motion_groups:
+                                import random as _r
+                                candidates = [g for g in self._motion_groups if g != "Idle"]
+                                if candidates:
+                                    g = _r.choice(candidates)
+                                    idx = _r.randint(0, self._motion_groups[g] - 1)
+                                    self.model.StartMotion(g, idx, 2)
                     elif mg and mi >= 0 and self.model:
                         if mg in self._motion_groups:
                             self.model.StartMotion(mg, mi, 3)
