@@ -480,7 +480,8 @@ class PetWindow(QOpenGLWidget):
                         mi = d.get("motion_index", -1)
                         mouth = d.get("mouth", [])
                         ms = d.get("frame_ms", 80)
-                        self._ws_queue.put({"type":"speak","text":txt,"emotion":d.get("emotion",""),"motion_group":mg,"motion_index":mi,"mouth":mouth,"frame_ms":ms})
+                        action = d.get("action", "")
+                        self._ws_queue.put({"type":"speak","text":txt,"emotion":d.get("emotion",""),"motion_group":mg,"motion_index":mi,"action":action,"mouth":mouth,"frame_ms":ms})
             except:
                 self._ws = None
                 if self._running:
