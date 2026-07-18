@@ -84,21 +84,25 @@ class Motion:
         self.time_elapsed = 0.0
 
 # ── 预设姿势库 ──
+# 使用所有 Live2D 模型都有的通用参数（头部/眼睛/眉毛/嘴巴）
+# 身体/手臂参数因模型而异，自动扫描后过滤
 
 POSE_LIBRARY = {
-    "forward":    {"ParamBodyAngleY": -8, "ParamAngleY": 5},
-    "backward":   {"ParamBodyAngleY": 10},
-    "lean_left":  {"ParamBodyAngleX": -10, "ParamAngleX": -5},
-    "lean_right": {"ParamBodyAngleX": 10, "ParamAngleX": 5},
-    "bow":        {"ParamAngleY": -20, "ParamBodyAngleY": -5},
+    "forward":    {"ParamAngleY": 8, "ParamBrowLY": 0.2, "ParamBrowRY": 0.2},
+    "backward":   {"ParamAngleY": -5, "ParamBrowLY": -0.1, "ParamBrowRY": -0.1},
     "tilt":       {"ParamAngleX": 15},
-    "wave":       {"ParamArmRAngle": -30},
-    "arms_up":    {"ParamArmRAngle": -45, "ParamArmLAngle": -45},
-    "shy":        {"ParamAngleY": -15, "ParamBodyAngleY": -5},
-    "surprised":  {"ParamBodyAngleY": 10, "ParamAngleX": 5},
-    "sad":        {"ParamAngleY": -10, "ParamBodyAngleY": 5},
-    "angry":      {"ParamBodyAngleX": 5, "ParamAngleY": -10},
-    "kime":       {"ParamArmRAngle": -45, "ParamBodyAngleX": 5},
+    "bow":        {"ParamAngleY": -20},
+    "shy":        {"ParamAngleY": -15, "ParamAngleX": -5},
+    "surprised":  {"ParamAngleY": 8, "ParamAngleX": 5, "ParamBrowLY": 0.5, "ParamBrowRY": 0.5},
+    "sad":        {"ParamAngleY": -10, "ParamBrowLY": -0.3, "ParamBrowRY": -0.3},
+    "angry":      {"ParamAngleY": -8, "ParamBrowLY": -0.5, "ParamBrowRY": -0.5},
+    "smile":      {"ParamAngleY": 5, "ParamBrowLY": 0.3, "ParamBrowRY": 0.3},
+    "wink":       {"ParamEyeROpen": 0.0, "ParamAngleX": 5},
+    "wave":       {"ParamAngleX": 10, "ParamAngleY": 5},   # 无手臂时的降级
+    "arms_up":    {"ParamAngleY": 8, "ParamAngleX": 5},     # 无手臂时的降级
+    "kime":       {"ParamAngleX": 8, "ParamAngleY": 5},
+    "lean_left":  {"ParamAngleX": -10},
+    "lean_right": {"ParamAngleX": 10},
 }
 
 ACTION_TO_POSE = {
