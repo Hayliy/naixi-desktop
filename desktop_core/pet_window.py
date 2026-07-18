@@ -11,10 +11,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "windows")
 os.environ.setdefault("QT_OPENGL", "angle")
 
 from OpenGL.GL import glViewport
-from PySide6.QtCore import Qt, QPoint, QRect, QTimerEvent, QTimer, QPropertyAnimation, Signal
-from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont, QFontMetrics, QPainterPath
+from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer, QPropertyAnimation, Signal
+from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont, QPainterPath
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
-from PySide6.QtWidgets import QApplication, QMenu, QFileDialog, QWidget, QLineEdit
+from PySide6.QtWidgets import QApplication, QMenu, QFileDialog, QWidget, QLineEdit, QLabel
 
 from live2d import v3 as live2d
 
@@ -32,27 +32,36 @@ if os.path.exists(VTS_MODELS):
 
 
 class BubbleWindow(QWidget):
-    """语言气泡 — 云朵形状 + 带尾巴"""
+    """语言气泡 — 圆角矩形+小尾巴（参照 yuuki-desktop 实现）"""
 
     BG_COLOR = QColor(180, 160, 220, 230)
     TEXT_COLOR = QColor(50, 30, 70)
     BORDER_COLOR = QColor(150, 130, 200, 200)
-    TAIL_SIZE = 10
-    PADDING = 14
-    MAX_WIDTH = 300
-    DISPLAY_MS = 5000
+    RADIUS = 18
+    PADDING = 16
+    MAX_WIDTH = 360
+    DISPLAY_MS = 6000
+    TAIL_SIZE = 12
 
     def __init__(self, pet: QWidget):
         super().__init__(None)
         self._pet = pet
-        self._text = ""
-        self._opacity = 1.0
-        self._fade_anim: Optional[QPropertyAnimation] = None
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+
+        self._label = QLabel(self)
+        self._label.setWordWrap(True)
+        self._label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self._label.setFont(QFont("Microsoft YaHei", 11))
+        self._label.setStyleSheet(f"color: {self.TEXT_COLOR.name()}; background: transparent;")
+        self._label.setMaximumWidth(self.MAX_WIDTH - 2 * self.PADDING)
+
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
         self._hide_timer.timeout.connect(self._fade_out)
-        self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+
+        self._fade_anim: Optional[QPropertyAnimation] = None
         self.hide()
 
     def show_text(self, text: str, duration: int = 0):
@@ -62,17 +71,12 @@ class BubbleWindow(QWidget):
         if self._fade_anim and self._fade_anim.state() == QPropertyAnimation.Running:
             self._fade_anim.stop()
         self.setWindowOpacity(1.0)
-        self._text = text
-        # 根据文字算尺寸
-        f = QFont("Microsoft YaHei", 11)
-        fm = QFontMetrics(f)
-        rect = fm.boundingRect(QRect(0, 0, self.MAX_WIDTH - 2 * self.PADDING, 0),
-                               Qt.AlignLeft | Qt.TextWordWrap, text)
-        bw = max(rect.width() + 2 * self.PADDING + 10, 80)
-        bh = rect.height() + 2 * self.PADDING + self.TAIL_SIZE + 8
+        self._label.setText(text)
+        self._label.adjustSize()
+        lw, lh = self._label.width(), self._label.height()
+        bw, bh = lw + 2 * self.PADDING, lh + 2 * self.PADDING + self.TAIL_SIZE
         self.setFixedSize(bw, bh)
-        self._text_rect = QRect(self.PADDING, self.PADDING,
-                                bw - 2 * self.PADDING, bh - 2 * self.PADDING - self.TAIL_SIZE)
+        self._label.move(self.PADDING, self.PADDING)
         self._reposition()
         self.show()
         self.raise_()
@@ -81,12 +85,11 @@ class BubbleWindow(QWidget):
     def _reposition(self):
         if self._pet is None:
             return
-        px, py = self._pet.x(), self._pet.y()
-        pw = self._pet.width()
-        x = px + pw // 2 - self.width() // 2
-        y = py - self.height() + self.TAIL_SIZE - 5
+        pp = self._pet.pos()
+        x = pp.x() + 20
+        y = pp.y() - self.height() + 30
         if y < 0:
-            y = py + 20
+            y = pp.y() + 20
         self.move(x, y)
 
     def _fade_out(self):
@@ -102,42 +105,18 @@ class BubbleWindow(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         w, h = self.width(), self.height()
         body_h = h - self.TAIL_SIZE
-
-        # 用重叠的圆 + 底部矩形拼出云朵形状
-        cloud = QPainterPath()
-        r = body_h * 0.35  # 圆半径
-        cx = w // 2
-        cy = body_h // 2
-
-        # 主体矩形
-        cloud.addRoundedRect(0, cy - r * 0.6, w, r * 1.7, r * 0.3, r * 0.3)
-
-        # 顶部三朵云弧（叠圆）
-        cloud.addEllipse(cx - r * 1.1, cy - r * 0.6, r * 1.1, r * 1.1)
-        cloud.addEllipse(cx - r * 0.4, cy - r * 0.9, r * 1.2, r * 1.2)
-        cloud.addEllipse(cx + r * 0.3, cy - r * 0.5, r * 1.0, r * 1.0)
-
-        # 左侧补弧
-        cloud.addEllipse(cx - r * 1.6, cy - r * 0.2, r * 0.9, r * 0.9)
-
-        # 底部尾巴
+        path = QPainterPath()
+        path.addRoundedRect(0, 0, w, body_h, self.RADIUS, self.RADIUS)
+        tail_x = w - 50
         tail = QPainterPath()
-        tail.moveTo(cx - self.TAIL_SIZE, body_h)
-        tail.lineTo(cx, h)
-        tail.lineTo(cx + self.TAIL_SIZE, body_h)
+        tail.moveTo(tail_x, body_h)
+        tail.lineTo(tail_x + self.TAIL_SIZE, h)
+        tail.lineTo(tail_x + 2 * self.TAIL_SIZE, body_h)
         tail.closeSubpath()
-        cloud = cloud.united(tail)
-
+        path = path.united(tail)
         p.setPen(self.BORDER_COLOR)
         p.setBrush(self.BG_COLOR)
-        p.drawPath(cloud)
-
-        # 文字
-        if self._text:
-            p.setPen(self.TEXT_COLOR)
-            f = QFont("Microsoft YaHei", 11)
-            p.setFont(f)
-            p.drawText(self._text_rect, Qt.AlignLeft | Qt.TextWordWrap, self._text)
+        p.drawPath(path)
         p.end()
 
 
