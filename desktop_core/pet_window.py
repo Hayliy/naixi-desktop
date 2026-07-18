@@ -5,7 +5,7 @@ from typing import Optional
 os.environ.setdefault("QT_QPA_PLATFORM", "windows")
 os.environ.setdefault("QT_OPENGL", "angle")
 
-from PySide6.QtWidgets import QApplication, QWidget, QFileDialog, QMenu
+from PySide6.QtWidgets import QApplication, QWidget, QFileDialog, QMenu, QLabel
 from PySide6.QtCore import Qt, QTimer, QPoint, Signal, QObject
 from PySide6.QtGui import QMouseEvent, QPainter, QColor, QFont, QAction, QPen, QBrush
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
@@ -54,24 +54,21 @@ class Live2DWidget(QOpenGLWidget):
 
     def initializeGL(self):
         v3.glInit()
-        # OpenGL 就绪后加载等待的模型
-        if self._pending_model and os.path.exists(self._pending_model):
+        log.info("[Live2D] OpenGL 已就绪")
+        if self._pending_model:
             self._do_load_model(self._pending_model)
             self._pending_model = ""
+        # 通知父窗口 OpenGL 就绪
+        if self.parent():
+            QTimer.singleShot(2000, self.parent()._delayed_load)
 
     def resizeGL(self, w, h):
         if self.model:
             self.model.Resize(w, h)
 
     def paintGL(self):
+        v3.clearBuffer(0.0, 0.0, 0.0, 0.0)
         if not self.model:
-            # 模型未加载时显示提示文字
-            v3.clearBuffer(0.2, 0.15, 0.25, 0.2)
-            painter = QPainter(self)
-            painter.setPen(QColor("#aaa"))
-            painter.setFont(QFont("微软雅黑", 13))
-            painter.drawText(self.rect(), Qt.AlignCenter, "正在加载模型...")
-            painter.end()
             return
         v3.clearBuffer(0.0, 0.0, 0.0, 0.0)
         if abs(self._mouth_target - self._mouth_current) > 0.01:
@@ -129,6 +126,21 @@ class PetWindow(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(400, 500)
         self._model_path = model_path
+        self._ready = False
+        self._loading_shown = True
+
+        # 加载状态提示
+        self._loading = QLabel("正在加载模型...", self)
+        self._loading.setStyleSheet("color: #ccc; font-size: 16px; font-weight: bold; background: rgba(50,30,70,180);")
+        self._loading.setAlignment(Qt.AlignCenter)
+        self._loading.setGeometry(0, 0, 400, 500)
+        self._loading.show()
+        self._loading.raise_()
+
+        # 创建 OpenGL 控件（但先不显示模型）
+        self.l2d = Live2DWidget(self)
+        self.l2d.setGeometry(0, 0, 400, 500)
+        self.l2d.hide()
 
         # 默认放在屏幕右下角
         from PySide6.QtGui import QScreen
@@ -175,8 +187,22 @@ class PetWindow(QWidget):
                 self._model_path = models[0]["path"]
                 self.l2d.load_model(models[0]["path"])
 
+        # 2 秒后切换到 OpenGL 渲染
+        self._delayed_load_called = False
+
         # 启动 WS 接收
         self._start_ws()
+
+    def _delayed_load(self):
+        """初始化完成后切换到 OpenGL 渲染"""
+        if self._delayed_load_called:
+            return
+        self._delayed_load_called = True
+        log.info("[桌宠] 切换到 OpenGL 渲染")
+        self._loading.hide()
+        self.l2d.show()
+        self.l2d.load_model(self._model_path or "")
+        self.update()
 
     def _start_ws(self):
         """后台线程：连接后端 WebSocket 接收口型/表情数据"""
