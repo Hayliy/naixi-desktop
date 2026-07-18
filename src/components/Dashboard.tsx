@@ -2107,11 +2107,13 @@ function LivePage() {
         </div>
         {s?.last_error && (
           <div className="px-3 py-2 border-t border-red-100 bg-red-50">
+            <span className="text-[9px] text-red-500">{s.last_error}</span>
+          </div>
+        )}
 
       {/* LLM 测试面板 */}
-      {s?.pet_running && (
-        <details className="bg-white border border-sakura-100 rounded-xl overflow-hidden mt-2">
-          <summary className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 text-[10px] font-medium text-sakura-500 cursor-pointer hover:bg-sakura-50">LLM 测试</summary>
+      <details className="bg-white border border-sakura-100 rounded-xl overflow-hidden mt-2">
+        <summary className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 text-[10px] font-medium text-sakura-500 cursor-pointer hover:bg-sakura-50">LLM 测试</summary>
           <div className="p-3 flex gap-2">
             <input value={testText} onChange={e=>setTestText(e.target.value)}
               onKeyDown={e=>e.key==='Enter'&&sendTest()}
