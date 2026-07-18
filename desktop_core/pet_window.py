@@ -272,6 +272,12 @@ class PetWindow(QOpenGLWidget):
         if self._dragging:
             self.move(e.globalPosition().toPoint() - self._drag_offset)
 
+    def moveEvent(self, e):
+        """窗口移动时同步更新气泡位置"""
+        super().moveEvent(e)
+        if hasattr(self, '_bubble'):
+            self._bubble._reposition()
+
     def mouseReleaseEvent(self, e: QMouseEvent):
         if e.button() == Qt.LeftButton:
             self._dragging = False
