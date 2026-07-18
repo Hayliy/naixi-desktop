@@ -111,26 +111,27 @@ def _categorize_params(all_params):
             cats[cat_name] = matches
     return cats
 
-# ── 动作模板（语义级） ──
-# 每个动作定义哪些部位参与、幅度和方向
+# ── 动作模板（语义级，归一化值） ──
+# 值范围：头部/身体/手臂 = -1.0~1.0（按实际参数范围缩放）
+# 眉毛/眼睛/嘴巴 = 0.0~1.0（按实际参数范围缩放）
 
 ACTION_TEMPLATES = {
-    "nod":      {"head_nod": -20, "head_tilt": 0},
-    "bow":      {"head_nod": -20, "body_bow": -8},
-    "tilt":     {"head_tilt": 15},
-    "shake":    {"head_tilt": 15, "head_nod": -5},
-    "wave":     {"head_tilt": 10, "head_nod": 5, "arm_r": -20},
-    "arms_up":  {"head_nod": 8, "arm_l": -30, "arm_r": -30},
-    "point_r":  {"head_tilt": 5, "arm_r": -20},
-    "point_l":  {"head_tilt": -5, "arm_l": -20},
-    "forward":  {"head_nod": 8, "body_bow": -8},
-    "backward": {"head_nod": -5, "body_bow": 10},
-    "shy":      {"head_nod": -15, "head_tilt": -5, "body_bow": -5},
-    "surprised":{"head_nod": 8, "head_tilt": 5, "brow_l": 0.5, "brow_r": 0.5, "body_bow": 10},
-    "sad":      {"head_nod": -10, "brow_l": -0.3, "brow_r": -0.3},
-    "angry":    {"head_nod": -8, "head_tilt": 5, "brow_l": -0.5, "brow_r": -0.5},
-    "smile":    {"head_nod": 5, "brow_l": 0.3, "brow_r": 0.3},
-    "kime":     {"head_tilt": 8, "head_nod": 5, "arm_r": -30},
+    "nod":      {"head_nod": -0.7, "head_tilt": 0},
+    "bow":      {"head_nod": -0.7, "body_bow": -0.4},
+    "tilt":     {"head_tilt": 0.5},
+    "shake":    {"head_tilt": 0.5, "head_nod": -0.2},
+    "wave":     {"head_tilt": 0.4, "head_nod": 0.2, "arm_r": -0.6},
+    "arms_up":  {"head_nod": 0.3, "arm_l": -0.8, "arm_r": -0.8},
+    "point_r":  {"head_tilt": 0.2, "arm_r": -0.6},
+    "point_l":  {"head_tilt": -0.2, "arm_l": -0.6},
+    "forward":  {"head_nod": 0.3, "body_bow": -0.4},
+    "backward": {"head_nod": -0.2, "body_bow": 0.4},
+    "shy":      {"head_nod": -0.5, "head_tilt": -0.2, "body_bow": -0.3},
+    "surprised":{"head_nod": 0.3, "head_tilt": 0.2, "brow_l": 0.6, "brow_r": 0.6, "body_bow": 0.4},
+    "sad":      {"head_nod": -0.4, "brow_l": -0.4, "brow_r": -0.4},
+    "angry":    {"head_nod": -0.3, "head_tilt": 0.2, "brow_l": -0.6, "brow_r": -0.6},
+    "smile":    {"head_nod": 0.2, "brow_l": 0.4, "brow_r": 0.4},
+    "kime":     {"head_tilt": 0.3, "head_nod": 0.2, "arm_r": -0.7},
 }
 
 ACTION_TO_TEMPLATE = {
@@ -144,17 +145,34 @@ class PoseEngine:
     def __init__(self, model):
         self.model = model
         self._current = None
-        self._categories = {}  # semantic category → [param names]
+        self._categories = {}
+        self._param_ranges = {}  # param_name → (min, max, default)
 
     def scan_model(self):
         try:
             ids = self.model.GetParamIds()
             self._categories = _categorize_params(ids)
-            _dbg(f"scan: {len(ids)} params, cats: {len(self._categories)}")
+            # 扫描每个参数的范围
+            for i in range(self.model.GetParameterCount()):
+                p = self.model.GetParameter(i)
+                self._param_ranges[p.id] = (p.min, p.max, p.default)
+            _dbg(f"scan: {len(ids)} params, cats: {len(self._categories)}, ranges: {len(self._param_ranges)}")
             for cat, names in sorted(self._categories.items()):
                 _dbg(f"  {cat}: {names}")
         except Exception as e:
             _dbg(f"scan fail: {e}")
+
+    def _scale_value(self, param_name: str, normalized: float) -> float:
+        """归一化值(-1~1) → 实际参数范围内的值"""
+        r = self._param_ranges.get(param_name)
+        if not r:
+            return normalized
+        pmin, pmax, pdefault = r
+        if pmin >= pmax:
+            return normalized
+        mid = (pmax + pmin) / 2 if pmin < 0 else pmin
+        half = (pmax - pmin) / 2
+        return mid + normalized * half
 
     def play_action(self, action: str) -> bool:
         template_name = ACTION_TO_TEMPLATE.get(action, action)
@@ -162,22 +180,21 @@ class PoseEngine:
         if not template:
             _dbg(f"play: no template {action}")
             return False
-        # 模板中的语义→实际参数名匹配
         concrete = {}
-        for cat_name, target_val in template.items():
+        for cat_name, norm_val in template.items():
             param_names = self._categories.get(cat_name, [])
             if param_names:
-                # 同类多个参数时取第一个，值按比例缩放
-                concrete[param_names[0]] = target_val
-                # 对称部位（双手/双腿）同步
+                # 按范围缩放归一化值
+                p0 = param_names[0]
+                concrete[p0] = self._scale_value(p0, norm_val)
                 if len(param_names) > 1:
-                    concrete[param_names[1]] = target_val
-        _dbg(f"play: {action} tmpl={template_name} "
-             f"cats={list(template.keys())} concrete={len(concrete)}")
+                    p1 = param_names[1]
+                    concrete[p1] = self._scale_value(p1, norm_val)
+        _dbg(f"play: {action} tmpl={template_name} concrete={len(concrete)}")
         if not concrete:
             _dbg("play: no params matched")
             return False
-        self._current = Motion.from_pose_dict(concrete)
+        self._current = Motion.from_pose_dict(concrete, duration=0.6)
         self._current.play()
         _dbg(f"play: started {action}")
         return True
