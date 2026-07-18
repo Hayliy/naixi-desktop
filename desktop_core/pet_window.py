@@ -5,7 +5,7 @@ from typing import Optional
 os.environ.setdefault("QT_QPA_PLATFORM", "windows")
 os.environ.setdefault("QT_OPENGL", "angle")
 
-from PySide6.QtWidgets import QApplication, QWidget, QFileDialog, QMenu
+from PySide6.QtWidgets import QApplication, QWidget, QFileDialog, QMenu, QLabel
 from PySide6.QtCore import Qt, QTimer, QPoint, Signal, QObject
 from PySide6.QtGui import QMouseEvent, QPainter, QColor, QFont, QAction
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
@@ -64,7 +64,8 @@ class Live2DWidget(QOpenGLWidget):
             self.model.Resize(w, h)
 
     def paintGL(self):
-        v3.clearBuffer(0.0, 0.0, 0.0, 0.0)
+        # 浅色背景让窗口可见（即使模型加载失败）
+        v3.clearBuffer(0.2, 0.15, 0.25, 0.3)
         if not self.model:
             return
         if abs(self._mouth_target - self._mouth_current) > 0.01:
@@ -102,6 +103,7 @@ class Live2DWidget(QOpenGLWidget):
             model.SetScale(scale)
             model.SetOffset(0, 0.1)
         self.model = model
+        self._status_label.hide()
         log.info(f"模型已加载: {model_path}")
 
     def set_mouth(self, value: float):
@@ -121,6 +123,23 @@ class PetWindow(QWidget):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(400, 500)
+        self._model_path = model_path
+
+        # 状态标签（模型加载前显示）
+        self._status_label = QLabel("正在加载模型...", self)
+        self._status_label.setStyleSheet("color: #aaa; font-size: 13px; background: transparent;")
+        self._status_label.setAlignment(Qt.AlignCenter)
+        self._status_label.setGeometry(0, self.height()//2 - 20, self.width(), 40)
+
+        # 默认放在屏幕右下角
+        from PySide6.QtGui import QScreen
+        screen = QScreen.availableGeometry(QApplication.primaryScreen())
+        self.move(screen.width() - 420, screen.height() - 520)
+
+        # 默认放在屏幕右下角
+        from PySide6.QtGui import QScreen
+        screen = QScreen.availableGeometry(QApplication.primaryScreen())
+        self.move(screen.width() - 420, screen.height() - 520)
 
         # Live2D 渲染控件
         self.l2d = Live2DWidget(self)
@@ -137,6 +156,11 @@ class PetWindow(QWidget):
         self._timer = QTimer()
         self._timer.timeout.connect(self.l2d.update)
         self._timer.start(16)
+
+        # 定时打印位置（首次启动后 2s）
+        QTimer.singleShot(2000, lambda: log.info(
+            f"[桌宠] 当前位置: ({self.x()},{self.y()}), 可见: {self.isVisible()}, 激活: {self.isActiveWindow()}"
+        ))
 
         # WebSocket 线程
         self._ws_thread: Optional[threading.Thread] = None
@@ -238,10 +262,12 @@ class PetWindow(QWidget):
 
 def run_pet(model_path: str = ""):
     """启动桌宠（阻塞）"""
-    # 初始化 live2d
     v3.init()
     app = QApplication.instance() or QApplication(sys.argv)
     win = PetWindow(model_path)
+    # 记录窗口位置以便调试
+    log.info(f"[桌宠] 窗口位置: ({win.x()}, {win.y()}), 大小: ({win.width()}, {win.height()})")
+    log.info("[桌宠] 窗口已弹出，请查看屏幕")
     win.show()
     sys.exit(app.exec())
 
