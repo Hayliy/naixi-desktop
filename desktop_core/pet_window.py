@@ -162,6 +162,8 @@ class ChatWorker(QObject):
 class PetWindow(QOpenGLWidget):
     """桌宠窗口 — QOpenGLWidget 本身就是窗口"""
 
+    _chat_request = Signal(str)  # 触发后台 HTTP 请求
+
     def __init__(self, model_path: str = ""):
         super().__init__()
         self.model: Optional[live2d.LAppModel] = None
@@ -181,6 +183,7 @@ class PetWindow(QOpenGLWidget):
         self._chat_worker = ChatWorker()
         self._chat_worker.moveToThread(self._chat_thread)
         self._chat_worker.done.connect(self._show_chat_result)
+        self._chat_request.connect(self._chat_worker.do_chat)  # Qt 自动 QueuedConnection
         self._chat_thread.start()
         # 测试对话输入（默认隐藏，右键菜单打开）
         self._chat_input = QLineEdit(self)
@@ -329,7 +332,7 @@ class PetWindow(QOpenGLWidget):
         self._chat_input.clear()
         self._chat_input.hide()
         self._bubble.show_text("思考中...", 5000)
-        QTimer.singleShot(0, lambda: self._chat_worker.do_chat(text))
+        self._chat_request.emit(text)  # 跨线程触发后台 HTTP
 
     def _show_chat_result(self, emotion: str, reply: str):
         self._bubble.show_text(f"[{emotion}] {reply}", 4000)
