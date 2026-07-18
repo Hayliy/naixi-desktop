@@ -154,6 +154,9 @@ class PetWindow(QOpenGLWidget):
         # 表情/动作映射
         self._expression_map: dict[str, str] = {}
         self._motion_groups: dict[str, int] = {}
+        self._idle_motion_groups: list[str] = []
+        self._idle_interval = 15.0
+        self._last_idle_ts = 0.0
         self._pose = PoseEngine(None)
         self._capture_mode = False  # 直播捕获模式（不透明背景）
 
@@ -233,6 +236,7 @@ class PetWindow(QOpenGLWidget):
             # 动作组
             motions = self.model.GetMotionGroups()
             self._motion_groups = motions if motions else {}
+            self._idle_motion_groups = [g for g in self._motion_groups if g != "Idle"] or list(self._motion_groups.keys())
             log.info(f"表情({len(ids)}个): {list(self._expression_map.values())}")
             log.info(f"动作组: {self._motion_groups}")
         except Exception as e:
@@ -283,10 +287,24 @@ class PetWindow(QOpenGLWidget):
             self.model.SetParameterValue("ParamMouthOpenY", self._mouth_current)
             self.model.SetParameterValue("ParamMouthForm", self._mouth_current)
         self.model.Update()
+        # 物理模拟（头发、衣服自然摆动）
+        self.model.UpdatePhysics(dt)
+        self.model.UpdateBreath(dt)
         self.model.Draw()
 
     def timerEvent(self, event: QTimerEvent):
         self.update()
+        # 空闲动作循环（每 15-30 秒随机播放一次 Idle 动作）
+        if self.model and self._idle_motion_groups:
+            now = time.time()
+            if now - getattr(self, '_last_idle_ts', 0) > self._idle_interval:
+                self._last_idle_ts = now
+                import random as _r
+                g = _r.choice(self._idle_motion_groups)
+                count = self._motion_groups.get(g, 1)
+                idx = _r.randint(0, count - 1)
+                self.model.StartMotion(g, idx, 1)
+                self._idle_interval = _r.uniform(12, 28)  # 随机间隔
 
     # ── 鼠标 ──
 
