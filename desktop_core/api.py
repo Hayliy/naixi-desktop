@@ -2931,6 +2931,7 @@ def setup_routes(app):
     app.router.add_get("/api/live/audio-devices", api_live_audio_devices)
     app.router.add_get("/api/live/live2d-stream", api_live2d_stream)
     app.router.add_get("/api/live2d-model/{path:.*}", api_live2d_model)
+    app.router.add_get("/api/live2d-model-list", api_live2d_model_list)
 
     # 启动时连接 MCP 服务器
     app.on_startup.append(_on_startup_mcp)
@@ -3155,6 +3156,33 @@ def _model_response(fp: str):
     mime = {"png": "image/png", "json": "application/json", "moc3": "application/octet-stream",
             "physics3": "application/json", "exp3": "application/json", "cdi3": "application/json"}.get(ext, "application/octet-stream")
     return web.FileResponse(fp, headers={"Content-Type": mime, "Access-Control-Allow-Origin": "*"})
+
+async def api_live2d_model_list(request):
+    """列出可用的 Live2D 模型（扫描 VTube Studio 和本地目录）"""
+    search_roots = [
+        os.path.join(_DESKTOP_DIR, "data", "models"),
+        r"D:\Program Files\Steam\steamapps\common\VTube Studio\VTube Studio_Data\StreamingAssets\Live2DModels",
+    ]
+    models = []
+    seen = set()
+    for base in search_roots:
+        if not os.path.exists(base):
+            continue
+        for entry in os.listdir(base):
+            model_dir = os.path.join(base, entry)
+            if not os.path.isdir(model_dir):
+                continue
+            # 查找 model3.json（支持直接以目录名下划线格式）
+            for f in os.listdir(model_dir):
+                if f.endswith(".model3.json") and f not in seen:
+                    seen.add(f)
+                    models.append({
+                        "name": entry,
+                        "modelFile": f,
+                        "path": os.path.join(model_dir, f),
+                    })
+                    break
+    return web.json_response({"models": models})
 
 # ── MCP 管理 API ──
 
