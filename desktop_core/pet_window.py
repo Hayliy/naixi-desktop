@@ -11,8 +11,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "windows")
 os.environ.setdefault("QT_OPENGL", "angle")
 
 from OpenGL.GL import glViewport
-from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer, Signal
-from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont
+from PySide6.QtCore import Qt, QPoint, QRect, QTimerEvent, QTimer, QPropertyAnimation, Signal
+from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont, QFontMetrics, QPainterPath
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QApplication, QMenu, QFileDialog, QWidget, QLineEdit
 
@@ -32,68 +32,112 @@ if os.path.exists(VTS_MODELS):
 
 
 class BubbleWindow(QWidget):
-    """语言气泡 — 跟随桌宠的透明气泡窗口"""
+    """语言气泡 — 云朵形状 + 带尾巴"""
+
+    BG_COLOR = QColor(180, 160, 220, 230)
+    TEXT_COLOR = QColor(50, 30, 70)
+    BORDER_COLOR = QColor(150, 130, 200, 200)
+    TAIL_SIZE = 10
+    PADDING = 14
+    MAX_WIDTH = 300
+    DISPLAY_MS = 5000
 
     def __init__(self, pet: QWidget):
         super().__init__(None)
         self._pet = pet
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._tick)
-        self._timer.start(30)
         self._text = ""
-        self._opacity = 0.0
-        self._fade_dir = 0  # 1=fade in, -1=fade out, 0=stay
-        self._stay = 0  # 停留计数
+        self._opacity = 1.0
+        self._fade_anim: Optional[QPropertyAnimation] = None
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self._fade_out)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
-        self.setFixedSize(280, 80)
+        self.hide()
 
-    def show_text(self, text: str, duration: int = 3000):
-        """显示气泡文字，duration 毫秒后淡出"""
+    def show_text(self, text: str, duration: int = 0):
+        if duration == 0:
+            duration = self.DISPLAY_MS
+        self._hide_timer.stop()
+        if self._fade_anim and self._fade_anim.state() == QPropertyAnimation.Running:
+            self._fade_anim.stop()
+        self.setWindowOpacity(1.0)
         self._text = text
-        self._opacity = 0.0
-        self._fade_dir = 1
-        self._stay = duration // 30
+        # 根据文字算尺寸
+        f = QFont("Microsoft YaHei", 11)
+        fm = QFontMetrics(f)
+        rect = fm.boundingRect(QRect(0, 0, self.MAX_WIDTH - 2 * self.PADDING, 0),
+                               Qt.AlignLeft | Qt.TextWordWrap, text)
+        bw = max(rect.width() + 2 * self.PADDING + 10, 80)
+        bh = rect.height() + 2 * self.PADDING + self.TAIL_SIZE + 8
+        self.setFixedSize(bw, bh)
+        self._text_rect = QRect(self.PADDING, self.PADDING,
+                                bw - 2 * self.PADDING, bh - 2 * self.PADDING - self.TAIL_SIZE)
+        self._reposition()
         self.show()
-        self._update_pos()
+        self.raise_()
+        self._hide_timer.start(duration)
 
-    def _update_pos(self):
+    def _reposition(self):
+        if self._pet is None:
+            return
         px, py = self._pet.x(), self._pet.y()
         pw = self._pet.width()
-        self.move(px + pw // 2 - 140, py - 90)
+        x = px + pw // 2 - self.width() // 2
+        y = py - self.height() + self.TAIL_SIZE - 5
+        if y < 0:
+            y = py + 20
+        self.move(x, y)
 
-    def _tick(self):
-        if self._fade_dir == 1:
-            self._opacity = min(1.0, self._opacity + 0.08)
-            if self._opacity >= 1.0:
-                self._fade_dir = 0
-        elif self._fade_dir == -1:
-            self._opacity = max(0.0, self._opacity - 0.04)
-            if self._opacity <= 0.0:
-                self.hide()
-                self._fade_dir = 0
-        elif self._fade_dir == 0 and self._stay > 0:
-            self._stay -= 1
-            if self._stay <= 0:
-                self._fade_dir = -1
-        self._update_pos()
-        self.update()
+    def _fade_out(self):
+        self._fade_anim = QPropertyAnimation(self, b"windowOpacity")
+        self._fade_anim.setDuration(500)
+        self._fade_anim.setStartValue(1.0)
+        self._fade_anim.setEndValue(0.0)
+        self._fade_anim.finished.connect(self.hide)
+        self._fade_anim.start()
 
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        # 半透明圆角气泡
-        alpha = int(self._opacity * 200)
-        p.setBrush(QColor(60, 40, 80, min(alpha, 200)))
-        p.setPen(QColor(120, 90, 160, alpha))
-        p.drawRoundedRect(4, 4, self.width() - 8, self.height() - 8, 12, 12)
+        w, h = self.width(), self.height()
+        body_h = h - self.TAIL_SIZE
+
+        # 用重叠的圆 + 底部矩形拼出云朵形状
+        cloud = QPainterPath()
+        r = body_h * 0.35  # 圆半径
+        cx = w // 2
+        cy = body_h // 2
+
+        # 主体矩形
+        cloud.addRoundedRect(0, cy - r * 0.6, w, r * 1.7, r * 0.3, r * 0.3)
+
+        # 顶部三朵云弧（叠圆）
+        cloud.addEllipse(cx - r * 1.1, cy - r * 0.6, r * 1.1, r * 1.1)
+        cloud.addEllipse(cx - r * 0.4, cy - r * 0.9, r * 1.2, r * 1.2)
+        cloud.addEllipse(cx + r * 0.3, cy - r * 0.5, r * 1.0, r * 1.0)
+
+        # 左侧补弧
+        cloud.addEllipse(cx - r * 1.6, cy - r * 0.2, r * 0.9, r * 0.9)
+
+        # 底部尾巴
+        tail = QPainterPath()
+        tail.moveTo(cx - self.TAIL_SIZE, body_h)
+        tail.lineTo(cx, h)
+        tail.lineTo(cx + self.TAIL_SIZE, body_h)
+        tail.closeSubpath()
+        cloud = cloud.united(tail)
+
+        p.setPen(self.BORDER_COLOR)
+        p.setBrush(self.BG_COLOR)
+        p.drawPath(cloud)
+
         # 文字
-        if self._text and self._opacity > 0.1:
-            p.setPen(QColor(255, 255, 255, int(255 * self._opacity)))
-            f = QFont("Microsoft YaHei", 12)
-            f.setBold(True)
+        if self._text:
+            p.setPen(self.TEXT_COLOR)
+            f = QFont("Microsoft YaHei", 11)
             p.setFont(f)
-            p.drawText(self.rect().adjusted(12, 8, -12, -8), Qt.AlignCenter | Qt.TextWordWrap, self._text)
+            p.drawText(self._text_rect, Qt.AlignLeft | Qt.TextWordWrap, self._text)
         p.end()
 
 
