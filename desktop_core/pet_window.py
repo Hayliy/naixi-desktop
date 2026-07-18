@@ -435,6 +435,9 @@ class PetWindow(QOpenGLWidget):
             self.model.SetAutoBlinkEnable(True)
             self.model.StartRandomMotion("Idle", 3)
             log.info(f"模型切换: {self._model_path}")
+            from desktop_core.motion_engine import PoseEngine
+            self._pose = PoseEngine(self.model)
+            self._pose.scan_model()
         except Exception as e:
             log.warning(f"模型切换失败: {e}")
 
