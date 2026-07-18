@@ -3130,9 +3130,9 @@ async def api_live2d_stream(request):
     engine._live2d_ws = ws
     try:
         async for msg in ws:
-            if msg.type == aiohttp.WSMsgType.CLOSED:
+            if msg.type == web.WSMsgType.CLOSED:
                 break
-            if msg.type == aiohttp.WSMsgType.TEXT:
+            if msg.type == web.WSMsgType.TEXT:
                 try:
                     data = json.loads(msg.data)
                     if data.get("type") == "chat":
