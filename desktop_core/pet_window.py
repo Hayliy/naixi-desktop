@@ -4,7 +4,7 @@
 - QOpenGLWidget 直接当窗口，无外层包裹
 - initializeGL 同步构造模型，paintGL 全权渲染
 """
-import os, sys, json, logging, threading, time
+import os, sys, json, logging, threading, time, math
 from typing import Optional
 
 os.environ.setdefault("QT_QPA_PLATFORM", "windows")
@@ -12,7 +12,7 @@ os.environ.setdefault("QT_OPENGL", "angle")
 
 from OpenGL.GL import glViewport
 from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer
-from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat
+from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QApplication, QMenu, QFileDialog
 
@@ -29,6 +29,72 @@ SEARCH_ROOTS = [DATA_MODELS]
 # VTube Studio 存在时才加入扫描
 if os.path.exists(VTS_MODELS):
     SEARCH_ROOTS.append(VTS_MODELS)
+
+
+class BubbleWindow(QWidget):
+    """语言气泡 — 跟随桌宠的透明气泡窗口"""
+
+    def __init__(self, pet: QWidget):
+        super().__init__(None)
+        self._pet = pet
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(30)
+        self._text = ""
+        self._opacity = 0.0
+        self._fade_dir = 0  # 1=fade in, -1=fade out, 0=stay
+        self._stay = 0  # 停留计数
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setFixedSize(280, 80)
+
+    def show_text(self, text: str, duration: int = 3000):
+        """显示气泡文字，duration 毫秒后淡出"""
+        self._text = text
+        self._opacity = 0.0
+        self._fade_dir = 1
+        self._stay = duration // 30
+        self.show()
+        self._update_pos()
+
+    def _update_pos(self):
+        px, py = self._pet.x(), self._pet.y()
+        pw = self._pet.width()
+        self.move(px + pw // 2 - 140, py - 90)
+
+    def _tick(self):
+        if self._fade_dir == 1:
+            self._opacity = min(1.0, self._opacity + 0.08)
+            if self._opacity >= 1.0:
+                self._fade_dir = 0
+        elif self._fade_dir == -1:
+            self._opacity = max(0.0, self._opacity - 0.04)
+            if self._opacity <= 0.0:
+                self.hide()
+                self._fade_dir = 0
+        elif self._fade_dir == 0 and self._stay > 0:
+            self._stay -= 1
+            if self._stay <= 0:
+                self._fade_dir = -1
+        self._update_pos()
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        # 半透明圆角气泡
+        alpha = int(self._opacity * 200)
+        p.setBrush(QColor(60, 40, 80, min(alpha, 200)))
+        p.setPen(QColor(120, 90, 160, alpha))
+        p.drawRoundedRect(4, 4, self.width() - 8, self.height() - 8, 12, 12)
+        # 文字
+        if self._text and self._opacity > 0.1:
+            p.setPen(QColor(255, 255, 255, int(255 * self._opacity)))
+            f = QFont("Microsoft YaHei", 12)
+            f.setBold(True)
+            p.setFont(f)
+            p.drawText(self.rect().adjusted(12, 8, -12, -8), Qt.AlignCenter | Qt.TextWordWrap, self._text)
+        p.end()
 
 
 def find_model3() -> list[dict]:
@@ -61,8 +127,11 @@ class PetWindow(QOpenGLWidget):
         self._drag_offset = QPoint()
         self._dragging = False
         # 表情/动作映射
-        self._expression_map: dict[str, str] = {}  # "开心" → "1脸红.exp3.json"
-        self._motion_groups: dict[str, int] = {}   # "Idle" → 3 (count)
+        self._expression_map: dict[str, str] = {}
+        self._motion_groups: dict[str, int] = {}
+
+        # 语言气泡
+        self._bubble = BubbleWindow(self)
 
         # 窗口属性：无边框 + 置顶 + 工具窗口 + 透明
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -248,6 +317,10 @@ class PetWindow(QOpenGLWidget):
                         break
                     d = json.loads(raw)
                     if d.get("type") == "speak":
+                        # 语言气泡
+                        txt = d.get("text", "")
+                        if txt:
+                            self._bubble.show_text(txt)
                         # 表情
                         expr = self._resolve_expression(d.get("emotion", ""))
                         if expr:

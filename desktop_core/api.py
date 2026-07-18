@@ -2932,6 +2932,9 @@ def setup_routes(app):
     app.router.add_get("/api/live/live2d-stream", api_live2d_stream)
     app.router.add_post("/api/live/pet-start", api_live_pet_start)
     app.router.add_post("/api/live/pet-stop", api_live_pet_stop)
+    app.router.add_post("/api/live/chat-test", api_live_chat_test)
+    app.router.add_get("/api/live/models", api_live_models)
+    app.router.add_post("/api/live/models/delete", api_live_models_delete)
     app.router.add_get("/api/live2d-model/{path:.*}", api_live2d_model)
     app.router.add_get("/api/live2d-model-list", api_live2d_model_list)
 
@@ -3146,6 +3149,58 @@ async def api_live_pet_stop(request):
     """停止桌宠"""
     from desktop_core.live_engine import engine
     engine._stop_pet()
+    return web.json_response({"ok": True})
+
+async def api_live_chat_test(request):
+    """LLM 测试：发送文本 → 返回回复+情绪"""
+    from desktop_core.live_engine import engine
+    body = await request.json()
+    text = body.get("text", "")
+    if not text:
+        return web.json_response({"error": "no text"}, status=400)
+    reply, emotion = await engine._decide_reply(text, "测试")
+    result = {"reply": reply, "emotion": emotion}
+    # 如果桌宠在运行，推送测试消息给它
+    if engine._live2d_ws and not engine._live2d_ws.closed:
+        try:
+            await engine._live2d_ws.send_json({
+                "type": "speak",
+                "text": reply,
+                "emotion": emotion,
+                "mouth": [0.5, 0.8, 0.5, 0.3, 0.0],
+                "frame_ms": 80,
+            })
+        except:
+            pass
+    return web.json_response(result)
+
+async def api_live_models(request):
+    """列出 data/models/ 目录中的模型"""
+    models_dir = os.path.join(_DESKTOP_DIR, "data", "models")
+    models = []
+    if os.path.exists(models_dir):
+        for entry in os.listdir(models_dir):
+            d = os.path.join(models_dir, entry)
+            if not os.path.isdir(d):
+                continue
+            for f in os.listdir(d):
+                if f.endswith(".model3.json"):
+                    models.append({"name": entry, "file": f, "path": os.path.join(d, f)})
+                    break
+    return web.json_response({"models": models})
+
+async def api_live_models_delete(request):
+    """删除 data/models/ 中的模型目录"""
+    from desktop_core.live_engine import engine
+    body = await request.json()
+    name = body.get("name", "")
+    if not name:
+        return web.json_response({"error": "no name"}, status=400)
+    target = os.path.join(_DESKTOP_DIR, "data", "models", name)
+    if not os.path.exists(target):
+        return web.json_response({"error": "not found"}, status=404)
+    import shutil
+    shutil.rmtree(target)
     return web.json_response({"ok": True})
 
 async def api_live2d_model(request):
