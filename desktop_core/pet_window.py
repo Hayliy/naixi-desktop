@@ -20,10 +20,15 @@ from live2d import v3 as live2d
 
 log = logging.getLogger("pet_window")
 
-SEARCH_ROOTS = [
-    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "models"),
-    r"D:\Program Files\Steam\steamapps\common\VTube Studio\VTube Studio_Data\StreamingAssets\Live2DModels",
-]
+# 模型目录：桌面端 data/models/ 为主，VTube Studio 为可选来源
+_DESKTOP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_MODELS = os.path.join(_DESKTOP_ROOT, "data", "models")
+VTS_MODELS = r"D:\Program Files\Steam\steamapps\common\VTube Studio\VTube Studio_Data\StreamingAssets\Live2DModels"
+
+SEARCH_ROOTS = [DATA_MODELS]
+# VTube Studio 存在时才加入扫描
+if os.path.exists(VTS_MODELS):
+    SEARCH_ROOTS.append(VTS_MODELS)
 
 
 def find_model3() -> list[dict]:
@@ -99,39 +104,37 @@ class PetWindow(QOpenGLWidget):
         self.startTimer(16)
 
     def _init_expression_map(self):
-        """初始化表情映射：模型的表情ID → 中文名"""
+        """初始化表情映射：读取模型所有表情，自动匹配情绪"""
         if not self.model:
             return
         try:
             ids = self.model.GetExpressionIds()
             self._expression_map = {}
             for eid in ids:
-                # 表情文件一般是 "1脸红.exp3.json" 格式，取数字后的中文
+                # 去掉扩展名和数字前缀，得到纯中文名
                 name = eid.replace(".exp3.json", "").lstrip("0123456789")
                 self._expression_map[eid] = name
-            # 反向映射：中文 → 表情ID
-            self._emotion_to_expr = {v: k for k, v in self._expression_map.items()}
-            # 默认映射（中文情绪 → 表情名）
-            self._emotion_fallback = {
-                "开心": "脸红", "欢迎": "心心眼", "惊讶": "心心眼",
-                "悲伤": "可怜眼", "害羞": "脸红", "生气": "黑脸",
-                "卖萌": "哇库哇库", "无奈": "空白眼",
-            }
-            log.info(f"表情已加载: {list(self._expression_map.keys())}")
             # 动作组
             motions = self.model.GetMotionGroups()
             self._motion_groups = motions if motions else {}
+            log.info(f"表情({len(ids)}个): {list(self._expression_map.values())}")
             log.info(f"动作组: {self._motion_groups}")
         except Exception as e:
             log.warning(f"表情/动作加载失败: {e}")
 
     def _resolve_expression(self, emotion: str) -> str:
-        """把中文情绪转成模型的表情ID"""
-        expr_name = self._emotion_fallback.get(emotion, "")
-        if expr_name:
-            for eid, ename in self._expression_map.items():
-                if ename == expr_name:
-                    return eid
+        """把情绪名匹配到模型的表情ID。优先精确匹配，再尝试包含匹配"""
+        if not self.model or not emotion:
+            return ""
+        expr_name = emotion.strip()
+        # 精确匹配：情绪名 == 表情名
+        for eid, ename in self._expression_map.items():
+            if ename == expr_name:
+                return eid
+        # 包含匹配：情绪名在表情名中
+        for eid, ename in self._expression_map.items():
+            if expr_name in ename or ename in expr_name:
+                return eid
         return ""
 
     def resizeGL(self, w: int, h: int):
@@ -187,13 +190,31 @@ class PetWindow(QOpenGLWidget):
 
     def _import_model(self):
         p, _ = QFileDialog.getOpenFileName(self, "选择 Live2D 模型文件", "", "模型文件 (*.model3.json)")
-        if p:
-            self._reload_model(p)
+        if not p:
+            return
+        # 复制到 data/models/ 目录
+        model_dir = os.path.dirname(p)
+        model_name = os.path.basename(model_dir)
+        target_dir = os.path.join(DATA_MODELS, model_name)
+        try:
+            import shutil
+            if os.path.exists(target_dir):
+                import time
+                target_dir += f"_imported_{int(time.time())}"
+            shutil.copytree(model_dir, target_dir)
+            new_path = os.path.join(target_dir, os.path.basename(p))
+            log.info(f"模型已导入: {new_path}")
+            notify = getattr(self, '_notify', None)
+            if notify:
+                notify(f"模型已导入: {model_name}")
+            self._reload_model(new_path)
+        except Exception as e:
+            log.warning(f"模型导入失败: {e}")
+            self._reload_model(p)  # 复制失败直接加载原路径
 
     def _reload_model(self, path: str):
         """重新加载模型（在 OpenGL 线程中）"""
         self._model_path = path
-        # 下一次 paintGL 时会重新创建 model
         QTimer.singleShot(0, self._init_model)
 
     def _init_model(self):
