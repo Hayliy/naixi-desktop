@@ -1,20 +1,25 @@
-"""桌宠窗口 — PySide6 + live2d.v3 实现透明置顶 Live2D 渲染"""
-import os, sys, json, logging, asyncio, threading
+"""桌宠窗口 — PySide6 + live2d.v3 透明置顶 Live2D 渲染
+
+参考: yuuki-desktop (github.com/Rinisnotarobot/yuuki-desktop)
+- QOpenGLWidget 直接当窗口，无外层包裹
+- initializeGL 同步构造模型，paintGL 全权渲染
+"""
+import os, sys, json, logging, threading, time
 from typing import Optional
 
 os.environ.setdefault("QT_QPA_PLATFORM", "windows")
 os.environ.setdefault("QT_OPENGL", "angle")
 
-from PySide6.QtWidgets import QApplication, QWidget, QFileDialog, QMenu
-from PySide6.QtCore import Qt, QTimer, QPoint, Signal, QObject
-from PySide6.QtGui import QMouseEvent, QPainter, QColor, QFont, QAction
+from OpenGL.GL import glViewport
+from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer
+from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
+from PySide6.QtWidgets import QApplication, QMenu, QFileDialog
 
-from live2d import v3
+from live2d import v3 as live2d
 
 log = logging.getLogger("pet_window")
 
-# ── 模型搜索路径 ──
 SEARCH_ROOTS = [
     os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "models"),
     r"D:\Program Files\Steam\steamapps\common\VTube Studio\VTube Studio_Data\StreamingAssets\Live2DModels",
@@ -22,7 +27,6 @@ SEARCH_ROOTS = [
 
 
 def find_model3() -> list[dict]:
-    """扫描所有可用模型，返回 [{name, modelFile, path}]"""
     models = []
     seen = set()
     for base in SEARCH_ROOTS:
@@ -40,26 +44,62 @@ def find_model3() -> list[dict]:
     return models
 
 
-class Live2DWidget(QOpenGLWidget):
-    """Live2D 渲染控件（OpenGL）"""
+class PetWindow(QOpenGLWidget):
+    """桌宠窗口 — QOpenGLWidget 本身就是窗口（参照 yuuki-desktop）"""
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.model: Optional[v3.LAppModel] = None
-        self.model_root = ""
+    def __init__(self, model_path: str = ""):
+        super().__init__()
+        self.model: Optional[live2d.LAppModel] = None
         self._mouth_target = 0.0
         self._mouth_current = 0.0
+        self._model_path = model_path or ""
+        self._drag_offset = QPoint()
+        self._dragging = False
+
+        # 窗口属性：无边框 + 置顶 + 工具窗口 + 透明
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setMouseTracking(True)
+        self.resize(400, 500)
+
+        # 右下角定位
+        screen = QGuiApplication.primaryScreen().availableGeometry()
+        self.move(screen.width() - 420, screen.height() - 520)
+
+        # 如果没有指定模型，自动找第一个
+        if not self._model_path or not os.path.exists(self._model_path):
+            models = find_model3()
+            if models:
+                self._model_path = models[0]["path"]
+
+        # 启动 WS 口型接收
         self._running = True
+        threading.Thread(target=self._ws_loop, daemon=True).start()
+
+    # ── OpenGL ──
 
     def initializeGL(self):
-        v3.glInit()
+        live2d.glInit()
+        live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
+        if self._model_path and os.path.exists(self._model_path):
+            try:
+                self.model = live2d.LAppModel()
+                self.model.LoadModelJson(self._model_path)
+                self.model.Resize(self.width(), self.height())
+                self.model.SetAutoBreathEnable(True)
+                self.model.SetAutoBlinkEnable(True)
+                self.model.StartRandomMotion("Idle", 3)
+                log.info(f"模型加载成功: {self._model_path}")
+            except Exception as e:
+                log.warning(f"模型加载失败: {e}")
+        self.startTimer(16)
 
-    def resizeGL(self, w, h):
+    def resizeGL(self, w: int, h: int):
         if self.model:
             self.model.Resize(w, h)
 
     def paintGL(self):
-        v3.clearBuffer(0.0, 0.0, 0.0, 0.0)
+        live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
         if not self.model:
             return
         # 口型平滑
@@ -70,160 +110,109 @@ class Live2DWidget(QOpenGLWidget):
         self.model.Update()
         self.model.Draw()
 
-    def load_model(self, model_path: str):
-        """加载 Live2D 模型"""
-        if self.model:
-            self.model = None
-        model = v3.LAppModel()
-        model.LoadModelJson(model_path)
-        model.SetAutoBreathEnable(True)
-        model.SetAutoBlinkEnable(True)
-        model.StartRandomMotion("Idle", 3)
-        canvas_w, canvas_h = model.GetCanvasSize()
-        if canvas_w and canvas_h:
-            # 按窗口比例缩放
-            win_w, win_h = self.width() or 400, self.height() or 500
-            scale = min(win_w / canvas_w, win_h / canvas_h) * 0.9
-            model.SetScale(scale)
-            model.SetOffset(0, 0.1)
-        self.model = model
-        log.info(f"模型已加载: {model_path}")
+    def timerEvent(self, event: QTimerEvent):
+        self.update()
 
-    def set_mouth(self, value: float):
-        """设置口型目标值 0.0~1.0"""
-        self._mouth_target = max(0.0, min(1.0, value))
+    # ── 鼠标 ──
 
-    def stop(self):
-        self._running = False
+    def mousePressEvent(self, e: QMouseEvent):
+        if e.button() == Qt.LeftButton:
+            self._dragging = True
+            self._drag_offset = e.globalPosition().toPoint() - self.pos()
+        super().mousePressEvent(e)
 
+    def mouseMoveEvent(self, e: QMouseEvent):
+        if self._dragging:
+            self.move(e.globalPosition().toPoint() - self._drag_offset)
 
-class PetWindow(QWidget):
-    """桌宠主窗口 — 透明置顶"""
+    def mouseReleaseEvent(self, e: QMouseEvent):
+        if e.button() == Qt.LeftButton:
+            self._dragging = False
+        super().mouseReleaseEvent(e)
 
-    def __init__(self, model_path: str = ""):
-        super().__init__()
-        self.setWindowTitle("奶昔桌宠")
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(400, 500)
+    # ── 右键菜单 ──
 
-        # Live2D 渲染控件
-        self.l2d = Live2DWidget(self)
-        self.l2d.setGeometry(0, 0, 400, 500)
-
-        # 拖拽
-        self._drag_pos = QPoint()
-
-        # 右键菜单
-        self.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.customContextMenuRequested.connect(self._show_menu)
-
-        # 定时刷新 (~60fps)
-        self._timer = QTimer()
-        self._timer.timeout.connect(self.l2d.update)
-        self._timer.start(16)
-
-        # WebSocket 线程
-        self._ws_thread: Optional[threading.Thread] = None
-        self._running = True
-
-        # 加载模型
-        if model_path and os.path.exists(model_path):
-            self.l2d.load_model(model_path)
-        else:
-            # 自动找第一个可用模型
-            models = find_model3()
-            if models:
-                self.l2d.load_model(models[0]["path"])
-
-        # 启动 WS 接收
-        self._start_ws()
-
-    def _start_ws(self):
-        """后台线程：连接后端 WebSocket 接收口型/表情数据"""
-
-        def _run():
-            import websocket
-            url = "ws://127.0.0.1:9845/api/live/live2d-stream"
-            while self._running:
-                try:
-                    ws = websocket.create_connection(url, timeout=5)
-                    while self._running:
-                        raw = ws.recv()
-                        if not raw:
-                            break
-                        data = json.loads(raw)
-                        if data.get("type") == "speak":
-                            mouth_data = data.get("mouth", [])
-                            frame_ms = data.get("frame_ms", 80)
-                            for m in mouth_data:
-                                if not self._running:
-                                    break
-                                self.l2d.set_mouth(m)
-                                import time
-                                time.sleep(frame_ms / 1000)
-                            self.l2d.set_mouth(0.0)
-                except Exception as e:
-                    if self._running:
-                        import time
-                        time.sleep(3)
-                finally:
-                    try:
-                        ws.close()
-                    except:
-                        pass
-
-        self._ws_thread = threading.Thread(target=_run, daemon=True)
-        self._ws_thread.start()
-
-    def _show_menu(self, pos):
+    def contextMenuEvent(self, event):
         menu = QMenu(self)
-        # 切换模型
         models = find_model3()
         if models:
             sub = menu.addMenu("切换模型")
             for m in models:
-                act = QAction(m["name"], self)
-                act.triggered.connect(lambda checked, p=m["path"]: self.l2d.load_model(p))
-                sub.addAction(act)
-        # 导入模型
-        act_import = QAction("导入模型文件...", self)
-        act_import.triggered.connect(self._import_model)
-        menu.addAction(act_import)
-        # 退出
+                a = sub.addAction(m["name"])
+                a.triggered.connect(lambda checked, p=m["path"]: self._reload_model(p))
+        menu.addAction("导入模型文件...", self._import_model)
         menu.addSeparator()
-        act_exit = QAction("退出", self)
-        act_exit.triggered.connect(self.close)
-        menu.addAction(act_exit)
-        menu.exec(self.mapToGlobal(pos))
+        menu.addAction("退出", QApplication.quit)
+        menu.exec(event.globalPos())
 
     def _import_model(self):
-        path, _ = QFileDialog.getOpenFileName(self, "选择 Live2D 模型文件", "", "模型文件 (*.model3.json)")
-        if path:
-            self.l2d.load_model(path)
+        p, _ = QFileDialog.getOpenFileName(self, "选择 Live2D 模型文件", "", "模型文件 (*.model3.json)")
+        if p:
+            self._reload_model(p)
 
-    # ── 鼠标拖拽 ──
+    def _reload_model(self, path: str):
+        """重新加载模型（在 OpenGL 线程中）"""
+        self._model_path = path
+        # 下一次 paintGL 时会重新创建 model
+        QTimer.singleShot(0, self._init_model)
 
-    def mousePressEvent(self, event: QMouseEvent):
-        if event.button() == Qt.LeftButton:
-            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+    def _init_model(self):
+        """重建模型"""
+        if not self._model_path or not os.path.exists(self._model_path):
+            return
+        try:
+            self.model = live2d.LAppModel()
+            self.model.LoadModelJson(self._model_path)
+            self.model.Resize(self.width(), self.height())
+            self.model.SetAutoBreathEnable(True)
+            self.model.SetAutoBlinkEnable(True)
+            self.model.StartRandomMotion("Idle", 3)
+            log.info(f"模型切换: {self._model_path}")
+        except Exception as e:
+            log.warning(f"模型切换失败: {e}")
 
-    def mouseMoveEvent(self, event: QMouseEvent):
-        if event.buttons() == Qt.LeftButton:
-            self.move(event.globalPosition().toPoint() - self._drag_pos)
+    def set_mouth(self, v: float):
+        self._mouth_target = max(0.0, min(1.0, v))
+
+    # ── WebSocket 口型 ──
+
+    def _ws_loop(self):
+        import websocket
+        while self._running:
+            try:
+                ws = websocket.create_connection("ws://127.0.0.1:9845/api/live/live2d-stream", timeout=5)
+                while self._running:
+                    raw = ws.recv()
+                    if not raw:
+                        break
+                    d = json.loads(raw)
+                    if d.get("type") == "speak":
+                        for m in d.get("mouth", []):
+                            if not self._running:
+                                break
+                            self.set_mouth(m)
+                            time.sleep(d.get("frame_ms", 80) / 1000)
+                        self.set_mouth(0.0)
+            except:
+                if self._running:
+                    time.sleep(3)
+            finally:
+                try:
+                    ws.close()
+                except:
+                    pass
 
     def closeEvent(self, event):
         self._running = False
-        self.l2d.stop()
-        self._timer.stop()
-        v3.glRelease()
         super().closeEvent(event)
 
 
 def run_pet(model_path: str = ""):
-    """启动桌宠（阻塞）"""
-    # 初始化 live2d
-    v3.init()
+    live2d.init()
+    fmt = QSurfaceFormat()
+    fmt.setAlphaBufferSize(8)
+    fmt.setSamples(4)
+    QSurfaceFormat.setDefaultFormat(fmt)
     app = QApplication.instance() or QApplication(sys.argv)
     win = PetWindow(model_path)
     win.show()
@@ -231,5 +220,4 @@ def run_pet(model_path: str = ""):
 
 
 if __name__ == "__main__":
-    model_arg = sys.argv[1] if len(sys.argv) > 1 else ""
-    run_pet(model_arg)
+    run_pet(sys.argv[1] if len(sys.argv) > 1 else "")
