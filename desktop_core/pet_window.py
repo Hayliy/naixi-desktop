@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "windows")
 os.environ.setdefault("QT_OPENGL", "angle")
 
 from OpenGL.GL import glViewport
-from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer, QPropertyAnimation
+from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer, QPropertyAnimation, Signal, Signal
 from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont, QPainterPath
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QApplication, QMenu, QFileDialog, QWidget, QLineEdit, QLabel
@@ -136,6 +136,7 @@ def find_model3() -> list[dict]:
 
 
 class PetWindow(QOpenGLWidget):
+    _chat_response = Signal(str, str)  # emotion, reply
     """桌宠窗口 — QOpenGLWidget 本身就是窗口（参照 yuuki-desktop）"""
 
     def __init__(self, model_path: str = ""):
@@ -149,6 +150,7 @@ class PetWindow(QOpenGLWidget):
         # 表情/动作映射
         self._expression_map: dict[str, str] = {}
         self._motion_groups: dict[str, int] = {}
+        self._chat_response.connect(self._on_chat_response)
 
         # 语言气泡
         self._bubble = BubbleWindow(self)
@@ -302,6 +304,10 @@ class PetWindow(QOpenGLWidget):
         menu.addAction("退出", QApplication.quit)
         menu.exec(event.globalPos())
 
+    def _on_chat_response(self, emotion: str, reply: str):
+        """主线程槽：收到后台线程的聊天结果后显示气泡"""
+        self._bubble.show_text(f"[{emotion}] {reply}", 4000)
+
     def _send_chat(self):
         text = self._chat_input.text().strip()
         if not text:
@@ -323,10 +329,10 @@ class PetWindow(QOpenGLWidget):
             result = _json.loads(resp)
             reply = result.get("reply") or result.get("error", "未知错误")
             emotion = result.get("emotion", "开心")
-            QTimer.singleShot(0, lambda: self._bubble.show_text(f"[{emotion}] {reply}", 4000))
+            self._chat_response.emit(emotion, reply)
         except Exception as e:
             log.warning(f"[聊天测试] 失败: {e}")
-            QTimer.singleShot(0, lambda: self._bubble.show_text(f"请求失败", 2500))
+            self._chat_response.emit("无奈", "请求失败")
 
     def _show_models(self):
         """显示模型列表对话框"""
