@@ -16,6 +16,8 @@ from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QApplication, QMenu, QFileDialog, QWidget, QLineEdit, QLabel
 
+from desktop_core.motion_engine import PoseEngine
+
 from live2d import v3 as live2d
 
 log = logging.getLogger("pet_window")
@@ -152,6 +154,7 @@ class PetWindow(QOpenGLWidget):
         # 表情/动作映射
         self._expression_map: dict[str, str] = {}
         self._motion_groups: dict[str, int] = {}
+        self._pose = PoseEngine(None)
         self._capture_mode = False  # 直播捕获模式（不透明背景）
 
         # 语言气泡
@@ -202,6 +205,11 @@ class PetWindow(QOpenGLWidget):
                 self.model.SetAutoBlinkEnable(True)
                 self.model.StartRandomMotion("Idle", 3)
                 self._init_expression_map()
+                if self._pose is None or self._pose.model is None:
+                    self._pose = PoseEngine(self.model)
+                else:
+                    self._pose.model = self.model
+                self._pose.scan_model()
                 log.info(f"模型加载成功: {self._model_path}")
             except Exception as e:
                 log.warning(f"模型加载失败: {e}")
@@ -256,10 +264,15 @@ class PetWindow(QOpenGLWidget):
         log.info(f"[桌宠] 捕获模式: {'开启' if self._capture_mode else '关闭'}")
 
     def paintGL(self):
+        now = time.time()
+        dt = now - getattr(self, '_last_frame_ts', now)
+        self._last_frame_ts = now
         live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
         self._process_ws_queue()
         if not self.model:
             return
+        # Pose 引擎驱动（每帧插值）
+        self._pose.update(dt)
         # 口型平滑
         if abs(self._mouth_target - self._mouth_current) > 0.01:
             self._mouth_current += (self._mouth_target - self._mouth_current) * 0.3
@@ -491,12 +504,14 @@ class PetWindow(QOpenGLWidget):
                         self.model.SetExpression(expr)
                     mg = msg.get("motion_group", "")
                     mi = msg.get("motion_index", -1)
-                    if mg and mi >= 0 and self.model:
-                        # 检查动作组在当前模型中是否存在
+                    # 优先 Pose 引擎驱动
+                    action = msg.get("action", "")
+                    if action and self._pose.play_action(action):
+                        pass
+                    elif mg and mi >= 0 and self.model:
                         if mg in self._motion_groups:
                             self.model.StartMotion(mg, mi, 3)
                         else:
-                            # 尝试通用组名
                             fallbacks = {"TapBody": "Idle", "TapHead": "Idle"}
                             fb = fallbacks.get(mg, "")
                             if fb in self._motion_groups:
