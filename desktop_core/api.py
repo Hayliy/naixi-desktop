@@ -3141,11 +3141,17 @@ async def api_live2d_stream(request):
                         if not reply:
                             reply = "嗯嗯～"
                             emotion = "开心"
+                        # 情绪→动作降级（LLM 未输出动作标签时用）
+                        if not action:
+                            emo_to_action = {"开心":"smile","欢迎":"wave","惊讶":"surprised",
+                                             "害羞":"shy","悲伤":"sad","生气":"angry","卖萌":"tilt"}
+                            action = emo_to_action.get(emotion, "")
                         mg, mi = engine._action_to_motion(action)
                         await ws.send_json({
                             "type": "speak",
                             "text": reply,
                             "emotion": emotion,
+                            "action": action,
                             "motion_group": mg,
                             "motion_index": mi,
                             "mouth": [0.5]*5,
@@ -3191,6 +3197,9 @@ async def api_live_chat_test(request):
         return web.json_response({"error": str(e), "reply": None, "emotion": "开心", "action": ""}, status=500)
     if not reply:
         return web.json_response({"reply": "LLM 未配置或规则未匹配", "emotion": "无奈", "action": ""}, status=200)
+    if not action:
+        emo_to_action = {"开心":"smile","欢迎":"wave","惊讶":"surprised","害羞":"shy","悲伤":"sad","生气":"angry","卖萌":"tilt"}
+        action = emo_to_action.get(emotion, "")
     mg, mi = engine._action_to_motion(action)
     result = {"reply": reply, "emotion": emotion, "action": action}
     if engine._live2d_ws and not engine._live2d_ws.closed:

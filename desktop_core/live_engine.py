@@ -964,8 +964,6 @@ class LiveEngine:
         reply, emotion, action = await self._decide_reply(prompt, "")
         if reply:
             await self._scene_queue.put({"type": "speak", "text": reply, "emotion": emotion, "action": action})
-        if reply:
-            await self._scene_queue.put({"type": "speak", "text": reply, "emotion": emotion})
 
     # ── 音频设备管理（sounddevice + VB-Cable） ──────────────────────────
 
