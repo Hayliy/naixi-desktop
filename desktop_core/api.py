@@ -3151,6 +3151,13 @@ async def api_live2d_stream(request):
                             "mouth": [0.5]*5,
                             "frame_ms": 80,
                         })
+                        # 同时触发 TTS 语音播放
+                        try:
+                            audio = await engine._synthesize(reply)
+                            if audio:
+                                engine.play_audio(audio)
+                        except:
+                            pass
                 except:
                     pass
     finally:
@@ -3200,6 +3207,13 @@ async def api_live_chat_test(request):
             })
         except:
             pass
+    # 触发 TTS 语音播放
+    try:
+        audio = await engine._synthesize(reply)
+        if audio:
+            engine.play_audio(audio)
+    except:
+        pass
     return web.json_response(result)
 
 async def api_live_models(request):
