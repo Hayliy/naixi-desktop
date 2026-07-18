@@ -55,6 +55,9 @@ class BubbleWindow(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self._fade_anim: Optional[QPropertyAnimation] = None
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self._fade_out)
         self.hide()
 
     def show_text(self, text: str, duration: int = 0):
@@ -73,10 +76,6 @@ class BubbleWindow(QWidget):
         self._reposition()
         self.show()
         self.raise_()
-        if not hasattr(self, '_hide_timer'):
-            self._hide_timer = QTimer(self)
-            self._hide_timer.setSingleShot(True)
-            self._hide_timer.timeout.connect(self._fade_out)
         self._hide_timer.start(duration)
 
     def _reposition(self):
