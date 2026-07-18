@@ -170,7 +170,7 @@ class PetWindow(QOpenGLWidget):
         self._chat_input.returnPressed.connect(self._send_chat)
 
         # 窗口属性：无边框 + 置顶 + 工具窗口 + 透明
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
         self.setMouseTracking(True)
