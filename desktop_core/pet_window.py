@@ -269,31 +269,30 @@ class PetWindow(QOpenGLWidget):
         menu.exec(event.globalPos())
 
     def _send_chat(self):
-        """发送测试消息到后端 LLM"""
         text = self._chat_input.text().strip()
         if not text:
             return
         self._chat_input.clear()
         self._chat_input.hide()
-        self._bubble.show_text(f"你说: {text}", 2000)
-        # 异步发送
+        self._bubble.show_text("思考中...", 5000)
         import threading
         threading.Thread(target=self._do_chat, args=(text,), daemon=True).start()
 
     def _do_chat(self, text: str):
-        """后端 LLM 请求"""
-        import urllib.request, json as _json
+        import urllib.request, json as _json, logging
+        log = logging.getLogger("pet_window")
         try:
             data = _json.dumps({"text": text}).encode()
             req = urllib.request.Request("http://127.0.0.1:9845/api/live/chat-test", data=data,
                                          headers={"Content-Type": "application/json"}, method="POST")
-            resp = urllib.request.urlopen(req, timeout=10).read().decode()
+            resp = urllib.request.urlopen(req, timeout=15).read().decode()
             result = _json.loads(resp)
-            reply, emotion = result.get("reply", ""), result.get("emotion", "开心")
-            # 在主线程更新 UI
+            reply = result.get("reply") or result.get("error", "未知错误")
+            emotion = result.get("emotion", "开心")
             QTimer.singleShot(0, lambda: self._bubble.show_text(f"[{emotion}] {reply}", 4000))
-        except:
-            QTimer.singleShot(0, lambda: self._bubble.show_text("请求失败", 2000))
+        except Exception as e:
+            log.warning(f"[聊天测试] 失败: {e}")
+            QTimer.singleShot(0, lambda: self._bubble.show_text(f"请求失败", 2500))
 
     def _show_models(self):
         """显示模型列表对话框"""

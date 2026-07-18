@@ -3158,9 +3158,13 @@ async def api_live_chat_test(request):
     text = body.get("text", "")
     if not text:
         return web.json_response({"error": "no text"}, status=400)
-    reply, emotion = await engine._decide_reply(text, "测试")
+    try:
+        reply, emotion = await engine._decide_reply(text, "测试")
+    except Exception as e:
+        return web.json_response({"error": str(e), "reply": None, "emotion": "开心"}, status=500)
+    if not reply:
+        return web.json_response({"reply": "LLM 未配置或规则未匹配", "emotion": "无奈"}, status=200)
     result = {"reply": reply, "emotion": emotion}
-    # 如果桌宠在运行，推送测试消息给它
     if engine._live2d_ws and not engine._live2d_ws.closed:
         try:
             await engine._live2d_ws.send_json({
