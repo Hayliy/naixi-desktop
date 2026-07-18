@@ -14,7 +14,7 @@ from OpenGL.GL import glViewport
 from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer
 from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
-from PySide6.QtWidgets import QApplication, QMenu, QFileDialog, QWidget
+from PySide6.QtWidgets import QApplication, QMenu, QFileDialog, QWidget, QLineEdit
 
 from live2d import v3 as live2d
 
@@ -132,6 +132,13 @@ class PetWindow(QOpenGLWidget):
 
         # 语言气泡
         self._bubble = BubbleWindow(self)
+        # 测试对话输入（默认隐藏，右键菜单打开）
+        self._chat_input = QLineEdit(self)
+        self._chat_input.setPlaceholderText("输入测试消息，回车发送...")
+        self._chat_input.setStyleSheet("background: rgba(40,30,60,200); color: #fff; border: 1px solid #5c4080; border-radius: 6px; padding: 4px 8px; font-size: 12px;")
+        self._chat_input.setGeometry(4, self.height()-28, self.width()-8, 24)
+        self._chat_input.hide()
+        self._chat_input.returnPressed.connect(self._send_chat)
 
         # 窗口属性：无边框 + 置顶 + 工具窗口 + 透明
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -246,6 +253,8 @@ class PetWindow(QOpenGLWidget):
 
     def contextMenuEvent(self, event):
         menu = QMenu(self)
+        menu.addAction("测试对话", lambda: self._chat_input.show() or self._chat_input.setFocus())
+        menu.addSeparator()
         models = find_model3()
         if models:
             sub = menu.addMenu("切换模型")
@@ -254,8 +263,67 @@ class PetWindow(QOpenGLWidget):
                 a.triggered.connect(lambda checked, p=m["path"]: self._reload_model(p))
         menu.addAction("导入模型文件...", self._import_model)
         menu.addSeparator()
+        menu.addAction("管理模型", self._show_models)
+        menu.addSeparator()
         menu.addAction("退出", QApplication.quit)
         menu.exec(event.globalPos())
+
+    def _send_chat(self):
+        """发送测试消息到后端 LLM"""
+        text = self._chat_input.text().strip()
+        if not text:
+            return
+        self._chat_input.clear()
+        self._chat_input.hide()
+        self._bubble.show_text(f"你说: {text}", 2000)
+        # 异步发送
+        import threading
+        threading.Thread(target=self._do_chat, args=(text,), daemon=True).start()
+
+    def _do_chat(self, text: str):
+        """后端 LLM 请求"""
+        import urllib.request, json as _json
+        try:
+            data = _json.dumps({"text": text}).encode()
+            req = urllib.request.Request("http://127.0.0.1:9845/api/live/chat-test", data=data,
+                                         headers={"Content-Type": "application/json"}, method="POST")
+            resp = urllib.request.urlopen(req, timeout=10).read().decode()
+            result = _json.loads(resp)
+            reply, emotion = result.get("reply", ""), result.get("emotion", "开心")
+            # 在主线程更新 UI
+            QTimer.singleShot(0, lambda: self._bubble.show_text(f"[{emotion}] {reply}", 4000))
+        except:
+            QTimer.singleShot(0, lambda: self._bubble.show_text("请求失败", 2000))
+
+    def _show_models(self):
+        """显示模型列表对话框"""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
+        dlg = QDialog(self)
+        dlg.setWindowTitle("模型管理")
+        dlg.setFixedSize(300, 400)
+        layout = QVBoxLayout(dlg)
+        for m in find_model3():
+            row = QHBoxLayout()
+            row.addWidget(QLabel(m["name"]))
+            btn = QPushButton("删除")
+            btn.setFixedSize(50, 24)
+            btn.clicked.connect(lambda checked, name=m["name"]: self._delete_model(name, dlg))
+            row.addWidget(btn)
+            layout.addLayout(row)
+        btn_close = QPushButton("关闭")
+        btn_close.clicked.connect(dlg.accept)
+        layout.addWidget(btn_close)
+        dlg.exec()
+
+    def _delete_model(self, name: str, dlg=None):
+        """删除模型"""
+        import shutil
+        target = os.path.join(DATA_MODELS, name)
+        if os.path.exists(target):
+            shutil.rmtree(target)
+            if dlg:
+                dlg.accept()
+            self._show_models()
 
     def _import_model(self):
         p, _ = QFileDialog.getOpenFileName(self, "选择 Live2D 模型文件", "", "模型文件 (*.model3.json)")
