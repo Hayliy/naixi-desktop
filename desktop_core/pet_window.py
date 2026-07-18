@@ -4,7 +4,7 @@
 - QOpenGLWidget 直接当窗口，无外层包裹
 - initializeGL 同步构造模型，paintGL 全权渲染
 """
-import os, sys, json, logging, threading, time
+import os, sys, json, logging, threading, time, queue
 from typing import Optional
 
 os.environ.setdefault("QT_QPA_PLATFORM", "windows")
@@ -155,6 +155,7 @@ class PetWindow(QOpenGLWidget):
 
         # 语言气泡
         self._bubble = BubbleWindow(self)
+        self._ws_queue = queue.Queue()
         # 测试对话输入（默认隐藏，右键菜单打开）
         self._chat_input = QLineEdit(self)
         self._chat_input.setPlaceholderText("输入测试消息，回车发送...")
@@ -245,6 +246,7 @@ class PetWindow(QOpenGLWidget):
 
     def paintGL(self):
         live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
+        self._process_ws_queue()
         if not self.model:
             return
         # 口型平滑
@@ -443,11 +445,7 @@ class PetWindow(QOpenGLWidget):
                         mi = d.get("motion_index", -1)
                         mouth = d.get("mouth", [])
                         ms = d.get("frame_ms", 80)
-                        # 所有 Qt 调用必须通过 QTimer 投递到主线程
-                        QTimer.singleShot(0, lambda t=txt: t and self._bubble.show_text(t))
-                        QTimer.singleShot(0, lambda e=expr: e and self.model and self.model.SetExpression(e))
-                        if mg and mi >= 0:
-                            QTimer.singleShot(0, lambda g=mg, i=mi: self.model and self.model.StartMotion(g, i, 3))
+                        self._ws_queue.put({"type":"speak","text":txt,"emotion":d.get("emotion",""),"motion_group":mg,"motion_index":mi,"mouth":mouth,"frame_ms":ms})
                         for m in mouth:
                             if not self._running:
                                 break
@@ -462,6 +460,24 @@ class PetWindow(QOpenGLWidget):
                     ws.close()
                 except:
                     pass
+
+    def _process_ws_queue(self):
+        while not self._ws_queue.empty():
+            try:
+                msg = self._ws_queue.get_nowait()
+                if msg.get("type") == "speak":
+                    txt = msg.get("text", "")
+                    if txt:
+                        self._bubble.show_text(txt)
+                    expr = self._resolve_expression(msg.get("emotion", ""))
+                    if expr and self.model:
+                        self.model.SetExpression(expr)
+                    mg = msg.get("motion_group", "")
+                    mi = msg.get("motion_index", -1)
+                    if mg and mi >= 0 and self.model:
+                        self.model.StartMotion(mg, mi, 3)
+            except:
+                pass
 
     def closeEvent(self, event):
         self._running = False
