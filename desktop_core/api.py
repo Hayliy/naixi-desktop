@@ -3123,16 +3123,34 @@ async def api_live_audio_devices(request):
     return web.json_response(engine.list_audio_devices())
 
 async def api_live2d_stream(request):
-    """WebSocket: 推送 Live2D 参数（MouthOpen/表情）到桌宠窗口"""
+    """WebSocket: 双向通信通道——推送参数 + 接收聊天"""
     from desktop_core.live_engine import engine
     ws = web.WebSocketResponse()
     await ws.prepare(request)
-    # 注册到引擎
     engine._live2d_ws = ws
     try:
         async for msg in ws:
             if msg.type == aiohttp.WSMsgType.CLOSED:
                 break
+            if msg.type == aiohttp.WSMsgType.TEXT:
+                try:
+                    data = json.loads(msg.data)
+                    if data.get("type") == "chat":
+                        # 桌宠发来的聊天请求
+                        text = data.get("text", "")
+                        reply, emotion = await engine._decide_reply(text, "测试")
+                        if not reply:
+                            reply = "嗯嗯～"
+                            emotion = "开心"
+                        await ws.send_json({
+                            "type": "speak",
+                            "text": reply,
+                            "emotion": emotion,
+                            "mouth": [0.5]*5,
+                            "frame_ms": 80,
+                        })
+                except:
+                    pass
     finally:
         if engine._live2d_ws is ws:
             engine._live2d_ws = None

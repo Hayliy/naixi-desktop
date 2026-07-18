@@ -167,6 +167,8 @@ class PetWindow(QOpenGLWidget):
         self._chat_input.setGeometry(4, self.height()-28, self.width()-8, 24)
         self._chat_input.hide()
         self._chat_input.returnPressed.connect(self._send_chat)
+        self._ws_lock = threading.Lock()
+        self._ws_instance = None
 
         # 窗口属性：无边框 + 置顶 + 工具窗口 + 透明
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -308,7 +310,6 @@ class PetWindow(QOpenGLWidget):
         self._chat_input.clear()
         self._chat_input.hide()
         self._bubble.show_text("思考中...", 5000)
-        # Qt 原生异步 HTTP，不阻塞主线程、不依赖线程
         import json as _json
         req = QNetworkRequest(QUrl("http://127.0.0.1:9845/api/live/chat-test"))
         req.setHeader(QNetworkRequest.ContentTypeHeader, "application/json")
@@ -316,7 +317,7 @@ class PetWindow(QOpenGLWidget):
         self._chat_nam.post(req, bytes(body))
 
     def _on_chat_reply(self, reply):
-        """QNetworkAccessManager 异步回调（主线程）"""
+        """QNetworkAccessManager 收到 HTTP 回复（主线程，不阻塞）"""
         import json as _json
         try:
             data = bytes(reply.readAll()).decode()
