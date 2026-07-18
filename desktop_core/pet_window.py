@@ -167,8 +167,9 @@ class PetWindow(QOpenGLWidget):
         self._chat_input.returnPressed.connect(self._send_chat)
 
         # 窗口属性：无边框 + 置顶 + 工具窗口 + 透明
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
         self.setMouseTracking(True)
         self.resize(400, 500)
 
@@ -466,6 +467,8 @@ def run_pet(model_path: str = ""):
     try:
         win = PetWindow(model_path)
         win.show()
+        win.raise_()
+        win.activateWindow()
         log.info("[桌宠] 窗口已显示")
         sys.exit(app.exec())
     except Exception as e:
