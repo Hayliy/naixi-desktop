@@ -196,6 +196,8 @@ class PetWindow(QOpenGLWidget):
     def initializeGL(self):
         live2d.glInit()
         live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
+        with open(r"D:\pet_init.log", "a") as f:
+            f.write(f"{time.time():.0f} initializeGL _model_path={self._model_path!r}\n")
         if self._model_path and os.path.exists(self._model_path):
             try:
                 self.model = live2d.LAppModel()
