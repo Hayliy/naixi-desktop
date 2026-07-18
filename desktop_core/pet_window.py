@@ -155,9 +155,23 @@ class PetWindow(QOpenGLWidget):
         self._bubble = BubbleWindow(self)
         # 测试对话输入（默认隐藏，右键菜单打开）
         self._chat_input = QLineEdit(self)
-        self._chat_input.setPlaceholderText("输入测试消息，回车发送...")
-        self._chat_input.setStyleSheet("background: rgba(40,30,60,200); color: #fff; border: 1px solid #5c4080; border-radius: 6px; padding: 4px 8px; font-size: 12px;")
-        self._chat_input.setGeometry(4, self.height()-28, self.width()-8, 24)
+        self._chat_input.setPlaceholderText("输入消息，回车发送...")
+        self._chat_input.setStyleSheet("""
+            QLineEdit {
+                background: rgba(40,30,60,200);
+                color: #ffd0e0;
+                border: 1px solid #705090;
+                border-radius: 12px;
+                padding: 4px 12px;
+                font-size: 11px;
+                selection-background-color: #9060c0;
+            }
+            QLineEdit:focus {
+                border-color: #c080e0;
+                background: rgba(50,35,70,220);
+            }
+        """)
+        self._chat_input.setGeometry(8, self.height()-30, self.width()-16, 24)
         self._chat_input.hide()
         self._chat_input.returnPressed.connect(self._send_chat)
 
