@@ -295,8 +295,18 @@ class PetWindow(QOpenGLWidget):
         menu.exec(event.globalPos())
 
     def _on_chat_response(self, emotion: str, reply: str):
-        """主线程槽：后台线程的聊天结果 → 显示气泡"""
         self._bubble.show_text(f"[{emotion}] {reply}", 4000)
+
+    DEBUG_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pet_debug.log")
+
+    @classmethod
+    def _log(cls, msg):
+        import time
+        try:
+            with open(cls.DEBUG_LOG, "a") as f:
+                f.write(f"{time.time():.0f} {msg}\n")
+        except:
+            pass
 
     def _send_chat(self):
         text = self._chat_input.text().strip()
@@ -305,10 +315,13 @@ class PetWindow(QOpenGLWidget):
         self._chat_input.clear()
         self._chat_input.hide()
         ws = getattr(self, "_ws", None)
+        self._log(f"_send_chat: ws={"OK" if ws else "NONE"}")
         if not ws or not getattr(ws, "connected", False):
             self._bubble.show_text("等待连接...", 2000)
+            self._log("_send_chat: WS未就绪")
             return
         self._bubble.show_text("思考中...", 5000)
+        self._log(f"_send_chat: 发送消息")
         self._ws_send(json.dumps({"type": "chat", "text": text}))
 
     def _show_models(self):
