@@ -108,6 +108,16 @@ class PoseEngine:
         self._current = None
         self._available: set = set()
 
+    def _dbg(self, msg):
+        import time as _t
+        try:
+            with open(r"D:
+aixi_desktop\desktop_core\pet_debug.log", "a") as f:
+                f.write(f"{_t.time():.0f} POSE {msg}
+")
+        except:
+            pass
+
     def scan_model(self):
         """扫描模型可用参数"""
         try:
