@@ -215,6 +215,24 @@ class PetWindow(QOpenGLWidget):
                 else:
                     self._pose.model = self.model
                 self._pose.scan_model()
+                # 生成动作文件并注册
+                try:
+                    motion_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "_motions")
+                    os.makedirs(motion_dir, exist_ok=True)
+                    motion_files = self._pose.generate_motion_files(motion_dir)
+                    for pose_name, fpath in motion_files.items():
+                        if "_loop" in pose_name:
+                            group = "Idle"
+                        else:
+                            group = "Pose"
+                        self.model.LoadExtraMotion(group, 0, fpath)
+                    # 更新 _motion_groups
+                    real_motions = self.model.GetMotionGroups()
+                    self._motion_groups = real_motions if real_motions else {}
+                    self._idle_motion_groups = [g for g in self._motion_groups if g == "Idle"]  # 优先用 Idle
+                    log.info(f"生成动作: {len(motion_files)} 个")
+                except Exception as e:
+                    log.warning(f"生成动作失败: {e}")
                 # 初始化手动眨眼
                 self._eye_state = 'open'
                 self._next_blink_ts = time.time() + __import__('random').uniform(3, 6)

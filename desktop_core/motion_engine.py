@@ -76,6 +76,29 @@ class Motion:
         self.playing = True
         self.time_elapsed = 0.0
 
+    def to_motion3_json(self) -> dict:
+        """导出为标准 .motion3.json 格式"""
+        curves_data = []
+        for c in self.curves:
+            if not c.segments:
+                continue
+            segs = [c.segments[0].p0.t, c.segments[0].p0.value]
+            for seg in c.segments:
+                segs.append(0)  # linear
+                segs.append(seg.p1.t)
+                segs.append(seg.p1.value)
+            curves_data.append({"Target": "Parameter", "Id": c.param_id, "Segments": segs})
+        curve_count = len(curves_data)
+        seg_count = sum(len(c["Segments"]) // 3 for c in curves_data) if curve_count else 0
+        pt_count = sum(len(c["Segments"]) // 3 * 2 for c in curves_data) if curve_count else 0
+        return {
+            "Version": 3,
+            "Meta": {"Duration": self.duration, "Fps": 30, "Loop": False,
+                     "CurveCount": curve_count, "TotalSegmentCount": seg_count,
+                     "TotalPointCount": pt_count},
+            "Curves": curves_data
+        }
+
 # ── 语义参数分类 ──
 
 PARAM_CATEGORIES = {
@@ -230,6 +253,49 @@ class PoseEngine:
         self._current.play()
         _dbg(f"play: started {action}")
         return True
+
+    def generate_motion_files(self, cache_dir: str) -> dict:
+        """为所有动作模板生成 .motion3.json 文件，返回 {pose_name: filepath}"""
+        import os, json
+        result = {}
+        generated = set()
+        for tag, template_name in ACTION_TO_TEMPLATE.items():
+            if template_name in generated:
+                continue
+            generated.add(template_name)
+            template = ACTION_TEMPLATES.get(template_name)
+            if not template:
+                continue
+            # 语义→具体参数
+            concrete = {}
+            for cat_name, target_val in template.items():
+                param_names = self._categories.get(cat_name, [])
+                if param_names:
+                    p0 = param_names[0]
+                    concrete[p0] = self._scale_value(p0, target_val)
+                    if len(param_names) > 1:
+                        concrete[param_names[1]] = self._scale_value(param_names[1], target_val)
+            if not concrete:
+                continue
+            duration = 0.6
+            motion = Motion.from_pose_dict(concrete, duration=duration)
+            data = motion.to_motion3_json()
+            fname = f"pose_{template_name}.motion3.json"
+            fpath = os.path.join(cache_dir, fname)
+            with open(fpath, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            result[template_name] = fpath
+            # 再生成一个循环版的 idle 版本
+            idle_data = dict(data)
+            idle_data["Meta"]["Loop"] = True
+            idle_data["Meta"]["Duration"] = duration * 4
+            idle_fname = f"pose_{template_name}_loop.motion3.json"
+            idle_fpath = os.path.join(cache_dir, idle_fname)
+            with open(idle_fpath, "w", encoding="utf-8") as f:
+                json.dump(idle_data, f, ensure_ascii=False)
+            result[f"{template_name}_loop"] = idle_fpath
+        _dbg(f"gen motions: {len(result)} files in {cache_dir}")
+        return result
 
     def update(self, dt):
         if self._current:

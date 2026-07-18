@@ -80,3 +80,32 @@
 1784388802 _ws_send: 已发送
 1784388806 POSE play: wave tmpl=wave concrete=4
 1784388806 POSE play: started wave
+1784389448 POSE scan: 373 params, cats: 12, ranges: 373
+1784389448 POSE   body_bow: ['ParamBodyAngleY']
+1784389448 POSE   body_lean: ['ParamBodyAngleX']
+1784389448 POSE   brow_l: ['ParamBrowLY', 'ParamBrowLX', 'ParamBrowLAngle', 'ParamBrowLForm']
+1784389448 POSE   brow_r: ['ParamBrowRY', 'ParamBrowRX', 'ParamBrowRAngle', 'ParamBrowRForm']
+1784389448 POSE   eye_l: ['ParamEyeLOpen']
+1784389448 POSE   eye_l_smile: ['ParamEyeLSmile']
+1784389448 POSE   eye_r: ['ParamEyeROpen']
+1784389448 POSE   eye_r_smile: ['ParamEyeRSmile']
+1784389448 POSE   head_nod: ['ParamAngleY', 'ParamBodyAngleY']
+1784389448 POSE   head_roll: ['ParamAngleZ', 'ParamBodyAngleZ']
+1784389448 POSE   head_tilt: ['ParamAngleX', 'ParamBodyAngleX']
+1784389448 POSE   mouth: ['ParamMouthForm', 'ParamMouthOpenY']
+1784389449 POSE play: nod tmpl=nod concrete=4
+1784389449 POSE play: started nod
+1784389474 POSE play: tilt tmpl=tilt concrete=2
+1784389474 POSE play: started tilt
+1784389498 POSE play: smile tmpl=smile concrete=8
+1784389498 POSE play: started smile
+1784389517 POSE play: nod tmpl=nod concrete=4
+1784389517 POSE play: started nod
+1784389529 POSE play: smile tmpl=smile concrete=8
+1784389529 POSE play: started smile
+1784389555 POSE play: tilt tmpl=tilt concrete=2
+1784389555 POSE play: started tilt
+1784389574 POSE play: nod tmpl=nod concrete=4
+1784389574 POSE play: started nod
+1784389598 POSE play: nod tmpl=nod concrete=4
+1784389599 POSE play: started nod
