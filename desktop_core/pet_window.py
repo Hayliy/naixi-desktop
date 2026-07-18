@@ -287,9 +287,6 @@ class PetWindow(QOpenGLWidget):
             self.model.SetParameterValue("ParamMouthOpenY", self._mouth_current)
             self.model.SetParameterValue("ParamMouthForm", self._mouth_current)
         self.model.Update()
-        # 物理模拟（头发、衣服自然摆动）
-        self.model.UpdatePhysics(dt)
-        self.model.UpdateBreath(dt)
         self.model.Draw()
 
     def timerEvent(self, event: QTimerEvent):
