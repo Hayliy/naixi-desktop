@@ -215,6 +215,9 @@ class PetWindow(QOpenGLWidget):
                 else:
                     self._pose.model = self.model
                 self._pose.scan_model()
+                # 初始化手动眨眼
+                self._eye_state = 'open'
+                self._next_blink_ts = time.time() + __import__('random').uniform(3, 6)
                 if hasattr(self._pose, '_available'):
                     log.info(f"可用参数数: {len(self._pose._available)} 参数={list(self._pose._available)[:15]}")
                 log.info(f"模型加载成功: {self._model_path}")
@@ -291,9 +294,21 @@ class PetWindow(QOpenGLWidget):
 
     def timerEvent(self, event: QTimerEvent):
         self.update()
-        # 空闲动作循环（每 15-30 秒随机）
         if not self.model:
             return
+        now = time.time()
+        # 手动眨眼 — VTS 模型未注册眨眼参数，SetAutoBlinkEnable 不生效
+        if getattr(self, '_eye_state', 'open') == 'closed' and now > getattr(self, '_eye_open_ts', 0):
+            for eye in ("ParamEyeLOpen", "ParamEyeROpen"):
+                self.model.SetParameterValue(eye, 1.0, 1.0)
+            self._eye_state = 'open'
+        elif getattr(self, '_eye_state', 'open') == 'open' and now > getattr(self, '_next_blink_ts', 0):
+            for eye in ("ParamEyeLOpen", "ParamEyeROpen"):
+                self.model.SetParameterValue(eye, 0.0, 1.0)
+            self._eye_state = 'closed'
+            self._eye_open_ts = now + 0.1  # 闭眼 100ms
+            self._next_blink_ts = now + __import__('random').uniform(3, 6)
+        # 空闲动作循环（每 15-30 秒随机）
         now = time.time()
         if now - getattr(self, '_last_idle_ts', 0) < self._idle_interval:
             return
