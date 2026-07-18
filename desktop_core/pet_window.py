@@ -152,6 +152,7 @@ class PetWindow(QOpenGLWidget):
         # 表情/动作映射
         self._expression_map: dict[str, str] = {}
         self._motion_groups: dict[str, int] = {}
+        self._capture_mode = False  # 直播捕获模式（不透明背景）
 
         # 语言气泡
         self._bubble = BubbleWindow(self)
@@ -244,8 +245,25 @@ class PetWindow(QOpenGLWidget):
         if self.model:
             self.model.Resize(w, h)
 
+    def _toggle_capture(self):
+        """切换直播捕获模式：透明背景 ↔ 绿色背景（供直播姬色度键抠图）"""
+        self._capture_mode = not self._capture_mode
+        if self._capture_mode:
+            self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+            self.setAttribute(Qt.WA_TranslucentBackground, False)
+        else:
+            self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+            self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.show()  # 刷新窗口
+        log.info(f"[桌宠] 捕获模式: {'开启' if self._capture_mode else '关闭'}")
+
     def paintGL(self):
-        live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
+        if self._capture_mode:
+            import OpenGL.GL as GL
+            GL.glClearColor(0.0, 1.0, 0.0, 1.0)  # 纯绿色背景
+            GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
+        else:
+            live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
         self._process_ws_queue()
         if not self.model:
             return
@@ -288,6 +306,9 @@ class PetWindow(QOpenGLWidget):
     def contextMenuEvent(self, event):
         menu = QMenu(self)
         menu.addAction("测试对话", lambda: self._chat_input.show() or self._chat_input.setFocus())
+        menu.addSeparator()
+        cap_label = "关闭捕获模式" if self._capture_mode else "直播捕获模式"
+        menu.addAction(cap_label, self._toggle_capture)
         menu.addSeparator()
         models = find_model3()
         if models:
