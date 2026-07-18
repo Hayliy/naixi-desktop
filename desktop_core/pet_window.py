@@ -291,17 +291,25 @@ class PetWindow(QOpenGLWidget):
 
     def timerEvent(self, event: QTimerEvent):
         self.update()
-        # 空闲动作循环（每 15-30 秒随机播放一次 Idle 动作）
-        if self.model and self._idle_motion_groups:
-            now = time.time()
-            if now - getattr(self, '_last_idle_ts', 0) > self._idle_interval:
-                self._last_idle_ts = now
-                import random as _r
-                g = _r.choice(self._idle_motion_groups)
-                count = self._motion_groups.get(g, 1)
-                idx = _r.randint(0, count - 1)
-                self.model.StartMotion(g, idx, 1)
-                self._idle_interval = _r.uniform(12, 28)  # 随机间隔
+        # 空闲动作循环（每 15-30 秒随机）
+        if not self.model:
+            return
+        now = time.time()
+        if now - getattr(self, '_last_idle_ts', 0) < self._idle_interval:
+            return
+        self._last_idle_ts = now
+        self._idle_interval = __import__('random').uniform(12, 28)
+        # 优先用模型自带动作组
+        if self._idle_motion_groups:
+            import random as _r
+            g = _r.choice(self._idle_motion_groups)
+            idx = _r.randint(0, self._motion_groups.get(g, 1) - 1)
+            self.model.StartMotion(g, idx, 1)
+        else:
+            # 无动作组时用 Pose 引擎做微动
+            import random as _r
+            idle_poses = ["tilt", "nod", "smile"]
+            self._pose.play_action(_r.choice(idle_poses))
 
     # ── 鼠标 ──
 
