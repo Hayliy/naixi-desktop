@@ -2,10 +2,18 @@
 动作引擎：.motion3.json 插值播放 + Pose 参数序列 + 动作标签驱动
 """
 
-import json, logging, time, threading
+import json, logging, time, threading, os
 from typing import Optional
 
 log = logging.getLogger("pose_engine")
+_DEBUG_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pet_debug.log")
+
+def _dbg(msg):
+    try:
+        with open(_DEBUG_LOG, "a") as f:
+            f.write(f"{time.time():.0f} POSE {msg}\n")
+    except:
+        pass
 
 # ── 曲线插值（来自 EasyLive2D/live2d-motion3） ──
 
@@ -76,7 +84,6 @@ class Motion:
         self.time_elapsed = 0.0
 
 # ── 预设姿势库 ──
-# VTube Studio 标准参数名，大多数模型都有
 
 POSE_LIBRARY = {
     "forward":    {"ParamBodyAngleY": -8, "ParamAngleY": 5},
@@ -101,46 +108,39 @@ ACTION_TO_POSE = {
 }
 
 class PoseEngine:
-    """动作标签驱动引擎"""
-
     def __init__(self, model):
         self.model = model
         self._current = None
         self._available: set = set()
 
-    def _dbg(self, msg):
-        import time as _t
-        try:
-            with open(r"D:
-aixi_desktop\desktop_core\pet_debug.log", "a") as f:
-                f.write(f"{_t.time():.0f} POSE {msg}
-")
-        except:
-            pass
-
     def scan_model(self):
-        """扫描模型可用参数"""
         try:
-            self._available = set(self.model.GetParameterIds())
-        except:
+            ids = self.model.GetParameterIds()
+            self._available = set(ids)
+            _dbg("scan: " + str(len(ids)) + " params: " + str(list(ids)[:10]))
+        except Exception as e:
+            _dbg("scan fail: " + str(e))
             self._available = set()
 
     def play_action(self, action: str) -> bool:
-        """根据动作标签播放姿势动画"""
         pose_name = ACTION_TO_POSE.get(action, action)
         pose = POSE_LIBRARY.get(pose_name)
         if not pose:
+            _dbg("play: no pose " + action)
             return False
         if self._available:
-            pose = {k: v for k, v in pose.items() if k in self._available}
+            filtered = {k: v for k, v in pose.items() if k in self._available}
+            _dbg("play: " + action + " pre=" + str(len(pose)) + " post=" + str(len(filtered)))
+            pose = filtered
         if not pose:
+            _dbg("play: empty after filter")
             return False
         self._current = Motion.from_pose_dict(pose)
         self._current.play()
+        _dbg("play: started " + action)
         return True
 
     def update(self, dt: float):
-        """每帧调用，驱动当前动作"""
         if self._current:
             done = self._current.update(dt, self.model)
             if done:
