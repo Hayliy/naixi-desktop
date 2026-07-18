@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "windows")
 os.environ.setdefault("QT_OPENGL", "angle")
 
 from OpenGL.GL import glViewport
-from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer, QPropertyAnimation
+from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer, QPropertyAnimation, Signal, QObject, QThread
 from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont, QPainterPath
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QApplication, QMenu, QFileDialog, QWidget, QLineEdit, QLabel
@@ -138,6 +138,27 @@ def find_model3() -> list[dict]:
     return models
 
 
+class ChatWorker(QObject):
+    """后台 HTTP 请求线程（规避 threading.Thread + Qt 信号问题）"""
+    done = Signal(str, str)  # emotion, reply
+
+    def do_chat(self, text: str):
+        import urllib.request, json as _json, logging
+        log = logging.getLogger("pet_window")
+        try:
+            data = _json.dumps({"text": text}).encode()
+            req = urllib.request.Request("http://127.0.0.1:9845/api/live/chat-test", data=data,
+                                         headers={"Content-Type": "application/json"}, method="POST")
+            resp = urllib.request.urlopen(req, timeout=15).read().decode()
+            result = _json.loads(resp)
+            reply = result.get("reply") or result.get("error", "未知错误")
+            emotion = result.get("emotion", "开心")
+            self.done.emit(emotion, reply)
+        except Exception as e:
+            log.warning(f"[聊天] 失败: {e}")
+            self.done.emit("无奈", "请求失败")
+
+
 class PetWindow(QOpenGLWidget):
     """桌宠窗口 — QOpenGLWidget 本身就是窗口"""
 
@@ -155,7 +176,12 @@ class PetWindow(QOpenGLWidget):
 
         # 语言气泡
         self._bubble = BubbleWindow(self)
-        self._pending_result: Optional[tuple[str, str]] = None
+        # QThread 后台聊天
+        self._chat_thread = QThread(self)
+        self._chat_worker = ChatWorker()
+        self._chat_worker.moveToThread(self._chat_thread)
+        self._chat_worker.done.connect(self._show_chat_result)
+        self._chat_thread.start()
         # 测试对话输入（默认隐藏，右键菜单打开）
         self._chat_input = QLineEdit(self)
         self._chat_input.setPlaceholderText("输入测试消息，回车发送...")
@@ -303,37 +329,10 @@ class PetWindow(QOpenGLWidget):
         self._chat_input.clear()
         self._chat_input.hide()
         self._bubble.show_text("思考中...", 5000)
-        # 线程内做 HTTP，把结果写回共享变量
-        self._pending_result = None
-        import threading
-        threading.Thread(target=self._do_chat, args=(text,), daemon=True).start()
-        # 定时器轮询结果（100ms间隔）
-        self._poll_timer = QTimer(self)
-        self._poll_timer.timeout.connect(self._check_result)
-        self._poll_timer.start(100)
+        QTimer.singleShot(0, lambda: self._chat_worker.do_chat(text))
 
-    def _check_result(self):
-        if self._pending_result is None:
-            return
-        self._poll_timer.stop()
-        emotion, reply = self._pending_result
+    def _show_chat_result(self, emotion: str, reply: str):
         self._bubble.show_text(f"[{emotion}] {reply}", 4000)
-
-    def _do_chat(self, text: str):
-        import urllib.request, json as _json, logging
-        log = logging.getLogger("pet_window")
-        try:
-            data = _json.dumps({"text": text}).encode()
-            req = urllib.request.Request("http://127.0.0.1:9845/api/live/chat-test", data=data,
-                                         headers={"Content-Type": "application/json"}, method="POST")
-            resp = urllib.request.urlopen(req, timeout=15).read().decode()
-            result = _json.loads(resp)
-            reply = result.get("reply") or result.get("error", "未知错误")
-            emotion = result.get("emotion", "开心")
-            self._pending_result = (emotion, reply)
-        except Exception as e:
-            log.warning(f"[聊天测试] 失败: {e}")
-            self._pending_result = ("无奈", "请求失败")
 
     def _show_models(self):
         """显示模型列表对话框"""
