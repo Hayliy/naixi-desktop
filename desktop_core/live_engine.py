@@ -816,24 +816,41 @@ class LiveEngine:
             pass
         return None
 
-    async def _decide_reply(self, text: str, user: str) -> Optional[str]:
-        """弹幕回复：LLM → 规则降级"""
-        # 先试 LLM
-        llm_reply = await self._call_llm(f"[弹幕] {user}: {text[:100]}")
+    async def _decide_reply(self, text: str, user: str) -> tuple[str, str]:
+        """弹幕回复：LLM → 规则降级。返回 (回复文本, 情绪)"""
+        llm_reply = await self._call_llm(
+            f"[弹幕] {user}: {text[:100]}\n"
+            "请用以下格式回复:\n"
+            "[情绪] 回复内容\n"
+            "可用情绪: 开心、欢迎、惊讶、悲伤、害羞、生气、卖萌\n"
+        )
         if llm_reply:
-            return llm_reply
-        # LLM 不可用 → 规则降级
-        t = text.lower()
+            return self._parse_reply(llm_reply)
+        t = text.lower().strip()
+        # (条件, 回复模板, 情绪)
         rules = [
-            (lambda t: any(k in t for k in ["你好","hi","hello","在吗"]), f"欢迎{user}来到直播间～"),
-            (lambda t: any(k in t for k in ["谢谢","感谢","thx"]), f"谢谢{user}的支持！"),
-            (lambda t: any(k in t for k in ["666","哈哈","笑死","好活"]), f"嘻嘻～{user}开心就好！"),
-            (lambda t: any(k in t for k in ["主播","奶昔","老婆","可爱"]), f"被{user}夸了，好害羞(｡>ω<｡)"),
+            (lambda t: any(k in t for k in ["你好","hi","hello","在吗"]), f"欢迎{user}来到直播间～", "欢迎"),
+            (lambda t: any(k in t for k in ["谢谢","感谢","thx"]), f"谢谢{user}的支持！", "开心"),
+            (lambda t: any(k in t for k in ["666","哈哈","笑死","好活"]), f"嘻嘻～{user}开心就好！", "开心"),
+            (lambda t: any(k in t for k in ["主播","奶昔","老婆","可爱"]), f"被{user}夸了，好害羞", "害羞"),
         ]
-        for cond, reply in rules:
+        for cond, reply, emotion in rules:
             if cond(t):
-                return reply
-        return None  # 规则匹配不到就不回复
+                return (reply, emotion)
+        return (None, "开心")
+
+    def _parse_reply(self, raw: str) -> tuple[str, str]:
+        """解析 LLM 回复中的情绪标记"""
+        emotion = "开心"
+        text = raw.strip()
+        if text.startswith("[") and "]" in text[:10]:
+            bracket_end = text.index("]")
+            emotion = text[1:bracket_end].strip()
+            text = text[bracket_end+1:].strip()
+        valid = {"开心","欢迎","惊讶","悲伤","害羞","生气","卖萌","无奈"}
+        if emotion not in valid:
+            emotion = "开心"
+        return (text, emotion)
 
     async def _agent_danmaku(self):
         """弹幕 Agent — B站 WS 回调本身已驱动，此协程保持运行"""
@@ -865,7 +882,8 @@ class LiveEngine:
                     reply = f"感谢{msg['user']}的醒目留言！"
                 else:
                     reply = f"欢迎{msg['user']}进入直播间～"
-                await self._scene_queue.put({"type": "speak", "text": reply, "emotion": "开心"})
+                emotion = "开心" if msg_type in ("gift", "guard") else "欢迎"
+                await self._scene_queue.put({"type": "speak", "text": reply, "emotion": emotion})
                 continue
 
             # 弹幕：削峰 + 批量
@@ -903,9 +921,9 @@ class LiveEngine:
             else:
                 prompt = "\n".join(f"[弹幕] {b['user']}: {b['text'][:60]}" for b in batch)
 
-            reply = await self._decide_reply(prompt, "")
+            reply, emotion = await self._decide_reply(prompt, "")
             if reply:
-                await self._scene_queue.put({"type": "speak", "text": reply, "emotion": "开心"})
+                await self._scene_queue.put({"type": "speak", "text": reply, "emotion": emotion})
 
     async def _process_batch(self):
         """处理积压的批量缓冲"""
@@ -915,9 +933,10 @@ class LiveEngine:
             return
         samples = batch[:3]
         prompt = f"（共{len(batch)}条弹幕）\n" + "\n".join(f"[弹幕] {b['user']}: {b['text'][:60]}" for b in samples)
-        reply = await self._decide_reply(prompt, "")
+        reply, emotion = await self._decide_reply(prompt, "")
+        reply, emotion = await self._decide_reply(prompt, "")
         if reply:
-            await self._scene_queue.put({"type": "speak", "text": reply, "emotion": "开心"})
+            await self._scene_queue.put({"type": "speak", "text": reply, "emotion": emotion})
 
     # ── 音频设备管理（sounddevice + VB-Cable） ──────────────────────────
 
@@ -1093,21 +1112,17 @@ class LiveEngine:
         except:
             return [0.0]
 
-    async def _vts_speak(self, audio_bytes: bytes, text: str = ""):
+    async def _vts_speak(self, audio_bytes: bytes, text: str = "", emotion: str = ""):
         """TTS 音频播放 + 口型同步（VTS + 桌宠双通道）"""
         mouth_data = self._audio_to_mouth_data(audio_bytes)
         if not mouth_data:
             return
-        # 播放音频
         self.play_audio(audio_bytes)
-        # 发送口型给桌宠窗口（前端 Live2D）
         if self._live2d_ws and not self._live2d_ws.closed:
             try:
                 await self._live2d_ws.send_json({
-                    "type": "speak",
-                    "mouth": mouth_data,
-                    "frame_ms": 80,
-                    "text": text,
+                    "type": "speak", "mouth": mouth_data,
+                    "frame_ms": 80, "text": text, "emotion": emotion,
                 })
             except:
                 pass
@@ -1140,9 +1155,7 @@ class LiveEngine:
 
             audio_bytes = await self._synthesize(text)
             if audio_bytes:
-                # VTube Studio 口型同步播放（含音频输出）
-                await self._vts_speak(audio_bytes, text)
-                # 保存临时文件供推流使用（ffmpeg 需要文件路径）
+                await self._vts_speak(audio_bytes, text, action.get("emotion", "开心"))
                 tmp = os.path.join(tempfile.gettempdir(), f"live_push_{int(time.time()*1000)}.wav")
                 try:
                     with open(tmp, "wb") as f:

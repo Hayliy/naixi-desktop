@@ -55,6 +55,9 @@ class PetWindow(QOpenGLWidget):
         self._model_path = model_path or ""
         self._drag_offset = QPoint()
         self._dragging = False
+        # 表情/动作映射
+        self._expression_map: dict[str, str] = {}  # "开心" → "1脸红.exp3.json"
+        self._motion_groups: dict[str, int] = {}   # "Idle" → 3 (count)
 
         # 窗口属性：无边框 + 置顶 + 工具窗口 + 透明
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -89,10 +92,47 @@ class PetWindow(QOpenGLWidget):
                 self.model.SetAutoBreathEnable(True)
                 self.model.SetAutoBlinkEnable(True)
                 self.model.StartRandomMotion("Idle", 3)
+                self._init_expression_map()
                 log.info(f"模型加载成功: {self._model_path}")
             except Exception as e:
                 log.warning(f"模型加载失败: {e}")
         self.startTimer(16)
+
+    def _init_expression_map(self):
+        """初始化表情映射：模型的表情ID → 中文名"""
+        if not self.model:
+            return
+        try:
+            ids = self.model.GetExpressionIds()
+            self._expression_map = {}
+            for eid in ids:
+                # 表情文件一般是 "1脸红.exp3.json" 格式，取数字后的中文
+                name = eid.replace(".exp3.json", "").lstrip("0123456789")
+                self._expression_map[eid] = name
+            # 反向映射：中文 → 表情ID
+            self._emotion_to_expr = {v: k for k, v in self._expression_map.items()}
+            # 默认映射（中文情绪 → 表情名）
+            self._emotion_fallback = {
+                "开心": "脸红", "欢迎": "心心眼", "惊讶": "心心眼",
+                "悲伤": "可怜眼", "害羞": "脸红", "生气": "黑脸",
+                "卖萌": "哇库哇库", "无奈": "空白眼",
+            }
+            log.info(f"表情已加载: {list(self._expression_map.keys())}")
+            # 动作组
+            motions = self.model.GetMotionGroups()
+            self._motion_groups = motions if motions else {}
+            log.info(f"动作组: {self._motion_groups}")
+        except Exception as e:
+            log.warning(f"表情/动作加载失败: {e}")
+
+    def _resolve_expression(self, emotion: str) -> str:
+        """把中文情绪转成模型的表情ID"""
+        expr_name = self._emotion_fallback.get(emotion, "")
+        if expr_name:
+            for eid, ename in self._expression_map.items():
+                if ename == expr_name:
+                    return eid
+        return ""
 
     def resizeGL(self, w: int, h: int):
         if self.model:
@@ -187,6 +227,16 @@ class PetWindow(QOpenGLWidget):
                         break
                     d = json.loads(raw)
                     if d.get("type") == "speak":
+                        # 表情
+                        expr = self._resolve_expression(d.get("emotion", ""))
+                        if expr:
+                            self.model.SetExpression(expr)
+                        # 动作
+                        mg = d.get("motion_group", "")
+                        mi = d.get("motion_index", -1)
+                        if mg and mi >= 0 and self.model:
+                            self.model.StartMotion(mg, mi, 3)
+                        # 口型
                         for m in d.get("mouth", []):
                             if not self._running:
                                 break
