@@ -5,9 +5,9 @@ from typing import Optional
 os.environ.setdefault("QT_QPA_PLATFORM", "windows")
 os.environ.setdefault("QT_OPENGL", "angle")
 
-from PySide6.QtWidgets import QApplication, QWidget, QFileDialog, QMenu, QLabel
+from PySide6.QtWidgets import QApplication, QWidget, QFileDialog, QMenu
 from PySide6.QtCore import Qt, QTimer, QPoint, Signal, QObject
-from PySide6.QtGui import QMouseEvent, QPainter, QColor, QFont, QAction
+from PySide6.QtGui import QMouseEvent, QPainter, QColor, QFont, QAction, QPen, QBrush
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 from live2d import v3
@@ -64,10 +64,16 @@ class Live2DWidget(QOpenGLWidget):
             self.model.Resize(w, h)
 
     def paintGL(self):
-        # 浅色背景让窗口可见（即使模型加载失败）
-        v3.clearBuffer(0.2, 0.15, 0.25, 0.3)
         if not self.model:
+            # 模型未加载时显示提示文字
+            v3.clearBuffer(0.2, 0.15, 0.25, 0.2)
+            painter = QPainter(self)
+            painter.setPen(QColor("#aaa"))
+            painter.setFont(QFont("微软雅黑", 13))
+            painter.drawText(self.rect(), Qt.AlignCenter, "正在加载模型...")
+            painter.end()
             return
+        v3.clearBuffer(0.0, 0.0, 0.0, 0.0)
         if abs(self._mouth_target - self._mouth_current) > 0.01:
             self._mouth_current += (self._mouth_target - self._mouth_current) * 0.3
             self.model.SetParameterValue("ParamMouthOpenY", self._mouth_current)
@@ -103,7 +109,6 @@ class Live2DWidget(QOpenGLWidget):
             model.SetScale(scale)
             model.SetOffset(0, 0.1)
         self.model = model
-        self._status_label.hide()
         log.info(f"模型已加载: {model_path}")
 
     def set_mouth(self, value: float):
@@ -124,12 +129,6 @@ class PetWindow(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(400, 500)
         self._model_path = model_path
-
-        # 状态标签（模型加载前显示）
-        self._status_label = QLabel("正在加载模型...", self)
-        self._status_label.setStyleSheet("color: #aaa; font-size: 13px; background: transparent;")
-        self._status_label.setAlignment(Qt.AlignCenter)
-        self._status_label.setGeometry(0, self.height()//2 - 20, self.width(), 40)
 
         # 默认放在屏幕右下角
         from PySide6.QtGui import QScreen
