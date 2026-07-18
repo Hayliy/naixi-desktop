@@ -142,6 +142,7 @@ class LiveEngine:
             "start_time": self._start_time,
             "last_error": self._last_error,
             "vts_connected": self._vts_ws is not None and not self._vts_ws.closed,
+            "pet_running": self._pet_proc is not None and self._pet_proc.poll() is None,
             "errors": self._agent_errors[-10:],
         }
 

@@ -1978,14 +1978,20 @@ function LivePage() {
     } catch { notify("请求失败", "error"); }
   };
 
-  const openPetWindow = async () => {
-    // 通过后端启动 PySide6 桌宠（独立子进程）
-    try {
-      const r = await apiPost("/api/live/pet-start", {});
-      if (r?.ok) notify("桌宠已启动", "success");
-      else notify("桌宠启动失败", "error");
-    } catch {
-      notify("桌宠启动失败", "error");
+  const togglePet = async () => {
+    if (s?.pet_running) {
+      try {
+        await apiPost("/api/live/pet-stop", {});
+        notify("桌宠已关闭", "success");
+        pollStatus();
+      } catch { notify("关闭失败", "error"); }
+    } else {
+      try {
+        const r = await apiPost("/api/live/pet-start", {});
+        if (r?.ok) notify("桌宠已启动", "success");
+        else notify("桌宠启动失败", "error");
+        pollStatus();
+      } catch { notify("桌宠启动失败", "error"); }
     }
   };
 
@@ -2044,7 +2050,7 @@ function LivePage() {
         <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
           <span className="text-[10px] font-medium text-sakura-500">WebSocket 连接状态</span>
           <div className="flex items-center gap-2">
-            <button onClick={openPetWindow} className="text-[8px] px-2 py-1 rounded bg-purple-500 text-white hover:bg-purple-600 transition-colors">桌宠</button>
+            <button onClick={togglePet} className={`text-[8px] px-2 py-1 rounded transition-colors ${s?.pet_running ? 'bg-purple-100 text-purple-600 hover:bg-purple-200' : 'bg-purple-500 text-white hover:bg-purple-600'}`}>{s?.pet_running ? '关闭桌宠' : '桌宠'}</button>
             <button onClick={()=>act("/api/live/connect",{app_id:appId,code:code,access_key_id:accessKeyId,access_key_secret:accessKeySecret,room_id:roomId},"连接成功")} disabled={!appId||!accessKeyId||!code} className="text-[8px] px-2 py-1 rounded bg-blue-500 text-white disabled:opacity-40 hover:bg-blue-600 transition-colors">测试连接</button>
             {s?.connected && <span className="text-[8px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded">已连接</span>}
             {!s?.connected && s?.running && <span className="text-[8px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded">等待连接</span>}
