@@ -4,7 +4,7 @@
 - QOpenGLWidget 直接当窗口，无外层包裹
 - initializeGL 同步构造模型，paintGL 全权渲染
 """
-import os, sys, json, logging, threading, time, math
+import os, sys, json, logging, threading, time
 from typing import Optional
 
 os.environ.setdefault("QT_QPA_PLATFORM", "windows")
@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer, QPropertyAnimation, 
 from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont, QPainterPath
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QApplication, QMenu, QFileDialog, QWidget, QLineEdit, QLabel
-from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkProxy, QNetworkProxyFactory
 
 from live2d import v3 as live2d
 
@@ -155,9 +155,12 @@ class PetWindow(QOpenGLWidget):
         self._motion_groups: dict[str, int] = {}
 
         # 语言气泡
-        # 语言气泡
         self._bubble = BubbleWindow(self)
         # 聊天（Qt 原生异步 HTTP，零线程）
+        # 禁用系统代理检测，避免 Windows WPAD 挂起
+        QNetworkProxyFactory.setUseSystemConfiguration(False)
+        QNetworkProxy.setApplicationProxy(QNetworkProxy(QNetworkProxy.NoProxy))
+        self._chat_nam = QNetworkAccessManager(self)
         self._chat_nam = QNetworkAccessManager(self)
         self._chat_nam.finished.connect(self._on_chat_reply)
         # 测试对话输入（默认隐藏，右键菜单打开）
@@ -310,18 +313,15 @@ class PetWindow(QOpenGLWidget):
         self._chat_input.clear()
         self._chat_input.hide()
         self._bubble.show_text("思考中...", 5000)
-        import json as _json
         req = QNetworkRequest(QUrl("http://127.0.0.1:9845/api/live/chat-test"))
         req.setHeader(QNetworkRequest.ContentTypeHeader, "application/json")
-        body = _json.dumps({"text": text}).encode()
+        body = json.dumps({"text": text}).encode()
         self._chat_nam.post(req, bytes(body))
 
     def _on_chat_reply(self, reply):
-        """QNetworkAccessManager 收到 HTTP 回复（主线程，不阻塞）"""
-        import json as _json
         try:
             data = bytes(reply.readAll()).decode()
-            result = _json.loads(data)
+            result = json.loads(data)
             emotion = result.get("emotion", "开心")
             reply_text = result.get("reply") or result.get("error", "错误")
             self._bubble.show_text(f"[{emotion}] {reply_text}", 4000)
