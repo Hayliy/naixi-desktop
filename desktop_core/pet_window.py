@@ -246,24 +246,17 @@ class PetWindow(QOpenGLWidget):
             self.model.Resize(w, h)
 
     def _toggle_capture(self):
-        """切换直播捕获模式：透明背景 ↔ 绿色背景（供直播姬色度键抠图）"""
+        """切换直播捕获模式：Tool 窗口 ↔ 普通窗口（供直播姬捕获）"""
         self._capture_mode = not self._capture_mode
         if self._capture_mode:
             self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-            self.setAttribute(Qt.WA_TranslucentBackground, False)
         else:
             self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
-            self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.show()  # 刷新窗口
+        self.show()
         log.info(f"[桌宠] 捕获模式: {'开启' if self._capture_mode else '关闭'}")
 
     def paintGL(self):
-        if self._capture_mode:
-            import OpenGL.GL as GL
-            GL.glClearColor(0.0, 1.0, 0.0, 1.0)  # 纯绿色背景
-            GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
-        else:
-            live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
+        live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
         self._process_ws_queue()
         if not self.model:
             return
