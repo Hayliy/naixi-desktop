@@ -401,7 +401,7 @@ class PetWindow(QOpenGLWidget):
             try:
                 self._ws = websocket.create_connection("ws://127.0.0.1:9845/api/live/live2d-stream", timeout=5)
                 while self._running:
-                    raw = ws.recv()
+                    raw = self._ws.recv()
                     if not raw:
                         break
                     d = json.loads(raw)
