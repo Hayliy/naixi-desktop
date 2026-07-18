@@ -439,6 +439,9 @@ class PetWindow(QOpenGLWidget):
             self._pose = PoseEngine(self.model)
             self._pose.scan_model()
         except Exception as e:
+            import traceback
+            with open(r"D:\naixi_desktop\desktop_core\pet_debug.log", "a") as f:
+                f.write(f"_init_model 失败: {e}\n{traceback.format_exc()}\n")
             log.warning(f"模型切换失败: {e}")
 
     def set_mouth(self, v: float):
