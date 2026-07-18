@@ -1,5 +1,5 @@
 """桌宠窗口 — PySide6 + live2d.v3 实现透明置顶 Live2D 渲染"""
-import os, sys, json, logging, asyncio, threading
+import os, sys, json, logging, asyncio, threading, time
 from typing import Optional
 
 os.environ.setdefault("QT_QPA_PLATFORM", "windows")
@@ -129,15 +129,7 @@ class PetWindow(QWidget):
         self._ready = False
         self._loading_shown = True
 
-        # 加载状态提示
-        self._loading = QLabel("正在加载模型...", self)
-        self._loading.setStyleSheet("color: #ccc; font-size: 16px; font-weight: bold; background: rgba(50,30,70,180);")
-        self._loading.setAlignment(Qt.AlignCenter)
-        self._loading.setGeometry(0, 0, 400, 500)
-        self._loading.show()
-        self._loading.raise_()
-
-        # 创建 OpenGL 控件（但先不显示模型）
+        # 创建 OpenGL 控件（隐藏，模型加载完成后才显示）
         self.l2d = Live2DWidget(self)
         self.l2d.setGeometry(0, 0, 400, 500)
         self.l2d.hide()
@@ -146,6 +138,14 @@ class PetWindow(QWidget):
         from PySide6.QtGui import QScreen
         screen = QScreen.availableGeometry(QApplication.primaryScreen())
         self.move(screen.width() - 420, screen.height() - 520)
+
+        # 2 秒后切换到 OpenGL 渲染（在此期间用 paintEvent 显示加载提示）
+        self._loading_start_ts = time.time()
+        QTimer.singleShot(2000, self._delayed_load)
+        self.setStyleSheet("background: transparent;")
+
+        # 启动 WS 接收
+        self._start_ws()
 
         # 默认放在屏幕右下角
         from PySide6.QtGui import QScreen
@@ -199,10 +199,27 @@ class PetWindow(QWidget):
             return
         self._delayed_load_called = True
         log.info("[桌宠] 切换到 OpenGL 渲染")
-        self._loading.hide()
+        self._ready = True
         self.l2d.show()
         self.l2d.load_model(self._model_path or "")
         self.update()
+
+    def paintEvent(self, event):
+        """加载阶段用 QPainter 直接画文字（避开 OpenGL 覆盖）"""
+        if self._ready:
+            return super().paintEvent(event)
+        # 绘制半透明紫色背景
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(80, 50, 110, 220))
+        # 画文字
+        p.setPen(QColor("#ffffff"))
+        f = QFont("Microsoft YaHei", 16)
+        f.setBold(True)
+        p.setFont(f)
+        p.drawText(self.rect(), Qt.AlignCenter | Qt.TextWordWrap, "正在加载模型...")
+        p.end()
+        # 继续刷新动画
+        QTimer.singleShot(50, self.update)
 
     def _start_ws(self):
         """后台线程：连接后端 WebSocket 接收口型/表情数据"""
