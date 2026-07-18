@@ -135,6 +135,9 @@ def find_model3() -> list[dict]:
                     seen.add(f)
                     models.append({"name": entry, "modelFile": f, "path": os.path.join(d, f)})
                     break
+    return models
+
+
 class PetWindow(QOpenGLWidget):
     """桌宠窗口 — QOpenGLWidget 本身就是窗口"""
 
