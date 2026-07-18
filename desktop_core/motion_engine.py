@@ -151,8 +151,8 @@ class PoseEngine:
             ids = self.model.GetParamIds()
             self._categories = _categorize_params(ids)
             _dbg(f"scan: {len(ids)} params, cats: {len(self._categories)}")
-            for cat, names in sorted(self._categories.items())[:8]:
-                _dbg(f"  {cat}: {names[:3]}{'...' if len(names)>3 else ''}")
+            for cat, names in sorted(self._categories.items()):
+                _dbg(f"  {cat}: {names}")
         except Exception as e:
             _dbg(f"scan fail: {e}")
 

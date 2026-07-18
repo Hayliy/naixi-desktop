@@ -1,0 +1,11 @@
+1784386543 POSE scan: 373 params, cats: 10
+1784386543 POSE   body_bow: ['ParamBodyAngleY']
+1784386543 POSE   body_lean: ['ParamBodyAngleX']
+1784386543 POSE   brow_l: ['ParamBrowLY', 'ParamBrowLX', 'ParamBrowLAngle']...
+1784386543 POSE   brow_r: ['ParamBrowRY', 'ParamBrowRX', 'ParamBrowRAngle']...
+1784386543 POSE   eye_l: ['ParamEyeLOpen', 'ParamEyeLSmile']
+1784386543 POSE   eye_r: ['ParamEyeROpen', 'ParamEyeRSmile']
+1784386543 POSE   head_nod: ['ParamAngleY', 'ParamBodyAngleY']
+1784386543 POSE   head_roll: ['ParamAngleZ', 'ParamBodyAngleZ']
+1784386558 POSE play: wave tmpl=wave cats=['head_tilt', 'head_nod', 'arm_r'] concrete=4
+1784386558 POSE play: started wave
