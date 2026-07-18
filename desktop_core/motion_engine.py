@@ -1,8 +1,9 @@
 """
-动作引擎：.motion3.json 插值播放 + Pose 参数序列 + 动作标签驱动
+动作引擎：参数语义匹配 + Pose 插值播放
+自动扫描模型参数，按语义分组，动态匹配到动作模板
 """
 
-import json, logging, time, threading, os
+import json, logging, time, threading, os, re
 from typing import Optional
 
 log = logging.getLogger("pose_engine")
@@ -15,58 +16,51 @@ def _dbg(msg):
     except:
         pass
 
-# ── 曲线插值（来自 EasyLive2D/live2d-motion3） ──
-
-class Point:
-    def __init__(self, t: float, value: float):
-        self.t = t
-        self.value = value
+# ── 曲线插值 ──
 
 class LinearSegment:
-    def __init__(self, p0: Point, p1: Point):
+    def __init__(self, p0, p1):
         self.p0, self.p1 = p0, p1
     def contains(self, t):
         return self.p0.t <= t <= self.p1.t
-    def interpolate(self, t: float) -> float:
+    def interpolate(self, t):
         return self.p0.value + (self.p1.value - self.p0.value) * (t - self.p0.t) / (self.p1.t - self.p0.t)
 
-class Curve:
-    def __init__(self, param_id: str):
-        self.param_id = param_id
-        self.segments: list = []
+class Point:
+    def __init__(self, t, value):
+        self.t, self.value = t, value
 
-    def interpolate(self, t: float) -> Optional[float]:
+class Curve:
+    def __init__(self, param_id):
+        self.param_id = param_id
+        self.segments = []
+    def interpolate(self, t):
         for seg in self.segments:
             if seg.contains(t):
                 return seg.interpolate(t)
         return None
-
     @staticmethod
-    def from_pose(param_id: str, target: float, duration: float = 0.7):
-        curve = Curve(param_id)
+    def from_pose(param_id, target, duration=0.7):
+        c = Curve(param_id)
         total = duration * 2
-        curve.segments = [
-            LinearSegment(Point(0, 0), Point(duration, target)),
-            LinearSegment(Point(duration, target), Point(total, 0)),
-        ]
-        return curve
+        c.segments = [LinearSegment(Point(0,0), Point(duration,target)),
+                      LinearSegment(Point(duration,target), Point(total,0))]
+        return c
 
 class Motion:
     def __init__(self):
-        self.curves: list[Curve] = []
+        self.curves = []
         self.time_elapsed = 0.0
         self.duration = 0.0
         self.playing = False
-
     @staticmethod
-    def from_pose_dict(params: dict, duration: float = 0.7):
+    def from_pose_dict(params, duration=0.7):
         m = Motion()
         m.duration = duration * 2
         for pid, val in params.items():
             m.curves.append(Curve.from_pose(pid, val, duration))
         return m
-
-    def update(self, dt: float, model) -> bool:
+    def update(self, dt, model):
         if not self.playing:
             return True
         self.time_elapsed += dt
@@ -78,73 +72,117 @@ class Motion:
             self.playing = False
             return True
         return False
-
     def play(self):
         self.playing = True
         self.time_elapsed = 0.0
 
-# ── 预设姿势库 ──
-# 使用所有 Live2D 模型都有的通用参数（头部/眼睛/眉毛/嘴巴）
-# 身体/手臂参数因模型而异，自动扫描后过滤
+# ── 语义参数分类 ──
 
-POSE_LIBRARY = {
-    "forward":    {"ParamAngleY": 8, "ParamBrowLY": 0.2, "ParamBrowRY": 0.2},
-    "backward":   {"ParamAngleY": -5, "ParamBrowLY": -0.1, "ParamBrowRY": -0.1},
-    "tilt":       {"ParamAngleX": 15},
-    "bow":        {"ParamAngleY": -20},
-    "shy":        {"ParamAngleY": -15, "ParamAngleX": -5},
-    "surprised":  {"ParamAngleY": 8, "ParamAngleX": 5, "ParamBrowLY": 0.5, "ParamBrowRY": 0.5},
-    "sad":        {"ParamAngleY": -10, "ParamBrowLY": -0.3, "ParamBrowRY": -0.3},
-    "angry":      {"ParamAngleY": -8, "ParamBrowLY": -0.5, "ParamBrowRY": -0.5},
-    "smile":      {"ParamAngleY": 5, "ParamBrowLY": 0.3, "ParamBrowRY": 0.3},
-    "wink":       {"ParamEyeROpen": 0.0, "ParamAngleX": 5},
-    "wave":       {"ParamAngleX": 10, "ParamAngleY": 5},   # 无手臂时的降级
-    "arms_up":    {"ParamAngleY": 8, "ParamAngleX": 5},     # 无手臂时的降级
-    "kime":       {"ParamAngleX": 8, "ParamAngleY": 5},
-    "lean_left":  {"ParamAngleX": -10},
-    "lean_right": {"ParamAngleX": 10},
+PARAM_CATEGORIES = {
+    "head_tilt":    ["AngleX"],
+    "head_nod":     ["AngleY"],
+    "head_roll":    ["AngleZ"],
+    "brow_l":       ["BrowL"],
+    "brow_r":       ["BrowR"],
+    "eye_l":        ["EyeL"],
+    "eye_r":        ["EyeR"],
+    "mouth":        ["Mouth"],
+    "arm_l":        ["ArmL", "ShoulderL", "ElbowL"],
+    "arm_r":        ["ArmR", "ShoulderR", "ElbowR"],
+    "hand_l":       ["HandL", "WristL"],
+    "hand_r":       ["HandR", "WristR"],
+    "body_lean":    ["BodyAngleX", "BodyX"],
+    "body_bow":     ["BodyAngleY", "BodyY"],
+    "leg_l":        ["LegL", "KneeL"],
+    "leg_r":        ["LegR", "KneeR"],
 }
 
-ACTION_TO_POSE = {
-    "wave": "wave", "bye": "wave", "nod": "bow",
-    "think": "tilt", "surprise": "surprised", "shake": "tilt",
-    "kime": "kime", "smile": "forward", "sad": "sad", "angry": "angry",
+def _categorize_params(all_params):
+    """扫描全部参数名，按语义分成组"""
+    cats = {}
+    for cat_name, keywords in PARAM_CATEGORIES.items():
+        matches = []
+        for p in all_params:
+            for kw in keywords:
+                if kw in p:
+                    matches.append(p)
+                    break
+        if matches:
+            cats[cat_name] = matches
+    return cats
+
+# ── 动作模板（语义级） ──
+# 每个动作定义哪些部位参与、幅度和方向
+
+ACTION_TEMPLATES = {
+    "nod":      {"head_nod": -20, "head_tilt": 0},
+    "bow":      {"head_nod": -20, "body_bow": -8},
+    "tilt":     {"head_tilt": 15},
+    "shake":    {"head_tilt": 15, "head_nod": -5},
+    "wave":     {"head_tilt": 10, "head_nod": 5, "arm_r": -20},
+    "arms_up":  {"head_nod": 8, "arm_l": -30, "arm_r": -30},
+    "point_r":  {"head_tilt": 5, "arm_r": -20},
+    "point_l":  {"head_tilt": -5, "arm_l": -20},
+    "forward":  {"head_nod": 8, "body_bow": -8},
+    "backward": {"head_nod": -5, "body_bow": 10},
+    "shy":      {"head_nod": -15, "head_tilt": -5, "body_bow": -5},
+    "surprised":{"head_nod": 8, "head_tilt": 5, "brow_l": 0.5, "brow_r": 0.5, "body_bow": 10},
+    "sad":      {"head_nod": -10, "brow_l": -0.3, "brow_r": -0.3},
+    "angry":    {"head_nod": -8, "head_tilt": 5, "brow_l": -0.5, "brow_r": -0.5},
+    "smile":    {"head_nod": 5, "brow_l": 0.3, "brow_r": 0.3},
+    "kime":     {"head_tilt": 8, "head_nod": 5, "arm_r": -30},
+}
+
+ACTION_TO_TEMPLATE = {
+    "wave": "wave", "bye": "wave", "nod": "nod", "think": "tilt",
+    "surprise": "surprised", "shake": "shake", "kime": "kime",
+    "smile": "smile", "forward": "forward", "backward": "backward",
+    "sad": "sad", "angry": "angry", "shy": "shy",
 }
 
 class PoseEngine:
     def __init__(self, model):
         self.model = model
         self._current = None
-        self._available: set = set()
+        self._categories = {}  # semantic category → [param names]
 
     def scan_model(self):
         try:
             ids = self.model.GetParamIds()
-            self._available = set(ids)
-            _dbg("scan: " + str(len(ids)) + " params: " + str(list(ids)[:10]))
+            self._categories = _categorize_params(ids)
+            _dbg(f"scan: {len(ids)} params, cats: {len(self._categories)}")
+            for cat, names in sorted(self._categories.items())[:8]:
+                _dbg(f"  {cat}: {names[:3]}{'...' if len(names)>3 else ''}")
         except Exception as e:
-            _dbg("scan fail: " + str(e))
-            self._available = set()
+            _dbg(f"scan fail: {e}")
 
     def play_action(self, action: str) -> bool:
-        pose_name = ACTION_TO_POSE.get(action, action)
-        pose = POSE_LIBRARY.get(pose_name)
-        if not pose:
-            _dbg("play: no pose " + action)
+        template_name = ACTION_TO_TEMPLATE.get(action, action)
+        template = ACTION_TEMPLATES.get(template_name)
+        if not template:
+            _dbg(f"play: no template {action}")
             return False
-        if self._available:
-            filtered = {k: v for k, v in pose.items() if k in self._available}
-            _dbg("play: " + action + " pre=" + str(len(pose)) + " post=" + str(len(filtered)))
-            pose = filtered
-        if not pose:
-            _dbg("play: empty after filter")
+        # 模板中的语义→实际参数名匹配
+        concrete = {}
+        for cat_name, target_val in template.items():
+            param_names = self._categories.get(cat_name, [])
+            if param_names:
+                # 同类多个参数时取第一个，值按比例缩放
+                concrete[param_names[0]] = target_val
+                # 对称部位（双手/双腿）同步
+                if len(param_names) > 1:
+                    concrete[param_names[1]] = target_val
+        _dbg(f"play: {action} tmpl={template_name} "
+             f"cats={list(template.keys())} concrete={len(concrete)}")
+        if not concrete:
+            _dbg("play: no params matched")
             return False
-        self._current = Motion.from_pose_dict(pose)
+        self._current = Motion.from_pose_dict(concrete)
         self._current.play()
-        _dbg("play: started " + action)
+        _dbg(f"play: started {action}")
         return True
 
-    def update(self, dt: float):
+    def update(self, dt):
         if self._current:
             done = self._current.update(dt, self.model)
             if done:
