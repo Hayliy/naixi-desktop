@@ -5,14 +5,6 @@
 - initializeGL 同步构造模型，paintGL 全权渲染
 """
 import os, sys, json, logging, threading, time, queue
-import time as _t; _log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pet_debug.log")
-def _dbg(m):
-    try:
-        with open(_log_file, "a") as f:
-            f.write(f"{_t.time():.0f} DBG {m}
-")
-    except: pass
-
 from typing import Optional
 
 os.environ.setdefault("QT_QPA_PLATFORM", "windows")
@@ -435,7 +427,6 @@ class PetWindow(QOpenGLWidget):
         """重建模型"""
         if not self._model_path or not os.path.exists(self._model_path):
             return
-        self._dbg("_init_model called")
         try:
             self.model = live2d.LAppModel()
             self.model.LoadModelJson(self._model_path)
@@ -444,15 +435,6 @@ class PetWindow(QOpenGLWidget):
             self.model.SetAutoBlinkEnable(True)
             self.model.StartRandomMotion("Idle", 3)
             log.info(f"模型切换: {self._model_path}")
-            self._dbg(f"模型切换: {self._model_path}")
-            if hasattr(self, "_motion_groups") and self._motion_groups:
-                self._dbg(f"动作组: {dict(list(self._motion_groups.items())[:5])}")
-            if hasattr(self, "_pose") and hasattr(self._pose, "_available"):
-                self._dbg(f"可用参数({len(self._pose._available)}): {list(self._pose._available)[:10]}")
-            from desktop_core.motion_engine import PoseEngine
-            self._pose = PoseEngine(self.model)
-            self._pose.scan_model()
-            self._dbg(f"Pose参数({len(self._pose._available)}): {list(self._pose._available)[:10]}")
         except Exception as e:
             log.warning(f"模型切换失败: {e}")
 
@@ -527,10 +509,8 @@ class PetWindow(QOpenGLWidget):
                     mi = msg.get("motion_index", -1)
                     # 优先 Pose 引擎驱动
                     action = msg.get("action", "")
-                    self._dbg(f"_process_ws_queue: action={action} action_bool={bool(action)} has_pose={hasattr(self,"_pose")} pose_model={self._pose.model is not None if hasattr(self,"_pose") else False}")
                     if action:
                         if not self._pose.play_action(action):
-                            self._dbg(f"play_action失败, 转随机动作")
                             # Pose 参数未匹配：尝试用 _motion_groups 里的动作组
                             if self.model and self._motion_groups:
                                 import random as _r
@@ -538,7 +518,6 @@ class PetWindow(QOpenGLWidget):
                                 if candidates:
                                     g = _r.choice(candidates)
                                     idx = _r.randint(0, self._motion_groups[g] - 1)
-                                    self._dbg(f"随机动作: {g}[{idx}]")
                                     self.model.StartMotion(g, idx, 2)
                     elif mg and mi >= 0 and self.model:
                         if mg in self._motion_groups:
