@@ -115,7 +115,7 @@ class PoseEngine:
 
     def scan_model(self):
         try:
-            ids = self.model.GetParameterIds()
+            ids = self.model.GetParamIds()
             self._available = set(ids)
             _dbg("scan: " + str(len(ids)) + " params: " + str(list(ids)[:10]))
         except Exception as e:
