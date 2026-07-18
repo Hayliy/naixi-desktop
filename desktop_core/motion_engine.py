@@ -2,8 +2,10 @@
 动作引擎：.motion3.json 插值播放 + Pose 参数序列 + 动作标签驱动
 """
 
-import json, time, threading
+import json, logging, time, threading
 from typing import Optional
+
+log = logging.getLogger("pose_engine")
 
 # ── 曲线插值（来自 EasyLive2D/live2d-motion3） ──
 
