@@ -36,3 +36,22 @@
 1784386898 _ws_send: 已发送
 1784386900 POSE play: think tmpl=tilt cats=['head_tilt'] concrete=2
 1784386900 POSE play: started think
+1784387070 POSE scan: 373 params, cats: 10, ranges: 373
+1784387070 POSE   body_bow: ['ParamBodyAngleY']
+1784387070 POSE   body_lean: ['ParamBodyAngleX']
+1784387070 POSE   brow_l: ['ParamBrowLY', 'ParamBrowLX', 'ParamBrowLAngle', 'ParamBrowLForm']
+1784387070 POSE   brow_r: ['ParamBrowRY', 'ParamBrowRX', 'ParamBrowRAngle', 'ParamBrowRForm']
+1784387070 POSE   eye_l: ['ParamEyeLOpen', 'ParamEyeLSmile']
+1784387070 POSE   eye_r: ['ParamEyeROpen', 'ParamEyeRSmile']
+1784387070 POSE   head_nod: ['ParamAngleY', 'ParamBodyAngleY']
+1784387070 POSE   head_roll: ['ParamAngleZ', 'ParamBodyAngleZ']
+1784387070 POSE   head_tilt: ['ParamAngleX', 'ParamBodyAngleX']
+1784387070 POSE   mouth: ['ParamMouthForm', 'ParamMouthOpenY']
+1784387076 _send_chat: ws=OK text=你好
+1784387076 _ws_send: 已发送
+1784387078 POSE play: wave tmpl=wave concrete=4
+1784387078 POSE play: started wave
+1784387097 _send_chat: ws=OK text=抬手
+1784387097 _ws_send: 已发送
+1784387099 POSE play: wave tmpl=wave concrete=4
+1784387099 POSE play: started wave

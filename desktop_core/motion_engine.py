@@ -111,27 +111,61 @@ def _categorize_params(all_params):
             cats[cat_name] = matches
     return cats
 
-# ── 动作模板（语义级，归一化值） ──
-# 值范围：头部/身体/手臂 = -1.0~1.0（按实际参数范围缩放）
-# 眉毛/眼睛/嘴巴 = 0.0~1.0（按实际参数范围缩放）
+# ── Live2D 官方标准参数范围（精确值） ──
+# 来源：https://docs.live2d.com/en/cubism-editor-manual/standard-parameter-list/
+
+STANDARD_PARAMS = {
+    "ParamAngleX":       (-30, 30, 0),      # 头部左右旋转
+    "ParamAngleY":       (-30, 30, 0),      # 头部上下
+    "ParamAngleZ":       (-30, 30, 0),      # 头部倾斜
+    "ParamEyeLOpen":     (0, 1, 1),         # 左眼开合 (0闭1开)
+    "ParamEyeLSmile":    (0, 1, 0),         # 左眼微笑
+    "ParamEyeROpen":     (0, 1, 1),         # 右眼开合
+    "ParamEyeRSmile":    (0, 1, 0),         # 右眼微笑
+    "ParamEyeBallX":     (-1, 1, 0),        # 眼珠左右
+    "ParamEyeBallY":     (-1, 1, 0),        # 眼珠上下
+    "ParamBrowLY":       (-1, 1, 0),        # 左眉上下 (-1压低, 1抬高)
+    "ParamBrowRY":       (-1, 1, 0),        # 右眉上下
+    "ParamBrowLX":       (-1, 1, 0),        # 左眉左右
+    "ParamBrowRX":       (-1, 1, 0),        # 右眉左右
+    "ParamBrowLAngle":   (-1, 1, 0),        # 左眉角度 (-1生气眉)
+    "ParamBrowRAngle":   (-1, 1, 0),        # 右眉角度
+    "ParamMouthForm":    (-1, 1, 0),        # 嘴形 (-1生气, 1微笑)
+    "ParamMouthOpenY":   (0, 1, 0),         # 嘴巴开合
+    "ParamCheek":        (0, 1, 0),         # 脸颊泛红
+    "ParamBodyAngleX":   (-10, 10, 0),      # 身体左右旋转
+    "ParamBodyAngleY":   (-10, 10, 0),      # 身体前后
+    "ParamBodyAngleZ":   (-10, 10, 0),      # 身体倾斜
+    "ParamBreath":       (0, 1, 0),         # 呼吸
+    "ParamArmRA":        (-30, 30, 0),      # 右臂A展开
+    "ParamArmLA":        (-30, 30, 0),      # 左臂A展开
+    "ParamArmRB":        (-30, 30, 0),      # 右臂B展开
+    "ParamArmLB":        (-30, 30, 0),      # 左臂B展开
+    "ParamHandL":        (-10, 10, 0),      # 左手变形
+    "ParamHandR":        (-10, 10, 0),      # 右手变形
+    "ParamShoulderY":    (-10, 10, 0),      # 耸肩
+}
+
+# ── 动作模板（语义级，使用实际参数值） ──
+# 值来自 Live2D 标准参数参考 + 常见 VTuber 表情习惯
 
 ACTION_TEMPLATES = {
-    "nod":      {"head_nod": -0.7, "head_tilt": 0},
-    "bow":      {"head_nod": -0.7, "body_bow": -0.4},
-    "tilt":     {"head_tilt": 0.5},
-    "shake":    {"head_tilt": 0.5, "head_nod": -0.2},
-    "wave":     {"head_tilt": 0.4, "head_nod": 0.2, "arm_r": -0.6},
-    "arms_up":  {"head_nod": 0.3, "arm_l": -0.8, "arm_r": -0.8},
-    "point_r":  {"head_tilt": 0.2, "arm_r": -0.6},
-    "point_l":  {"head_tilt": -0.2, "arm_l": -0.6},
-    "forward":  {"head_nod": 0.3, "body_bow": -0.4},
-    "backward": {"head_nod": -0.2, "body_bow": 0.4},
-    "shy":      {"head_nod": -0.5, "head_tilt": -0.2, "body_bow": -0.3},
-    "surprised":{"head_nod": 0.3, "head_tilt": 0.2, "brow_l": 0.6, "brow_r": 0.6, "body_bow": 0.4},
-    "sad":      {"head_nod": -0.4, "brow_l": -0.4, "brow_r": -0.4},
-    "angry":    {"head_nod": -0.3, "head_tilt": 0.2, "brow_l": -0.6, "brow_r": -0.6},
-    "smile":    {"head_nod": 0.2, "brow_l": 0.4, "brow_r": 0.4},
-    "kime":     {"head_tilt": 0.3, "head_nod": 0.2, "arm_r": -0.7},
+    "nod":      {"head_nod": -15, "head_tilt": 0},
+    "bow":      {"head_nod": -20, "body_bow": -8},
+    "tilt":     {"head_tilt": 20},
+    "shake":    {"head_tilt": 20, "head_nod": -5},
+    "wave":     {"head_tilt": 12, "head_nod": 5, "arm_r": -25},
+    "arms_up":  {"head_nod": 8, "arm_l": -30, "arm_r": -30},
+    "point_r":  {"head_tilt": 5, "arm_r": -20},
+    "point_l":  {"head_tilt": -5, "arm_l": -20},
+    "forward":  {"head_nod": 10, "body_bow": -6},
+    "backward": {"head_nod": -5, "body_bow": 8},
+    "shy":      {"head_nod": -18, "head_tilt": -8, "body_bow": -4},
+    "surprised":{"head_nod": 10, "head_tilt": 8, "brow_l": 0.6, "brow_r": 0.6, "body_bow": 5},
+    "sad":      {"head_nod": -12, "brow_l": -0.4, "brow_r": -0.4},
+    "angry":    {"head_nod": -10, "head_tilt": 8, "brow_l": -0.7, "brow_r": -0.7},
+    "smile":    {"head_nod": 5, "brow_l": 0.3, "brow_r": 0.3},
+    "kime":     {"head_tilt": 10, "head_nod": 5, "arm_r": -25},
 }
 
 ACTION_TO_TEMPLATE = {
@@ -162,17 +196,13 @@ class PoseEngine:
         except Exception as e:
             _dbg(f"scan fail: {e}")
 
-    def _scale_value(self, param_name: str, normalized: float) -> float:
-        """归一化值(-1~1) → 实际参数范围内的值"""
+    def _scale_value(self, param_name: str, target: float) -> float:
+        """将目标值限制在参数实际范围内，若参数不存在则直接返回"""
         r = self._param_ranges.get(param_name)
-        if not r:
-            return normalized
-        pmin, pmax, pdefault = r
-        if pmin >= pmax:
-            return normalized
-        mid = (pmax + pmin) / 2 if pmin < 0 else pmin
-        half = (pmax - pmin) / 2
-        return mid + normalized * half
+        if r:
+            pmin, pmax, _ = r
+            return max(pmin, min(pmax, target))
+        return target
 
     def play_action(self, action: str) -> bool:
         template_name = ACTION_TO_TEMPLATE.get(action, action)
