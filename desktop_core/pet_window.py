@@ -463,9 +463,18 @@ def run_pet(model_path: str = ""):
     fmt.setSamples(4)
     QSurfaceFormat.setDefaultFormat(fmt)
     app = QApplication.instance() or QApplication(sys.argv)
-    win = PetWindow(model_path)
-    win.show()
-    sys.exit(app.exec())
+    try:
+        win = PetWindow(model_path)
+        win.show()
+        log.info("[桌宠] 窗口已显示")
+        sys.exit(app.exec())
+    except Exception as e:
+        import traceback
+        log.error(f"[桌宠] 启动失败: {e}\n{traceback.format_exc()}")
+        # 写入文件方便排查
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "pet_error.log"), "w") as f:
+            f.write(traceback.format_exc())
+        sys.exit(1)
 
 
 if __name__ == "__main__":
