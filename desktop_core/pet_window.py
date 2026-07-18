@@ -439,6 +439,8 @@ class PetWindow(QOpenGLWidget):
         while self._running:
             try:
                 self._ws = websocket.create_connection("ws://127.0.0.1:9845/api/live/live2d-stream", timeout=5)
+                # recv 超时设为 5 分钟，避免无消息时频繁断线
+                self._ws.settimeout(300)
                 while self._running:
                     raw = self._ws.recv()
                     if not raw:

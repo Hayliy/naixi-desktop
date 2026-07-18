@@ -16,3 +16,11 @@
 1784361521 _ws_send: 已发送
 1784361535 _send_chat: ws=NONE text=饿饿
 1784361757 _send_chat: ws=NONE text=1
+1784376580 _send_chat: ws=NONE text=你好呀
+1784376591 _send_chat: ws=OK text=你好呀
+1784376591 _ws_send: 已发送
+1784376599 _send_chat: ws=NONE text=嘻嘻
+1784376616 _send_chat: ws=NONE text=嘻嘻
+1784377010 _send_chat: ws=OK text=你好
+1784377010 _ws_send: 已发送
+1784377036 _send_chat: ws=NONE text=你好
