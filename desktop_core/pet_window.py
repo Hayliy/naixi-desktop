@@ -11,10 +11,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "windows")
 os.environ.setdefault("QT_OPENGL", "angle")
 
 from OpenGL.GL import glViewport
-from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer, QPropertyAnimation, Signal, Signal
-from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont, QPainterPath
+from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer, Signal
+from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
-from PySide6.QtWidgets import QApplication, QMenu, QFileDialog, QWidget, QLineEdit, QLabel
+from PySide6.QtWidgets import QApplication, QMenu, QFileDialog, QWidget, QLineEdit
 
 from live2d import v3 as live2d
 
@@ -32,88 +32,68 @@ if os.path.exists(VTS_MODELS):
 
 
 class BubbleWindow(QWidget):
-    """语言气泡 — 紧跟桌宠的粉嫩圆角气泡，带小尾巴和淡出动画"""
-
-    BG_COLOR = QColor(255, 182, 193, 230)      # 粉色半透明
-    TEXT_COLOR = QColor(80, 20, 40)             # 深玫红文字
-    BORDER_COLOR = QColor(255, 130, 160, 200)   # 粉色边框
-    RADIUS = 16
-    PADDING = 14
-    MAX_WIDTH = 340
-    DISPLAY_MS = 6000
-    TAIL_SIZE = 10
+    """语言气泡 — 跟随桌宠的透明气泡窗口"""
 
     def __init__(self, pet: QWidget):
         super().__init__(None)
         self._pet = pet
-        self._label = QLabel(self)
-        self._label.setWordWrap(True)
-        self._label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        self._label.setFont(QFont("Microsoft YaHei", 11))
-        self._label.setStyleSheet(f"color: {self.TEXT_COLOR.name()}; background: transparent;")
-        self._label.setMaximumWidth(self.MAX_WIDTH - 2 * self.PADDING)
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(30)
+        self._text = ""
+        self._opacity = 0.0
+        self._fade_dir = 0  # 1=fade in, -1=fade out, 0=stay
+        self._stay = 0  # 停留计数
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
-        self._fade_anim: Optional[QPropertyAnimation] = None
-        self._hide_timer = QTimer(self)
-        self._hide_timer.setSingleShot(True)
-        self._hide_timer.timeout.connect(self._fade_out)
-        self.hide()
+        self.setFixedSize(280, 80)
 
-    def show_text(self, text: str, duration: int = 0):
-        if duration == 0:
-            duration = self.DISPLAY_MS
-        self._hide_timer.stop()
-        if self._fade_anim and self._fade_anim.state() == QPropertyAnimation.Running:
-            self._fade_anim.stop()
-        self.setWindowOpacity(1.0)
-        self._label.setText(text)
-        self._label.adjustSize()
-        lw, lh = self._label.width(), self._label.height()
-        bw, bh = lw + 2 * self.PADDING, lh + 2 * self.PADDING + self.TAIL_SIZE
-        self.setFixedSize(bw, bh)
-        self._label.move(self.PADDING, self.PADDING)
-        self._reposition()
+    def show_text(self, text: str, duration: int = 3000):
+        """显示气泡文字，duration 毫秒后淡出"""
+        self._text = text
+        self._opacity = 0.0
+        self._fade_dir = 1
+        self._stay = duration // 30
         self.show()
-        self.raise_()
-        self._hide_timer.start(duration)
+        self._update_pos()
 
-    def _reposition(self):
-        if self._pet is None:
-            return
+    def _update_pos(self):
         px, py = self._pet.x(), self._pet.y()
         pw = self._pet.width()
-        x = px + pw // 2 - self.width() // 2
-        y = py - self.height() + self.TAIL_SIZE - 5
-        if y < 0:
-            y = py + 20
-        self.move(x, y)
+        self.move(px + pw // 2 - 140, py - 90)
 
-    def _fade_out(self):
-        self._fade_anim = QPropertyAnimation(self, b"windowOpacity")
-        self._fade_anim.setDuration(500)
-        self._fade_anim.setStartValue(1.0)
-        self._fade_anim.setEndValue(0.0)
-        self._fade_anim.finished.connect(self.hide)
-        self._fade_anim.start()
+    def _tick(self):
+        if self._fade_dir == 1:
+            self._opacity = min(1.0, self._opacity + 0.08)
+            if self._opacity >= 1.0:
+                self._fade_dir = 0
+        elif self._fade_dir == -1:
+            self._opacity = max(0.0, self._opacity - 0.04)
+            if self._opacity <= 0.0:
+                self.hide()
+                self._fade_dir = 0
+        elif self._fade_dir == 0 and self._stay > 0:
+            self._stay -= 1
+            if self._stay <= 0:
+                self._fade_dir = -1
+        self._update_pos()
+        self.update()
 
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        w, h = self.width(), self.height()
-        body_h = h - self.TAIL_SIZE
-        path = QPainterPath()
-        path.addRoundedRect(0, 0, w, body_h, self.RADIUS, self.RADIUS)
-        tail_x = w // 2
-        tail = QPainterPath()
-        tail.moveTo(tail_x - self.TAIL_SIZE, body_h)
-        tail.lineTo(tail_x, h)
-        tail.lineTo(tail_x + self.TAIL_SIZE, body_h)
-        tail.closeSubpath()
-        path = path.united(tail)
-        p.setPen(self.BORDER_COLOR)
-        p.setBrush(self.BG_COLOR)
-        p.drawPath(path)
+        # 半透明圆角气泡
+        alpha = int(self._opacity * 200)
+        p.setBrush(QColor(60, 40, 80, min(alpha, 200)))
+        p.setPen(QColor(120, 90, 160, alpha))
+        p.drawRoundedRect(4, 4, self.width() - 8, self.height() - 8, 12, 12)
+        # 文字
+        if self._text and self._opacity > 0.1:
+            p.setPen(QColor(255, 255, 255, int(255 * self._opacity)))
+            f = QFont("Microsoft YaHei", 12)
+            f.setBold(True)
+            p.setFont(f)
+            p.drawText(self.rect().adjusted(12, 8, -12, -8), Qt.AlignCenter | Qt.TextWordWrap, self._text)
         p.end()
 
 
@@ -136,8 +116,9 @@ def find_model3() -> list[dict]:
 
 
 class PetWindow(QOpenGLWidget):
-    _chat_response = Signal(str, str)  # emotion, reply
     """桌宠窗口 — QOpenGLWidget 本身就是窗口（参照 yuuki-desktop）"""
+
+    _chat_response = Signal(str, str)  # emotion, reply（线程安全）
 
     def __init__(self, model_path: str = ""):
         super().__init__()
@@ -150,31 +131,19 @@ class PetWindow(QOpenGLWidget):
         # 表情/动作映射
         self._expression_map: dict[str, str] = {}
         self._motion_groups: dict[str, int] = {}
-        self._chat_response.connect(self._on_chat_response)
 
         # 语言气泡
         self._bubble = BubbleWindow(self)
         # 测试对话输入（默认隐藏，右键菜单打开）
         self._chat_input = QLineEdit(self)
-        self._chat_input.setPlaceholderText("输入消息，回车发送...")
-        self._chat_input.setStyleSheet("""
-            QLineEdit {
-                background: rgba(40,30,60,200);
-                color: #ffd0e0;
-                border: 1px solid #705090;
-                border-radius: 12px;
-                padding: 4px 12px;
-                font-size: 11px;
-                selection-background-color: #9060c0;
-            }
-            QLineEdit:focus {
-                border-color: #c080e0;
-                background: rgba(50,35,70,220);
-            }
-        """)
-        self._chat_input.setGeometry(8, self.height()-30, self.width()-16, 24)
+        self._chat_input.setPlaceholderText("输入测试消息，回车发送...")
+        self._chat_input.setStyleSheet("background: rgba(40,30,60,200); color: #fff; border: 1px solid #5c4080; border-radius: 6px; padding: 4px 8px; font-size: 12px;")
+        self._chat_input.setGeometry(4, self.height()-28, self.width()-8, 24)
         self._chat_input.hide()
         self._chat_input.returnPressed.connect(self._send_chat)
+
+        # 线程安全信号：后台线程 → 主线程 UI 更新
+        self._chat_response.connect(self._on_chat_response)
 
         # 窗口属性：无边框 + 置顶 + 工具窗口 + 透明
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -305,7 +274,7 @@ class PetWindow(QOpenGLWidget):
         menu.exec(event.globalPos())
 
     def _on_chat_response(self, emotion: str, reply: str):
-        """主线程槽：收到后台线程的聊天结果后显示气泡"""
+        """主线程槽：后台线程的聊天结果 → 显示气泡"""
         self._bubble.show_text(f"[{emotion}] {reply}", 4000)
 
     def _send_chat(self):
