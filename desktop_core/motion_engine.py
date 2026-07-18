@@ -60,6 +60,22 @@ class Motion:
         for pid, val in params.items():
             m.curves.append(Curve.from_pose(pid, val, duration))
         return m
+
+    @staticmethod
+    def from_keyframes(duration, curves_data):
+        """从关键帧列表生成动作。curves_data = [(param_id, [(t,v),...]), ...]"""
+        m = Motion()
+        m.duration = duration
+        for param_id, kf_list in curves_data:
+            if len(kf_list) < 2:
+                continue
+            curve = Curve(param_id)
+            for i in range(len(kf_list) - 1):
+                p0 = Point(kf_list[i][0], kf_list[i][1])
+                p1 = Point(kf_list[i+1][0], kf_list[i+1][1])
+                curve.segments.append(LinearSegment(p0, p1))
+            m.curves.append(curve)
+        return m
     def update(self, dt, model):
         if not self.playing:
             return True
@@ -193,6 +209,100 @@ ACTION_TEMPLATES = {
     "kime":     {"head_tilt": 10, "head_nod": 5, "arm_r": -25},
 }
 
+# ── 外部动作定义（来自 shinshin86/live2d-add-motion-sample-web-ui） ──
+# 每个动作： (名称, 时长, [(参数名, [(时间,值), ...]), ...])
+
+HIYORI_MOTIONS = [
+    ("hello", 3.0, [
+        ("ParamAngleY", [(0,0),(0.4,12),(0.8,-8),(1.2,10),(1.6,-6),(2.2,4),(3.0,0)]),
+        ("ParamAngleZ", [(0,0),(0.6,-8),(1.4,8),(2.2,-3),(3.0,0)]),
+        ("ParamBodyAngleY", [(0,0),(0.4,6),(0.8,-3),(1.2,6),(1.6,-2),(2.2,3),(3.0,0)]),
+        ("ParamBodyAngleZ", [(0,0),(0.7,-5),(1.5,5),(2.3,-2),(3.0,0)]),
+        ("ParamEyeLSmile", [(0,0),(0.3,1),(2.4,1),(3.0,0)]),
+        ("ParamEyeRSmile", [(0,0),(0.3,1),(2.4,1),(3.0,0)]),
+        ("ParamEyeLOpen", [(0,1),(0.3,0),(2.4,0),(3.0,1)]),
+        ("ParamEyeROpen", [(0,1),(0.3,0),(2.4,0),(3.0,1)]),
+        ("ParamBrowLY", [(0,0),(0.3,0.6),(2.4,0.6),(3.0,0)]),
+        ("ParamBrowRY", [(0,0),(0.3,0.6),(2.4,0.6),(3.0,0)]),
+        ("ParamMouthForm", [(0,1),(3.0,1)]),
+        ("ParamMouthOpenY", [(0,0),(0.35,0.8),(0.9,0.4),(1.3,0.7),(2.0,0.5),(2.6,0),(3.0,0)]),
+    ]),
+    ("wink", 2.0, [
+        ("ParamEyeROpen", [(0,1),(0.3,0),(1.2,0),(1.5,1),(2.0,1)]),
+        ("ParamEyeRSmile", [(0,0),(0.3,1),(1.2,1),(1.5,0),(2.0,0)]),
+        ("ParamEyeLOpen", [(0,1),(2.0,1)]),
+        ("ParamBrowRY", [(0,0),(0.3,-0.3),(1.2,-0.3),(1.6,0),(2.0,0)]),
+        ("ParamAngleX", [(0,0),(0.35,6),(1.3,6),(2.0,0)]),
+        ("ParamAngleZ", [(0,0),(0.35,-12),(1.3,-12),(2.0,0)]),
+        ("ParamBodyAngleZ", [(0,0),(0.4,-4),(1.3,-4),(2.0,0)]),
+        ("ParamMouthForm", [(0,1),(2.0,1)]),
+        ("ParamMouthOpenY", [(0,0),(0.35,0.5),(1.2,0.3),(1.7,0),(2.0,0)]),
+    ]),
+    ("nod", 2.2, [
+        ("ParamAngleY", [(0,0),(0.35,-22),(0.7,-4),(1.0,-18),(1.5,0),(2.2,0)]),
+        ("ParamBodyAngleY", [(0,0),(0.4,-3),(1.1,-2),(1.6,0),(2.2,0)]),
+        ("ParamEyeLOpen", [(0,1),(0.35,0.55),(0.7,0.9),(1.0,0.6),(1.5,1),(2.2,1)]),
+        ("ParamEyeROpen", [(0,1),(0.35,0.55),(0.7,0.9),(1.0,0.6),(1.5,1),(2.2,1)]),
+        ("ParamBrowLY", [(0,0),(0.35,0.3),(1.5,0),(2.2,0)]),
+        ("ParamBrowRY", [(0,0),(0.35,0.3),(1.5,0),(2.2,0)]),
+        ("ParamMouthForm", [(0,1),(2.2,1)]),
+    ]),
+    ("thinking", 4.0, [
+        ("ParamAngleX", [(0,0),(0.8,-12),(3.2,-12),(4.0,0)]),
+        ("ParamAngleY", [(0,0),(0.8,6),(3.2,6),(4.0,0)]),
+        ("ParamAngleZ", [(0,0),(0.8,14),(3.2,14),(4.0,0)]),
+        ("ParamEyeBallX", [(0,0),(0.7,-0.8),(2.0,-0.8),(2.4,-0.5),(3.2,-0.8),(4.0,0)]),
+        ("ParamEyeBallY", [(0,0),(0.7,0.7),(3.2,0.7),(4.0,0)]),
+        ("ParamEyeLOpen", [(0,1),(0.8,0.75),(3.2,0.75),(4.0,1)]),
+        ("ParamEyeROpen", [(0,1),(0.8,0.75),(3.2,0.75),(4.0,1)]),
+        ("ParamBrowLY", [(0,0),(0.8,-0.3),(3.2,-0.3),(4.0,0)]),
+        ("ParamBrowRY", [(0,0),(0.8,-0.3),(3.2,-0.3),(4.0,0)]),
+        ("ParamMouthForm", [(0,1),(0.8,-1.2),(3.2,-1.2),(4.0,1)]),
+        ("ParamBodyAngleZ", [(0,0),(0.9,6),(3.2,6),(4.0,0)]),
+    ]),
+    ("surprised", 2.5, [
+        ("ParamEyeLOpen", [(0,1),(0.15,1.2),(1.4,1.2),(2.0,1),(2.5,1)]),
+        ("ParamEyeROpen", [(0,1),(0.15,1.2),(1.4,1.2),(2.0,1),(2.5,1)]),
+        ("ParamBrowLY", [(0,0),(0.15,1),(1.4,1),(2.0,0),(2.5,0)]),
+        ("ParamBrowRY", [(0,0),(0.15,1),(1.4,1),(2.0,0),(2.5,0)]),
+        ("ParamMouthForm", [(0,1),(0.15,-1.5),(1.4,-1.5),(2.1,1),(2.5,1)]),
+        ("ParamMouthOpenY", [(0,0),(0.15,0.9),(1.4,0.8),(2.1,0),(2.5,0)]),
+        ("ParamAngleY", [(0,0),(0.15,18),(0.5,12),(1.4,12),(2.1,0),(2.5,0)]),
+        ("ParamBodyAngleY", [(0,0),(0.18,8),(1.4,6),(2.2,0),(2.5,0)]),
+    ]),
+    ("shy", 4.0, [
+        ("ParamAngleX", [(0,0),(0.8,10),(2.0,6),(3.3,9),(4.0,0)]),
+        ("ParamAngleY", [(0,0),(0.7,-14),(3.3,-12),(4.0,0)]),
+        ("ParamAngleZ", [(0,0),(0.9,7),(2.2,4),(3.3,7),(4.0,0)]),
+        ("ParamEyeBallX", [(0,0),(0.7,0.6),(2.0,0.4),(3.3,0.6),(4.0,0)]),
+        ("ParamEyeBallY", [(0,0),(0.7,-0.6),(3.3,-0.5),(4.0,0)]),
+        ("ParamEyeLOpen", [(0,1),(0.7,0.65),(3.3,0.65),(4.0,1)]),
+        ("ParamEyeROpen", [(0,1),(0.7,0.65),(3.3,0.65),(4.0,1)]),
+        ("ParamEyeLSmile", [(0,0),(0.7,0.5),(3.3,0.5),(4.0,0)]),
+        ("ParamEyeRSmile", [(0,0),(0.7,0.5),(3.3,0.5),(4.0,0)]),
+        ("ParamBrowLY", [(0,0),(0.7,-0.2),(3.3,-0.2),(4.0,0)]),
+        ("ParamBrowRY", [(0,0),(0.7,-0.2),(3.3,-0.2),(4.0,0)]),
+        ("ParamMouthForm", [(0,1),(0.7,0.3),(3.3,0.3),(4.0,1)]),
+        ("ParamMouthOpenY", [(0,0),(0.7,0.15),(3.3,0.1),(4.0,0)]),
+        ("ParamBodyAngleZ", [(0,0),(1.0,-6),(2.2,-3),(3.4,-6),(4.0,0)]),
+    ]),
+    ("headshake", 2.4, [
+        ("ParamAngleX", [(0,0),(0.3,-24),(0.7,20),(1.1,-16),(1.5,10),(1.9,0),(2.4,0)]),
+        ("ParamBodyAngleX", [(0,0),(0.35,-4),(0.75,4),(1.15,-3),(1.55,2),(2.0,0),(2.4,0)]),
+        ("ParamEyeLOpen", [(0,1),(0.3,0.7),(1.5,0.7),(1.9,1),(2.4,1)]),
+        ("ParamEyeROpen", [(0,1),(0.3,0.7),(1.5,0.7),(1.9,1),(2.4,1)]),
+        ("ParamMouthForm", [(0,1),(0.3,-0.8),(1.6,-0.8),(2.1,1),(2.4,1)]),
+    ]),
+]
+
+# 动作名→动作标签映射
+HIYORI_ACTION_MAP = {
+    "wave": "hello", "bye": "hello", "hello": "hello",
+    "nod": "nod", "think": "thinking", "surprise": "surprised",
+    "shake": "headshake", "shy": "shy", "wink": "wink",
+    "kime": "hello", "smile": "hello", "sad": "shy", "angry": "headshake",
+}
+
 ACTION_TO_TEMPLATE = {
     "wave": "wave", "bye": "wave", "nod": "nod", "think": "tilt",
     "surprise": "surprised", "shake": "shake", "kime": "kime",
@@ -255,46 +365,37 @@ class PoseEngine:
         return True
 
     def generate_motion_files(self, cache_dir: str) -> dict:
-        """为所有动作模板生成 .motion3.json 文件，返回 {pose_name: filepath}"""
+        """从 HIYORI_MOTIONS 生成 .motion3.json 文件并注册到模型"""
         import os, json
         result = {}
-        generated = set()
-        for tag, template_name in ACTION_TO_TEMPLATE.items():
-            if template_name in generated:
+        available = set(self._param_ranges.keys()) if self._param_ranges else set()
+        for motion_name, duration, curves_data in HIYORI_MOTIONS:
+            # 只保留模型有的参数
+            filtered = [(pid, kf) for pid, kf in curves_data if pid in available]
+            if not filtered:
                 continue
-            generated.add(template_name)
-            template = ACTION_TEMPLATES.get(template_name)
-            if not template:
-                continue
-            # 语义→具体参数
-            concrete = {}
-            for cat_name, target_val in template.items():
-                param_names = self._categories.get(cat_name, [])
-                if param_names:
-                    p0 = param_names[0]
-                    concrete[p0] = self._scale_value(p0, target_val)
-                    if len(param_names) > 1:
-                        concrete[param_names[1]] = self._scale_value(param_names[1], target_val)
-            if not concrete:
-                continue
-            duration = 0.6
-            motion = Motion.from_pose_dict(concrete, duration=duration)
+            # 限制值范围
+            safe_kf = []
+            for pid, kf in filtered:
+                safe = [(t, self._scale_value(pid, v)) for t, v in kf]
+                safe_kf.append((pid, safe))
+            motion = Motion.from_keyframes(duration, safe_kf)
             data = motion.to_motion3_json()
-            fname = f"pose_{template_name}.motion3.json"
+            fname = f"gen_{motion_name}.motion3.json"
             fpath = os.path.join(cache_dir, fname)
             with open(fpath, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False)
-            result[template_name] = fpath
-            # 再生成一个循环版的 idle 版本
-            idle_data = dict(data)
-            idle_data["Meta"]["Loop"] = True
-            idle_data["Meta"]["Duration"] = duration * 4
-            idle_fname = f"pose_{template_name}_loop.motion3.json"
+            result[motion_name] = fpath
+            # 循环版
+            idle = dict(data)
+            idle["Meta"]["Loop"] = True
+            idle["Meta"]["Duration"] = duration * 1.5
+            idle_fname = f"gen_{motion_name}_loop.motion3.json"
             idle_fpath = os.path.join(cache_dir, idle_fname)
             with open(idle_fpath, "w", encoding="utf-8") as f:
-                json.dump(idle_data, f, ensure_ascii=False)
-            result[f"{template_name}_loop"] = idle_fpath
-        _dbg(f"gen motions: {len(result)} files in {cache_dir}")
+                json.dump(idle, f, ensure_ascii=False)
+            result[f"{motion_name}_loop"] = idle_fpath
+        _dbg(f"gen motions: {len(result)} files")
         return result
 
     def update(self, dt):
