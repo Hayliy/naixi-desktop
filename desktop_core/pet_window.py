@@ -50,9 +50,14 @@ class Live2DWidget(QOpenGLWidget):
         self._mouth_target = 0.0
         self._mouth_current = 0.0
         self._running = True
+        self._pending_model = ""  # 等待 OpenGL 就绪后加载
 
     def initializeGL(self):
         v3.glInit()
+        # OpenGL 就绪后加载等待的模型
+        if self._pending_model and os.path.exists(self._pending_model):
+            self._do_load_model(self._pending_model)
+            self._pending_model = ""
 
     def resizeGL(self, w, h):
         if self.model:
@@ -62,7 +67,6 @@ class Live2DWidget(QOpenGLWidget):
         v3.clearBuffer(0.0, 0.0, 0.0, 0.0)
         if not self.model:
             return
-        # 口型平滑
         if abs(self._mouth_target - self._mouth_current) > 0.01:
             self._mouth_current += (self._mouth_target - self._mouth_current) * 0.3
             self.model.SetParameterValue("ParamMouthOpenY", self._mouth_current)
@@ -71,9 +75,21 @@ class Live2DWidget(QOpenGLWidget):
         self.model.Draw()
 
     def load_model(self, model_path: str):
-        """加载 Live2D 模型"""
+        """加载 Live2D 模型（延迟到 OpenGL 就绪）"""
+        if not os.path.exists(model_path):
+            log.warning(f"模型文件不存在: {model_path}")
+            return
         if self.model:
             self.model = None
+        if hasattr(self, 'context') and self.context():
+            # OpenGL 已就绪，直接加载
+            self._do_load_model(model_path)
+        else:
+            # OpenGL 未就绪，等 initializeGL 加载
+            self._pending_model = model_path
+
+    def _do_load_model(self, model_path: str):
+        """在 OpenGL 上下文中加载模型"""
         model = v3.LAppModel()
         model.LoadModelJson(model_path)
         model.SetAutoBreathEnable(True)
@@ -81,7 +97,6 @@ class Live2DWidget(QOpenGLWidget):
         model.StartRandomMotion("Idle", 3)
         canvas_w, canvas_h = model.GetCanvasSize()
         if canvas_w and canvas_h:
-            # 按窗口比例缩放
             win_w, win_h = self.width() or 400, self.height() or 500
             scale = min(win_w / canvas_w, win_h / canvas_h) * 0.9
             model.SetScale(scale)
@@ -127,13 +142,14 @@ class PetWindow(QWidget):
         self._ws_thread: Optional[threading.Thread] = None
         self._running = True
 
-        # 加载模型
+        # 加载模型（延迟到 OpenGL 就绪）
         if model_path and os.path.exists(model_path):
+            self._model_path = model_path
             self.l2d.load_model(model_path)
         else:
-            # 自动找第一个可用模型
             models = find_model3()
             if models:
+                self._model_path = models[0]["path"]
                 self.l2d.load_model(models[0]["path"])
 
         # 启动 WS 接收

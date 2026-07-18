@@ -2,7 +2,7 @@
 架构：danmaku → scene → tts → avatar → stream (5 Agent asyncio.Queue 串联)
 """
 
-import asyncio, hashlib, hmac, json, logging, os, re, subprocess, tempfile, time
+import asyncio, hashlib, hmac, json, logging, os, re, subprocess, sys, tempfile, time
 from datetime import datetime
 from typing import Optional
 from aiohttp import WSMsgType
@@ -1392,9 +1392,7 @@ class LiveEngine:
             args = [sys.executable, "-B", pet_script]
             if model_path:
                 args.append(model_path)
-            self._pet_proc = subprocess.Popen(
-                args, creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
-            )
+            self._pet_proc = subprocess.Popen(args)
             log.info(f"[桌宠] 已启动: {' '.join(args[-2:])}")
             return True
         except Exception as e:
