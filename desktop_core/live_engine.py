@@ -100,6 +100,8 @@ class LiveEngine:
         self._vts_port: int = 8001
         # 桌宠 WebSocket（前端 Live2D 窗口）
         self._live2d_ws: Optional[aiohttp.WebSocketResponse] = None
+        # 桌宠子进程（PySide6 独立窗口）
+        self._pet_proc: Optional[subprocess.Popen] = None
         # 场景历史（全部保留，过长时压缩）
         self._scene_history: list[dict] = []
         self._live_prompt: str = DEFAULT_LIVE_PROMPT
@@ -296,6 +298,7 @@ class LiveEngine:
         self._running = False
         await self.disconnect_bilibili()
         await self._vts_disconnect()
+        self._stop_pet()
         await self._stop_ffmpeg()
         for aid in list(self._agent_tasks.keys()):
             t = self._agent_tasks.pop(aid, None)
@@ -1374,6 +1377,41 @@ class LiveEngine:
             except: pass
             self._ffmpeg_proc = None
             log.info("[直播] 推流已停止")
+
+    def _start_pet(self, model_path: str = ""):
+        """启动桌宠子进程（PySide6 独立窗口）"""
+        if self._pet_proc and self._pet_proc.poll() is None:
+            log.info("[桌宠] 已在运行")
+            return True
+        try:
+            sidecar = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src-tauri", "sidecar")
+            pet_script = os.path.join(sidecar, "pet_window.py")
+            if not os.path.exists(pet_script):
+                # 也可能是和桌面端代码放在一起
+                pet_script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "desktop_core", "pet_window.py")
+            args = [sys.executable, "-B", pet_script]
+            if model_path:
+                args.append(model_path)
+            self._pet_proc = subprocess.Popen(
+                args, creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+            )
+            log.info(f"[桌宠] 已启动: {' '.join(args[-2:])}")
+            return True
+        except Exception as e:
+            log.warning(f"[桌宠] 启动失败: {e}")
+            return False
+
+    def _stop_pet(self):
+        """停止桌宠子进程"""
+        if self._pet_proc and self._pet_proc.poll() is None:
+            try:
+                self._pet_proc.terminate()
+                self._pet_proc.wait(timeout=3)
+            except:
+                try: self._pet_proc.kill()
+                except: pass
+            self._pet_proc = None
+            log.info("[桌宠] 已停止")
 
 
 # 全局单例
