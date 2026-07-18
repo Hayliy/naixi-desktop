@@ -492,7 +492,15 @@ class PetWindow(QOpenGLWidget):
                     mg = msg.get("motion_group", "")
                     mi = msg.get("motion_index", -1)
                     if mg and mi >= 0 and self.model:
-                        self.model.StartMotion(mg, mi, 3)
+                        # 检查动作组在当前模型中是否存在
+                        if mg in self._motion_groups:
+                            self.model.StartMotion(mg, mi, 3)
+                        else:
+                            # 尝试通用组名
+                            fallbacks = {"TapBody": "Idle", "TapHead": "Idle"}
+                            fb = fallbacks.get(mg, "")
+                            if fb in self._motion_groups:
+                                self.model.StartMotion(fb, 0, 1)
             except:
                 pass
 
