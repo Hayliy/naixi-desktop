@@ -321,7 +321,7 @@ class PetWindow(QOpenGLWidget):
             self.model.SetParameterValue("ParamMouthForm", self._mouth_current, 1.0)
 
         if getattr(self, '_image_mode', False):
-            # ── 离屏渲染到 FBO → 图像切片 → 独立肢体变换 ──
+            # ── 离屏渲染到 FBO → 图像切片 → 独立肢体变换(NOPENGL QPainter) ─
             w, h = self.width(), self.height()
             if self._fbo is None or self._fbo.size().width() != w or self._fbo.size().height() != h:
                 from PySide6.QtOpenGL import QOpenGLFramebufferObjectFormat
@@ -338,41 +338,34 @@ class PetWindow(QOpenGLWidget):
             # 计算手臂角度（平滑插值）
             self._arm_angle_l += (self._arm_target_l - self._arm_angle_l) * 0.1
             self._arm_angle_r += (self._arm_target_r - self._arm_angle_r) * 0.1
-            # 图像切片 + 手臂变换
-            self._render_sliced_image(img)
+            # 用 QPainter 绘制三块：左臂 + 身体 + 右臂
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+            arm_w = int(w * 0.22)
+            body_w = w - 2 * arm_w
+            pivot_y = int(h * 0.38)
+            # 左臂
+            l_img = img.copy(0, 0, arm_w, h)
+            painter.save()
+            painter.translate(arm_w, pivot_y)
+            painter.rotate(self._arm_angle_l)
+            painter.translate(-arm_w, -pivot_y)
+            painter.drawImage(0, 0, l_img)
+            painter.restore()
+            # 身体
+            painter.drawImage(arm_w, 0, img.copy(arm_w, 0, body_w, h))
+            # 右臂
+            r_img = img.copy(w - arm_w, 0, arm_w, h)
+            painter.save()
+            painter.translate(w - arm_w, pivot_y)
+            painter.rotate(self._arm_angle_r)
+            painter.translate(-(w - arm_w), -pivot_y)
+            painter.drawImage(w - arm_w, 0, r_img)
+            painter.restore()
+            painter.end()
         else:
-            # ── 标准模式（直接渲染） ──
             live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
             self.model.Draw()
-
-    def _render_sliced_image(self, img: QImage):
-        """将渲染后的图像切为左臂/身体/右臂三块，手臂独立变换"""
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.SmoothPixmapTransform)
-        w, h = img.width(), img.height()
-        arm_w = int(w * 0.22)  # 左右各 22% 为手臂区域
-        body_w = w - 2 * arm_w
-        # 肩膀铰点 Y（约 35% 高度处）
-        pivot_y = int(h * 0.38)
-        # 左臂：旋转
-        l_img = img.copy(0, 0, arm_w, h)
-        painter.save()
-        painter.translate(arm_w, pivot_y)  # 肩膀位置
-        painter.rotate(self._arm_angle_l)
-        painter.translate(-arm_w, -pivot_y)
-        painter.drawImage(0, 0, l_img)
-        painter.restore()
-        # 身体：不动
-        painter.drawImage(arm_w, 0, img.copy(arm_w, 0, body_w, h))
-        # 右臂：旋转
-        r_img = img.copy(w - arm_w, 0, arm_w, h)
-        painter.save()
-        painter.translate(w - arm_w, pivot_y)
-        painter.rotate(self._arm_angle_r)
-        painter.translate(-(w - arm_w), -pivot_y)
-        painter.drawImage(w - arm_w, 0, r_img)
-        painter.restore()
-        painter.end()
 
     def _set_arm_angles(self, action: str):
         """根据动作设置手臂摆动角度"""
