@@ -504,7 +504,7 @@ class PetWindow(QOpenGLWidget):
             self.model.StartRandomMotion("Idle", 3)
             log.info(f"模型切换: {self._model_path}")
             from desktop_core.motion_engine import PoseEngine
-from desktop_core.bone_rig import create_default_skeleton, create_default_animator
+            from desktop_core.bone_rig import create_default_skeleton, create_default_animator
             self._pose = PoseEngine(self.model)
             self._pose.scan_model()
         except Exception as e:
