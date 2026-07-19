@@ -6,13 +6,12 @@ const PORT = 39539
 var _udp: PacketPeerUDP = PacketPeerUDP.new()
 var _vrm_instance: Node = null
 var _skeleton: Skeleton3D = null
-var _loader: ResourceLoader = null
 var _loading = false
+var _progress = [0.0]
 
 func _ready():
 	print("=== Naixi VRM Renderer ===")
 	
-	# 简单背景
 	var sky = WorldEnvironment.new()
 	var env = Environment.new()
 	env.background_mode = Environment.BG_COLOR
@@ -21,14 +20,13 @@ func _ready():
 	sky.environment = env
 	add_child(sky)
 	
-	# 相机
 	var cam = Camera3D.new()
-	cam.position = Vector3(0, 1.3, 2.0)
-	cam.look_at(Vector3(0, 1.0, 0))
+	cam.position = Vector3(0, 0.8, 3.0)
+	cam.look_at(Vector3(0, 0.5, 0))
+	cam.fov = 40
 	cam.current = true
 	add_child(cam)
 	
-	# 灯光
 	var l1 = DirectionalLight3D.new()
 	l1.rotation = Vector3(-0.4, 0.8, 0)
 	l1.light_energy = 1.5
@@ -38,39 +36,39 @@ func _ready():
 	l2.light_energy = 0.5
 	add_child(l2)
 	
-	# 后台加载 VRM（不卡界面）
-	_loader = ResourceLoader.load_threaded_request(VRM_PATH)
-	if _loader:
+	# 后台加载
+	var err = ResourceLoader.load_threaded_request(VRM_PATH)
+	if err == OK:
 		_loading = true
-		print("后台加载中: ", VRM_PATH)
+		print("后台加载中...")
 	else:
-		print("加载失败，需要启用 VRM 插件")
-		print("操作: 项目 → 项目设置 → 插件 → 启用 VRM 和 MToon Shader")
+		print("加载失败: err=", err)
+		print("需要启用 VRM 插件: 项目 → 项目设置 → 插件 → 启用 VRM")
 	
-	# UDP
 	_udp.bind(PORT)
 
-func _process(delta):
+func _process(_delta):
 	if _loading:
-		var p = _loader.get_progress()[0]
-		if _loader.poll() == OK:
-			return  # 还在加载
-		# 加载完成
-		var scene = _loader.get_resource()
+		var st = ResourceLoader.load_threaded_get_status(VRM_PATH, _progress)
+		if st == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+			return
 		_loading = false
-		if scene:
-			_vrm_instance = scene.instantiate()
-			if _vrm_instance:
-				_vrm_instance.position = Vector3(0, -0.5, 0)
-				add_child(_vrm_instance)
-				_find_skeleton(_vrm_instance)
-				print("✓ 加载成功，骨骼: ", _skeleton.get_bone_count() if _skeleton else 0)
+		if st == ResourceLoader.THREAD_LOAD_LOADED:
+			var scene = ResourceLoader.load_threaded_get(VRM_PATH)
+			if scene:
+				_vrm_instance = scene.instantiate()
+				if _vrm_instance:
+					_vrm_instance.position = Vector3(0, 0, 0)
+					add_child(_vrm_instance)
+					_find_skeleton(_vrm_instance)
+					print("✓ 加载成功")
+				else:
+					print("✗ 实例化失败")
 			else:
-				print("✗ 实例化失败")
+				print("✗ 获取资源失败")
 		else:
-			print("✗ 加载返回空")
+			print("✗ 加载状态: ", st)
 	
-	# UDP
 	while _udp.get_available_packet_count() > 0:
 		var data = _udp.get_packet().get_string_from_utf8()
 		_handle_vmc(data)
