@@ -17,7 +17,8 @@ from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QApplication, QMenu, QFileDialog, QWidget, QLineEdit, QLabel
 
 from desktop_core.motion_engine import PoseEngine
-from desktop_core.bone_rig import create_default_skeleton, create_default_animator
+from desktop_core.engine.ecs import World
+from desktop_core.engine.skeleton import build_skeleton, set_pose, get_bone_angles, SkeletalAnimator
 
 from live2d import v3 as live2d
 
@@ -159,8 +160,15 @@ class PetWindow(QOpenGLWidget):
         self._idle_interval = 15.0
         self._last_idle_ts = 0.0
         self._pose = PoseEngine(None)
-        self._skeleton = create_default_skeleton()
-        self._animator = create_default_animator(self._skeleton)
+        self._ecs_world = World()
+        # 构建骨骼骨架
+        from desktop_core.engine.skeleton import _collect_all
+        self._skeleton_root = build_skeleton()
+        all_bones = []
+        _collect_all(self._skeleton_root, all_bones)
+        for e in all_bones:
+            self._ecs_world.add_entity(e)
+        self._ecs_world.add_system(SkeletalAnimator())
         self._capture_mode = False  # 直播捕获模式（不透明背景）
 
         # 语言气泡
@@ -307,7 +315,7 @@ class PetWindow(QOpenGLWidget):
         if not self.model:
             return
         # 骨骼动画更新
-        self._skeleton.update(0.12)
+        self._ecs_world.update(dt)
         # 口型平滑（在 Update 前设，会被物理覆盖，需要放到 Update 后）
         if abs(self._mouth_target - self._mouth_current) > 0.01:
             self._mouth_current += (self._mouth_target - self._mouth_current) * 0.3
@@ -504,7 +512,8 @@ class PetWindow(QOpenGLWidget):
             self.model.StartRandomMotion("Idle", 3)
             log.info(f"模型切换: {self._model_path}")
             from desktop_core.motion_engine import PoseEngine
-            from desktop_core.bone_rig import create_default_skeleton, create_default_animator
+            from desktop_core.engine.ecs import World
+            from desktop_core.engine.skeleton import build_skeleton, set_pose, get_bone_angles, SkeletalAnimator
             self._pose = PoseEngine(self.model)
             self._pose.scan_model()
         except Exception as e:
@@ -583,7 +592,7 @@ class PetWindow(QOpenGLWidget):
                     action = msg.get("action", "")
                     if action:
                         # 骨骼动画驱动
-                        self._animator.play(action)
+                        set_pose(self._skeleton_root, action)
                         if not self._pose.play_action(action):
                             # Pose 参数未匹配：尝试用 _motion_groups 里的动作组
                             if self.model and self._motion_groups:
