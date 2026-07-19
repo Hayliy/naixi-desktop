@@ -170,6 +170,8 @@ class PetWindow(QOpenGLWidget):
             self._ecs_world.add_entity(e)
         self._ecs_world.add_system(SkeletalAnimator())
         self._ecs_world.add_system(WalkSystem())
+        # 测试：启动后立即行走
+        self._skeleton_root.add(WalkCycle())
         self._capture_mode = False  # 直播捕获模式（不透明背景）
 
         # 语言气泡
