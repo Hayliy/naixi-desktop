@@ -350,12 +350,21 @@ class PetWindow(QOpenGLWidget):
         wa = get_bone_angles(self._skeleton_root) if hasattr(self, '_skeleton_root') and self._skeleton_root else {}
         arm_l = wa.get('arm_l_upper', 0)
         arm_r = wa.get('arm_r_upper', 0)
+        # 行走方向——水平翻转
+        wc = self._skeleton_root.get(WalkCycle) if hasattr(self, '_skeleton_root') and self._skeleton_root else None
+        facing_left = (wc and wc.direction < 0)
+        # 设置行走边界（窗口边缘留 50px 内边距）
+        if wc:
+            wc.bound_left = -50
+            wc.bound_right = w - 50
         # 用 QPainter 绘制：身体 + 左臂（旋转）+ 右臂（旋转）
         arm_w = int(w * 0.20)
         pivot_y = int(h * 0.35)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
-        painter.translate(ox, oy)
+        painter.translate(ox + (w if facing_left else 0), oy)
+        if facing_left:
+            painter.scale(-1, 1)  # 水平翻转
         # 左臂
         painter.save()
         painter.translate(arm_w, pivot_y)

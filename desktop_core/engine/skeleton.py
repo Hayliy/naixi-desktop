@@ -20,9 +20,11 @@ class WalkCycle(Component):
         self.speed: float = 60.0  # px/s 行走速度
         self.direction: float = 1.0  # 1=右, -1=左
         self.amplitude: float = 20.0  # 手臂摆动幅度
+        self.bound_left: float = -9999  # 左边界
+        self.bound_right: float = 9999  # 右边界
 
 class WalkSystem(System):
-    """行走系统——每帧更新行走循环"""
+    """行走系统——每帧更新行走循环，遇边界反弹"""
     order = 1
 
     def update(self, world: World, dt: float):
@@ -30,12 +32,19 @@ class WalkSystem(System):
             wc = entity.get(WalkCycle)
             t = entity.get(Transform)
             wc.elapsed += dt
+            # 边界检测与反弹
+            if t.x < wc.bound_left:
+                t.x = wc.bound_left
+                wc.direction = 1.0
+            elif t.x > wc.bound_right:
+                t.x = wc.bound_right
+                wc.direction = -1.0
             # 水平移动
             t.x += wc.direction * wc.speed * dt
             # 身体上下颠簸
             bounce = abs(math.sin(wc.elapsed * 6)) * 3
             t.y = bounce
-            # 更新手臂摆动（遍历骨骼）
+            # 更新手臂摆动
             _apply_walk_pose(entity, wc)
 
 def _apply_walk_pose(root: Entity, wc: WalkCycle):
