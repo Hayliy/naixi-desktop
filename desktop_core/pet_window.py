@@ -19,7 +19,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QFileDialog, QWidget, QLineEd
 from desktop_core.motion_engine import PoseEngine
 from desktop_core.engine.ecs import World
 from desktop_core.engine.transform import Transform
-from desktop_core.engine.skeleton import build_skeleton, set_pose, get_bone_angles, SkeletalAnimator, WalkCycle, WalkSystem
+from desktop_core.engine.skeleton import build_skeleton, set_pose, get_bone_angles, SkeletalAnimator, WalkCycle, WalkSystem, _collect_all
 
 from live2d import v3 as live2d
 
@@ -517,7 +517,7 @@ class PetWindow(QOpenGLWidget):
             from desktop_core.motion_engine import PoseEngine
             from desktop_core.engine.ecs import World
             from desktop_core.engine.transform import Transform
-            from desktop_core.engine.skeleton import build_skeleton, set_pose, get_bone_angles, SkeletalAnimator, WalkCycle, WalkSystem
+            from desktop_core.engine.skeleton import build_skeleton, set_pose, get_bone_angles, SkeletalAnimator, WalkCycle, WalkSystem, _collect_all
             self._pose = PoseEngine(self.model)
             self._pose.scan_model()
         except Exception as e:

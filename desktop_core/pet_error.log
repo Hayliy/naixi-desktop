@@ -1,8 +1,7 @@
 Traceback (most recent call last):
-  File "D:\naixi_desktop\desktop_core\pet_window.py", line 570, in run_pet
-    win.show()
-    ~~~~~~~~^^
-  File "D:\naixi_desktop\desktop_core\pet_window.py", line 291, in paintGL
-    self.model.UpdatePhysics(dt)
-    ^^^^^^^^^^^^^^^^^^^^^^^^
-AttributeError: Error calling Python override of QOpenGLWidget::paintGL(): 'LAppModel' object has no attribute 'UpdatePhysics'
+  File "D:\naixi_desktop\desktop_core\pet_window.py", line 635, in run_pet
+    win = PetWindow(model_path)
+  File "D:\naixi_desktop\desktop_core\pet_window.py", line 168, in __init__
+    _collect_all(self._skeleton_root, all_bones)
+    ^^^^^^^^^^^^
+NameError: name '_collect_all' is not defined
