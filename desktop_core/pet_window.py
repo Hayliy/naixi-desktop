@@ -313,23 +313,64 @@ class PetWindow(QOpenGLWidget):
         now = time.time()
         dt = now - getattr(self, '_last_frame_ts', now)
         self._last_frame_ts = now
-        live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
         self._process_ws_queue()
         if not self.model:
+            live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
             return
         # 骨骼动画更新
         self._ecs_world.update(dt)
-        # 口型平滑（在 Update 前设，会被物理覆盖，需要放到 Update 后）
+        # 口型平滑
         if abs(self._mouth_target - self._mouth_current) > 0.01:
             self._mouth_current += (self._mouth_target - self._mouth_current) * 0.3
-        # 先让模型算好呼吸/眨眼/物理
+        # 模型状态更新
         self.model.Update()
-        # 再叠加上我们的 Pose 参数（必须在 Update 之后，否则被覆盖）
         self._pose.update(dt)
         if abs(self._mouth_current) > 0.01:
             self.model.SetParameterValue("ParamMouthOpenY", self._mouth_current, 1.0)
             self.model.SetParameterValue("ParamMouthForm", self._mouth_current, 1.0)
+        # ── FBO 离屏渲染 → QPainter 合成 ──
+        w, h = self.width(), self.height()
+        if getattr(self, '_fbo', None) is None or self._fbo.size().width() != w or self._fbo.size().height() != h:
+            from PySide6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat
+            fmt = QOpenGLFramebufferObjectFormat()
+            fmt.setSamples(0)
+            fmt.setAttachment(QOpenGLFramebufferObject.CombinedDepthStencil)
+            self._fbo = QOpenGLFramebufferObject(w, h, fmt)
+        self._fbo.bind()
+        live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
         self.model.Draw()
+        self._fbo.release()
+        img = self._fbo.toImage()
+        # 骨骼偏移
+        root_t = self._skeleton_root.get(Transform) if hasattr(self, '_skeleton_root') and self._skeleton_root else None
+        ox = root_t.world_x if root_t else 0
+        oy = root_t.world_y if root_t else 0
+        wa = get_bone_angles(self._skeleton_root) if hasattr(self, '_skeleton_root') and self._skeleton_root else {}
+        arm_l = wa.get('arm_l_upper', 0)
+        arm_r = wa.get('arm_r_upper', 0)
+        # 用 QPainter 绘制：身体 + 左臂（旋转）+ 右臂（旋转）
+        arm_w = int(w * 0.20)
+        pivot_y = int(h * 0.35)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        painter.translate(ox, oy)
+        # 左臂
+        painter.save()
+        painter.translate(arm_w, pivot_y)
+        painter.rotate(arm_l)
+        painter.translate(-arm_w, -pivot_y)
+        painter.drawImage(0, 0, img.copy(0, 0, arm_w, h))
+        painter.restore()
+        # 身体
+        painter.drawImage(arm_w, 0, img.copy(arm_w, 0, w - 2 * arm_w, h))
+        # 右臂
+        painter.save()
+        painter.translate(w - arm_w, pivot_y)
+        painter.rotate(arm_r)
+        painter.translate(-(w - arm_w), -pivot_y)
+        painter.drawImage(w - arm_w, 0, img.copy(w - arm_w, 0, arm_w, h))
+        painter.restore()
+        painter.end()
 
     def timerEvent(self, event: QTimerEvent):
         self.update()
