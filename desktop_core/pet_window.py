@@ -329,6 +329,8 @@ class PetWindow(QOpenGLWidget):
             self.model.SetParameterValue("ParamMouthOpenY", self._mouth_current, 1.0)
             self.model.SetParameterValue("ParamMouthForm", self._mouth_current, 1.0)
         # ── FBO 离屏渲染 → QPainter 合成 ──
+        # 先清空屏幕
+        live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
         w, h = self.width(), self.height()
         if getattr(self, '_fbo', None) is None or self._fbo.size().width() != w or self._fbo.size().height() != h:
             from PySide6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat
