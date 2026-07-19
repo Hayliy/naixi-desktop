@@ -1,20 +1,33 @@
-; Godot VRM Renderer — 桌宠 3D 渲染子进程
-; 接收 Python ECS 引擎的 VMC 协议 → 驱动 VRM 模型 → 透明窗口渲染
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
+config_version=5
 
 [application]
+
 config/name="Naixi VRM Renderer"
 config/description="桌宠 VRM 3D 渲染器 — 接收 VMC 协议驱动模型"
 run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.7")
 
 [display]
+
 window/size/viewport_width=600
 window/size/viewport_height=800
-window/size/mode=0
 window/size/always_on_top=true
 window/per_pixel_transparency/allowed=true
 window/per_pixel_transparency/enabled=true
-window/dpi/allow_hidpi=true
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/vrm/plugin.cfg", "res://addons/Godot-MToon-Shader/plugin.cfg")
 
 [rendering]
+
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
