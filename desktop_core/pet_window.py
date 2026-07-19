@@ -12,7 +12,9 @@ os.environ.setdefault("QT_OPENGL", "angle")
 
 from OpenGL.GL import glViewport
 from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer, QPropertyAnimation
-from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont, QPainterPath
+from PySide6.QtGui import (QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont, 
+                             QPainterPath, QImage, QTransform)
+from PySide6.QtOpenGL import QOpenGLFramebufferObject
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QApplication, QMenu, QFileDialog, QWidget, QLineEdit, QLabel
 
@@ -157,6 +159,7 @@ class PetWindow(QOpenGLWidget):
         self._idle_motion_groups: list[str] = []
         self._idle_interval = 15.0
         self._last_idle_ts = 0.0
+        self._part_map: dict[str, int] = {}  # part_name → index
         self._pose = PoseEngine(None)
         self._capture_mode = False  # 直播捕获模式（不透明背景）
 
@@ -199,6 +202,13 @@ class PetWindow(QOpenGLWidget):
     def initializeGL(self):
         live2d.glInit()
         live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
+        # 初始化 FBO（离屏渲染用）
+        self._fbo = None
+        self._arm_angle_l = 0.0
+        self._arm_angle_r = 0.0
+        self._arm_target_l = 0.0
+        self._arm_target_r = 0.0
+        self._image_mode = True  # True=用FBO切图模式 False=标准模式
         with open(r"D:\pet_init.log", "a") as f:
             f.write(f"{time.time():.0f} initializeGL _model_path={self._model_path!r}\n")
         if self._model_path and os.path.exists(self._model_path):
@@ -296,21 +306,91 @@ class PetWindow(QOpenGLWidget):
         now = time.time()
         dt = now - getattr(self, '_last_frame_ts', now)
         self._last_frame_ts = now
-        live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
         self._process_ws_queue()
         if not self.model:
+            live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
             return
-        # 口型平滑（在 Update 前设，会被物理覆盖，需要放到 Update 后）
+        # 口型平滑
         if abs(self._mouth_target - self._mouth_current) > 0.01:
             self._mouth_current += (self._mouth_target - self._mouth_current) * 0.3
-        # 先让模型算好呼吸/眨眼/物理
+        # 更新模型参数
         self.model.Update()
-        # 再叠加上我们的 Pose 参数（必须在 Update 之后，否则被覆盖）
         self._pose.update(dt)
         if abs(self._mouth_current) > 0.01:
             self.model.SetParameterValue("ParamMouthOpenY", self._mouth_current, 1.0)
             self.model.SetParameterValue("ParamMouthForm", self._mouth_current, 1.0)
-        self.model.Draw()
+
+        if getattr(self, '_image_mode', False):
+            # ── 离屏渲染到 FBO → 图像切片 → 独立肢体变换 ──
+            w, h = self.width(), self.height()
+            if self._fbo is None or self._fbo.size().width() != w or self._fbo.size().height() != h:
+                from PySide6.QtOpenGL import QOpenGLFramebufferObjectFormat
+                fmt = QOpenGLFramebufferObjectFormat()
+                fmt.setSamples(0)
+                fmt.setAttachment(QOpenGLFramebufferObject.CombinedDepthStencil)
+                self._fbo = QOpenGLFramebufferObject(w, h, fmt)
+            self._fbo.bind()
+            live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
+            self.model.Draw()
+            self._fbo.release()
+            # 读 FBO 为 QImage
+            img = self._fbo.toImage()
+            # 计算手臂角度（平滑插值）
+            self._arm_angle_l += (self._arm_target_l - self._arm_angle_l) * 0.1
+            self._arm_angle_r += (self._arm_target_r - self._arm_angle_r) * 0.1
+            # 图像切片 + 手臂变换
+            self._render_sliced_image(img)
+        else:
+            # ── 标准模式（直接渲染） ──
+            live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
+            self.model.Draw()
+
+    def _render_sliced_image(self, img: QImage):
+        """将渲染后的图像切为左臂/身体/右臂三块，手臂独立变换"""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        w, h = img.width(), img.height()
+        arm_w = int(w * 0.22)  # 左右各 22% 为手臂区域
+        body_w = w - 2 * arm_w
+        # 肩膀铰点 Y（约 35% 高度处）
+        pivot_y = int(h * 0.38)
+        # 左臂：旋转
+        l_img = img.copy(0, 0, arm_w, h)
+        painter.save()
+        painter.translate(arm_w, pivot_y)  # 肩膀位置
+        painter.rotate(self._arm_angle_l)
+        painter.translate(-arm_w, -pivot_y)
+        painter.drawImage(0, 0, l_img)
+        painter.restore()
+        # 身体：不动
+        painter.drawImage(arm_w, 0, img.copy(arm_w, 0, body_w, h))
+        # 右臂：旋转
+        r_img = img.copy(w - arm_w, 0, arm_w, h)
+        painter.save()
+        painter.translate(w - arm_w, pivot_y)
+        painter.rotate(self._arm_angle_r)
+        painter.translate(-(w - arm_w), -pivot_y)
+        painter.drawImage(w - arm_w, 0, r_img)
+        painter.restore()
+        painter.end()
+
+    def _set_arm_angles(self, action: str):
+        """根据动作设置手臂摆动角度"""
+        angles = {
+            "wave":    (-25, -25),
+            "bye":     (-25, -25),
+            "hello":   (-25, -20),
+            "arms_up": (-45, -45),
+            "kime":    (-20, -20),
+            "point_r": (0, -30),
+            "point_l": (-30, 0),
+            "smile":   (-10, -10),
+            "shy":     (5, 5),
+            "bow":     (0, 0),
+        }
+        a = angles.get(action, (0, 0))
+        self._arm_target_l = float(a[0])
+        self._arm_target_r = float(a[1])
 
     def timerEvent(self, event: QTimerEvent):
         self.update()
@@ -573,6 +653,9 @@ class PetWindow(QOpenGLWidget):
                     # 优先 Pose 引擎驱动
                     action = msg.get("action", "")
                     if action:
+                        # 图像模式：驱动手臂角度
+                        if getattr(self, '_image_mode', False):
+                            self._set_arm_angles(action)
                         if not self._pose.play_action(action):
                             # Pose 参数未匹配：尝试用 _motion_groups 里的动作组
                             if self.model and self._motion_groups:
