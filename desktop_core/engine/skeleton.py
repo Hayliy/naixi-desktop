@@ -2,6 +2,7 @@
 骨骼动画系统——基于 ECS 的骨架+动作驱动
 """
 from __future__ import annotations
+import math
 from .ecs import Entity, Component, System, World
 from .transform import Transform
 
