@@ -300,14 +300,16 @@ class PetWindow(QOpenGLWidget):
         self._process_ws_queue()
         if not self.model:
             return
-        # Pose 引擎驱动（每帧插值）
-        self._pose.update(dt)
-        # 口型平滑
+        # 口型平滑（在 Update 前设，会被物理覆盖，需要放到 Update 后）
         if abs(self._mouth_target - self._mouth_current) > 0.01:
             self._mouth_current += (self._mouth_target - self._mouth_current) * 0.3
-            self.model.SetParameterValue("ParamMouthOpenY", self._mouth_current)
-            self.model.SetParameterValue("ParamMouthForm", self._mouth_current)
+        # 先让模型算好呼吸/眨眼/物理
         self.model.Update()
+        # 再叠加上我们的 Pose 参数（必须在 Update 之后，否则被覆盖）
+        self._pose.update(dt)
+        if abs(self._mouth_current) > 0.01:
+            self.model.SetParameterValue("ParamMouthOpenY", self._mouth_current, 1.0)
+            self.model.SetParameterValue("ParamMouthForm", self._mouth_current, 1.0)
         self.model.Draw()
 
     def timerEvent(self, event: QTimerEvent):

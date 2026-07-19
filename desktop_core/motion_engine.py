@@ -83,7 +83,7 @@ class Motion:
         for c in self.curves:
             v = c.interpolate(self.time_elapsed)
             if v is not None:
-                model.SetParameterValue(c.param_id, v)
+                model.SetParameterValue(c.param_id, v, 1.0)
         if self.time_elapsed >= self.duration:
             self.playing = False
             return True
