@@ -12,6 +12,44 @@ class BoneData(Component):
         self.length = length
         self.target_rotation: float = 0.0  # 目标角度
 
+class WalkCycle(Component):
+    """行走循环数据"""
+    def __init__(self):
+        self.elapsed: float = 0.0
+        self.speed: float = 60.0  # px/s 行走速度
+        self.direction: float = 1.0  # 1=右, -1=左
+        self.amplitude: float = 20.0  # 手臂摆动幅度
+
+class WalkSystem(System):
+    """行走系统——每帧更新行走循环"""
+    order = 1
+
+    def update(self, world: World, dt: float):
+        for entity in world.get_entities_with(WalkCycle, Transform):
+            wc = entity.get(WalkCycle)
+            t = entity.get(Transform)
+            wc.elapsed += dt
+            # 水平移动
+            t.x += wc.direction * wc.speed * dt
+            # 身体上下颠簸
+            bounce = abs(math.sin(wc.elapsed * 6)) * 3
+            t.y = bounce
+            # 更新手臂摆动（遍历骨骼）
+            _apply_walk_pose(entity, wc)
+
+def _apply_walk_pose(root: Entity, wc: WalkCycle):
+    """设置行走姿态——手臂交替摆动"""
+    angle = math.sin(wc.elapsed * 5) * wc.amplitude
+    _set_bone_target(root, "arm_r_upper", -angle)
+    _set_bone_target(root, "arm_l_upper", angle)
+
+def _set_bone_target(e: Entity, name: str, angle: float):
+    b = e.get(BoneData)
+    if b and b.name == name:
+        b.target_rotation = angle
+    for child in e.children:
+        _set_bone_target(child, name, angle)
+
 class SkeletalAnimator(System):
     """骨骼动画系统——每帧向目标角度插值"""
     speed: float = 0.12
