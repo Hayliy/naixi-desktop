@@ -242,9 +242,9 @@ class PetWindow(QOpenGLWidget):
                 if hasattr(self._pose, '_available'):
                     log.info(f"可用参数数: {len(self._pose._available)} 参数={list(self._pose._available)[:15]}")
                 log.info(f"模型加载成功: {self._model_path}")
-            # 动作→骨骼动画
-            from desktop_core.bone_rig import create_default_animator
-            self._animator = create_default_animator(self._skeleton)
+                # 动作→骨骼动画
+                from desktop_core.bone_rig import create_default_animator
+                self._animator = create_default_animator(self._skeleton)
             except Exception as e:
                 log.warning(f"模型加载失败: {e}")
         self.startTimer(16)
