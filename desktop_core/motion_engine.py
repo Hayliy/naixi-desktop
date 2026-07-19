@@ -326,6 +326,10 @@ class PoseEngine:
                 p = self.model.GetParameter(i)
                 self._param_ranges[p.id] = (p.min, p.max, p.default)
             _dbg(f"scan: {len(ids)} params, cats: {len(self._categories)}, ranges: {len(self._param_ranges)}")
+            # 打印非面部参数（手臂/腿/身体等）
+            unusual = [p for p in sorted(ids) if not any(p.startswith(k) for k in ('ParamAngle','ParamBody','ParamEye','ParamBrow','ParamMouth','ParamCheek','ParamBreath'))]
+            if unusual:
+                _dbg(f"OTHER: {unusual}")
             for cat, names in sorted(self._categories.items()):
                 _dbg(f"  {cat}: {names}")
         except Exception as e:
