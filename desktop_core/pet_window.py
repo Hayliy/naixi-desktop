@@ -12,7 +12,7 @@ os.environ.setdefault("QT_OPENGL", "angle")
 
 from OpenGL.GL import glViewport
 from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer, QPropertyAnimation
-from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont, QPainterPath
+from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont, QPainterPath, QImage
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QApplication, QMenu, QFileDialog, QWidget, QLineEdit, QLabel
 
