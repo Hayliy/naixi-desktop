@@ -2954,6 +2954,9 @@ def setup_routes(app):
     # 取消 Agent
     app.router.add_post("/api/chat/cancel", api_cancel_chat)
 
+    # 日志
+    app.router.add_get("/api/logs", api_logs)
+
 
 # ── 任务管理 API ──
 
@@ -3475,3 +3478,22 @@ async def api_config_trust(request):
         return web.json_response({"ok": True, "full_trust": enabled})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
+
+
+async def api_logs(request):
+    """返回后端日志文件内容（过滤掉 HTTP 访问日志）"""
+    log_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs", "naixi_desktop.log")
+    try:
+        with open(log_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        # 过滤掉 aiohttp.access 行（HTTP 请求日志），只保留应用日志
+        app_lines = [l for l in lines if 'aiohttp.access' not in l]
+        # 如果应用日志太少，回退到全部日志
+        if len(app_lines) < 10:
+            app_lines = lines
+        last_lines = app_lines[-200:]
+        return web.Response(text="".join(last_lines), content_type="text/plain", charset="utf-8")
+    except FileNotFoundError:
+        return web.Response(text="日志文件不存在", content_type="text/plain", charset="utf-8", status=404)
+    except Exception as e:
+        return web.Response(text=f"读取日志失败: {e}", content_type="text/plain", charset="utf-8", status=500)
