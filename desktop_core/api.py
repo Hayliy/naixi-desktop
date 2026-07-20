@@ -1,5 +1,5 @@
 """桌面端 API 路由 — 脱敏版，不含任何 QQ 机器人相关功能"""
-import json, os, sys, time, logging, asyncio
+import json, os, sys, time, logging, asyncio, hmac
 from aiohttp import web
 from datetime import datetime
 
@@ -14,8 +14,8 @@ _session_trust: dict[str, set[str]] = {}
 _active_agent_tasks: dict[str, asyncio.Task] = {}
 _agent_cancel_events: dict[str, asyncio.Event] = {}
 
-# 高危工具列表（执行前需要用户确认）
-HIGH_RISK_TOOLS = {"bash", "kill_process", "run_local_command"}
+# 高危工具列表（执行前需要用户确认）— 以 tools 模块为单一来源，避免两处定义漂移
+from desktop_core.tools import HIGH_RISK_TOOLS
 
 # tiktoken 精确估算（可选依赖）
 _USE_TIKTOKEN = False
@@ -43,10 +43,33 @@ def _estimate_tokens(text: str) -> int:
 
 from desktop_core.context import ContextManager
 
-from desktop_core.storage import meta_get, meta_set, encrypt_config, decrypt_config, decrypt_api_key, conv_list, conv_get_messages, conv_delete, conv_delete_message, conv_save_message_sync as conv_save_message
+from desktop_core.storage import meta_get, meta_set, encrypt_config, decrypt_config, decrypt_api_key, mask_config, merge_preserve_keys, conv_list, conv_get_messages, conv_delete, conv_delete_message, conv_save_message_sync as conv_save_message
 from desktop_core import tools
 
 log = logging.getLogger("desktop")
+
+# ── 来源信任判定（防跨站/DNS 重绑定攻击本机后端） ──
+# 后端只绑定 127.0.0.1，主要威胁是用户浏览器里的恶意网页向 127.0.0.1:9845 发跨域请求。
+# 规则：无 Origin（curl/服务端调用）放行；Origin 为 tauri/本机回环则信任；其余外部站点一律拒绝。
+def is_trusted_origin(origin: str) -> bool:
+    if not origin:
+        return True  # 非浏览器请求（无 Origin 头），放行
+    try:
+        from urllib.parse import urlparse
+        u = urlparse(origin)
+        host = (u.hostname or "").lower()
+        if host in ("tauri.localhost", "ipc.localhost", "localhost", "127.0.0.1", "::1"):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def cors_origin_header(request):
+    """若请求来源可信，返回应回显的 Origin；否则返回 None（不加 CORS 头）"""
+    origin = request.headers.get("Origin", "")
+    return origin if (origin and is_trusted_origin(origin)) else None
+
 
 # 延迟导入工作流引擎（从 naixi_py 引用，但 storage/config 已被桌面端覆盖）
 _workflow_api = None
@@ -293,9 +316,9 @@ async def api_webhook_execute(request):
     
     wf_api = _get_workflow_api()
     
-    # 验证 API Key
+    # 验证 API Key（使用恒定时间比较，避免计时侧信道）
     stored_key = await wf_api["get_api_key"](wid)
-    if not stored_key or stored_key != api_key:
+    if not stored_key or not hmac.compare_digest(str(stored_key), str(api_key)):
         return web.json_response({"error": "API Key 无效"}, status=403)
     
     body = {}
@@ -651,10 +674,11 @@ async def api_database_stats(request):
 # ── 配置管理（API Key / 平台连接） ──
 
 async def api_desktop_config_get(request):
+    # 安全：绝不向前端返回明文密钥，只返回掩码占位符（前端用它判断"已配置"，编辑时留原样即保留）
     raw = meta_get("desktop_config")
     if raw:
         config = json.loads(raw)
-        decrypt_config(config)  # 解密 api_key 再返回
+        mask_config(config)  # 掩码 api_key，永不返回明文
         return web.json_response(config)
     return web.json_response({"api_providers": {}, "platform_configs": {}})
 
@@ -664,21 +688,26 @@ async def api_desktop_config_set(request):
         body = await request.json()
         # 合并现有配置，而不是整条替换（防止 curl 测试误覆盖）
         raw = meta_get("desktop_config")
+        original = {}
         if raw:
             try:
-                existing = json.loads(raw)
+                original = json.loads(raw)
+                existing = original
                 # 只合并已知的顶层键
                 for key in ("api_providers", "platform_configs", "mcp_servers", "desktop_full_trust", "settings"):
                     if key in body:
                         existing[key] = body[key]
                 body = existing
-            except:
-                pass
-        encrypt_config(body)  # 加密所有 api_key 再存库
+            except Exception:
+                original = {}
+        # 前端回传掩码/空密钥时，沿用已存的加密密文，避免误删或误覆盖真实密钥
+        merge_preserve_keys(body, original)
+        encrypt_config(body)  # 幂等加密：只加密新明文密钥，不重复加密已加密值
         meta_set("desktop_config", json.dumps(body, ensure_ascii=False))
         return web.json_response({"ok": True})
     except Exception as e:
-        return web.json_response({"error": str(e)}, status=400)
+        log.warning(f"保存桌面配置失败: {e}")
+        return web.json_response({"error": "配置保存失败"}, status=400)
 
 
 async def api_desktop_paths(request):
@@ -1640,7 +1669,10 @@ async def api_chat_stream(request):
         sse.headers["Content-Type"] = "text/event-stream"
         sse.headers["Cache-Control"] = "no-cache"
         sse.headers["Connection"] = "keep-alive"
-        sse.headers["Access-Control-Allow-Origin"] = "*"
+        _co = cors_origin_header(request)
+        if _co:
+            sse.headers["Access-Control-Allow-Origin"] = _co
+            sse.headers["Vary"] = "Origin"
         await sse.prepare(request)
 
         full_response = ""
@@ -1796,10 +1828,10 @@ async def api_chat_stream(request):
                                 # ── 1. 全局完全信任：跳过所有确认 ──
                                 full_trust = meta_get("desktop_full_trust") == "true"
                                 if full_trust:
-                                    tr = await tools.execute(fn_name, fn_args, tool_ctx)
+                                    tr = await tools.execute(fn_name, fn_args, {**tool_ctx, "high_risk_approved": True})
                                 # ── 2. 会话级信任：该工具已授权，直接执行 ──
                                 elif conv_key and fn_name in _session_trust.get(conv_key, set()):
-                                    tr = await tools.execute(fn_name, fn_args, tool_ctx)
+                                    tr = await tools.execute(fn_name, fn_args, {**tool_ctx, "high_risk_approved": True})
                                 # ── 3. 需要弹窗确认 ──
                                 else:
                                     req_id = call_id or f"perm_{time.time()}"
@@ -1815,7 +1847,7 @@ async def api_chat_stream(request):
                                         return call_id, "⏱ 权限确认超时，已取消"
                                     else:
                                         if perm_result.get("approved"):
-                                            tr = await tools.execute(fn_name, fn_args, tool_ctx)
+                                            tr = await tools.execute(fn_name, fn_args, {**tool_ctx, "high_risk_approved": True})
                                             # 勾选"始终允许"→ 加入会话级信任
                                             if perm_result.get("always_allow") and conv_key:
                                                 if conv_key not in _session_trust:
@@ -3345,7 +3377,8 @@ def _model_response(fp: str):
     ext = os.path.splitext(fp)[1].lower()
     mime = {"png": "image/png", "json": "application/json", "moc3": "application/octet-stream",
             "physics3": "application/json", "exp3": "application/json", "cdi3": "application/json"}.get(ext, "application/octet-stream")
-    return web.FileResponse(fp, headers={"Content-Type": mime, "Access-Control-Allow-Origin": "*"})
+    # CORS 头由中间件按来源信任度统一注入，此处不再硬编码通配符 *
+    return web.FileResponse(fp, headers={"Content-Type": mime})
 
 async def api_live2d_model_list(request):
     """列出可用的 Live2D 模型（扫描 VTube Studio 和本地目录）"""

@@ -35,7 +35,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:9845 http://localhost:9845 ws://127.0.0.1:9845 ws://localhost:9845; img-src 'self' data: blob: https: http://127.0.0.1:9845; media-src 'self' data: blob: https: http://127.0.0.1:9845; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'"
     }
   },
   "bundle": {

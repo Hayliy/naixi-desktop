@@ -8,7 +8,6 @@ from logging.handlers import RotatingFileHandler
 # 日志文件（崩溃时也能查到原因）
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
-os.makedirs(LOG_DIR, exist_ok=True)
 LOG_FILE = os.path.join(LOG_DIR, "naixi_desktop.log")
 _handler = RotatingFileHandler(LOG_FILE, maxBytes=5*1024*1024, backupCount=3, encoding="utf-8")
 _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
@@ -109,10 +108,15 @@ async def main():
 
     # 自动连接 MCP 服务器（自动补全 npx 路径）
     try:
-        # 将 managed Node.js 加入 PATH，让 MCP 子进程能找到 npx
-        node_bin = os.path.dirname(sys.executable) if "python" in sys.executable else ""
-        node_bin_dir = os.path.dirname(r"C:\Users\21222\.workbuddy\binaries\node\versions\22.22.2\npx")
-        if node_bin_dir not in os.environ.get("PATH", ""):
+        # 将 Node.js 目录加入 PATH，让 MCP 子进程能找到 npx。
+        # 解析优先级：环境变量 NAIXI_NODE_BIN > 系统 PATH 中已有的 npx > 跳过（不硬编码任何用户路径）
+        import shutil as _shutil
+        node_bin_dir = os.environ.get("NAIXI_NODE_BIN", "").strip()
+        if not node_bin_dir:
+            _npx = _shutil.which("npx")
+            if _npx:
+                node_bin_dir = os.path.dirname(_npx)
+        if node_bin_dir and node_bin_dir not in os.environ.get("PATH", ""):
             os.environ["PATH"] = node_bin_dir + os.pathsep + os.environ.get("PATH", "")
         from desktop_core.tools import connect_mcp_servers
         mcp_count = await asyncio.wait_for(connect_mcp_servers(), timeout=8)
@@ -123,16 +127,31 @@ async def main():
     except Exception as e:
         log.warning(f"MCP 自动连接失败: {e}")
 
+    from desktop_core.api import is_trusted_origin
+
     @web.middleware
     async def cors_middleware(request, handler):
+        origin = request.headers.get("Origin", "")
+        trusted = is_trusted_origin(origin)
+        # 预检请求
         if request.method == "OPTIONS":
-            return web.Response(headers={
-                "Access-Control-Allow-Origin": "*",
+            headers = {
                 "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type",
-            })
+                "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            }
+            if origin and trusted:
+                headers["Access-Control-Allow-Origin"] = origin
+                headers["Vary"] = "Origin"
+            return web.Response(headers=headers)
+        # 拒绝来自非信任浏览器源的跨域请求（防 DNS 重绑定/CSRF）
+        if origin and not trusted:
+            log.warning(f"拒绝不受信任的跨域请求，来源: {origin}")
+            return web.json_response({"error": "来源不被信任"}, status=403)
         resp = await handler(request)
-        resp.headers["Access-Control-Allow-Origin"] = "*"
+        # 仅对可信来源回显 Origin（不再使用通配符 *）
+        if origin and trusted:
+            resp.headers["Access-Control-Allow-Origin"] = origin
+            resp.headers["Vary"] = "Origin"
         return resp
 
     app = web.Application(middlewares=[cors_middleware])
@@ -304,8 +323,6 @@ async def main():
             except Exception as e:
                 log.warning(f"自动化调度异常: {e}")
                 await asyncio.sleep(30)
-
-    asyncio.create_task(automation_scheduler())
 
     asyncio.create_task(automation_scheduler())
 

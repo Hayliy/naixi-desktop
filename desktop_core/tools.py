@@ -8,6 +8,10 @@ log = logging.getLogger("tools")
 WORKSPACE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "workspace")
 os.makedirs(WORKSPACE_DIR, exist_ok=True)
 
+# ── 高危工具（需上层完成用户确认后方可执行）──
+# run_local_command 为已合并入 bash 的旧名，保留以兼容旧引用
+HIGH_RISK_TOOLS = {"bash", "kill_process", "run_local_command"}
+
 # ── 工具注册表 ──
 _registry = {}
 
@@ -144,8 +148,15 @@ async def execute(name, args, context=None):
     tool = _registry.get(name)
     if not tool:
         return f"未知工具: {name}"
+    context = context or {}
+    # 高危工具守卫（下沉到执行器统一把关）：
+    # 仅当上层显式标记 high_risk_approved=True（已完成用户确认或全局信任）时才放行。
+    # 工作流 / webhook 等非交互路径不带此标记，默认拒绝，防止绕过聊天层的权限确认。
+    if name in HIGH_RISK_TOOLS and not context.get("high_risk_approved"):
+        log.warning(f"[工具] 拒绝未经确认的高危工具调用: {name}")
+        return f"❌ 高危工具 {name} 需经用户确认后才能执行，当前调用来源未授权，已拒绝"
     try:
-        result = await tool["handler"](args, context or {})
+        result = await tool["handler"](args, context)
         return str(result)[:5000]
     except Exception as e:
         log.warning(f"[工具] {name} 执行失败: {e}")
@@ -419,11 +430,28 @@ async def _run_command(args, ctx):
     cwd = args.get("cwd", None)
     if not command:
         return "缺少要执行的命令"
-    # 安全检查
-    dangerous = ["rm -rf /", "format", "shutdown", "reboot", "init 0", "mkfs", "dd if=", ":(){ :|:& };:"]
-    for d in dangerous:
-        if d in command.lower():
-            return f"❌ 禁止执行危险命令"
+    # 安全检查：先规范化命令（去引号/反引号、折叠空白、转小写），再用正则匹配危险模式，
+    # 覆盖多空格、引号包裹、参数换序等常见绕过手法
+    _norm = re.sub(r"[\"'`]", "", command)
+    _norm = re.sub(r"\s+", " ", _norm).strip().lower()
+    dangerous_patterns = [
+        r"\brm\s+(?:-\S+\s+)*-?[rf]{1,2}\b[^|;&]*\s[/~]\*?\s*(?:$|[;|&])",  # rm -rf / 及变体（含 -fr、参数换序、根目录/家目录）
+        r"\brm\b[^|;&]*--no-preserve-root",                                  # rm --no-preserve-root
+        r"\bmkfs\b",                                                          # 格式化文件系统
+        r"\bdd\b[^|;&]*\bif=",                                                # dd if= 覆写磁盘
+        r"\b(?:shutdown|reboot|halt|poweroff|logoff)\b",                      # 关机/重启
+        r"\binit\s+0\b",                                                      # init 0
+        r"\bformat\s+[a-z]:",                                                 # windows format c:
+        r":\(\)\s*\{[^}]*:\s*\|\s*:[^}]*&[^}]*\}",                            # fork 炸弹
+        r">\s*/dev/sd[a-z]",                                                  # 写入原始磁盘设备
+        r"\bchmod\b[^|;&]*\b777\b[^|;&]*\s/\s*(?:$|[;|&])",                   # chmod 777 /
+        r"\bdel\b[^|;&]*\s/[sfq]\b",                                          # windows del /s /q
+        r"\brd\b[^|;&]*\s/s\b",                                               # windows rd /s
+    ]
+    for pat in dangerous_patterns:
+        if re.search(pat, _norm):
+            log.warning(f"[工具] 拒绝执行危险命令: {command[:100]}")
+            return "❌ 禁止执行危险命令"
     try:
         # ── 启动 .exe 程序：避免弹终端窗口 ──
         cmd_stripped = command.strip().strip("\"")

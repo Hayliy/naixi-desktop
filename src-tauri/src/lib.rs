@@ -25,8 +25,10 @@ pub fn run() {
 
             if script.exists() {
                 let shell = app.shell();
-                // 使用 WorkBuddy 管理的 Python，替代系统 PATH 中的 python
-                let python_path = r"C:\Users\21222\.workbuddy\binaries\python\versions\3.13.12\python.exe";
+                // Python 解释器解析：环境变量 NAIXI_PYTHON_PATH 优先，否则回退系统 PATH 中的 python
+                // 不硬编码任何用户专属绝对路径，保证换机/换用户仍可启动
+                let python_path = std::env::var("NAIXI_PYTHON_PATH")
+                    .unwrap_or_else(|_| "python".to_string());
                 match shell.command(python_path)
                     .arg(script.to_string_lossy().to_string())
                     .spawn()

@@ -7,28 +7,31 @@ log = logging.getLogger("desktop")
 DB_PATH = ""
 
 # ── API Key 加密 ──
+# 密钥体系（2026-07 加固）：
+#   1) 主密钥为随机 32 字节，用 Windows DPAPI（当前用户作用域）保护后存入 meta 表。
+#      DPAPI 把密钥绑定到当前 Windows 账户——即使数据库被拷到别的机器/账户也无法解密。
+#   2) 旧数据用「机器 UUID 派生」的旧密钥加密，保留旧密钥仅用于向后兼容解密，不再用于新加密。
+#   3) encrypt 幂等：已是 enc: 前缀的值不再二次加密（修复历史多层加密 bug）。
+#   4) 加密失败绝不回退明文——宁可返回空，也不把密钥以明文落库。
 _ENCRYPT_PREFIX = "enc:"
-_FERNET_KEY_CACHE = None
+_KEY_MASK = "********"          # 返回给前端的掩码占位符（绝不返回明文）
+_MASTER_META_KEY = "_fernet_master_v2"
+_FERNET_CACHE = None           # 当前主密钥 Fernet（加解密都用）
+_LEGACY_FERNET_CACHE = None    # 旧 UUID 派生密钥 Fernet（仅解密旧数据）
 
-def _get_fernet_key() -> bytes:
-    """从机器唯一标识派生 Fernet 加密密钥"""
-    global _FERNET_KEY_CACHE
-    if _FERNET_KEY_CACHE:
-        return _FERNET_KEY_CACHE
 
+def _machine_uuid() -> str:
+    """取机器唯一标识：UUID -> MAC -> 常量（仅用于旧密钥兼容派生）"""
     try:
-        # 取 Windows 机器 UUID（每台机器唯一）
         r = subprocess.run(
             ["powershell", "-NoProfile", "-Command",
              "Get-CimInstance -Class Win32_ComputerSystemProduct | Select-Object -ExpandProperty UUID"],
             capture_output=True, text=True, timeout=5
         )
         mid = r.stdout.strip()
-    except:
+    except Exception:
         mid = ""
-    
     if not mid or len(mid) < 10:
-        # 回退：取 MAC 地址
         try:
             r = subprocess.run(
                 ["powershell", "-NoProfile", "-Command",
@@ -36,54 +39,173 @@ def _get_fernet_key() -> bytes:
                 capture_output=True, text=True, timeout=5
             )
             mid = r.stdout.strip().replace("-", "")
-        except:
+        except Exception:
             mid = ""
-
     if not mid or len(mid) < 8:
-        # 最终回退
         mid = "NAIXI-DESKTOP-FALLBACK"
+    return mid
 
-    raw_key = hashlib.sha256(f"naixi-v1::{mid}".encode()).digest()
-    _FERNET_KEY_CACHE = base64.urlsafe_b64encode(raw_key[:32])
-    return _FERNET_KEY_CACHE
+
+def _legacy_fernet():
+    """旧版机器 UUID 派生密钥（仅用于解密历史数据，保证向后兼容）"""
+    global _LEGACY_FERNET_CACHE
+    if _LEGACY_FERNET_CACHE is not None:
+        return _LEGACY_FERNET_CACHE
+    try:
+        from cryptography.fernet import Fernet
+        raw = hashlib.sha256(f"naixi-v1::{_machine_uuid()}".encode()).digest()
+        _LEGACY_FERNET_CACHE = Fernet(base64.urlsafe_b64encode(raw[:32]))
+    except Exception:
+        _LEGACY_FERNET_CACHE = False
+    return _LEGACY_FERNET_CACHE
+
+
+def _dpapi_protect(data: bytes):
+    """用 Windows DPAPI（当前用户作用域）保护数据，失败返回 None"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class DATA_BLOB(ctypes.Structure):
+            _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+        buf = ctypes.create_string_buffer(data, len(data))
+        blob_in = DATA_BLOB(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char)))
+        blob_out = DATA_BLOB()
+        if not ctypes.windll.crypt32.CryptProtectData(
+            ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out)
+        ):
+            return None
+        out = ctypes.string_at(blob_out.pbData, blob_out.cbData)
+        ctypes.windll.kernel32.LocalFree(blob_out.pbData)
+        return out
+    except Exception:
+        return None
+
+
+def _dpapi_unprotect(blob: bytes):
+    """用 Windows DPAPI 还原数据，失败返回 None"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class DATA_BLOB(ctypes.Structure):
+            _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+        buf = ctypes.create_string_buffer(blob, len(blob))
+        blob_in = DATA_BLOB(len(blob), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char)))
+        blob_out = DATA_BLOB()
+        if not ctypes.windll.crypt32.CryptUnprotectData(
+            ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out)
+        ):
+            return None
+        out = ctypes.string_at(blob_out.pbData, blob_out.cbData)
+        ctypes.windll.kernel32.LocalFree(blob_out.pbData)
+        return out
+    except Exception:
+        return None
+
+
+def _get_fernet():
+    """获取当前主密钥 Fernet 实例。
+    优先用 DPAPI 保护的随机主密钥；DPAPI 不可用时回退到旧 UUID 派生密钥（保证不崩）。
+    """
+    global _FERNET_CACHE
+    if _FERNET_CACHE is not None:
+        return _FERNET_CACHE
+    from cryptography.fernet import Fernet
+    try:
+        stored = meta_get(_MASTER_META_KEY, "")
+        if stored:
+            blob = base64.b64decode(stored.encode())
+            raw = _dpapi_unprotect(blob)
+            if raw and len(raw) == 32:
+                _FERNET_CACHE = Fernet(base64.urlsafe_b64encode(raw))
+                return _FERNET_CACHE
+        # 首次生成随机主密钥并用 DPAPI 保护后落库
+        raw = os.urandom(32)
+        blob = _dpapi_protect(raw)
+        if blob:
+            meta_set(_MASTER_META_KEY, base64.b64encode(blob).decode())
+            _FERNET_CACHE = Fernet(base64.urlsafe_b64encode(raw))
+            log.info("已生成 DPAPI 保护的新主密钥")
+            return _FERNET_CACHE
+        # DPAPI 不可用：回退旧派生密钥（仍可工作，安全性稍弱）
+        log.warning("DPAPI 不可用，回退到机器标识派生密钥")
+        legacy = _legacy_fernet()
+        if legacy:
+            _FERNET_CACHE = legacy
+            return _FERNET_CACHE
+    except Exception as e:
+        log.warning(f"主密钥初始化异常: {e}")
+    # 最终兜底：用旧派生密钥
+    legacy = _legacy_fernet()
+    _FERNET_CACHE = legacy if legacy else False
+    return _FERNET_CACHE
 
 
 def encrypt_api_key(plain: str) -> str:
-    """加密 API Key，返回带前缀的密文"""
+    """加密 API Key，返回带前缀的密文。幂等：已加密的值原样返回，不二次加密。"""
     if not plain:
         return ""
+    if plain.startswith(_ENCRYPT_PREFIX):
+        return plain  # 已加密，避免多层加密
     try:
-        from cryptography.fernet import Fernet
-        f = Fernet(_get_fernet_key())
+        f = _get_fernet()
+        if not f:
+            log.warning("加密不可用（无可用密钥），拒绝以明文存储密钥")
+            return ""
         return _ENCRYPT_PREFIX + f.encrypt(plain.encode()).decode()
-    except Exception:
-        log.warning("加密 API Key 失败，回退到明文")
-        return plain
+    except Exception as e:
+        log.warning(f"加密 API Key 失败: {e}；拒绝以明文存储密钥")
+        return ""  # 绝不回退明文
 
 
 def decrypt_api_key(cipher: str) -> str:
-    """解密 API Key"""
+    """解密 API Key。支持历史多层加密（循环剥离）；先试新主密钥，再试旧派生密钥。"""
     if not cipher:
         return ""
     if not cipher.startswith(_ENCRYPT_PREFIX):
         return cipher  # 未加密的旧数据，原样返回
-    try:
-        from cryptography.fernet import Fernet, InvalidToken
-        f = Fernet(_get_fernet_key())
-        return f.decrypt(cipher[len(_ENCRYPT_PREFIX):].encode()).decode()
-    except InvalidToken:
-        log.warning("API Key 解密失败（密钥不匹配），返回空")
-        return ""
-    except Exception as e:
-        log.warning(f"API Key 解密异常: {e}")
-        return cipher  # 安全回退
+    from cryptography.fernet import InvalidToken
+    fernets = [x for x in (_get_fernet(), _legacy_fernet()) if x]
+    cur = cipher
+    for _ in range(10):  # 最多剥离 10 层，防御历史多层加密
+        if not cur.startswith(_ENCRYPT_PREFIX):
+            return cur
+        token = cur[len(_ENCRYPT_PREFIX):].encode()
+        plain = None
+        for f in fernets:
+            try:
+                plain = f.decrypt(token).decode()
+                break
+            except InvalidToken:
+                continue
+            except Exception:
+                continue
+        if plain is None:
+            log.warning("API Key 解密失败（无匹配密钥），返回空")
+            return ""
+        cur = plain
+    log.warning("API Key 解密层数异常，返回空")
+    return ""
+
+
+def mask_api_key(cipher_or_plain: str) -> str:
+    """把密钥转为掩码占位符，绝不返回明文。有值返回掩码，无值返回空。"""
+    return _KEY_MASK if cipher_or_plain else ""
+
+
+def is_masked_key(value: str) -> bool:
+    """判断前端回传的值是否是掩码（含未改动占位符），或为空——两者都应保留原有密钥。"""
+    return (not value) or (_KEY_MASK[:4] in value)
 
 
 def encrypt_config(config: dict) -> dict:
-    """对整个配置中的 api_providers 做密钥加密（原地修改）"""
+    """对整个配置中的 api_providers 做密钥加密（原地修改，幂等）"""
     providers = config.get("api_providers", {})
     for k, v in providers.items():
-        if "api_key" in v and v["api_key"]:
+        if isinstance(v, dict) and v.get("api_key"):
             v["api_key"] = encrypt_api_key(v["api_key"])
     return config
 
@@ -92,9 +214,32 @@ def decrypt_config(config: dict) -> dict:
     """对整个配置中的 api_providers 做密钥解密（原地修改）"""
     providers = config.get("api_providers", {})
     for k, v in providers.items():
-        if "api_key" in v and v["api_key"]:
+        if isinstance(v, dict) and v.get("api_key"):
             v["api_key"] = decrypt_api_key(v["api_key"])
     return config
+
+
+def mask_config(config: dict) -> dict:
+    """把配置中所有 api_key 替换为掩码占位符，用于安全返回给前端（绝不返回明文）"""
+    providers = config.get("api_providers", {})
+    for k, v in providers.items():
+        if isinstance(v, dict):
+            v["api_key"] = mask_api_key(v.get("api_key", ""))
+    return config
+
+
+def merge_preserve_keys(new_config: dict, old_config: dict) -> dict:
+    """合并配置时保留旧密钥：前端回传掩码或空 api_key 时，沿用旧的加密密文，避免误删/误覆盖密钥。"""
+    new_provs = new_config.get("api_providers", {})
+    old_provs = (old_config or {}).get("api_providers", {})
+    for k, v in new_provs.items():
+        if not isinstance(v, dict):
+            continue
+        incoming = v.get("api_key", "")
+        if is_masked_key(incoming):
+            old = old_provs.get(k, {})
+            v["api_key"] = old.get("api_key", "") if isinstance(old, dict) else ""
+    return new_config
 
 def _get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
