@@ -60,14 +60,19 @@ const NAV_ITEMS = [
   { key: "settings",   icon: <Settings size={16} />,       label: "设置" },
 ];
 
+interface StatsData {
+  backend: { pid: number; memory_mb: number; cpu: number; version: string };
+  services: Record<string, boolean>;
+  providers: { total: number; with_key: number; list: { name: string; model: string; has_key: boolean; type: string }[] };
+  database: { size_mb: number; tables: { name: string; count: number }[] };
+}
+interface DesktopStatusData { name: string; version: string; online: boolean; }
+// 连接子页（消息平台）沿用的 QQ 连接状态类型，仅用于"连接"tab，不进主仪表盘
 interface NapcatData { connected: boolean; groups: number; }
 interface SysData { cpu: number; memory: number; disk: number; gpu_name?: string; gpu_mem_total?: number; gpu_mem_used?: number; gpu_util?: number; }
 interface KbData { categories: { name: string; count: number }[]; total: number; }
-interface QuotaData { models: { name: string; used: number; limit: number; depleted: boolean }[]; }
 interface MemData { layers: { name: string; desc: string; count: number; status: string }[]; }
-interface StatusData { trust_level: number; trust_total: number; trust_rate: number; knowledge_items: number; knowledge_cats: number; tools: number; skills: number; agents: number; cases: number; napcat_connected: boolean; version: string; experiences: number; }
-interface AgentItem { name: string; desc: string; }
-interface AgentData { agents: AgentItem[]; }
+interface ToolData { tools: { name: string; desc: string }[]; }
 interface DesktopConfig { configured?: boolean; }
 
 export default function Dashboard() {
@@ -90,16 +95,13 @@ export default function Dashboard() {
     };
   }, []);
 
-  const [st, setSt] = useState<StatusData | null>(null);
-  const [napcat, setNapcat] = useState<NapcatData | null>(null);
+  const [dstatus, setDstatus] = useState<DesktopStatusData | null>(null);
+  const [stats, setStats] = useState<StatsData | null>(null);
+  const [napcat, setNapcat] = useState<NapcatData | null>(null); // 仅供连接子页显示 QQ 连接状态
   const [sys, setSys] = useState<SysData | null>(null);
   const [kb, setKb] = useState<KbData | null>(null);
-  const [quota, setQuota] = useState<QuotaData | null>(null);
   const [mem, setMem] = useState<MemData | null>(null);
-  const [agentsData, setAgentsData] = useState<AgentData | null>(null);
-  const [toolsData, setToolsData] = useState<{tools: {name: string; desc: string}[]} | null>(null);
-  const [health, setHealth] = useState<{napcat: boolean; ollama: boolean; glm_api: boolean; backend: boolean} | null>(null);
-  const [dbStats, setDbStats] = useState<{tables: {name: string; count: number}[]} | null>(null);
+  const [toolsData, setToolsData] = useState<ToolData | null>(null);
   const [activeNav, setActiveNav] = useState("dashboard");
   const [showSetup, setShowSetup] = useState(false);
 
@@ -108,16 +110,13 @@ export default function Dashboard() {
     loadAvatarCache();
 
     const fetch = () => {
-      apiGet<StatusData>("/api/status").then(setSt).catch(() => {});
+      apiGet<DesktopStatusData>("/api/desktop_status").then(setDstatus).catch(() => {});
+      apiGet<StatsData>("/api/stats").then(setStats).catch(() => {});
       apiGet<NapcatData>("/api/napcat/status").then(setNapcat).catch(() => {});
       apiGet<SysData>("/api/system/resources").then(setSys).catch(() => {});
       apiGet<KbData>("/api/knowledge/summary").then(setKb).catch(() => {});
-      apiGet<QuotaData>("/api/quota/stats").then(setQuota).catch(() => {});
       apiGet<MemData>("/api/memory/stats").then(setMem).catch(() => {});
-      apiGet<AgentData>("/api/agents").then(setAgentsData).catch(() => {});
-      apiGet("/api/tools").then(setToolsData).catch(() => {});
-      apiGet("/api/service/health").then(setHealth).catch(() => {});
-      apiGet("/api/database/stats").then(setDbStats).catch(() => {});
+      apiGet<ToolData>("/api/tools").then(setToolsData).catch(() => {});
     };
     fetch();
     const t = setInterval(fetch, 5000);
@@ -138,7 +137,7 @@ export default function Dashboard() {
     localStorage.setItem("naixi_setup_dismissed", "true");
   }, []);
 
-  if (!st) return (
+  if (!stats && !dstatus) return (
     <div className="flex items-center justify-center h-screen bg-sakura-50">
       <div className="flex items-center gap-2 text-sakura-400">
         <Activity className="w-4 h-4 animate-pulse" />
@@ -147,30 +146,22 @@ export default function Dashboard() {
     </div>
   );
 
-  const napcatOk = napcat?.connected ?? false;
   const kbCategories = kb?.categories ?? [];
   const memLayers = mem?.layers ?? [];
 
-  const findQuota = (name: string) => quota?.models?.find(q => q.name === name) ?? null;
-
+  // 桌面端模型清单（静态展示，真实用量由供应商配额接口提供）
   const MODEL_CONFIG = [
-    { n: "qwen3-32b",              r: "主人专属 · 百炼",      p: null,  qn: "qwen3-32b" },
-    { n: "ling-2.6-1t",            r: "群聊主力 · 百灵",      p: null,  qn: "ling-2.6-1t" },
-    { n: "glm-4.7-flash",          r: "智谱备用 · 对话",      p: null,  qn: "glm-4.7-flash" },
-    { n: "qwen-vl-plus",           r: "识图 · 百炼视觉",      p: null,  qn: "qwen-vl-plus" },
-    { n: "qwen-turbo",             r: "备用降级 · 百炼",      p: null,  qn: "qwen-turbo" },
-    { n: "CogView-3-Flash",        r: "文生图 · 智谱",        p: "免费", qn: null },
-    { n: "CogVideoX-Flash",        r: "文生视频 · 智谱",       p: "免费", qn: null },
+    { n: "qwen3-32b",      r: "对话主力 · 百炼",  p: null },
+    { n: "glm-4.7-flash",  r: "智谱备用 · 对话", p: null },
+    { n: "qwen-vl-plus",   r: "识图 · 百炼视觉", p: null },
+    { n: "CogView-3-Flash", r: "文生图 · 智谱",  p: "免费" },
+    { n: "CogVideoX-Flash", r: "文生视频 · 智谱", p: "免费" },
   ];
-  const modelTotal = MODEL_CONFIG.reduce((a, m) => {
-    const q = m.qn ? findQuota(m.qn) : null;
-    return a + (q?.used ?? 0);
-  }, 0);
 
   return (
     <AppProvider>
     <ToastProvider>
-    <AppShell sidebar={<Sidebar items={NAV_ITEMS} activeNav={activeNav} onNavChange={setActiveNav} version={`v${st.version}`} />}>
+    <AppShell sidebar={<Sidebar items={NAV_ITEMS} activeNav={activeNav} onNavChange={setActiveNav} version={`v${dstatus?.version ?? stats?.backend?.version ?? "0.1.0"}`} />}>
       <Header>
         <div className="flex items-center gap-2">
           {PAGE_ICONS[activeNav] || <LayoutDashboard size={15} className="text-sakura-400" />}
@@ -180,7 +171,7 @@ export default function Dashboard() {
       <Main fluid={activeNav !== "dashboard"}>
         <>
           {/* 设置引导弹窗 */}
-          {showSetup && !st.napcat_connected && (
+          {showSetup && (
             <SetupGuide onClose={handleCloseSetup} />
           )}
 
@@ -225,86 +216,52 @@ export default function Dashboard() {
           <div style={{ display: activeNav === "dashboard" ? "block" : "none" }}>
             <div className="space-y-4">
 
-          <div className={`flex items-center gap-3 px-4 py-3 rounded-lg border ${napcatOk ? "bg-green-50 border-green-200" : "bg-red-50 border-red-200"}`}>
-            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${napcatOk ? "bg-green-100" : "bg-red-100"}`}>
-              {napcatOk ? <Wifi size={20} className="text-green-500" /> : <WifiOff size={20} className="text-red-500" />}
-            </div>
-            <div>
-              <p className={`text-sm font-bold ${napcatOk ? "text-green-700" : "text-red-700"}`}>
-                {napcatOk ? "NapCat 已连接" : "NapCat 离线"}
-              </p>
-              <p className="text-xs text-sakura-400 mt-0.5">
-                {napcatOk ? `QQ 在线 · ${napcat?.groups ?? 0} 个群` : "QQ 消息无法收发"}
-              </p>
-            </div>
-          </div>
+          {(() => {
+            const online = dstatus?.online ?? (stats?.services?.["后端API"] ?? false);
+            const offlineSvcs = stats ? Object.entries(stats.services).filter(([, v]) => !v).map(([k]) => k) : [];
+            const ok = online && offlineSvcs.length === 0;
+            return (
+              <div className={`flex items-center gap-3 px-4 py-3 rounded-lg border ${ok ? "bg-green-50 border-green-200" : "bg-amber-50 border-amber-200"}`}>
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${ok ? "bg-green-100" : "bg-amber-100"}`}>
+                  {ok ? <CheckCircle size={20} className="text-green-500" /> : <AlertTriangle size={20} className="text-amber-500" />}
+                </div>
+                <div>
+                  <p className={`text-sm font-bold ${ok ? "text-green-700" : "text-amber-700"}`}>
+                    {dstatus?.name ?? "奶昔桌面端"} · {online ? "运行中" : "离线"}
+                  </p>
+                  <p className="text-xs text-sakura-400 mt-0.5">
+                    v{dstatus?.version ?? stats?.backend?.version ?? "0.1.0"}
+                    {offlineSvcs.length > 0 ? ` · ${offlineSvcs.join("、")} 未启动` : " · 全部服务正常"}
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
 
           <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
             <Card className="p-4">
-              <p className="text-xs text-sakura-400 mb-0.5">今日消息</p>
-              <p className="text-2xl font-bold text-sakura-500">{st.trust_total}</p>
-              <p className="text-[11px] text-green-600 mt-0.5">成功率 {st.trust_rate}%</p>
-            </Card>
-            <Card className="p-4">
               <p className="text-xs text-sakura-400 mb-0.5">工具总数</p>
-              <p className="text-2xl font-bold text-sakura-500">{st.tools}</p>
-              <p className="text-[11px] text-sakura-400 mt-0.5">{st.skills} 技能</p>
+              <p className="text-2xl font-bold text-sakura-500">{toolsData?.tools?.length ?? 0}</p>
+              <p className="text-[11px] text-sakura-400 mt-0.5">已注册</p>
             </Card>
             <Card className="p-4">
-              <p className="text-xs text-sakura-400 mb-0.5">知识条目</p>
-              <p className="text-2xl font-bold text-sakura-500">{kb?.total ?? st.knowledge_items}</p>
-              <p className="text-[11px] text-green-600 mt-0.5">{kbCategories.length} 个分类</p>
+              <p className="text-xs text-sakura-400 mb-0.5">记忆层数</p>
+              <p className="text-2xl font-bold text-sakura-500">{memLayers.length}</p>
+              <p className="text-[11px] text-sakura-400 mt-0.5">长期 / 短期</p>
             </Card>
             <Card className="p-4">
-              <p className="text-xs text-sakura-400 mb-0.5">核心模块</p>
-              <p className="text-2xl font-bold text-sakura-500">{st.agents}</p>
-              <p className="text-[11px] text-sakura-400 mt-0.5">{st.cases} 经验案例</p>
+              <p className="text-xs text-sakura-400 mb-0.5">供应商</p>
+              <p className="text-2xl font-bold text-sakura-500">{stats?.providers?.total ?? 0}</p>
+              <p className="text-[11px] text-green-600 mt-0.5">{stats?.providers?.with_key ?? 0} 个已配密钥</p>
+            </Card>
+            <Card className="p-4">
+              <p className="text-xs text-sakura-400 mb-0.5">数据库表</p>
+              <p className="text-2xl font-bold text-sakura-500">{stats?.database?.tables?.length ?? 0}</p>
+              <p className="text-[11px] text-sakura-400 mt-0.5">{stats?.database?.size_mb ?? 0} MB</p>
             </Card>
           </div>
 
           <div className="grid gap-4 grid-cols-1 lg:grid-cols-2 xl:grid-cols-3">
-
-            <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-sakura-500 mb-3">模型用量</p>
-              <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5">
-                {MODEL_CONFIG.map((m, i) => {
-                  const q = m.qn ? findQuota(m.qn) : null;
-                  const used = q?.used ?? null;
-                  const limit = q?.limit ?? null;
-                  const pct = (limit && limit > 0 && used !== null) ? Math.round(used * 100 / limit) : null;
-                  const showQuota = used !== null;
-                  return (
-                    <div key={i} className="border-b border-sakura-50 last:border-0 py-1.5">
-                      <div className="flex items-center gap-2 text-xs">
-                        <Brain size={12} className="text-sakura-400 shrink-0" />
-                        <span className="text-sakura-600 w-28 truncate font-medium">{m.n}</span>
-                        <span className="text-sakura-400 flex-1 truncate">{m.r}</span>
-                        {showQuota ? (
-                          <span className={`shrink-0 ${limit && used > limit ? "text-red-500" : "text-sakura-500"}`}>
-                            {(used / 10000).toFixed(1)}万
-                            {limit > 0 ? ` / ${(limit / 10000).toFixed(0)}万` : ""}
-                          </span>
-                        ) : m.p ? (
-                          <span className="text-sakura-300 shrink-0">{m.p}</span>
-                        ) : (
-                          <span className="text-sakura-300 shrink-0">—</span>
-                        )}
-                        {q?.depleted && limit > 0 && <span className="text-[10px] px-1 py-0.5 rounded bg-red-50 text-red-600">耗尽</span>}
-                      </div>
-                      {showQuota && limit > 0 && (
-                        <div className="mt-1 ml-8 h-1 rounded-full bg-sakura-100 overflow-hidden">
-                          <div className={`h-full rounded-full ${pct && pct > 90 ? "bg-red-400" : "bg-gradient-to-r from-sakura-400 to-sakura-500"}`}
-                               style={{width: `${Math.min(pct ?? 0, 100)}%`}} />
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="mt-2 pt-2 border-t border-sakura-100 text-[10px] text-sakura-300 flex justify-between">
-                <span>总计 {(modelTotal / 10000).toFixed(1)}万</span>
-                <span>降级链：Ollama → Dify → 卖萌</span>
-              </div>
-            </Card>
 
             <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-sakura-500 mb-3">系统资源</p>
               <div className="flex-1 min-h-0 overflow-y-auto space-y-3">
@@ -313,13 +270,29 @@ export default function Dashboard() {
                 <Bar label="磁盘" val={`${sys?.disk ?? 0}%`} w={sys?.disk ?? 0} />
                 <Bar label="GPU" val={`${sys?.gpu_util ?? 0}%`} w={sys?.gpu_util ?? 0} />
                 <div className="border-t border-sakura-100 pt-3 space-y-1.5 text-xs">
-                  <Row l="GPU 型号" v={sys?.gpu_name ?? "无"} />
-                  <Row l="显存" v={`${sys?.gpu_mem_used ?? 0} MB / ${sys?.gpu_mem_total ?? 0} MB`} />
-                  <Row l="后端 API" v="dashboard_api.py :9845" />
-                  <Row l="NapCat" v="WS 3001 · HTTP 3000" />
-                  <Row l="SearXNG" v="本地搜索引擎 :8898" />
-                  <Row l="Ollama" v="本地模型 :11434" />
+                  <Row l="后端进程" v={`PID ${stats?.backend?.pid ?? "—"}`} />
+                  <Row l="后端内存" v={`${stats?.backend?.memory_mb ?? 0} MB`} />
+                  <Row l="后端 CPU" v={`${stats?.backend?.cpu ?? 0}%`} />
+                  <Row l="SearXNG" v="本地搜索 :8899" />
                 </div>
+              </div>
+            </Card>
+
+            <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-sakura-500 mb-3">供应商配置（{stats?.providers?.total ?? 0}）</p>
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5">
+                {(stats?.providers?.list ?? []).map((p, i) => (
+                  <div key={i} className="flex items-center gap-2 py-1.5 border-b border-sakura-50 last:border-0 text-xs">
+                    <Server size={12} className="text-sakura-400 shrink-0" />
+                    <span className="text-sakura-600 w-20 shrink-0 truncate font-medium">{p.name}</span>
+                    <span className="text-sakura-400 flex-1 truncate">{p.model}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${p.has_key ? "bg-green-50 text-green-600" : "bg-sakura-50 text-sakura-300"}`}>
+                      {p.has_key ? "已配" : "未配"}
+                    </span>
+                  </div>
+                ))}
+                {(stats?.providers?.list?.length ?? 0) === 0 && (
+                  <div className="text-center py-8 text-sakura-300 text-xs">尚未配置供应商</div>
+                )}
               </div>
             </Card>
 
@@ -332,9 +305,10 @@ export default function Dashboard() {
                     <span className="text-sakura-500 font-medium">{c.count}</span>
                   </div>
                 ))}
+                {kbCategories.length === 0 && <div className="text-center py-8 text-sakura-300 text-xs">暂无分类</div>}
               </div>
               <div className="mt-2 pt-2 border-t border-sakura-100 text-[10px] text-sakura-300">
-                总计 {kb?.total ?? 0} 条目 · 来自库街区 wiki
+                总计 {kb?.total ?? 0} 条目
               </div>
             </Card>
 
@@ -348,68 +322,57 @@ export default function Dashboard() {
                     <span className="text-sakura-500 font-medium">{l.count}</span>
                   </div>
                 ))}
+                {memLayers.length === 0 && <div className="text-center py-8 text-sakura-300 text-xs">暂无记忆层</div>}
               </div>
             </Card>
 
-            <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-sakura-500 mb-3">工具概览（{toolsData?.count ?? st.tools ?? 0} 个）</p>
+            <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-sakura-500 mb-3">工具概览（{toolsData?.tools?.length ?? 0} 个）</p>
               <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5">
-                {(toolsData?.tools ?? []).slice(0, 50).map((t, i) => (
+                {(toolsData?.tools ?? []).slice(0, 30).map((t, i) => (
                   <div key={i} className="flex items-center gap-2 py-1 border-b border-sakura-50 last:border-0 text-xs">
                     <Wrench size={11} className="text-sakura-400 shrink-0 mt-0.5" />
-                    <span className="text-sakura-600 w-40 shrink-0 truncate font-medium">{t.name}</span>
+                    <span className="text-sakura-600 w-36 shrink-0 truncate font-medium">{t.name}</span>
                     <span className="text-sakura-400 flex-1 truncate">{t.desc || ""}</span>
                   </div>
                 ))}
-              </div>
-            </Card>
-
-            <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-sakura-500 mb-3">智能体（{agentsData?.agents?.length ?? 0} 个）</p>
-              <div className="flex-1 min-h-0 overflow-y-auto space-y-1">
-                {(agentsData?.agents ?? []).map((a, i) => (
-                  <div key={i} className="flex items-start gap-2 py-1 border-b border-sakura-50 last:border-0 text-xs">
-                    <Bot size={11} className="text-sakura-400 shrink-0 mt-0.5" />
-                    <span className="text-sakura-600 w-16 shrink-0">{a.name}</span>
-                    <span className="text-sakura-400 flex-1 truncate">{a.desc.slice(0, 24)}</span>
-                  </div>
-                ))}
+                {!toolsData?.tools?.length && <div className="text-center py-8 text-sakura-300 text-xs">暂无工具</div>}
               </div>
             </Card>
 
             <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-sakura-500 mb-3">服务状态</p>
               <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5">
-                {[
-                  { i: Bot, n: "NapCat", s: health?.napcat ?? false, d: `WS 3001 · ${napcat?.groups ?? 0}群` },
-                  { i: Globe, n: "后端 API", s: health?.backend ?? true, d: "localhost:9845" },
-                  { i: Brain, n: "智谱 GLM", s: health?.glm_api ?? false, d: "免费额度" },
-                  { i: CpuIcon, n: "Ollama", s: health?.ollama ?? false, d: "localhost:11434" },
-                ].map((svc, idx) => (
+                {stats?.services && Object.entries(stats.services).map(([name, ok], idx) => (
                   <div key={idx} className="flex items-center gap-2 py-1.5 border-b border-sakura-50 last:border-0 text-xs">
-                    <svc.i size={12} className="text-sakura-400 shrink-0" />
-                    <span className="text-sakura-600 w-16">{svc.n}</span>
-                    <span className={svc.s ? "text-green-600" : "text-red-500"}>
-                      ● {svc.s ? "在线" : "离线"}
-                    </span>
-                    <span className="text-sakura-300 ml-auto">{svc.d}</span>
+                    {name === "后端API" ? <Server size={12} className="text-sakura-400 shrink-0" /> : <Globe size={12} className="text-sakura-400 shrink-0" />}
+                    <span className="text-sakura-600 w-20">{name}</span>
+                    <span className={ok ? "text-green-600" : "text-red-500"}>● {ok ? "在线" : "离线"}</span>
                   </div>
                 ))}
+                {!stats?.services && <div className="text-center py-8 text-sakura-300 text-xs">加载中...</div>}
               </div>
             </Card>
 
             <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-sakura-500 mb-3">系统数据</p>
               <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5">
-                {[
-                  { n: "审计日志", v: dbStats?.tables?.find(t => t.name === "audit_log")?.count ?? "—", i: "条" },
-                  { n: "对话记录", v: dbStats?.tables?.find(t => t.name === "conversations")?.count ?? "—", i: "条" },
-                  { n: "工具调用", v: dbStats?.tables?.find(t => t.name === "tool_usage")?.count ?? "—", i: "次" },
-                  { n: "反馈", v: dbStats?.tables?.find(t => t.name === "feedback")?.count ?? "—", i: "条" },
-                  { n: "缓存", v: dbStats?.tables?.find(t => t.name === "response_cache")?.count ?? "—", i: "条" },
-                  { n: "用户画像", v: dbStats?.tables?.find(t => t.name === "user_profiles")?.count ?? "—", i: "个" },
-                ].map((d, i) => (
+                {(stats?.database?.tables ?? []).slice(0, 8).map((d, i) => (
                   <div key={i} className="flex items-center gap-2 py-1 border-b border-sakura-50 last:border-0 text-xs">
                     <Database size={11} className="text-sakura-400 shrink-0" />
-                    <span className="text-sakura-600 w-16 shrink-0">{d.n}</span>
-                    <span className="text-sakura-500 font-medium">{d.v}</span>
-                    <span className="text-sakura-300 text-[10px]">{d.i}</span>
+                    <span className="text-sakura-600 w-32 shrink-0 truncate">{d.name}</span>
+                    <span className="text-sakura-500 font-medium ml-auto">{d.count}</span>
+                  </div>
+                ))}
+                <div className="pt-1 text-[10px] text-sakura-300">总计 {stats?.database?.size_mb ?? 0} MB</div>
+              </div>
+            </Card>
+
+            <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-sakura-500 mb-3">模型清单</p>
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5">
+                {MODEL_CONFIG.map((m, i) => (
+                  <div key={i} className="flex items-center gap-2 py-1.5 border-b border-sakura-50 last:border-0 text-xs">
+                    <Sparkles size={12} className="text-sakura-400 shrink-0" />
+                    <span className="text-sakura-600 w-32 truncate font-medium">{m.n}</span>
+                    <span className="text-sakura-400 flex-1 truncate">{m.r}</span>
+                    {m.p && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-600 shrink-0">{m.p}</span>}
                   </div>
                 ))}
               </div>
