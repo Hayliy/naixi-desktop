@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { applyTheme, getTheme } from "@/lib/theme";
+import { SettingRow, BTN_GHOST } from "./settings/primitives";
 
 type ThemeMode = "light" | "dark";
 
@@ -20,31 +21,31 @@ export default function ThemeSettings() {
 
   useEffect(() => { applyTheme(theme, hue); }, [theme, hue]);
 
+  const currentName = PRESETS.reduce((a, b) => Math.abs(b.hue - hue) < Math.abs(a.hue - hue) ? b : a, PRESETS[0]).name;
+
   return (
-    <div className="space-y-3 text-xs">
-      <div>
-        <p className="text-[10px] text-sakura-400 mb-1.5">主题模式</p>
-        <div className="flex gap-1.5">
+    <>
+      {/* 主题模式 — 分段切换 */}
+      <SettingRow label="主题模式" desc="浅色或暗色外观">
+        <div className="flex gap-1 bg-sakura-50 border border-sakura-200 rounded-lg p-0.5">
           {(["light", "dark"] as const).map(m => (
             <button key={m} onClick={() => setTheme(m)}
-              className={`flex-1 px-3 py-1.5 rounded-lg text-[11px] border transition-colors ${
-                theme === m ? "bg-sakura-200 text-sakura-600 border-sakura-300" : "bg-sakura-50 text-sakura-400 border-sakura-100 hover:bg-sakura-100"
+              className={`px-4 py-1 rounded-md text-sm transition-colors ${
+                theme === m ? "bg-sakura-500 text-white" : "text-sakura-400 hover:text-sakura-500"
               }`}>
               {m === "light" ? "浅色" : "暗色"}
             </button>
           ))}
         </div>
-      </div>
+      </SettingRow>
 
-      <div>
-        <p className="text-[10px] text-sakura-400 mb-1.5">主题色</p>
-        {/* 预设色板 */}
-        <div className="flex flex-wrap gap-2 mb-2.5">
+      {/* 主题色 — 预设色板 */}
+      <SettingRow label="主题色" desc="点选预设配色">
+        <div className="flex flex-wrap gap-2 justify-end max-w-[220px]">
           {PRESETS.map(p => (
-            <button key={p.hue} onClick={() => setHue(p.hue)}
-              title={p.name}
-              className={`w-7 h-7 rounded-full border-2 transition-all ${
-                hue === p.hue ? "scale-110 border-sakura-500 shadow-sm" : "border-transparent hover:scale-105"
+            <button key={p.hue} onClick={() => setHue(p.hue)} title={p.name}
+              className={`w-6 h-6 rounded-full border-2 transition-all ${
+                hue === p.hue ? "scale-110 border-sakura-500" : "border-transparent hover:scale-105"
               }`}
               style={{
                 background: `hsl(${p.hue}, 65%, ${theme === "light" ? "70%" : "35%"})`,
@@ -52,24 +53,23 @@ export default function ThemeSettings() {
               }} />
           ))}
         </div>
-        {/* 自定义滑块 */}
-        <div className="relative">
-          <input type="range" min="0" max="360" value={hue} onChange={e => setHue(Number(e.target.value))}
-            className="w-full" style={{ accentColor: `hsl(${hue}, 65%, 55%)` }} />
-        </div>
-        <div className="flex items-center gap-2 mt-1">
-          <span className="w-5 h-5 rounded-full shrink-0 border" style={{ background: `hsl(${hue}, 65%, ${theme === "light" ? "70%" : "35%"})`, borderColor: `hsl(${hue}, 65%, 80%)` }} />
-          <span className="text-[10px] text-sakura-500">
-            {PRESETS.reduce((a,b) => Math.abs(b.hue-hue) < Math.abs(a.hue-hue) ? b : a, PRESETS[0]).name}
-          </span>
-          <span className="text-[10px] text-sakura-300 ml-auto">hsl({hue}&deg;, 65%, ...)</span>
-        </div>
-      </div>
+      </SettingRow>
 
-      <button onClick={() => { setTheme("light"); setHue(350); }}
-        className="w-full px-2.5 py-1 rounded-lg text-[10px] border border-sakura-100 text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 transition-colors">
-        恢复默认主题
-      </button>
-    </div>
+      {/* 色相微调 — 滑块 */}
+      <SettingRow label="色相微调" desc={`当前：${currentName}（hsl ${hue}°）`}>
+        <div className="flex items-center gap-2.5 min-w-[200px]">
+          <input type="range" min="0" max="360" value={hue}
+            onChange={e => setHue(Number(e.target.value))}
+            className="flex-1" style={{ accentColor: `hsl(${hue}, 65%, 55%)` }} />
+          <span className="w-6 h-6 rounded-full shrink-0 border"
+            style={{ background: `hsl(${hue}, 65%, ${theme === "light" ? "70%" : "35%"})`, borderColor: `hsl(${hue}, 65%, 80%)` }} />
+        </div>
+      </SettingRow>
+
+      {/* 恢复默认 */}
+      <SettingRow label="恢复默认主题" desc="重置为浅色 + 樱粉配色">
+        <button onClick={() => { setTheme("light"); setHue(350); }} className={BTN_GHOST}>恢复默认</button>
+      </SettingRow>
+    </>
   );
 }

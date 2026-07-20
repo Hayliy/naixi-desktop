@@ -1,8 +1,7 @@
 import { useState, useEffect } from "react";
-import { Plus, Trash2, Check, X, Loader2, ChevronDown, ChevronUp, Pencil, Save, Eye, EyeOff } from "lucide-react";
+import { Plus, Trash2, Check, X, Loader2, Pencil, Save, Eye, EyeOff } from "lucide-react";
 import { useAppConfig } from "@/contexts/AppContext";
-import { apiGet, apiPost } from "@/lib/api";
-import { useToast } from "@/components/Toast";
+import { apiPost } from "@/lib/api";
 
 const PROVIDER_TYPES = [
   // ─── 国际 ───
@@ -57,6 +56,8 @@ interface EditableProvider {
 }
 
 export default function ProviderSettings({ onClose }: { onClose?: () => void }) {
+  // 有 onClose = 作为 Chat 右侧滑出面板（保留 header/侧栏）；无 onClose = 嵌入设置页（行式，无 header）
+  const embedded = !onClose;
   const { config, loaded, refreshConfig } = useAppConfig();
   const [providers, setProviders] = useState<Provider[]>([]);
   const [loading, setLoading] = useState(true);
@@ -188,25 +189,32 @@ export default function ProviderSettings({ onClose }: { onClose?: () => void }) 
   if (loading) return <div className="flex items-center justify-center py-12"><Loader2 size={16} className="text-sakura-300 animate-spin" /></div>;
 
   return (
-    <div className="flex-1 w-full border-l border-sakura-100 bg-white flex flex-col h-full">
-      <div className="bg-white flex items-center justify-between px-3 py-2 border-b border-sakura-100 shrink-0">
-        <span className="text-xs font-semibold text-sakura-500">模型供应商</span>
-        <button onClick={onClose} className="p-0.5 hover:bg-sakura-50 rounded text-sakura-300"><X size={13} /></button>
-      </div>
+    <div className={embedded ? "w-full" : "flex-1 w-full border-l border-sakura-100 bg-white flex flex-col h-full"}>
+      {/* 面板模式才显示标题栏与关闭按钮；嵌入设置页时由外层 Section 提供标题 */}
+      {!embedded && (
+        <div className="bg-white flex items-center justify-between px-3 py-2 border-b border-sakura-100 shrink-0">
+          <span className="text-xs font-semibold text-sakura-500">模型供应商</span>
+          <button onClick={onClose} className="p-0.5 hover:bg-sakura-50 rounded text-sakura-300"><X size={13} /></button>
+        </div>
+      )}
 
       {/* Provider 列表 */}
-      <div className="flex-1 overflow-y-auto space-y-1 overflow-x-hidden pr-0.5">
+      <div className={embedded ? "w-full" : "flex-1 overflow-y-auto space-y-1 overflow-x-hidden pr-0.5"}>
         {/* 添加按钮 */}
         {!showForm && (
           <button onClick={openForm}
-            className="flex items-center gap-1 w-full px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
-            <Plus size={10} /> 添加供应商
+            className={embedded
+              ? "flex items-center justify-center gap-1.5 w-full py-2.5 mt-1 rounded-lg text-sm text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors"
+              : "flex items-center gap-1 w-full px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors"}>
+            <Plus size={embedded ? 14 : 10} /> 添加供应商
           </button>
         )}
 
         {/* 新增表单 — 在列表上方 */}
         {showForm && (
-          <div className="bg-white border border-sakura-200 rounded-xl p-3 space-y-2.5 text-xs">
+          <div className={embedded
+            ? "bg-sakura-50/50 border border-sakura-200/60 rounded-lg p-4 space-y-2.5 text-xs mt-1"
+            : "bg-white border border-sakura-200 rounded-xl p-3 space-y-2.5 text-xs"}>
             <p className="text-xs font-semibold text-sakura-500">添加供应商</p>
             <select value={formType} onChange={e => selectType(e.target.value)}
               className="w-full px-2.5 py-1.5 rounded-lg border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px]">
@@ -278,11 +286,12 @@ export default function ProviderSettings({ onClose }: { onClose?: () => void }) 
               provider={getEditingProvider(p.id)!}
               onSave={saveProviderEdit}
               onCancel={() => setEditingId(null)}
+              embedded={embedded}
             />
           ) : (
             /* ═══ 展示模式 ═══ */
-            <div key={p.id} className="bg-white border border-sakura-100 rounded-lg text-xs">
-              <div className="flex items-center justify-between px-3 py-2.5">
+            <div key={p.id} className={embedded ? "text-xs border-t border-sakura-200/50" : "bg-white border border-sakura-100 rounded-lg text-xs"}>
+              <div className={embedded ? "flex items-center justify-between py-3" : "flex items-center justify-between px-3 py-2.5"}>
                 <div className="flex items-center gap-2.5 min-w-0 flex-1">
                   <span className="w-6 h-6 rounded flex items-center justify-center text-[9px] font-bold bg-sakura-100 text-sakura-500 shrink-0">
                     {(p.name || "??").slice(0, 2).toUpperCase()}
@@ -329,10 +338,11 @@ export default function ProviderSettings({ onClose }: { onClose?: () => void }) 
 }
 
 /* ═══ 内联编辑卡片 ═══ */
-function EditProviderCard({ provider, onSave, onCancel }: {
+function EditProviderCard({ provider, onSave, onCancel, embedded }: {
   provider: EditableProvider;
   onSave: (ep: EditableProvider) => Promise<void>;
   onCancel: () => void;
+  embedded?: boolean;
 }) {
   const [key, setKey] = useState(provider.key);
   const [type, setType] = useState(provider.type || "chat");
@@ -352,7 +362,9 @@ function EditProviderCard({ provider, onSave, onCancel }: {
   };
 
   return (
-    <div className="bg-white border border-sakura-200 rounded-lg p-3 space-y-2.5 text-xs">
+    <div className={embedded
+      ? "bg-sakura-50/50 border border-sakura-200/60 rounded-lg p-4 space-y-2.5 text-xs mt-1"
+      : "bg-white border border-sakura-200 rounded-lg p-3 space-y-2.5 text-xs"}>
       <div className="flex items-center justify-between">
         <p className="text-xs font-semibold text-sakura-500">编辑供应商</p>
         <span className="text-[10px] text-sakura-300">ID: {provider.id}</span>

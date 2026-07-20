@@ -5,6 +5,7 @@ export interface ProviderConfig {
   api_key: string;
   api_url: string;
   model: string;
+  type?: string; // 服务能力类型：chat/vision/image/video/audio/embedding
 }
 
 export interface AppConfig {
