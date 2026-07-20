@@ -632,7 +632,7 @@ async def api_desktop_config_set(request):
             try:
                 existing = json.loads(raw)
                 # 只合并已知的顶层键
-                for key in ("api_providers", "platform_configs", "mcp_servers", "desktop_full_trust"):
+                for key in ("api_providers", "platform_configs", "mcp_servers", "desktop_full_trust", "settings"):
                     if key in body:
                         existing[key] = body[key]
                 body = existing
@@ -643,6 +643,30 @@ async def api_desktop_config_set(request):
         return web.json_response({"ok": True})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
+
+
+async def api_desktop_paths(request):
+    """返回桌面端真实文件路径与存储信息（运行时计算，不硬编码）"""
+    import os as _os
+    base = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    db_path = _os.path.join(base, "data", "naixi_desktop.db")
+    logs_dir = _os.path.join(base, "logs")
+    models_dir = _os.path.join(base, "models")
+    db_size = _os.path.getsize(db_path) if _os.path.exists(db_path) else 0
+    keep_days = 7
+    raw = meta_get("desktop_config")
+    if raw:
+        try:
+            keep_days = json.loads(raw).get("settings", {}).get("log_keep_days", 7)
+        except Exception:
+            pass
+    return web.json_response({
+        "db_path": db_path,
+        "db_size_mb": round(db_size / (1024 ** 2), 2) if db_size else 0,
+        "logs_dir": logs_dir,
+        "models_dir": models_dir,
+        "log_keep_days": keep_days,
+    })
 
 
 # ── 默认提示词（基于 GitHub 开源项目最佳实践）──
@@ -2789,6 +2813,7 @@ def setup_routes(app):
     app.router.add_get("/api/desktop/status", api_desktop_status)
     app.router.add_get("/api/desktop/config", api_desktop_config_get)
     app.router.add_post("/api/desktop/config", api_desktop_config_set)
+    app.router.add_get("/api/desktop/paths", api_desktop_paths)
     app.router.add_post("/api/desktop/test-connection", api_desktop_test_connection)
     app.router.add_post("/api/desktop/models", api_desktop_list_models)
     app.router.add_get("/api/stats", api_stats)
