@@ -71,7 +71,11 @@ interface DesktopStatusData { name: string; version: string; online: boolean; }
 interface NapcatData { connected: boolean; groups: number; }
 interface SysData { cpu: number; memory: number; disk: number; gpu_name?: string; gpu_mem_total?: number; gpu_mem_used?: number; gpu_util?: number; }
 interface KbData { categories: { name: string; count: number }[]; total: number; }
-interface MemData { layers: { name: string; desc: string; count: number; status: string }[]; }
+interface MemData {
+  total: number; conversations: number; recent_7d: number;
+  categories: { name: string; count: number }[];
+  recent: { conv: string; role: string; content: string; time: string }[];
+}
 interface ToolData { tools: { name: string; desc: string }[]; }
 interface DesktopConfig { configured?: boolean; }
 
@@ -147,7 +151,7 @@ export default function Dashboard() {
   );
 
   const kbCategories = kb?.categories ?? [];
-  const memLayers = mem?.layers ?? [];
+  const memCats = mem?.categories ?? [];
 
   // 桌面端模型清单（静态展示，真实用量由供应商配额接口提供）
   const MODEL_CONFIG = [
@@ -207,7 +211,7 @@ export default function Dashboard() {
           <div style={{ display: activeNav === "workflow" ? "block" : "none", height: "100%" }}><ErrorBoundary name="工作流"><ReactFlowProvider><WorkflowEditor /></ReactFlowProvider></ErrorBoundary></div>
           <div style={{ display: activeNav === "knowledge" ? "block" : "none", height: "100%" }}><ErrorBoundary name="知识库"><KbPage kb={kb} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "tools" ? "block" : "none", height: "100%" }}><ErrorBoundary name="工具"><ToolsPage toolsData={toolsData} /></ErrorBoundary></div>
-          <div style={{ display: activeNav === "memory" ? "block" : "none", height: "100%" }}><ErrorBoundary name="记忆"><MemPage memLayers={memLayers} /></ErrorBoundary></div>
+          <div style={{ display: activeNav === "memory" ? "block" : "none", height: "100%" }}><ErrorBoundary name="记忆"><MemPage /></ErrorBoundary></div>
           <div style={{ display: activeNav === "connection" ? "block" : "none", height: "100%" }}><ErrorBoundary name="连接"><NapcatPage napcat={napcat} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "ops" ? "block" : "none", height: "100%" }}><ErrorBoundary name="运维"><OpsPage errors={globalErrors} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "live" ? "block" : "none", height: "100%" }}><ErrorBoundary name="直播"><LivePage /></ErrorBoundary></div>
@@ -245,9 +249,9 @@ export default function Dashboard() {
               <p className="text-[11px] text-sakura-400 mt-0.5">已注册</p>
             </Card>
             <Card className="p-4">
-              <p className="text-xs text-sakura-400 mb-0.5">记忆层数</p>
-              <p className="text-2xl font-bold text-sakura-500">{memLayers.length}</p>
-              <p className="text-[11px] text-sakura-400 mt-0.5">长期 / 短期</p>
+              <p className="text-xs text-sakura-400 mb-0.5">记忆总数</p>
+              <p className="text-2xl font-bold text-sakura-500">{mem?.total ?? 0}</p>
+              <p className="text-[11px] text-sakura-400 mt-0.5">{mem?.conversations ?? 0} 段对话</p>
             </Card>
             <Card className="p-4">
               <p className="text-xs text-sakura-400 mb-0.5">供应商</p>
@@ -316,15 +320,19 @@ export default function Dashboard() {
 
             <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-sakura-500 mb-3">记忆系统</p>
               <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5">
-                {memLayers.map((l, i) => (
-                  <div key={i} className="flex items-center gap-2 py-1.5 border-b border-sakura-50 last:border-0 text-xs">
-                    <Brain size={12} className="text-sakura-400 shrink-0" />
-                    <span className="text-sakura-600 w-20 shrink-0">{l.name}</span>
-                    <span className="text-sakura-400 flex-1 truncate">{l.desc}</span>
-                    <span className="text-sakura-500 font-medium">{l.count}</span>
-                  </div>
-                ))}
-                {memLayers.length === 0 && <div className="text-center py-8 text-sakura-300 text-xs">暂无记忆层</div>}
+                <Row l="总记忆" v={`${mem?.total ?? 0} 条`} />
+                <Row l="对话数" v={`${mem?.conversations ?? 0}`} />
+                <Row l="近7天活跃" v={`${mem?.recent_7d ?? 0}`} />
+                <div className="border-t border-sakura-100 pt-2 space-y-1">
+                  {memCats.map((c, i) => (
+                    <div key={i} className="flex items-center gap-2 text-xs">
+                      <Brain size={12} className="text-sakura-400 shrink-0" />
+                      <span className="text-sakura-600 w-20 shrink-0 truncate">{c.name}</span>
+                      <span className="text-sakura-400 flex-1 text-right">{c.count}</span>
+                    </div>
+                  ))}
+                  {memCats.length === 0 && <div className="text-center py-2 text-sakura-300 text-xs">暂无分类</div>}
+                </div>
               </div>
             </Card>
 
@@ -1100,7 +1108,7 @@ function catLabel(cat: string): string {
   return labels[cat] || cat;
 }
 
-function MemPage({ memLayers }: { memLayers: { name: string; desc: string; count: number; status: string }[] }) {
+function MemPage() {
   const [stats, setStats] = useState<any>(null);
   const [items, setItems] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
