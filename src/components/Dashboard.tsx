@@ -2691,11 +2691,14 @@ function SchedulerPage() {
 function LogsPage() {
   const [logs, setLogs] = useState("");
   useEffect(() => {
-    fetch("/api/logs").then(r => r.text().then(setLogs)).catch(() => setLogs("无法加载日志"));
+    const fetchLogs = () => fetch("/api/logs").then(r => r.text().then(setLogs)).catch(() => {});
+    fetchLogs();
+    const timer = setInterval(fetchLogs, 1000);
+    return () => clearInterval(timer);
   }, []);
   return (
     <div className="space-y-4">
-      <p className="text-sm font-semibold text-sakura-500">日志</p>
+      <p className="text-sm font-semibold text-sakura-500">日志（1 秒自动刷新）</p>
       <pre className="bg-[#1a1a2e] text-green-400 text-[11px] p-4 rounded-xl overflow-auto max-h-[70vh] font-mono leading-relaxed">{logs || "加载中..."}</pre>
     </div>
   );
