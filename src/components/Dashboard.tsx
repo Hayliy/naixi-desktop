@@ -10,6 +10,7 @@ import WorkflowEditor from "@/components/WorkflowEditor";
 import { ReactFlowProvider } from "@xyflow/react";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import SetupGuide from "@/components/SetupGuide";
+import SettingsPage from "@/components/SettingsPage";
 import {
   LayoutDashboard, MessageCircle, BookOpen, Wrench, Brain,
   Bot, Server, Settings, Gamepad, Calendar, FileText,
@@ -207,7 +208,7 @@ export default function Dashboard() {
 
           <div style={{ display: activeNav === "chat" || activeNav === "settings" ? "block" : "none", height: "100%" }}>
             {activeNav === "settings" ? (
-              <ErrorBoundary name="设置"><SetupGuide standalone onClose={() => setActiveNav("dashboard")} /></ErrorBoundary>
+              <ErrorBoundary name="设置"><SettingsPage /></ErrorBoundary>
             ) : (
               <ErrorBoundary name="对话"><ChatPage /></ErrorBoundary>
             )}
