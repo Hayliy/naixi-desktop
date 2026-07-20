@@ -38,3 +38,6 @@ _motions/
 logs/
 pet_debug.log
 pet_init.log
+
+# 打包生成的资源（自包含 Python 运行时 + 暂存的纯代码桌面核心，体积大不入库）
+src-tauri/resources/

@@ -115,6 +115,10 @@ class LiveEngine:
         # 音频设备
         self._audio_out_device: str = ""  # 输出设备名称（VB-Cable 或默认）
         self._audio_in_device: str = ""   # 输入设备名称
+        # 桌宠配置（前端 SettingsPet 读写）
+        self._model_path: str = ""
+        self._render_mode: str = "live2d"
+        self._tts_engine: str = "cosyvoice"
         self._sd_available: bool = False
         try:
             import sounddevice
@@ -169,6 +173,9 @@ class LiveEngine:
                 self._live_prompt = cfg.get("live_prompt") or DEFAULT_LIVE_PROMPT
                 self._audio_out_device = cfg.get("audio_out_device", "")
                 self._audio_in_device = cfg.get("audio_in_device", "")
+                self._model_path = cfg.get("model_path", "")
+                self._render_mode = cfg.get("render_mode", "live2d")
+                self._tts_engine = cfg.get("tts_engine", "cosyvoice")
                 self._bili_config_saved = bool(self._access_key_id and self._access_key_secret)
         except: pass
 
@@ -202,6 +209,9 @@ class LiveEngine:
                 "live_prompt": kwargs.get("live_prompt", base.get("live_prompt", self._live_prompt)),
                 "audio_out_device": kwargs.get("audio_out_device", base.get("audio_out_device", self._audio_out_device)),
                 "audio_in_device": kwargs.get("audio_in_device", base.get("audio_in_device", self._audio_in_device)),
+                "model_path": kwargs.get("model_path", base.get("model_path", self._model_path)),
+                "render_mode": kwargs.get("render_mode", base.get("render_mode", self._render_mode)),
+                "tts_engine": kwargs.get("tts_engine", base.get("tts_engine", self._tts_engine)),
             }
             from desktop_core.storage import meta_set
             meta_set("live_config", json.dumps(cfg))
@@ -214,6 +224,9 @@ class LiveEngine:
             self._live_prompt = cfg["live_prompt"]
             self._audio_out_device = cfg.get("audio_out_device", "")
             self._audio_in_device = cfg.get("audio_in_device", "")
+            self._model_path = cfg["model_path"]
+            self._render_mode = cfg["render_mode"]
+            self._tts_engine = cfg["tts_engine"]
             self._bili_config_saved = bool(self._access_key_id and self._access_key_secret)
             log.info("[直播] 配置已保存")
             return True

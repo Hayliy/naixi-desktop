@@ -14,8 +14,23 @@ _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %
 logging.getLogger().addHandler(_handler)
 logging.getLogger().setLevel(logging.INFO)
 
-# 桌面端核心模块路径
-DESKTOP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+# 桌面端核心模块路径：向上查找包含 desktop_core 包的目录（兼容开发态与打包态）
+def _find_core_root():
+    here = os.path.dirname(os.path.abspath(__file__))
+    d = here
+    while True:
+        if os.path.isdir(os.path.join(d, "desktop_core")):
+            return d
+        # 打包态：desktop_core 在 resources/ 下（Tauri 资源目录分层结构）
+        if os.path.isdir(os.path.join(d, "resources", "desktop_core")):
+            return os.path.join(d, "resources")
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    return here
+
+DESKTOP_DIR = _find_core_root()
 if DESKTOP_DIR not in sys.path:
     sys.path.insert(0, DESKTOP_DIR)
 

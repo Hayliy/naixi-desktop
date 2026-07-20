@@ -46,6 +46,28 @@ fn port_in_use(addr: &str) -> bool {
     false
 }
 
+/// 解析 Python 解释器路径：
+/// 1. 环境变量 NAIXI_PYTHON_PATH 优先（调试/自定义）
+/// 2. 打包后优先用自包含的嵌入式 Python（resources/python-embed/python.exe）
+/// 3. 回退系统 PATH 中的 python
+/// 不硬编码任何用户专属绝对路径，保证换机/换用户仍可启动
+fn resolve_python(app: &tauri::AppHandle) -> String {
+    if let Ok(p) = std::env::var("NAIXI_PYTHON_PATH") {
+        if !p.trim().is_empty() {
+            return p;
+        }
+    }
+    if !cfg!(debug_assertions) {
+        if let Ok(rd) = app.path().resource_dir() {
+            let embed = rd.join("python-embed").join("python.exe");
+            if embed.exists() {
+                return embed.to_string_lossy().to_string();
+            }
+        }
+    }
+    "python".to_string()
+}
+
 /// 启动桌面后端：先预检 Python 解释器与端口占用，再拉起 sidecar。
 /// 任何失败都返回中文错误信息，供前端展示。
 fn spawn_backend(app: &tauri::AppHandle) -> Result<(), String> {
@@ -53,9 +75,7 @@ fn spawn_backend(app: &tauri::AppHandle) -> Result<(), String> {
     if !script.exists() {
         return Err(format!("后端脚本不存在: {}", script.display()));
     }
-    // Python 解释器解析：环境变量 NAIXI_PYTHON_PATH 优先，否则回退系统 PATH 中的 python
-    // 不硬编码任何用户专属绝对路径，保证换机/换用户仍可启动
-    let python_path = std::env::var("NAIXI_PYTHON_PATH").unwrap_or_else(|_| "python".to_string());
+    let python_path = resolve_python(app);
     // 预检：解释器是否可用
     match std::process::Command::new(&python_path).arg("--version").status() {
         Ok(_) => {}

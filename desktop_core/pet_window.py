@@ -229,8 +229,18 @@ class PetWindow(QOpenGLWidget):
                 self._pose.scan_model()
                 # 生成动作文件并注册
                 try:
+                    # 优先写项目内 _motions（开发态）；打包态资源目录只读时回退到用户目录
                     motion_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "_motions")
-                    os.makedirs(motion_dir, exist_ok=True)
+                    try:
+                        os.makedirs(motion_dir, exist_ok=True)
+                        _test = os.path.join(motion_dir, ".w")
+                        with open(_test, "w") as _f:
+                            _f.write("1")
+                        os.remove(_test)
+                    except Exception:
+                        motion_dir = os.path.join(os.path.expanduser("~"), ".naixi_desktop", "motions")
+                        os.makedirs(motion_dir, exist_ok=True)
+                        log.info(f"动作目录改用用户目录: {motion_dir}")
                     motion_files = self._pose.generate_motion_files(motion_dir)
                     for pose_name, fpath in motion_files.items():
                         if "_loop" in pose_name:

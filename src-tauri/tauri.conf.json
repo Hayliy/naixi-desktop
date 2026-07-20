@@ -7,7 +7,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeBuildCommand": "npm run build && python src-tauri/stage_core.py"
   },
   "app": {
     "windows": [
@@ -47,7 +47,9 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "sidecar/*"
+      "sidecar/*.py",
+      "resources/desktop_core/**/*.py",
+      "resources/python-embed/**/*"
     ]
   },
   "plugins": {

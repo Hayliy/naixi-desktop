@@ -3195,6 +3195,30 @@ async def api_live_config(request):
     from desktop_core.live_engine import engine
     engine._load_config()
     if request.method == "GET":
+        mp = engine._model_path
+        # 未手动设置时自动发现第一个模型
+        if not mp:
+            try:
+                for base_dir in (
+                    os.path.join(_DESKTOP_DIR, "data", "models"),
+                    os.path.join(_DESKTOP_DIR, "godot_renderer", "models"),
+                ):
+                    if not os.path.exists(base_dir):
+                        continue
+                    for entry in sorted(os.listdir(base_dir)):
+                        d = os.path.join(base_dir, entry)
+                        if not os.path.isdir(d):
+                            continue
+                        for f in os.listdir(d):
+                            if f.endswith(".model3.json"):
+                                mp = os.path.join(d, f)
+                                break
+                        if mp:
+                            break
+                    if mp:
+                        break
+            except:
+                pass
         return web.json_response({
             "access_key_id": engine._access_key_id,
             "access_key_secret": engine._access_key_secret[:4]+"****" if engine._access_key_secret else "",
@@ -3206,6 +3230,9 @@ async def api_live_config(request):
             "live_prompt": engine._live_prompt,
             "audio_out_device": engine._audio_out_device,
             "audio_in_device": engine._audio_in_device,
+            "model_path": mp,
+            "render_mode": engine._render_mode,
+            "tts_engine": engine._tts_engine,
         })
     body = await request.json()
     ok = engine.save_config(**body)
