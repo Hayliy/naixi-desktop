@@ -440,7 +440,17 @@ async def api_stats(request):
     try:
         self_proc = psutil.Process(self_pid)
         self_mem = round(self_proc.memory_info().rss / (1024**2), 1)
-        self_cpu = self_proc.cpu_percent(interval=0.3)
+        # 后端 CPU：统计两次轮询间的平均占用，避免空闲进程瞬时采样恒为 0
+        ct = self_proc.cpu_times()
+        now = _time.time()
+        prev = getattr(api_stats, "_cpu_prev", None)
+        if prev is None:
+            self_cpu = 0.0
+        else:
+            dw = now - prev["wall"]
+            dp = (ct.user + ct.system) - prev["proc"]
+            self_cpu = round(max(0.0, min((dp / dw) * 100.0, 100.0)), 1) if dw > 0.01 else 0.0
+        api_stats._cpu_prev = {"wall": now, "proc": ct.user + ct.system}
     except:
         self_mem = 0; self_cpu = 0
 
@@ -506,13 +516,39 @@ async def api_system_resources(request):
         mem_used_pct = round((1 - mem_free / mem_total) * 100, 1) if mem_total > 0 else 50
         disk = disk_info[0] if isinstance(disk_info, list) else disk_info
         disk_used_pct = round((1 - float(disk.get("FreeGB", 200)) / float(disk.get("TotalGB", 500))) * 100, 1)
+        # GPU：nvidia-smi 真实查询，缺失或异常时优雅降级为 0
+        gpu = {"gpu_util": 0, "gpu_name": "N/A", "gpu_mem_total": 0, "gpu_mem_used": 0}
+        try:
+            gproc = await asyncio.create_subprocess_exec(
+                "nvidia-smi", "--query-gpu=utilization.gpu,name,memory.total,memory.used",
+                "--format=csv,noheader,nounits",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            gout, _ = await asyncio.wait_for(gproc.communicate(), timeout=5)
+            gl = gout.decode("gbk", errors="ignore").strip().split("\n")[0]
+            if gl:
+                parts = [x.strip() for x in gl.split(",")]
+                if len(parts) >= 4:
+                    gpu = {
+                        "gpu_util": float(parts[0] or 0),
+                        "gpu_name": parts[1] or "N/A",
+                        "gpu_mem_total": float(parts[2] or 0),
+                        "gpu_mem_used": float(parts[3] or 0),
+                    }
+        except Exception:
+            pass
         return web.json_response({
             "cpu": cpu, "memory": mem_used_pct, "disk": disk_used_pct,
-            "gpu_util": 0, "gpu_name": "N/A", "gpu_mem_total": 0, "gpu_mem_used": 0,
+            "gpu_util": gpu["gpu_util"], "gpu_name": gpu["gpu_name"],
+            "gpu_mem_total": gpu["gpu_mem_total"], "gpu_mem_used": gpu["gpu_mem_used"],
             "uptime": int(time.time()),
         })
     except Exception as e:
-        return web.json_response({"cpu": 0, "memory": 0, "disk": 0, "gpu_util": 0, "error": str(e)[:50]})
+        return web.json_response({
+            "cpu": 0, "memory": 0, "disk": 0,
+            "gpu_util": 0, "gpu_name": "N/A", "gpu_mem_total": 0, "gpu_mem_used": 0,
+            "error": str(e)[:50]
+        })
 
 
 async def api_system_info(request):

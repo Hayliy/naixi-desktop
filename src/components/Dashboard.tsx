@@ -270,6 +270,8 @@ export default function Dashboard() {
                 <Bar label="磁盘" val={`${sys?.disk ?? 0}%`} w={sys?.disk ?? 0} />
                 <Bar label="GPU" val={`${sys?.gpu_util ?? 0}%`} w={sys?.gpu_util ?? 0} />
                 <div className="border-t border-sakura-100 pt-3 space-y-1.5 text-xs">
+                  <Row l="显卡" v={sys?.gpu_name ?? "N/A"} />
+                  <Row l="显存" v={`${sys?.gpu_mem_used ?? 0}/${sys?.gpu_mem_total ?? 0} MB`} />
                   <Row l="后端进程" v={`PID ${stats?.backend?.pid ?? "—"}`} />
                   <Row l="后端内存" v={`${stats?.backend?.memory_mb ?? 0} MB`} />
                   <Row l="后端 CPU" v={`${stats?.backend?.cpu ?? 0}%`} />
