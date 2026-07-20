@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import type { ReactNode } from "react";
 import {
   Cpu, Cat, Mic, Search, HardDrive, Server,
-  Palette, DatabaseBackup, ShieldCheck, Info, Check, X,
+  Palette, DatabaseBackup, ShieldCheck, Info, Check, X, Lock,
 } from "lucide-react";
 import ProviderSettings from "./ProviderSettings";
 import ThemeSettings from "./ThemeSettings";
@@ -42,19 +42,50 @@ function useToast() {
   return { show, node };
 }
 
-/* ── 复用样式（全部走主题语义类，跟随明暗）── */
-const CARD = "bg-sakura-50 border border-sakura-100 rounded-xl";
-const INPUT = "w-full mt-1 bg-sakura-50 border border-sakura-200 rounded-lg px-3 py-2 text-sm text-sakura-700 focus:outline-none focus:border-sakura-300";
-const LABEL = "text-xs text-sakura-400";
-const BTN = "px-4 py-1.5 bg-sakura-500 text-white rounded-lg text-sm hover:bg-sakura-400 transition-colors disabled:opacity-60";
-const BTN_GHOST = "px-4 py-1.5 border border-sakura-200 text-sakura-500 rounded-lg text-sm hover:bg-sakura-100 transition-colors";
-const HEAD = "text-sm font-semibold text-sakura-500";
+/* ── 行式布局复用组件（零卡片，靠分隔线分组）── */
+const INPUT = "min-w-[180px] bg-sakura-50 border border-sakura-200 rounded-lg px-3 py-1.5 text-sm text-sakura-700 focus:outline-none focus:border-sakura-300";
+const BTN = "px-5 py-1.5 bg-sakura-500 text-white rounded-lg text-sm hover:bg-sakura-400 transition-colors disabled:opacity-60";
+const BTN_GHOST = "px-5 py-1.5 border border-sakura-200 text-sakura-500 rounded-lg text-sm hover:bg-sakura-100 transition-colors";
 
-function Row({ k, v, mono }: { k: string; v: ReactNode; mono?: boolean }) {
+/* 分组：粉色小标题 + 灰色说明 */
+function Section({ title, desc, children }: { title: string; desc?: string; children: ReactNode }) {
   return (
-    <div className="flex justify-between gap-4">
-      <span className="text-sakura-400 shrink-0">{k}</span>
-      <span className={`text-sakura-600 text-right ${mono ? "font-mono text-[11px] break-all" : ""}`}>{v}</span>
+    <section className="mb-8">
+      <p className="text-xs font-medium text-sakura-500 tracking-wide">{title}</p>
+      {desc && <p className="text-xs text-sakura-400 mt-0.5 mb-1">{desc}</p>}
+      <div>{children}</div>
+    </section>
+  );
+}
+
+/* 单行：左标题+说明，右控件右对齐，顶部细分隔线 */
+function SettingRow({ label, desc, children }: { label: string; desc?: string; children: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-6 py-3.5 border-t border-sakura-200/50">
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-sakura-600">{label}</p>
+        {desc && <p className="text-xs text-sakura-400 mt-0.5">{desc}</p>}
+      </div>
+      <div className="shrink-0 flex items-center">{children}</div>
+    </div>
+  );
+}
+
+/* 只读展示行（用于文件/安全/关于） */
+function InfoRow({ label, value, mono }: { label: string; value: ReactNode; mono?: boolean }) {
+  return (
+    <div className="flex items-start justify-between gap-6 py-3 border-t border-sakura-200/50">
+      <span className="text-sm text-sakura-500 shrink-0">{label}</span>
+      <span className={`text-sm text-sakura-600 text-right ${mono ? "font-mono text-[11px] break-all" : ""}`}>{value}</span>
+    </div>
+  );
+}
+
+/* 底部固定保存条 */
+function SaveBar({ onSave, saving }: { onSave: () => void; saving: boolean }) {
+  return (
+    <div className="flex justify-end mt-2 pt-4 border-t border-sakura-200/50">
+      <button onClick={onSave} disabled={saving} className={BTN}>{saving ? "保存中..." : "保存更改"}</button>
     </div>
   );
 }
@@ -83,17 +114,23 @@ export default function SettingsPage() {
           );
         })}
       </div>
-      <div className="flex-1 overflow-y-auto p-4">
-        {tab === "model" && <SettingsModel />}
-        {tab === "pet" && <SettingsPet show={show} />}
-        {tab === "voice" && <SettingsVoice show={show} />}
-        {tab === "search" && <SettingsSearch show={show} />}
-        {tab === "storage" && <SettingsStorage />}
-        {tab === "system" && <SettingsSystem show={show} />}
-        {tab === "interface" && <div className="max-w-xl"><p className={`${HEAD} mb-3`}>界面与主题</p><ThemeSettings /></div>}
-        {tab === "backup" && <SettingsBackup show={show} />}
-        {tab === "security" && <SettingsSecurity />}
-        {tab === "about" && <SettingsAbout />}
+      <div className="flex-1 overflow-y-auto px-6 py-5">
+        <div className="max-w-2xl">
+          {tab === "model" && <SettingsModel />}
+          {tab === "pet" && <SettingsPet show={show} />}
+          {tab === "voice" && <SettingsVoice show={show} />}
+          {tab === "search" && <SettingsSearch show={show} />}
+          {tab === "storage" && <SettingsStorage />}
+          {tab === "system" && <SettingsSystem show={show} />}
+          {tab === "interface" && (
+            <Section title="界面与主题" desc="切换明暗主题与配色">
+              <ThemeSettings />
+            </Section>
+          )}
+          {tab === "backup" && <SettingsBackup show={show} />}
+          {tab === "security" && <SettingsSecurity />}
+          {tab === "about" && <SettingsAbout />}
+        </div>
       </div>
       {node}
     </div>
@@ -103,10 +140,9 @@ export default function SettingsPage() {
 /* ── 模型 ── */
 function SettingsModel() {
   return (
-    <div className="space-y-6">
-      <p className={HEAD}>模型供应商与默认配置</p>
+    <Section title="模型供应商" desc="配置各模型的 API Key 与默认调用模型">
       <ProviderSettings />
-    </div>
+    </Section>
   );
 }
 
@@ -132,28 +168,24 @@ function SettingsPet({ show }: { show: ShowFn }) {
     finally { setSaving(false); }
   };
   return (
-    <div className="space-y-4 max-w-xl">
-      <p className={HEAD}>桌宠设置</p>
-      <div>
-        <label className={LABEL}>渲染模式</label>
+    <Section title="桌宠设置" desc="控制虚拟形象的渲染方式与语音">
+      <SettingRow label="渲染模式" desc="Live2D 或 VRM 三维模型">
         <select value={mode} onChange={e => setMode(e.target.value)} className={INPUT}>
           <option value="live2d">Live2D</option>
           <option value="vrm">VRM (Godot)</option>
         </select>
-      </div>
-      <div>
-        <label className={LABEL}>模型文件路径</label>
+      </SettingRow>
+      <SettingRow label="模型文件路径" desc="桌宠模型资源的本地路径">
         <input value={modelPath} onChange={e => setModelPath(e.target.value)} className={INPUT} />
-      </div>
-      <div>
-        <label className={LABEL}>TTS 引擎</label>
+      </SettingRow>
+      <SettingRow label="TTS 引擎" desc="桌宠说话使用的合成引擎">
         <select value={ttsEngine} onChange={e => setTtsEngine(e.target.value)} className={INPUT}>
           <option value="cosyvoice">CosyVoice (百炼)</option>
           <option value="edge-tts">Edge TTS</option>
         </select>
-      </div>
-      <button onClick={save} disabled={saving} className={BTN}>{saving ? "保存中..." : "保存"}</button>
-    </div>
+      </SettingRow>
+      <SaveBar onSave={save} saving={saving} />
+    </Section>
   );
 }
 
@@ -177,22 +209,19 @@ function SettingsVoice({ show }: { show: ShowFn }) {
     finally { setSaving(false); }
   };
   return (
-    <div className="space-y-4 max-w-xl">
-      <p className={HEAD}>语音设置</p>
-      <div>
-        <label className={LABEL}>朗读模式</label>
+    <Section title="朗读设置" desc="控制奶昔说话使用的引擎与音色">
+      <SettingRow label="朗读模式" desc="选择本地或云端 TTS 引擎">
         <select value={mode} onChange={e => setMode(e.target.value)} className={INPUT}>
           <option value="browser">浏览器内置</option>
           <option value="edge-tts">Edge TTS</option>
           <option value="cosyvoice">CosyVoice (百炼)</option>
         </select>
-      </div>
-      <div>
-        <label className={LABEL}>默认音色</label>
+      </SettingRow>
+      <SettingRow label="默认音色" desc="合成语音使用的音色标识">
         <input value={voice} onChange={e => setVoice(e.target.value)} className={INPUT} />
-      </div>
-      <button onClick={save} disabled={saving} className={BTN}>{saving ? "保存中..." : "保存"}</button>
-    </div>
+      </SettingRow>
+      <SaveBar onSave={save} saving={saving} />
+    </Section>
   );
 }
 
@@ -215,14 +244,12 @@ function SettingsSearch({ show }: { show: ShowFn }) {
     finally { setSaving(false); }
   };
   return (
-    <div className="space-y-4 max-w-xl">
-      <p className={HEAD}>搜索设置</p>
-      <div>
-        <label className={LABEL}>SearXNG 地址</label>
+    <Section title="搜索设置" desc="配置联网搜索使用的检索服务">
+      <SettingRow label="SearXNG 地址" desc="本地或远程 SearXNG 实例的 URL">
         <input value={searxng} onChange={e => setSearxng(e.target.value)} className={INPUT} />
-      </div>
-      <button onClick={save} disabled={saving} className={BTN}>{saving ? "保存中..." : "保存"}</button>
-    </div>
+      </SettingRow>
+      <SaveBar onSave={save} saving={saving} />
+    </Section>
   );
 }
 
@@ -233,20 +260,17 @@ function SettingsStorage() {
     apiGet<any>("/api/desktop/paths").then(setP).catch(() => setP({ error: true }));
   }, []);
   return (
-    <div className="space-y-4 max-w-xl">
-      <p className={HEAD}>文件与存储</p>
-      <div className={`${CARD} p-4 space-y-3 text-xs`}>
-        {!p && <p className="text-sakura-400">加载中...</p>}
-        {p?.error && <p className="text-sakura-400">无法获取路径信息</p>}
-        {p && !p.error && <>
-          <Row k="数据库路径" v={p.db_path} mono />
-          <Row k="数据库大小" v={`${p.db_size_mb} MB`} />
-          <Row k="日志目录" v={p.logs_dir} mono />
-          <Row k="模型目录" v={p.models_dir} mono />
-          <Row k="日志保留" v={`${p.log_keep_days} 天`} />
-        </>}
-      </div>
-    </div>
+    <Section title="文件与存储" desc="数据库与日志的本地位置">
+      {!p && <p className="text-sm text-sakura-400 py-3 border-t border-sakura-200/50">加载中...</p>}
+      {p?.error && <p className="text-sm text-sakura-400 py-3 border-t border-sakura-200/50">无法获取路径信息</p>}
+      {p && !p.error && <>
+        <InfoRow label="数据库路径" value={p.db_path} mono />
+        <InfoRow label="数据库大小" value={`${p.db_size_mb} MB`} />
+        <InfoRow label="日志目录" value={p.logs_dir} mono />
+        <InfoRow label="模型目录" value={p.models_dir} mono />
+        <InfoRow label="日志保留" value={`${p.log_keep_days} 天`} />
+      </>}
+    </Section>
   );
 }
 
@@ -270,23 +294,23 @@ function SettingsSystem({ show }: { show: ShowFn }) {
     finally { setSaving(false); }
   };
   return (
-    <div className="space-y-4 max-w-xl">
-      <p className={HEAD}>系统与环境</p>
-      <div>
-        <label className={LABEL}>服务端口（只读，改动需重启后端）</label>
-        <input value={port} readOnly className={`${INPUT} opacity-60 cursor-not-allowed`} />
-      </div>
-      <div>
-        <label className={LABEL}>日志级别</label>
+    <Section title="系统与环境" desc="后端服务与日志相关配置">
+      <SettingRow label="服务端口" desc="改动需重启后端生效">
+        <div className="flex items-center gap-2 min-w-[180px]">
+          <input value={port} readOnly className={`${INPUT} opacity-60 cursor-not-allowed flex-1`} />
+          <Lock className="w-3.5 h-3.5 text-sakura-300 shrink-0" />
+        </div>
+      </SettingRow>
+      <SettingRow label="日志级别" desc="控制后端日志输出的详细程度">
         <select value={logLevel} onChange={e => setLogLevel(e.target.value)} className={INPUT}>
           <option value="DEBUG">DEBUG</option>
           <option value="INFO">INFO</option>
           <option value="WARNING">WARNING</option>
           <option value="ERROR">ERROR</option>
         </select>
-      </div>
-      <button onClick={save} disabled={saving} className={BTN}>{saving ? "保存中..." : "保存"}</button>
-    </div>
+      </SettingRow>
+      <SaveBar onSave={save} saving={saving} />
+    </Section>
   );
 }
 
@@ -320,28 +344,25 @@ function SettingsBackup({ show }: { show: ShowFn }) {
     inp.click();
   };
   return (
-    <div className="space-y-4 max-w-xl">
-      <p className={HEAD}>备份与迁移</p>
-      <p className="text-xs text-sakura-400">导出当前全部配置为 JSON 文件，或从备份文件恢复。</p>
-      <div className="flex gap-2">
+    <Section title="备份与迁移" desc="导出当前全部配置为 JSON 文件，或从备份文件恢复">
+      <SettingRow label="导出配置" desc="将全部配置保存为 naixi-config.json">
         <button onClick={exportCfg} className={BTN}>导出配置</button>
-        <button onClick={importCfg} className={BTN_GHOST}>导入配置</button>
-      </div>
-    </div>
+      </SettingRow>
+      <SettingRow label="导入配置" desc="从备份文件恢复配置（会覆盖当前值）">
+        <button onClick={importCfg} className={BTN_GHOST}>选择文件</button>
+      </SettingRow>
+    </Section>
   );
 }
 
 /* ── 安全 ── */
 function SettingsSecurity() {
   return (
-    <div className="space-y-4 max-w-xl">
-      <p className={HEAD}>安全设置</p>
-      <div className={`${CARD} p-4 space-y-3 text-xs`}>
-        <Row k="CORS 策略" v="*（允许所有来源，仅本地使用）" />
-        <Row k="API Key 加密" v="Fernet 对称加密（机器 UUID 派生密钥）" />
-        <Row k="密钥存储" v="SQLite desktop_config 表（加密后存储）" />
-      </div>
-    </div>
+    <Section title="安全设置" desc="数据加密与访问策略（只读）">
+      <InfoRow label="CORS 策略" value="*（允许所有来源，仅本地使用）" />
+      <InfoRow label="API Key 加密" value="Fernet 对称加密（机器 UUID 派生密钥）" />
+      <InfoRow label="密钥存储" value="SQLite desktop_config 表（加密后存储）" />
+    </Section>
   );
 }
 
@@ -356,14 +377,11 @@ function SettingsAbout() {
     }).catch(() => setVer("无法获取"));
   }, []);
   return (
-    <div className="space-y-4 max-w-xl">
-      <p className={HEAD}>关于</p>
-      <div className={`${CARD} p-4 space-y-2 text-xs`}>
-        <Row k="版本" v={ver} />
-        <Row k="已加载工具" v={tools === null ? "-" : `${tools} 个`} />
-        <Row k="技术栈" v="Python + React + Tauri + Godot" />
-        <Row k="项目" v="naixi_desktop" />
-      </div>
-    </div>
+    <Section title="关于" desc="版本与运行环境信息">
+      <InfoRow label="版本" value={ver} />
+      <InfoRow label="已加载工具" value={tools === null ? "-" : `${tools} 个`} />
+      <InfoRow label="技术栈" value="Python + React + Tauri + Godot" />
+      <InfoRow label="项目" value="naixi_desktop" />
+    </Section>
   );
 }
