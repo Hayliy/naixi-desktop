@@ -2811,6 +2811,11 @@ def setup_routes(app):
     app.router.add_get("/api/status", api_status)
     # 桌面状态
     app.router.add_get("/api/desktop/status", api_desktop_status)
+    app.router.add_get("/api/desktop_status", api_desktop_status)  # 前端下划线路径别名
+    # 系统资源（整机 CPU/内存/磁盘/GPU）——补注册漏掉的路由，修复仪表盘系统资源恒为 0% 问题
+    app.router.add_get("/api/system/resources", api_system_resources)
+    app.router.add_get("/api/system/info", api_system_info)
+    app.router.add_get("/api/system/processes", api_system_processes)
     app.router.add_get("/api/desktop/config", api_desktop_config_get)
     app.router.add_post("/api/desktop/config", api_desktop_config_set)
     app.router.add_get("/api/desktop/paths", api_desktop_paths)
