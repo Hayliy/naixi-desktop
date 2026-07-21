@@ -396,7 +396,7 @@ Function .onInit
   ; Branded splash screen
   !if "${SPLASHIMAGE}" != ""
   ${If} $PassiveMode = 0
-  ${AndIf} ${Not} ${Silent}
+  ${AndIf} ${Silent} = 0
     InitPluginsDir
     SetOutPath "$PLUGINSDIR"
     File "${SPLASHIMAGE}"
