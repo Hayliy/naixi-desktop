@@ -55,7 +55,8 @@
         "displayLanguageSelector": true,
         "languages": ["SimpChinese", "English"],
         "headerImage": "installer/header.bmp",
-        "sidebarImage": "installer/sidebar.bmp"
+        "sidebarImage": "installer/sidebar.bmp",
+        "template": "installer.nsi"
       }
     },
     "resources": [
