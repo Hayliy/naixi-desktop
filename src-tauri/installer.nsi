@@ -191,6 +191,7 @@ Function fn_Welcome
   Pop $0
   SendMessage $0 ${WM_SETTEXT} 0 "STR:Cancel"
   ${NSD_OnClick} $0 fn_Cancel
+  nsDialogs::Show
 FunctionEnd
 
 Function fn_WelcomeInstall
@@ -241,6 +242,7 @@ Function fn_DirPage
   SetCtlColors $0 "${CLR_WHITE}" "${CLR_HEADER}"
   SendMessage $0 ${WM_SETTEXT} 0 "STR:Install"
   ${NSD_OnClick} $0 fn_DirInstall
+  nsDialogs::Show
 FunctionEnd
 
 Function fn_Browse
@@ -296,6 +298,7 @@ Function fn_Finish
   SetCtlColors $0 "${CLR_WHITE}" "${CLR_HEADER}"
   SendMessage $0 ${WM_SETTEXT} 0 "STR:Done"
   ${NSD_OnClick} $0 fn_Done
+  nsDialogs::Show
 FunctionEnd
 
 Function fn_Done

@@ -51,11 +51,9 @@
         "language": "zh-CN"
       },
       "nsis": {
-        "installMode": "both",
+        "installMode": "currentUser",
         "displayLanguageSelector": true,
         "languages": ["SimpChinese", "English"],
-        "headerImage": "installer/header.bmp",
-        "sidebarImage": "installer/sidebar.bmp",
         "template": "installer.nsi",
         "installerIcon": "icons/icon.ico"
       }
