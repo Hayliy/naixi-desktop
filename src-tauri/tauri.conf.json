@@ -52,7 +52,10 @@
       },
       "nsis": {
         "installMode": "currentUserOrMachine",
-        "displayLanguageSelector": true
+        "displayLanguageSelector": true,
+        "languages": ["SimpChinese", "English"],
+        "headerImage": "installer/header.bmp",
+        "sidebarImage": "installer/sidebar.bmp"
       }
     },
     "resources": [
