@@ -94,8 +94,8 @@ export default function BackendGuard({ children }: { children: ReactNode }) {
         </div>
       )}
 
-      {/* ═══ 悬浮状态按钮（后端正常或横幅已关闭时，右下角小图标） ═══ */}
-      {!(status === "down" && !bannerDismissed) && (
+      {/* ═══ 悬浮状态按钮（右下角常驻，掉线时也显示） ═══ */}
+      {status !== "checking" && (
         <div className="fixed bottom-4 right-4 z-50 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-white/80 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-600 shadow-sm text-xs text-gray-500 dark:text-gray-300 backdrop-blur-sm hover:shadow-md transition-shadow">
           <span className={`inline-block w-2 h-2 rounded-full ${status === "up" ? "bg-green-500" : "bg-red-500"}`} />
           <span className="hidden sm:inline">后端</span>
