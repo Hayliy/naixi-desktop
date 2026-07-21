@@ -7,7 +7,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build && \"C:/Users/21222/.workbuddy/binaries/python/versions/3.13.12/python.exe\" src-tauri/stage_core.py"
+    "beforeBuildCommand": "npm run build && C:/Users/21222/.workbuddy/binaries/python/versions/3.13.12/python.exe src-tauri/stage_core.py"
   },
   "app": {
     "windows": [
