@@ -56,7 +56,8 @@
         "languages": ["SimpChinese", "English"],
         "headerImage": "installer/header.bmp",
         "sidebarImage": "installer/sidebar.bmp",
-        "template": "installer.nsi"
+        "template": "installer.nsi",
+        "installerIcon": "icons/icon.ico"
       }
     },
     "resources": [

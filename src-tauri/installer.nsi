@@ -194,7 +194,8 @@ Function fn_Welcome
 FunctionEnd
 
 Function fn_WelcomeInstall
-  Call fn_DirPage
+  Pop $0
+  Abort
 FunctionEnd
 
 Function fn_Cancel
@@ -253,7 +254,9 @@ Function fn_Browse
 FunctionEnd
 
 Function fn_DirInstall
+  Pop $0
   ${NSD_GetText} $InstallPathText $INSTDIR
+  Abort
 FunctionEnd
 
 Function fn_DirPageLeave
@@ -296,6 +299,7 @@ Function fn_Finish
 FunctionEnd
 
 Function fn_Done
+  Pop $0
   ${NSD_GetState} $RunCheck $0
   ${If} $0 = ${BST_CHECKED}
     nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" ""
