@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { apiGet, apiPost } from "@/lib/api";
 import { AppShell, Sidebar, Header, Main } from "@/components/shell";
 import { AppProvider } from "@/contexts/AppContext";
