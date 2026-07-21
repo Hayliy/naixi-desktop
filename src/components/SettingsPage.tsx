@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Cpu, Cat, Mic, Search, HardDrive, Server,
-  Palette, DatabaseBackup, ShieldCheck, Info, Check, X, Lock,
+  Palette, DatabaseBackup, ShieldCheck, Info, Check, X, Lock, Upload,
 } from "lucide-react";
 import ProviderSettings from "./ProviderSettings";
 import ThemeSettings from "./ThemeSettings";
@@ -104,6 +104,8 @@ function SettingsPet({ show }: { show: ShowFn }) {
   const [modelPath, setModelPath] = useState("");
   const [ttsEngine, setTtsEngine] = useState("cosyvoice");
   const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     apiGet<any>("/api/live/config").then(d => {
       if (d.render_mode) setMode(d.render_mode);
@@ -111,6 +113,23 @@ function SettingsPet({ show }: { show: ShowFn }) {
       if (d.tts_engine) setTtsEngine(d.tts_engine);
     }).catch(() => {});
   }, []);
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await apiPost<any>("/api/live/models/import", form);
+      if (res.ok && res.path) {
+        setModelPath(res.path);
+        show(`模型已导入: ${res.name}`);
+      } else {
+        show("导入失败", "err");
+      }
+    } catch { show("导入失败", "err"); }
+    finally { setImporting(false); if (fileRef.current) fileRef.current.value = ""; }
+  };
   const save = async () => {
     setSaving(true);
     try {
@@ -128,7 +147,13 @@ function SettingsPet({ show }: { show: ShowFn }) {
         </select>
       </SettingRow>
       <SettingRow label="模型文件路径" desc="桌宠模型资源的本地路径">
-        <input value={modelPath} onChange={e => setModelPath(e.target.value)} className={INPUT} />
+        <div className="flex gap-1 items-center">
+          <input value={modelPath} onChange={e => setModelPath(e.target.value)} className={INPUT + " flex-1 min-w-0"} placeholder="留空则自动发现" />
+          <input ref={fileRef} type="file" accept=".model3.json,.vrm" onChange={handleImport} className="hidden" />
+          <button type="button" onClick={() => fileRef.current?.click()} disabled={importing} className={BTN_GHOST} title="选择模型文件导入">
+            <Upload size={14} className={importing ? "animate-pulse" : ""} />
+          </button>
+        </div>
       </SettingRow>
       <SettingRow label="TTS 引擎" desc="桌宠说话使用的合成引擎">
         <select value={ttsEngine} onChange={e => setTtsEngine(e.target.value)} className={INPUT}>

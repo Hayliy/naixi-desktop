@@ -3054,6 +3054,7 @@ def setup_routes(app):
     app.router.add_post("/api/live/chat-test", api_live_chat_test)
     app.router.add_get("/api/live/models", api_live_models)
     app.router.add_post("/api/live/models/delete", api_live_models_delete)
+    app.router.add_post("/api/live/models/import", api_live_models_import)
     app.router.add_get("/api/live2d-model/{path:.*}", api_live2d_model)
     app.router.add_get("/api/live2d-model-list", api_live2d_model_list)
 
@@ -3402,6 +3403,45 @@ async def api_live_models_delete(request):
     import shutil
     shutil.rmtree(target)
     return web.json_response({"ok": True})
+
+
+async def api_live_models_import(request):
+    """导入模型文件到 data/models/"""
+    models_dir = os.path.join(_DESKTOP_DIR, "data", "models")
+    os.makedirs(models_dir, exist_ok=True)
+    try:
+        reader = await request.multipart()
+        field = await reader.next()
+        if not field or field.name != "file":
+            return web.json_response({"error": "缺少 file 字段"}, status=400)
+        filename = field.filename or "model.model3.json"
+        content = await field.read()
+        # 判断文件类型
+        is_vrm = filename.lower().endswith(".vrm")
+        is_model3 = filename.lower().endswith(".model3.json")
+        if not is_vrm and not is_model3:
+            return web.json_response({"error": "仅支持 .model3.json 或 .vrm 文件"}, status=400)
+        # 模型目录名：去后缀 → 去重名 → 创建
+        base_name = os.path.splitext(filename)[0]
+        if base_name.endswith(".model3"):
+            base_name = base_name[:-7]  # 去掉 .model3 后缀
+        target_dir = os.path.join(models_dir, base_name)
+        suffix = 1
+        while os.path.exists(target_dir):
+            target_dir = os.path.join(models_dir, f"{base_name}_{suffix}")
+            suffix += 1
+        os.makedirs(target_dir, exist_ok=True)
+        # 保存文件
+        dest = os.path.join(target_dir, filename)
+        with open(dest, "wb") as f:
+            f.write(content)
+        # 返回模型路径
+        model_path = os.path.join(target_dir, filename) if is_model3 else target_dir
+        log.info(f"模型已导入: {dest}")
+        return web.json_response({"ok": True, "path": model_path, "name": base_name})
+    except Exception as e:
+        log.warning(f"模型导入失败: {e}")
+        return web.json_response({"error": "导入失败"}, status=500)
 
 async def api_live2d_model(request):
     """代理 Live2D 模型文件（递归搜索本地 VTube Studio / data/models 目录）"""
