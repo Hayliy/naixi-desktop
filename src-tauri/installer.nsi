@@ -27,6 +27,9 @@ ManifestDPIAwareness PerMonitorV2
 ${StrCase}
 ${StrLoc}
 
+; 默认简体中文（安装进度页等内置界面）
+LoadLanguageFile "${NSISDIR}\Contrib\Language files\SimpChinese.nlf"
+
 {{#if installer_hooks}}
 !include "{{installer_hooks}}"
 {{/if}}
@@ -84,12 +87,14 @@ Var StepLabel4
 Var InstallPathText
 Var DesktopCheck
 Var RunCheck
+Var hBanner
+Var hBmpHandle
 Var PassiveMode
 Var UpdateMode
 Var NoShortcutMode
 
-Name "${PRODUCTNAME}"
-BrandingText "${COPYRIGHT}"
+Name "奶昔 · 桌面智能体"
+BrandingText " "
 OutFile "${OUTFILE}"
 !define PLACEHOLDER_INSTALL_DIR "placeholder\${PRODUCTNAME}"
 InstallDir "${PLACEHOLDER_INSTALL_DIR}"
@@ -130,37 +135,86 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   !include MultiUser.nsh
 !endif
 
-; ─── Macro: step indicator bar ───
+; ─── Keep nsDialogs child at its default size (480x210 content area)
+!macro ResizeToClient
+  ; NSIS default custom-page dialog is already sized correctly.
+  ; Do NOT try to resize the parent or the MUI chrome here - it breaks layout.
+!macroend
+
+; ─── Hide NSIS default wizard buttons & branding ───
+!macro HideWizardChrome
+  GetDlgItem $0 $HWNDPARENT 1
+  ShowWindow $0 0
+  GetDlgItem $0 $HWNDPARENT 2
+  ShowWindow $0 0
+  GetDlgItem $0 $HWNDPARENT 3
+  ShowWindow $0 0
+  ; Branding label / watermark
+  GetDlgItem $0 $HWNDPARENT 1028
+  ${If} $0 != 0
+    ShowWindow $0 0
+  ${EndIf}
+  GetDlgItem $0 $HWNDPARENT 1038
+  ${If} $0 != 0
+    ShowWindow $0 0
+  ${EndIf}
+  GetDlgItem $0 $HWNDPARENT 1256
+  ${If} $0 != 0
+    ShowWindow $0 0
+  ${EndIf}
+!macroend
+
+; ─── Macro: banner bitmap (480x110 fits default NSIS content width) ───
+!macro ShowBanner
+  ${NSD_CreateBitmap} 0 0 480 110 ""
+  Pop $hBanner
+  ${NSD_SetBitmap} $hBanner "$PLUGINSDIR\banner.bmp" $hBmpHandle
+!macroend
+
+; ─── Use NSIS default window size (custom pages fill the default content area) ───
+Function .onGUIInit
+  ; No window resizing - NSIS default MUI dialog size is stable.
+FunctionEnd
+
+; ─── Macro: step indicator bar (footer) ───
 !macro CreateStepBar ACTIVE
   Push $0
-  StrCpy $0 ${CLR_STEP_ON}
-  StrCpy $1 ${CLR_STEP_OFF}
-  ${NSD_CreateLabel} 0 44 120 4 ""
+  ${NSD_CreateLabel} 20 220 72 16 ""
   Pop $StepLabel0
-  SetCtlColors $StepLabel0 "${CLR_STEP_ON}" "${CLR_STEP_ON}"
-  ${If} ${ACTIVE} < 1
-    SetCtlColors $StepLabel0 "${CLR_STEP_OFF}" "${CLR_STEP_OFF}"
+  ${If} ${ACTIVE} >= 1
+    SetCtlColors $StepLabel0 "${CLR_TEXT}" "${CLR_BG}"
+  ${Else}
+    SetCtlColors $StepLabel0 "${CLR_MUTED}" "${CLR_BG}"
   ${EndIf}
-  ${NSD_CreateLabel} 120 44 120 4 ""
+  SendMessage $StepLabel0 ${WM_SETTEXT} 0 "STR:1 欢迎"
+
+  ${NSD_CreateLabel} 96 220 72 16 ""
   Pop $StepLabel1
-  SetCtlColors $StepLabel1 "${CLR_STEP_OFF}" "${CLR_STEP_OFF}"
   ${If} ${ACTIVE} >= 2
-    SetCtlColors $StepLabel1 "${CLR_STEP_ON}" "${CLR_STEP_ON}"
+    SetCtlColors $StepLabel1 "${CLR_TEXT}" "${CLR_BG}"
+  ${Else}
+    SetCtlColors $StepLabel1 "${CLR_MUTED}" "${CLR_BG}"
   ${EndIf}
-  ${NSD_CreateLabel} 240 44 120 4 ""
+  SendMessage $StepLabel1 ${WM_SETTEXT} 0 "STR:2 位置"
+
+  ${NSD_CreateLabel} 172 220 72 16 ""
   Pop $StepLabel2
-  SetCtlColors $StepLabel2 "${CLR_STEP_OFF}" "${CLR_STEP_OFF}"
   ${If} ${ACTIVE} >= 3
-    SetCtlColors $StepLabel2 "${CLR_STEP_ON}" "${CLR_STEP_ON}"
+    SetCtlColors $StepLabel2 "${CLR_TEXT}" "${CLR_BG}"
+  ${Else}
+    SetCtlColors $StepLabel2 "${CLR_MUTED}" "${CLR_BG}"
   ${EndIf}
-  ${NSD_CreateLabel} 360 44 120 4 ""
+  SendMessage $StepLabel2 ${WM_SETTEXT} 0 "STR:3 安装"
+
+  ${NSD_CreateLabel} 248 220 72 16 ""
   Pop $StepLabel3
-  SetCtlColors $StepLabel3 "${CLR_STEP_OFF}" "${CLR_STEP_OFF}"
   ${If} ${ACTIVE} >= 4
-    SetCtlColors $StepLabel3 "${CLR_STEP_ON}" "${CLR_STEP_ON}"
+    SetCtlColors $StepLabel3 "${CLR_TEXT}" "${CLR_BG}"
+  ${Else}
+    SetCtlColors $StepLabel3 "${CLR_MUTED}" "${CLR_BG}"
   ${EndIf}
+  SendMessage $StepLabel3 ${WM_SETTEXT} 0 "STR:4 完成"
   Pop $0
-  Pop $1
 !macroend
 
 ; ─── Page 1: Welcome ───
@@ -169,28 +223,36 @@ Page custom fn_Welcome
 Function fn_Welcome
   nsDialogs::Create 1018
   Pop $Dialog
+  !insertmacro ResizeToClient
+  !insertmacro HideWizardChrome
   SetCtlColors $Dialog "" "${CLR_BG}"
 
-  ${NSD_CreateLabel} 0 0 480 52 ""
-  Pop $0
-  SetCtlColors $0 "${CLR_WHITE}" "${CLR_HEADER}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:  欢迎安装 Naixi 桌面平台"
+  !insertmacro ShowBanner
 
-  ${NSD_CreateLabel} 20 66 460 100 ""
+  ${NSD_CreateLabel} 20 124 440 24 ""
   Pop $0
   SetCtlColors $0 "${CLR_TEXT}" "${CLR_BG}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:本向导将帮助您安装 ${PRODUCTNAME} v${VERSION}。$\r$\n$\r$\nNaixi 是一个 AI 驱动的桌面平台，集成了智能对话、知识管理、自动化、Agent 和工具调用等能力。$\r$\n$\r$\n点击下方按钮开始安装。"
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:欢迎安装 奶昔 · 桌面智能体 v${VERSION}"
 
-  ${NSD_CreateButton} 270 175 100 28 ""
+  ${NSD_CreateLabel} 20 154 440 60 ""
   Pop $0
-  SetCtlColors $0 "${CLR_WHITE}" "${CLR_HEADER}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:安装"
-  ${NSD_OnClick} $0 fn_WelcomeInstall
+  SetCtlColors $0 "${CLR_TEXT}" "${CLR_BG}"
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:奶昔 是你的桌面 AI 智能体工作站，集成 AI 对话、工作流、自动化与知识库。$\r$\n$\r$\n点击「安装」开始，只需几步即可完成。"
 
-  ${NSD_CreateButton} 380 175 80 28 ""
+  !insertmacro CreateStepBar 1
+
+  ${NSD_CreateButton} 260 216 80 28 ""
   Pop $0
   SendMessage $0 ${WM_SETTEXT} 0 "STR:取消"
   ${NSD_OnClick} $0 fn_Cancel
+
+  ${NSD_CreateButton} 350 216 100 28 ""
+  Pop $0
+  SetCtlColors $0 "${CLR_WHITE}" "${CLR_HEADER}"
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:安装 >>"
+  ${NSD_OnClick} $0 fn_WelcomeInstall
+
+  ${NSD_FreeBitmap} $hBanner
   nsDialogs::Show
 FunctionEnd
 
@@ -209,39 +271,40 @@ Page custom fn_DirPage fn_DirPageLeave
 Function fn_DirPage
   nsDialogs::Create 1018
   Pop $Dialog
+  !insertmacro ResizeToClient
+  !insertmacro HideWizardChrome
   SetCtlColors $Dialog "" "${CLR_BG}"
 
-  ${NSD_CreateLabel} 0 0 480 36 ""
-  Pop $0
-  SetCtlColors $0 "${CLR_WHITE}" "${CLR_HEADER}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:  选择安装位置"
+  !insertmacro ShowBanner
 
-  !insertmacro CreateStepBar 2
-
-  ${NSD_CreateLabel} 20 60 440 14 ""
+  ${NSD_CreateLabel} 20 124 440 24 ""
   Pop $0
   SetCtlColors $0 "${CLR_TEXT}" "${CLR_BG}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:目标文件夹"
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:选择安装位置"
 
-  ${NSD_CreateText} 20 78 340 20 ""
+  ${NSD_CreateText} 20 154 340 22 ""
   Pop $InstallPathText
   SendMessage $InstallPathText ${WM_SETTEXT} 0 "STR:$INSTDIR"
 
-  ${NSD_CreateButton} 370 78 90 20 ""
+  ${NSD_CreateButton} 370 154 80 22 ""
   Pop $0
   SendMessage $0 ${WM_SETTEXT} 0 "STR:浏览..."
   ${NSD_OnClick} $0 fn_Browse
 
-  ${NSD_CreateLabel} 20 112 440 20 ""
+  ${NSD_CreateLabel} 20 184 440 16 ""
   Pop $0
   SetCtlColors $0 "${CLR_MUTED}" "${CLR_BG}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:所需磁盘空间: ${ESTIMATEDSIZE} MB"
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:所需磁盘空间：约 ${ESTIMATEDSIZE} MB"
 
-  ${NSD_CreateButton} 300 160 100 28 ""
+  !insertmacro CreateStepBar 2
+
+  ${NSD_CreateButton} 350 216 100 28 ""
   Pop $0
   SetCtlColors $0 "${CLR_WHITE}" "${CLR_HEADER}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:安装"
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:安装 >>"
   ${NSD_OnClick} $0 fn_DirInstall
+
+  ${NSD_FreeBitmap} $hBanner
   nsDialogs::Show
 FunctionEnd
 
@@ -266,7 +329,11 @@ Function fn_DirPageLeave
 FunctionEnd
 
 ; ─── Page 3: InstFiles (runs Sections) ───
-Page instfiles
+Page instfiles "" fn_InstFilesShow
+
+Function fn_InstFilesShow
+  !insertmacro HideWizardChrome
+FunctionEnd
 
 ; ─── Page 4: Finish ───
 Page custom fn_Finish
@@ -274,35 +341,45 @@ Page custom fn_Finish
 Function fn_Finish
   nsDialogs::Create 1018
   Pop $Dialog
+  !insertmacro ResizeToClient
+  !insertmacro HideWizardChrome
   SetCtlColors $Dialog "" "${CLR_BG}"
 
-  ${NSD_CreateLabel} 0 0 480 52 ""
+  !insertmacro ShowBanner
+
+  ${NSD_CreateLabel} 20 124 440 50 ""
   Pop $0
-  SetCtlColors $0 "${CLR_WHITE}" "${CLR_HEADER}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:  安装完成"
+  SetCtlColors $0 "${CLR_TEXT}" "${CLR_BG}"
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:奶昔 · 桌面智能体 v${VERSION} 安装完成！$\r$\n感谢使用，点击「完成」开始使用。"
+
+  ${NSD_CreateCheckBox} 24 180 420 16 ""
+  Pop $RunCheck
+  SendMessage $RunCheck ${BM_SETCHECK} ${BST_CHECKED} 0
+  SendMessage $RunCheck ${WM_SETTEXT} 0 "STR:立即运行 奶昔"
+
+  ${NSD_CreateCheckBox} 24 204 420 16 ""
+  Pop $DesktopCheck
+  SendMessage $DesktopCheck ${BM_SETCHECK} ${BST_CHECKED} 0
+  SendMessage $DesktopCheck ${WM_SETTEXT} 0 "STR:创建桌面快捷方式"
 
   !insertmacro CreateStepBar 4
 
-  ${NSD_CreateLabel} 20 66 440 60 ""
-  Pop $0
-  SetCtlColors $0 "${CLR_TEXT}" "${CLR_BG}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:${PRODUCTNAME} v${VERSION} 安装完成。$\r$\n$\r$\n感谢使用 Naixi！"
-
-  ${NSD_CreateCheckBox} 30 140 400 14 ""
-  Pop $RunCheck
-  SendMessage $RunCheck ${BM_SETCHECK} ${BST_CHECKED} 0
-  SendMessage $RunCheck ${WM_SETTEXT} 0 "STR:立即运行 ${PRODUCTNAME}"
-
-  ${NSD_CreateButton} 300 180 100 28 ""
+  ${NSD_CreateButton} 350 216 100 28 ""
   Pop $0
   SetCtlColors $0 "${CLR_WHITE}" "${CLR_HEADER}"
   SendMessage $0 ${WM_SETTEXT} 0 "STR:完成"
   ${NSD_OnClick} $0 fn_Done
+
+  ${NSD_FreeBitmap} $hBanner
   nsDialogs::Show
 FunctionEnd
 
 Function fn_Done
   Pop $0
+  ${NSD_GetState} $DesktopCheck $0
+  ${If} $0 = ${BST_CHECKED}
+    CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+  ${EndIf}
   ${NSD_GetState} $RunCheck $0
   ${If} $0 = ${BST_CHECKED}
     nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" ""
@@ -357,7 +434,6 @@ Section "Main" SEC01
   ; Shortcuts
   CreateDirectory "$SMPROGRAMS\${PRODUCTNAME}"
   CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
-  CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
   !ifmacrodef NSIS_HOOK_POSTINSTALL
     !insertmacro NSIS_HOOK_POSTINSTALL
   !endif
@@ -407,6 +483,9 @@ Function RestorePreviousInstallLocation
 FunctionEnd
 
 Function .onInit
+  InitPluginsDir
+  SetOutPath $PLUGINSDIR
+  File "D:\naixi_desktop\src-tauri\installer\banner.bmp"
   ${GetOptions} $CMDLINE "/P" $PassiveMode
   ${IfNot} ${Errors}
     StrCpy $PassiveMode 1

@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>奶昔安装器 mockup</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #e8e8e8;
+  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+}
+.window {
+  width: 540px;
+  height: 430px;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 10px 32px rgba(0,0,0,0.18);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.banner {
+  width: 100%;
+  height: 150px;
+  object-fit: cover;
+  display: block;
+}
+.content {
+  flex: 1;
+  padding: 22px 30px;
+  position: relative;
+}
+.page { display: none; }
+.page.active { display: block; }
+h2 { font-size: 19px; color: #72243E; margin-bottom: 12px; font-weight: 600; }
+p { font-size: 13px; color: #666; line-height: 1.7; margin-bottom: 8px; }
+.path-row { display: flex; gap: 8px; margin: 14px 0 10px; }
+.path-row input {
+  flex: 1;
+  height: 28px;
+  border: 1px solid #D3C1D0;
+  border-radius: 5px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: #444;
+  background: #FDF8FA;
+}
+.btn {
+  height: 28px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 5px;
+  background: #D4537E;
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn:hover { background: #b9446c; }
+.btn.secondary { background: #F4C0D1; color: #72243E; }
+.disk { font-size: 11px; color: #888; margin-top: 4px; }
+.progress-wrap { margin-top: 20px; }
+.progress-bar {
+  width: 100%;
+  height: 8px;
+  background: #F4C0D1;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.progress-fill {
+  width: 60%;
+  height: 100%;
+  background: #D4537E;
+  transition: width 0.3s;
+}
+.progress-text { font-size: 11px; color: #888; margin-top: 6px; }
+.check-row { display: flex; align-items: center; gap: 6px; margin-top: 18px; font-size: 13px; color: #555; }
+.footer {
+  height: 62px;
+  border-top: 1px solid #F4C0D1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 30px;
+  background: #FDF8FA;
+}
+.steps { display: flex; gap: 14px; }
+.step {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: #aaa;
+}
+.step .num {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #F4C0D1;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+}
+.step.active { color: #D4537E; }
+.step.active .num { background: #D4537E; }
+.footer-btns { display: flex; gap: 10px; }
+.footer-btns .btn { height: 30px; padding: 0 18px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="window">
+  <img class="banner" src="banner_preview.png" alt="banner">
+
+  <div class="content">
+    <div class="page active" id="p1">
+      <h2>欢迎安装奶昔 · 桌面智能体</h2>
+      <p>嗨，我是奶昔。你的桌面 AI 智能体工作站。</p>
+      <p>集 AI 对话、工作流编排、任务自动化、知识库管理与虚拟主播于一体。安装后，你可以从桌面随时唤出我，把重复的事交给我打理。</p>
+    </div>
+    <div class="page" id="p2">
+      <h2>选择安装位置</h2>
+      <div class="path-row">
+        <input value="C:\Users\21222\AppData\Local\奶昔" readonly>
+        <button class="btn secondary">浏览...</button>
+      </div>
+      <div class="disk">所需磁盘空间：约 420 MB &nbsp;|&nbsp; 可用空间：58.2 GB</div>
+    </div>
+    <div class="page" id="p3">
+      <h2>正在安装</h2>
+      <p>稍等一下，正在把奶昔搬到你电脑上...</p>
+      <div class="progress-wrap">
+        <div class="progress-bar"><div class="progress-fill" id="fill"></div></div>
+        <div class="progress-text">正在解压资源文件... 60%</div>
+      </div>
+    </div>
+    <div class="page" id="p4">
+      <h2>安装完成</h2>
+      <p>奶昔 · 桌面智能体 v0.1.0 已经安装完成。</p>
+      <label class="check-row"><input type="checkbox" checked> 立即运行奶昔</label>
+      <label class="check-row"><input type="checkbox" checked> 创建桌面快捷方式</label>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="steps">
+      <div class="step active" data-i="1"><span class="num">1</span>欢迎</div>
+      <div class="step" data-i="2"><span class="num">2</span>位置</div>
+      <div class="step" data-i="3"><span class="num">3</span>安装</div>
+      <div class="step" data-i="4"><span class="num">4</span>完成</div>
+    </div>
+    <div class="footer-btns">
+      <button class="btn secondary" id="prevBtn" onclick="prev()">上一步</button>
+      <button class="btn" id="nextBtn" onclick="next()">下一步</button>
+    </div>
+  </div>
+</div>
+<script>
+let page = 1;
+function show(n){
+  document.querySelectorAll('.page').forEach(el=>el.classList.remove('active'));
+  document.getElementById('p'+n).classList.add('active');
+  document.querySelectorAll('.step').forEach(el=>{
+    el.classList.toggle('active', parseInt(el.dataset.i) <= n);
+  });
+  const nextBtn = document.getElementById('nextBtn');
+  const prevBtn = document.getElementById('prevBtn');
+  prevBtn.style.visibility = n === 1 ? 'hidden' : 'visible';
+  if(n === 2) nextBtn.textContent = '安装';
+  else if(n === 3) nextBtn.textContent = '安装中';
+  else if(n === 4) nextBtn.textContent = '完成';
+  else nextBtn.textContent = '下一步';
+  nextBtn.disabled = (n === 3);
+  nextBtn.style.opacity = n === 3 ? '0.6' : '1';
+}
+function next(){ if(page < 4){ page++; show(page); } }
+function prev(){ if(page > 1){ page--; show(page); } }
+show(1);
+</script>
+</body>
+</html>
