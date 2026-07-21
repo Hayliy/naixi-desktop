@@ -94,6 +94,45 @@ Var StartMenuCheck
 Var InstallPath
 Var InstallPathText
 
+; ── Custom step indicator macro ──
+!macro CreateStepDots CURRENT
+  ${NSD_CreateLabel} 20 44 440 10 ""
+  Pop $StepLabel0
+  ${If} ${CURRENT} >= 1
+    SetCtlColors $StepLabel0 "${CLR_STEP_DONE}" "${CLR_BG}"
+  ${Else}
+    SetCtlColors $StepLabel0 "${CLR_STEP_PEND}" "${CLR_BG}"
+  ${EndIf}
+  SendMessage $StepLabel0 ${WM_SETTEXT} 0 "STR:Welcome"
+
+  ${NSD_CreateLabel} 100 44 440 10 ""
+  Pop $StepLabel1
+  ${If} ${CURRENT} >= 2
+    SetCtlColors $StepLabel1 "${CLR_STEP_DONE}" "${CLR_BG}"
+  ${Else}
+    SetCtlColors $StepLabel1 "${CLR_STEP_PEND}" "${CLR_BG}"
+  ${EndIf}
+  SendMessage $StepLabel1 ${WM_SETTEXT} 0 "STR:Location"
+
+  ${NSD_CreateLabel} 200 44 440 10 ""
+  Pop $StepLabel2
+  ${If} ${CURRENT} >= 3
+    SetCtlColors $StepLabel2 "${CLR_STEP_DONE}" "${CLR_BG}"
+  ${Else}
+    SetCtlColors $StepLabel2 "${CLR_STEP_PEND}" "${CLR_BG}"
+  ${EndIf}
+  SendMessage $StepLabel2 ${WM_SETTEXT} 0 "STR:Install"
+
+  ${NSD_CreateLabel} 300 44 440 10 ""
+  Pop $StepLabel3
+  ${If} ${CURRENT} >= 4
+    SetCtlColors $StepLabel3 "${CLR_STEP_DONE}" "${CLR_BG}"
+  ${Else}
+    SetCtlColors $StepLabel3 "${CLR_STEP_PEND}" "${CLR_BG}"
+  ${EndIf}
+  SendMessage $StepLabel3 ${WM_SETTEXT} 0 "STR:Finish"
+!macroend
+
 Name "${PRODUCTNAME}"
 BrandingText "${COPYRIGHT}"
 OutFile "${OUTFILE}"
@@ -442,47 +481,8 @@ Function FinishDone
   Quit
 FunctionEnd
 
-!macro CreateStepDots CURRENT
-  ${NSD_CreateLabel} 20 44 440 10 ""
-  Pop $StepLabel0
-  ${If} ${CURRENT} >= 1
-    SetCtlColors $StepLabel0 "${CLR_STEP_DONE}" "${CLR_BG}"
-  ${Else}
-    SetCtlColors $StepLabel0 "${CLR_STEP_PEND}" "${CLR_BG}"
-  ${EndIf}
-  SendMessage $StepLabel0 ${WM_SETTEXT} 0 "STR:Welcome"
-
-  ${NSD_CreateLabel} 100 44 440 10 ""
-  Pop $StepLabel1
-  ${If} ${CURRENT} >= 2
-    SetCtlColors $StepLabel1 "${CLR_STEP_DONE}" "${CLR_BG}"
-  ${Else}
-    SetCtlColors $StepLabel1 "${CLR_STEP_PEND}" "${CLR_BG}"
-  ${EndIf}
-  SendMessage $StepLabel1 ${WM_SETTEXT} 0 "STR:Location"
-
-  ${NSD_CreateLabel} 200 44 440 10 ""
-  Pop $StepLabel2
-  ${If} ${CURRENT} >= 3
-    SetCtlColors $StepLabel2 "${CLR_STEP_DONE}" "${CLR_BG}"
-  ${Else}
-    SetCtlColors $StepLabel2 "${CLR_STEP_PEND}" "${CLR_BG}"
-  ${EndIf}
-  SendMessage $StepLabel2 ${WM_SETTEXT} 0 "STR:Install"
-
-  ${NSD_CreateLabel} 300 44 440 10 ""
-  Pop $StepLabel3
-  ${If} ${CURRENT} >= 4
-    SetCtlColors $StepLabel3 "${CLR_STEP_DONE}" "${CLR_BG}"
-  ${Else}
-    SetCtlColors $StepLabel3 "${CLR_STEP_PEND}" "${CLR_BG}"
-  ${EndIf}
-  SendMessage $StepLabel3 ${WM_SETTEXT} 0 "STR:Finish"
-!macroend
-
 ; ──────────────────────────────────────────────
-; Install logic (copied from default template)
-; ──────────────────────────────────────────────
+; Install logic
 
 Function InstallSections
   SetOutPath $INSTDIR
