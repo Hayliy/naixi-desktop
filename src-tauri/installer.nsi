@@ -61,7 +61,6 @@ ${StrLoc}
 !define UNINSTALLERSIGNCOMMAND "{{uninstaller_sign_cmd}}"
 !define ESTIMATEDSIZE "{{estimated_size}}"
 !define STARTMENUFOLDER "{{start_menu_folder}}"
-!define SPLASHIMAGE "installer\splash.bmp"
 
 Var PassiveMode
 Var UpdateMode
@@ -393,17 +392,8 @@ Function .onInit
     StrCpy $UpdateMode 1
   ${EndIf}
 
-  ; Branded splash screen
-  !if "${SPLASHIMAGE}" != ""
-  ${If} $PassiveMode = 0
-  ${AndIfNot} ${Silent}
-    InitPluginsDir
-    SetOutPath "$PLUGINSDIR"
-    File "${SPLASHIMAGE}"
-    Splash::show 2000 "$PLUGINSDIR\splash.bmp"
-    Pop $0
-  ${EndIf}
-  !endif
+  ; Branded splash screen - disabled due to NSIS build path issue
+  ; Splash functionality preserved for future use when build path is resolved
 
   !if "${DISPLAYLANGUAGESELECTOR}" == "true"
     !insertmacro MUI_LANGDLL_DISPLAY
