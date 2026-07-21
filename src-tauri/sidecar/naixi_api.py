@@ -34,6 +34,9 @@ DESKTOP_DIR = _find_core_root()
 if DESKTOP_DIR not in sys.path:
     sys.path.insert(0, DESKTOP_DIR)
 
+# 记录入口脚本路径（供重启 API 使用）
+sys._naixi_entry = __file__
+
 # 数据库路径
 DESKTOP_DATA_DIR = os.path.join(DESKTOP_DIR, "data")
 os.makedirs(DESKTOP_DATA_DIR, exist_ok=True)

@@ -3,6 +3,7 @@ import { apiGet } from "@/lib/api";
 import { AlertTriangle, RotateCw, RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { apiPost } from "@/lib/api";
 
 const isTauri =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -46,16 +47,19 @@ export default function BackendGuard({ children }: { children: ReactNode }) {
   }, []);
 
   const restart = async () => {
-    if (!isTauri) return;
     setRestarting(true);
     setErrorMsg("");
     setBannerDismissed(false);
     try {
-      await invoke("start_backend");
+      if (isTauri) {
+        await invoke("start_backend");
+      } else {
+        await apiPost("/api/desktop/restart", {});
+      }
     } catch (e) {
       setErrorMsg(typeof e === "string" ? e : "后端启动失败，请查看日志");
     }
-    await probe();
+    setTimeout(() => probe(), 1500);
     setRestarting(false);
   };
 
@@ -73,7 +77,7 @@ export default function BackendGuard({ children }: { children: ReactNode }) {
           <span className="flex-1">
             {errorMsg || "后端未运行，部分功能不可用"}
           </span>
-          {isTauri && (
+          {isTauri ? (
             <>
               <button
                 onClick={restart}
@@ -90,6 +94,15 @@ export default function BackendGuard({ children }: { children: ReactNode }) {
                 关闭
               </button>
             </>
+          ) : (
+            <button
+              onClick={restart}
+              disabled={restarting}
+              className="flex items-center gap-1 px-2 py-1 rounded bg-amber-600 text-white text-xs hover:bg-amber-700 disabled:opacity-50"
+            >
+              <RotateCw size={12} className={restarting ? "animate-spin" : ""} />
+              {restarting ? "重启中" : "重启后端"}
+            </button>
           )}
         </div>
       )}
@@ -101,8 +114,8 @@ export default function BackendGuard({ children }: { children: ReactNode }) {
           <span className="hidden sm:inline">后端</span>
           <button
             onClick={restart}
-            disabled={restarting || !isTauri}
-            title={isTauri ? "重启后端" : "重启需在桌面程序中使用"}
+            disabled={restarting}
+            title={isTauri ? "重启后端" : "重启后端（浏览器模式）"}
             className="flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"
           >
             <RefreshCw size={12} className={restarting ? "animate-spin" : ""} />

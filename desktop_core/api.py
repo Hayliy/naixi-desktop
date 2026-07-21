@@ -710,6 +710,26 @@ async def api_desktop_config_set(request):
         return web.json_response({"error": "配置保存失败"}, status=400)
 
 
+async def api_desktop_restart(request):
+    """重启后端（浏览器模式用 REST API 替代 Tauri invoke）"""
+    try:
+        import subprocess, sys, os
+        script = getattr(sys, '_naixi_entry', None) or (sys.argv[0] if sys.argv and os.path.isfile(sys.argv[0]) else None)
+        if not script:
+            return web.json_response({"error": "无法确定入口脚本路径"}, status=500)
+        # 用同样的解释器启动新进程（应答后 1 秒退出当前进程）
+        subprocess.Popen(
+            [sys.executable, os.path.abspath(script)],
+            cwd=os.path.dirname(os.path.abspath(script)),
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        asyncio.get_event_loop().call_later(1, lambda: os._exit(0))
+        return web.json_response({"ok": True, "message": "后端正在重启"})
+    except Exception as e:
+        log.warning(f"重启后端失败: {e}")
+        return web.json_response({"error": "重启失败"}, status=500)
+
+
 async def api_desktop_paths(request):
     """返回桌面端真实文件路径与存储信息（运行时计算，不硬编码）"""
     import os as _os
@@ -2887,6 +2907,7 @@ def setup_routes(app):
     app.router.add_get("/api/desktop/config", api_desktop_config_get)
     app.router.add_post("/api/desktop/config", api_desktop_config_set)
     app.router.add_get("/api/desktop/paths", api_desktop_paths)
+    app.router.add_post("/api/desktop/restart", api_desktop_restart)
     app.router.add_post("/api/desktop/test-connection", api_desktop_test_connection)
     app.router.add_post("/api/desktop/models", api_desktop_list_models)
     app.router.add_get("/api/stats", api_stats)
