@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { apiGet } from "@/lib/api";
-import { AlertTriangle, RotateCw } from "lucide-react";
+import { AlertTriangle, RotateCw, RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
@@ -9,13 +9,14 @@ const isTauri =
 
 type Status = "checking" | "up" | "down";
 
-// 后端健康守卫：定期探测后端，失联时显示横幅并提供重启入口。
-// 不阻塞主界面，仅在后端不可用时顶部浮出提示条。
+// 后端健康守卫：定期探测后端状态，失联时显示横幅并提供重启入口。
+// 后端正常时右下角悬浮显示状态指示 + 手动重启按钮。
 export default function BackendGuard({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<Status>("checking");
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [restarting, setRestarting] = useState(false);
   const timerRef = useRef<number | null>(null);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
 
   const probe = async () => {
     try {
@@ -32,10 +33,10 @@ export default function BackendGuard({ children }: { children: ReactNode }) {
     timerRef.current = window.setInterval(probe, 5000);
     let unlisten: UnlistenFn | undefined;
     if (isTauri) {
-      // Rust 侧启动失败时（如未检测到 Python）主动推送原因
       listen<string>("backend-error", (e) => {
         setStatus("down");
         setErrorMsg(e.payload);
+        setBannerDismissed(false);
       }).then((fn) => (unlisten = fn));
     }
     return () => {
@@ -48,6 +49,7 @@ export default function BackendGuard({ children }: { children: ReactNode }) {
     if (!isTauri) return;
     setRestarting(true);
     setErrorMsg("");
+    setBannerDismissed(false);
     try {
       await invoke("start_backend");
     } catch (e) {
@@ -57,11 +59,14 @@ export default function BackendGuard({ children }: { children: ReactNode }) {
     setRestarting(false);
   };
 
-  const showBanner = status === "down";
+  // 掉线横幅（可关闭）
+  const showBanner = status === "down" && !bannerDismissed;
 
   return (
     <>
       {children}
+
+      {/* ═══ 后端掉线横幅 ═══ */}
       {showBanner && (
         <div className="fixed top-0 left-0 right-0 z-50 flex items-center gap-2 px-3 py-2 bg-amber-50 border-b border-amber-300 text-amber-800 text-xs">
           <AlertTriangle size={14} className="shrink-0" />
@@ -69,15 +74,39 @@ export default function BackendGuard({ children }: { children: ReactNode }) {
             {errorMsg || "后端未运行，部分功能不可用"}
           </span>
           {isTauri && (
-            <button
-              onClick={restart}
-              disabled={restarting}
-              className="flex items-center gap-1 px-2 py-1 rounded bg-amber-600 text-white text-xs hover:bg-amber-700 disabled:opacity-50"
-            >
-              <RotateCw size={12} className={restarting ? "animate-spin" : ""} />
-              {restarting ? "重启中" : "重启后端"}
-            </button>
+            <>
+              <button
+                onClick={restart}
+                disabled={restarting}
+                className="flex items-center gap-1 px-2 py-1 rounded bg-amber-600 text-white text-xs hover:bg-amber-700 disabled:opacity-50"
+              >
+                <RotateCw size={12} className={restarting ? "animate-spin" : ""} />
+                {restarting ? "重启中" : "重启后端"}
+              </button>
+              <button
+                onClick={() => setBannerDismissed(true)}
+                className="text-amber-500 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-200 text-xs px-1"
+              >
+                关闭
+              </button>
+            </>
           )}
+        </div>
+      )}
+
+      {/* ═══ 悬浮状态按钮（后端正常时，右下角小图标） ═══ */}
+      {status === "up" && (
+        <div className="fixed bottom-4 right-4 z-50 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-white/80 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-600 shadow-sm text-xs text-gray-500 dark:text-gray-300 backdrop-blur-sm hover:shadow-md transition-shadow">
+          <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
+          <span className="hidden sm:inline">后端</span>
+          <button
+            onClick={restart}
+            disabled={restarting || !isTauri}
+            title={isTauri ? "重启后端" : "重启需在桌面程序中使用"}
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"
+          >
+            <RefreshCw size={12} className={restarting ? "animate-spin" : ""} />
+          </button>
         </div>
       )}
     </>
