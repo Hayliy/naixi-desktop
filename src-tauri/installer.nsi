@@ -77,7 +77,11 @@ ${StrLoc}
 
 Var PageIndex
 Var HeaderBgHwnd
-Var StepLabels[5]
+Var StepLabel0
+Var StepLabel1
+Var StepLabel2
+Var StepLabel3
+Var StepLabel4
 Var Dialog
 
 Var PassiveMode
@@ -440,40 +444,40 @@ FunctionEnd
 
 !macro CreateStepDots CURRENT
   ${NSD_CreateLabel} 20 44 440 10 ""
-  Pop $0
+  Pop $StepLabel0
   ${If} ${CURRENT} >= 1
-    SetCtlColors $0 "${CLR_STEP_DONE}" "${CLR_BG}"
+    SetCtlColors $StepLabel0 "${CLR_STEP_DONE}" "${CLR_BG}"
   ${Else}
-    SetCtlColors $0 "${CLR_STEP_PEND}" "${CLR_BG}"
+    SetCtlColors $StepLabel0 "${CLR_STEP_PEND}" "${CLR_BG}"
   ${EndIf}
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:Welcome"
+  SendMessage $StepLabel0 ${WM_SETTEXT} 0 "STR:Welcome"
 
   ${NSD_CreateLabel} 100 44 440 10 ""
-  Pop $0
+  Pop $StepLabel1
   ${If} ${CURRENT} >= 2
-    SetCtlColors $0 "${CLR_STEP_DONE}" "${CLR_BG}"
+    SetCtlColors $StepLabel1 "${CLR_STEP_DONE}" "${CLR_BG}"
   ${Else}
-    SetCtlColors $0 "${CLR_STEP_PEND}" "${CLR_BG}"
+    SetCtlColors $StepLabel1 "${CLR_STEP_PEND}" "${CLR_BG}"
   ${EndIf}
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:Location"
+  SendMessage $StepLabel1 ${WM_SETTEXT} 0 "STR:Location"
 
   ${NSD_CreateLabel} 200 44 440 10 ""
-  Pop $0
+  Pop $StepLabel2
   ${If} ${CURRENT} >= 3
-    SetCtlColors $0 "${CLR_STEP_DONE}" "${CLR_BG}"
+    SetCtlColors $StepLabel2 "${CLR_STEP_DONE}" "${CLR_BG}"
   ${Else}
-    SetCtlColors $0 "${CLR_STEP_PEND}" "${CLR_BG}"
+    SetCtlColors $StepLabel2 "${CLR_STEP_PEND}" "${CLR_BG}"
   ${EndIf}
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:Install"
+  SendMessage $StepLabel2 ${WM_SETTEXT} 0 "STR:Install"
 
   ${NSD_CreateLabel} 300 44 440 10 ""
-  Pop $0
+  Pop $StepLabel3
   ${If} ${CURRENT} >= 4
-    SetCtlColors $0 "${CLR_STEP_DONE}" "${CLR_BG}"
+    SetCtlColors $StepLabel3 "${CLR_STEP_DONE}" "${CLR_BG}"
   ${Else}
-    SetCtlColors $0 "${CLR_STEP_PEND}" "${CLR_BG}"
+    SetCtlColors $StepLabel3 "${CLR_STEP_PEND}" "${CLR_BG}"
   ${EndIf}
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:Finish"
+  SendMessage $StepLabel3 ${WM_SETTEXT} 0 "STR:Finish"
 !macroend
 
 ; ──────────────────────────────────────────────
