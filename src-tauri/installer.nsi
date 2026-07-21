@@ -310,13 +310,15 @@ Function fn_Done
   Quit
 FunctionEnd
 
-; ─── Languages ───
+; ─── Languages (disabled - custom nsDialogs pages don't need MUI) ───
+{{#if false}}
 {{#each languages}}
 !insertmacro MUI_LANGUAGE "{{this}}"
 {{/each}}
 {{#each language_files}}
   !include "{{this}}"
 {{/each}}
+{{/if}}
 
 ; ════════════════════════════════════════════
 ; Sections (install logic)
