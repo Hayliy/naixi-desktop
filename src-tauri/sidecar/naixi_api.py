@@ -34,6 +34,11 @@ DESKTOP_DIR = _find_core_root()
 if DESKTOP_DIR not in sys.path:
     sys.path.insert(0, DESKTOP_DIR)
 
+# 让 api.py 模块也能正确找到项目根路径
+# 项目根永远是 naixi_api.py 所在目录的 3 层上级（src-tauri/sidecar/ → src-tauri/ → naixi_desktop/）
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+os.environ["DESKTOP_DIR"] = _PROJECT_ROOT
+
 # 记录入口脚本路径（供重启 API 使用）
 sys._naixi_entry = __file__
 

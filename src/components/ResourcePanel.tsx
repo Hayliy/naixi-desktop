@@ -5,7 +5,7 @@ import { useToast } from "@/components/Toast";
 import { getAvatarUrl } from "@/lib/avatar";
 
 type TabType = "prompts" | "experts" | "skills";
-const TAB_LABELS: Record<TabType, string> = { prompts: "提示词", experts: "专家团队", skills: "Skill 技能" };
+const TAB_LABELS: Record<TabType, string> = { prompts: "提示词", experts: "专家", skills: "Skill 技能" };
 const TAB_META_KEY: Record<TabType, string> = { prompts: "custom_prompts", experts: "custom_experts", skills: "custom_skills" };
 const ALL_CATS = ["全部", "通用", "开发", "代码开发", "写作文案", "数据分析", "设计创意", "翻译语言", "教育学习", "商业运营", "法律合规"];
 

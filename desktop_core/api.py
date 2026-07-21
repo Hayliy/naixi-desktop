@@ -2077,7 +2077,7 @@ async def api_providers(request):
 async def api_prompts_github(request):
     """返回从 GitHub 下载的所有提示词（合并自定义）"""
     import os, json as _json
-    fp = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "prompts", "prompts.json")
+    fp = os.path.join(_DESKTOP_DIR, "data", "prompts", "prompts.json")
     data = []
     if os.path.exists(fp):
         with open(fp, 'r', encoding='utf-8') as f:
@@ -2097,7 +2097,7 @@ async def api_prompts_github(request):
 async def api_experts_list(request):
     """返回专家列表（合并自定义）"""
     import os, json as _json
-    fp = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "prompts", "experts.json")
+    fp = os.path.join(_DESKTOP_DIR, "data", "prompts", "experts.json")
     data = []
     if os.path.exists(fp):
         with open(fp, 'r', encoding='utf-8') as f:
@@ -2116,7 +2116,7 @@ async def api_experts_list(request):
 async def api_skills_list(request):
     """返回 Skill 列表（合并自定义）"""
     import os, json as _json
-    fp = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "prompts", "skills.json")
+    fp = os.path.join(_DESKTOP_DIR, "data", "prompts", "skills.json")
     data = []
     if os.path.exists(fp):
         with open(fp, 'r', encoding='utf-8') as f:
