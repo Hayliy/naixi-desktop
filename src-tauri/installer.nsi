@@ -117,7 +117,9 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   !define MULTIUSER_MUI
   !define MULTIUSER_INSTALLMODE_INSTDIR "${PRODUCTNAME}"
   !define MULTIUSER_INSTALLMODE_COMMANDLINE
-  !if "${ARCH}" == "x64" || "${ARCH}" == "arm64"
+  !if "${ARCH}" == "x64"
+    !define MULTIUSER_USE_PROGRAMFILES64
+  !else if "${ARCH}" == "arm64"
     !define MULTIUSER_USE_PROGRAMFILES64
   !endif
   !define MULTIUSER_INSTALLMODE_DEFAULT_REGISTRY_KEY "${UNINSTKEY}"
