@@ -20,7 +20,7 @@ import {
   HardDrive, Shield, Film, Layers, GitBranch,
   Cpu as CpuIcon, Zap, Network, Lock,
   Plus, Check, Repeat, Play, Pause, ChevronDown, ChevronUp, ChevronLeft, Edit3, Trash2, CircleAlert,
-  Search, X, Loader2, Copy, Download, RefreshCw,
+  Search, X, Loader2, Copy, Download, RefreshCw, Upload,
 } from "lucide-react";
 
 const PAGE_TITLES: Record<string, string> = {
@@ -1952,6 +1952,34 @@ function LivePage() {
     } catch { notify("请求失败", "error"); }
   };
 
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const afterImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await apiPost<any>("/api/live/models/import", form);
+      if (res.ok && res.path) {
+        notify(`模型已导入: ${res.name}`, "success");
+        await apiPost("/api/live/save-config", { model_path: res.path });
+        const r = await apiPost("/api/live/pet-start", { model_path: res.path });
+        if (r?.ok) notify("桌宠已启动", "success");
+        else notify("桌宠启动失败", "error");
+      } else {
+        notify("导入失败", "error");
+      }
+    } catch { notify("导入失败", "error"); }
+    finally {
+      setImporting(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+    pollStatus();
+  };
+
   const togglePet = async () => {
     if (s?.pet_running) {
       try {
@@ -1961,11 +1989,20 @@ function LivePage() {
       } catch { notify("关闭失败", "error"); }
     } else {
       try {
-        const r = await apiPost("/api/live/pet-start", {});
-        if (r?.ok) notify("桌宠已启动", "success");
-        else notify("桌宠启动失败", "error");
-        pollStatus();
-      } catch { notify("桌宠启动失败", "error"); }
+        const cfg = await apiGet<any>("/api/live/config");
+        if (cfg?.model_path) {
+          const r = await apiPost("/api/live/pet-start", { model_path: cfg.model_path });
+          if (r?.ok) notify("桌宠已启动", "success");
+          else notify("桌宠启动失败", "error");
+        } else {
+          fileRef.current?.click();  // 没模型 → 弹出文件选择器
+          return;
+        }
+      } catch {
+        fileRef.current?.click();
+        return;
+      }
+      pollStatus();
     }
   };
 
@@ -2029,6 +2066,7 @@ function LivePage() {
             {s?.connected && <span className="text-[8px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded">已连接</span>}
             {!s?.connected && s?.running && <span className="text-[8px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded">等待连接</span>}
             {!s?.connected && !s?.running && <span className="text-[8px] bg-sakura-100 text-sakura-500 px-1.5 py-0.5 rounded">未启动</span>}
+            <input ref={fileRef} type="file" accept=".model3.json,.vrm" onChange={afterImport} className="hidden" />
           </div>
         </div>
         <div className="p-3 grid grid-cols-2 gap-3 text-[10px]">
