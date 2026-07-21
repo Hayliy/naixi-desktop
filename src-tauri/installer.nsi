@@ -174,22 +174,22 @@ Function fn_Welcome
   ${NSD_CreateLabel} 0 0 480 52 ""
   Pop $0
   SetCtlColors $0 "${CLR_WHITE}" "${CLR_HEADER}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:  Welcome to Naixi Desktop"
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:  欢迎安装 Naixi 桌面平台"
 
-  ${NSD_CreateLabel} 20 66 440 90 ""
+  ${NSD_CreateLabel} 20 66 460 100 ""
   Pop $0
   SetCtlColors $0 "${CLR_TEXT}" "${CLR_BG}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:This wizard will install ${PRODUCTNAME} v${VERSION} on your computer.$\r$\n$\r$\n${PRODUCTNAME} is an AI-powered desktop platform with intelligent chat, knowledge management, automation, agents, and tools integration.$\r$\n$\r$\nClick Install to begin."
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:本向导将帮助您安装 ${PRODUCTNAME} v${VERSION}。$\r$\n$\r$\nNaixi 是一个 AI 驱动的桌面平台，集成了智能对话、知识管理、自动化、Agent 和工具调用等能力。$\r$\n$\r$\n点击下方按钮开始安装。"
 
-  ${NSD_CreateButton} 300 170 90 24 ""
+  ${NSD_CreateButton} 270 175 100 28 ""
   Pop $0
   SetCtlColors $0 "${CLR_WHITE}" "${CLR_HEADER}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:Install"
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:安装"
   ${NSD_OnClick} $0 fn_WelcomeInstall
 
-  ${NSD_CreateButton} 400 170 60 24 ""
+  ${NSD_CreateButton} 380 175 80 28 ""
   Pop $0
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:Cancel"
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:取消"
   ${NSD_OnClick} $0 fn_Cancel
   nsDialogs::Show
 FunctionEnd
@@ -214,14 +214,14 @@ Function fn_DirPage
   ${NSD_CreateLabel} 0 0 480 36 ""
   Pop $0
   SetCtlColors $0 "${CLR_WHITE}" "${CLR_HEADER}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:  Choose install location"
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:  选择安装位置"
 
   !insertmacro CreateStepBar 2
 
   ${NSD_CreateLabel} 20 60 440 14 ""
   Pop $0
   SetCtlColors $0 "${CLR_TEXT}" "${CLR_BG}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:DESTINATION FOLDER"
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:目标文件夹"
 
   ${NSD_CreateText} 20 78 340 20 ""
   Pop $InstallPathText
@@ -229,25 +229,25 @@ Function fn_DirPage
 
   ${NSD_CreateButton} 370 78 90 20 ""
   Pop $0
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:Browse..."
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:浏览..."
   ${NSD_OnClick} $0 fn_Browse
 
   ${NSD_CreateLabel} 20 112 440 20 ""
   Pop $0
   SetCtlColors $0 "${CLR_MUTED}" "${CLR_BG}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:Disk space required: ${ESTIMATEDSIZE} MB"
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:所需磁盘空间: ${ESTIMATEDSIZE} MB"
 
-  ${NSD_CreateButton} 300 160 90 24 ""
+  ${NSD_CreateButton} 300 160 100 28 ""
   Pop $0
   SetCtlColors $0 "${CLR_WHITE}" "${CLR_HEADER}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:Install"
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:安装"
   ${NSD_OnClick} $0 fn_DirInstall
   nsDialogs::Show
 FunctionEnd
 
 Function fn_Browse
   ${NSD_GetText} $InstallPathText $0
-  nsDialogs::SelectFolderDialog "Select installation folder" "$0"
+  nsDialogs::SelectFolderDialog "选择安装文件夹" "$0"
   Pop $0
   ${If} $0 != error
     SendMessage $InstallPathText ${WM_SETTEXT} 0 "STR:$0"
@@ -279,24 +279,24 @@ Function fn_Finish
   ${NSD_CreateLabel} 0 0 480 52 ""
   Pop $0
   SetCtlColors $0 "${CLR_WHITE}" "${CLR_HEADER}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:  Installation complete"
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:  安装完成"
 
   !insertmacro CreateStepBar 4
 
   ${NSD_CreateLabel} 20 66 440 60 ""
   Pop $0
   SetCtlColors $0 "${CLR_TEXT}" "${CLR_BG}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:${PRODUCTNAME} v${VERSION} has been installed.$\r$\n$\r$\nThank you for choosing Naixi!"
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:${PRODUCTNAME} v${VERSION} 安装完成。$\r$\n$\r$\n感谢使用 Naixi！"
 
   ${NSD_CreateCheckBox} 30 140 400 14 ""
   Pop $RunCheck
   SendMessage $RunCheck ${BM_SETCHECK} ${BST_CHECKED} 0
-  SendMessage $RunCheck ${WM_SETTEXT} 0 "STR:Run ${PRODUCTNAME} now"
+  SendMessage $RunCheck ${WM_SETTEXT} 0 "STR:立即运行 ${PRODUCTNAME}"
 
-  ${NSD_CreateButton} 300 180 90 24 ""
+  ${NSD_CreateButton} 300 180 100 28 ""
   Pop $0
   SetCtlColors $0 "${CLR_WHITE}" "${CLR_HEADER}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:Done"
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:完成"
   ${NSD_OnClick} $0 fn_Done
   nsDialogs::Show
 FunctionEnd
@@ -421,7 +421,7 @@ Function .onInit
   ${EndIf}
 
   !if "${DISPLAYLANGUAGESELECTOR}" == "true"
-    !insertmacro MUI_LANGDLL_DISPLAY
+    MessageBox MB_OK "Naixi 安装程序默认使用简体中文。"
   !endif
 
   !insertmacro SetContext
