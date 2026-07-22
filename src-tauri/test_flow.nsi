@@ -528,13 +528,6 @@ Function fn_ProgressPage
       System::Call "user32::UpdateWindow(i $hStepTxt2)"
       System::Call "user32::UpdateWindow(i $hStepTxt3)"
       System::Call "user32::UpdateWindow(i $hStepTxt4)"
-      ; ── 调试用：env NAIXI_P3PAUSE=1 时在 50% 暂停 6s，便于截图取证 ──
-      ${If} $TickCount == 50
-        ReadEnvStr $R2 "NAIXI_P3PAUSE"
-        ${If} $R2 != ""
-          System::Call "kernel32::Sleep(i 6000)"
-        ${EndIf}
-      ${EndIf}
       ${If} $TickCount >= 100
         SetOutPath "$INSTDIR"
         FileOpen $R0 "$INSTDIR\installed.txt" w

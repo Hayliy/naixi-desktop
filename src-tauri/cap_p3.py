@@ -133,9 +133,8 @@ def footer_text_px(img):
                 if abs(r-bg[0])+abs(g-bg[1])+abs(b-bg[2])>40: tot+=1
     return tot
 
-# launch with pause env
-env = os.environ.copy(); env["NAIXI_P3PAUSE"] = "1"
-p = subprocess.Popen([EXE], env=env)
+# launch installer
+p = subprocess.Popen([EXE])
 print("launched")
 hwnd = find_window(40)
 if not hwnd:
