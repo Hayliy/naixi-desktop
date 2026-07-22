@@ -93,6 +93,12 @@ LoadLanguageFile "${NSISDIR}\Contrib\Language files\SimpChinese.nlf"
 !ifndef EM_SETREADONLY
   !define EM_SETREADONLY 0x00CF
 !endif
+!ifndef PBM_SETRANGE
+  !define PBM_SETRANGE 0x0401
+!endif
+!ifndef PBM_SETPOS
+  !define PBM_SETPOS 0x0402
+!endif
 
 ; ── 窗口尺寸（与 mockup.html 一致）──
 !define WIN_W   540
@@ -262,17 +268,28 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   Pop $1
 !macroend
 
-; ── 位图按钮：底层位图显示 + 顶层透明 Label 点击区（SS_BITMAP 不发 STN_CLICKED，点击由 Label 接管）──
+; ── 位图按钮：位图控件直接显示 + 直接接收点击（nsDialogs 子类化捕获鼠标，需真实鼠标事件）──
 !macro BitmapBtn X Y W H BMP HANDLER OUTVAR_BMP OUTVAR_CLICK
   ${NSD_CreateBitmap} ${X} ${Y} ${W} ${H} ""
   Pop ${OUTVAR_BMP}
   ${NSD_SetBitmap} ${OUTVAR_BMP} "${BMP}" $R0
+  !insertmacro AddNotify ${OUTVAR_BMP}
+  ${NSD_OnClick} ${OUTVAR_BMP} ${HANDLER}
+  System::Call "user32::SetWindowPos(i ${OUTVAR_BMP}, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
+  StrCpy ${OUTVAR_CLICK} ${OUTVAR_BMP}
+!macroend
+
+; ── 透明点击区：用于 banner 右上角已绘制好的最小化/关闭按钮（真正透明，不擦除背景）──
+!macro ClickArea X Y W H HANDLER OUTVAR
   ${NSD_CreateLabel} ${X} ${Y} ${W} ${H} ""
-  Pop ${OUTVAR_CLICK}
-  SetCtlColors ${OUTVAR_CLICK} "${CLR_BG}" ""
-  !insertmacro AddNotify ${OUTVAR_CLICK}
-  ${NSD_OnClick} ${OUTVAR_CLICK} ${HANDLER}
-  System::Call "user32::SetWindowPos(i ${OUTVAR_CLICK}, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
+  Pop ${OUTVAR}
+  SetCtlColors ${OUTVAR} "${CLR_BG}" ""
+  !insertmacro AddNotify ${OUTVAR}
+  ${NSD_OnClick} ${OUTVAR} ${HANDLER}
+  System::Call "user32::GetWindowLong(i ${OUTVAR}, i ${GWL_EXSTYLE}) i .r0"
+  IntOp $0 $0 | 0x00000020  ; WS_EX_TRANSPARENT
+  System::Call "user32::SetWindowLong(i ${OUTVAR}, i ${GWL_EXSTYLE}, i r0)"
+  System::Call "user32::SetWindowPos(i ${OUTVAR}, i 0, i 0, i 0, i 0, i 0, i 0x0043)"
 !macroend
 
 ; ── 粉色主按钮（Label 模拟）───
@@ -302,36 +319,23 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   ${NSD_SetBitmap} $hBanner "$PLUGINSDIR\banner.bmp" $hBmpHandle
   ${NSD_OnClick} $hBanner fn_DragTitle
 
-  ; 右上角最小化按钮（透明蒙版 + 字形 —，深灰字）
-  ${NSD_CreateLabel} 478 6 28 24 "—"
-  Pop $0
-  SetCtlColors $0 "${CLR_CLOSE}" ""
-  !insertmacro ApplyFont $0 $hFontBtn
-  !insertmacro CenterLabel $0
-  !insertmacro AddNotify $0
-  ${NSD_OnClick} $0 fn_Minimize
-
-  ; 右上角关闭按钮（透明蒙版 + 字形 ×，深灰字）
-  ${NSD_CreateLabel} 506 6 28 24 "×"
-  Pop $0
-  SetCtlColors $0 "${CLR_CLOSE}" ""
-  !insertmacro ApplyFont $0 $hFontBtn
-  !insertmacro CenterLabel $0
-  !insertmacro AddNotify $0
-  ${NSD_OnClick} $0 fn_Close
+  ; 右上角最小化/关闭按钮：banner 位图上已绘制半透明蒙版 + 字形，这里只加透明点击区
+  !insertmacro ClickArea 478 6 28 24 fn_Minimize $0
+  !insertmacro ClickArea 506 6 28 24 fn_Close $0
 !macroend
 
 !macro CreateStep IDX ACTIVE X LABEL
-  ; 数字圆点（20x20，激活粉底白字 / 未激活浅粉底白字），匹配 mockup .step .num
-  ${NSD_CreateBitmap} ${X} 388 20 20 ""
+  ; 数字圆点（18x18，激活粉底白字 / 未激活浅粉底白字），匹配 mockup .step .num
+  ${NSD_CreateBitmap} ${X} 389 18 18 ""
   Pop $8
   ${If} ${ACTIVE} >= ${IDX}
     ${NSD_SetBitmap} $8 "$PLUGINSDIR\num${IDX}_on.bmp" $9
   ${Else}
     ${NSD_SetBitmap} $8 "$PLUGINSDIR\num${IDX}_off.bmp" $9
   ${EndIf}
+  System::Call "user32::SetWindowPos(i $8, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
 
-  IntOp $9 ${X} + 26
+  IntOp $9 ${X} + 24
   ${NSD_CreateLabel} $9 390 44 18 "${LABEL}"
   Pop $8
   ${If} ${ACTIVE} >= ${IDX}
@@ -459,17 +463,16 @@ Function fn_DirPage
   !insertmacro ApplyFont $0 $hFontTitle
 
   ; 输入框边框
-  ${NSD_CreateLabel} 29 209 382 30 ""
+  ${NSD_CreateLabel} 29 209 382 32 ""
   Pop $0
   SetCtlColors $0 "${CLR_BORDER}" "${CLR_BORDER}"
 
-  ; 路径输入框（只读）
-  ${NSD_CreateText} 30 210 380 28 "$INSTDIR"
+  ; 路径显示框（用 Label 模拟输入框，确保配色完全可控）
+  ${NSD_CreateLabel} 30 210 380 30 "$INSTDIR"
   Pop $InstallPathText
-  !insertmacro FlatEdit $InstallPathText
   SetCtlColors $InstallPathText "${CLR_INPUT_TEXT}" "${CLR_INPUT_BG}"
   !insertmacro ApplyFont $InstallPathText $hFontBody
-  SendMessage $InstallPathText ${EM_SETREADONLY} 1 0
+  !insertmacro CenterLabel $InstallPathText
 
   ; 浏览按钮（次级：浅粉底深粉字，90x28）
   !insertmacro BitmapBtn 420 210 90 28 "$PLUGINSDIR\btn_browse.bmp" fn_Browse $R8 $R9
@@ -523,14 +526,14 @@ Function fn_ProgressPage
   SetCtlColors $0 "${CLR_TEXT_BODY}" "${CLR_BG}"
   !insertmacro ApplyFont $0 $hFontBody
 
-  ; 进度条背景（浅粉色）
+  ; 进度条轨道（浅粉色）
   ${NSD_CreateLabel} 30 246 480 8 ""
   Pop $hProgressBar
   SetCtlColors $hProgressBar "${CLR_LIGHT_PINK}" "${CLR_LIGHT_PINK}"
-  ; 进度条填充（粉色），初始宽度 0
-  ${NSD_CreateLabel} 30 246 0 8 ""
-  Pop $hProgressFill
-  SetCtlColors $hProgressFill "${CLR_PINK}" "${CLR_PINK}"
+  ; 原生进度条控件（msctls_progress32），PBM_SETPOS 自动重绘，无需消息泵
+  System::Call "user32::CreateWindowEx(i 0, t 'msctls_progress32', i 0, i 0x50000000, i 30, i 246, i 480, i 8, i $Dialog, i 0, i 0, i 0) i .r1"
+  StrCpy $hProgressFill $1
+  SendMessage $hProgressFill ${PBM_SETRANGE} 0 0x00640000
 
   ${NSD_CreateLabel} 30 260 480 18 ""
   Pop $hProgressStatus
@@ -541,28 +544,19 @@ Function fn_ProgressPage
 
   StrCpy $InstallDone 0
   StrCpy $InstallStage 0
-  ${NSD_CreateTimer} fn_InstallTick 100
 
   ${NSD_FreeBitmap} $hBanner
+  ; 手动显示对话框并执行真实安装（分阶段），用 PBM_SETPOS 更新进度
+  System::Call "user32::ShowWindow(i $HWNDPARENT, i 5)"
+  System::Call "user32::ShowWindow(i $Dialog, i 5)"
+  ${Do}
+    ${If} $InstallDone == 1
+      ${Break}
+    ${EndIf}
+    Call fn_DoInstall
+    System::Call "kernel32::Sleep(i 80)"
+  ${Loop}
   nsDialogs::Show
-FunctionEnd
-
-!macro SetProgressWidth PERCENT
-  IntOp $R0 ${PERCENT} * 480
-  IntOp $R0 $R0 / 100
-  System::Call "user32::SetWindowPos(i $hProgressFill, i 0, i 30, i 246, i r0, i 8, i 0x0014)"
-!macroend
-
-Function fn_InstallTick
-  ${If} $InstallDone == 1
-    Return
-  ${EndIf}
-  Call fn_DoInstall
-  ${If} $InstallDone == 1
-    ${NSD_KillTimer} fn_InstallTick
-  ${Else}
-    ${NSD_CreateTimer} fn_InstallTick 120
-  ${EndIf}
 FunctionEnd
 
 Function fn_ProgressPageLeave
@@ -647,7 +641,7 @@ SectionEnd
 Function fn_DoInstall
   ${If} $InstallStage == 0
     ${NSD_SetText} $hProgressStatus "准备安装..."
-    !insertmacro SetProgressWidth 8
+    SendMessage $hProgressFill ${PBM_SETPOS} 8 0
     SetOutPath $INSTDIR
     !ifmacrodef NSIS_HOOK_PREINSTALL
       !insertmacro NSIS_HOOK_PREINSTALL
@@ -658,19 +652,19 @@ Function fn_DoInstall
   ${EndIf}
   ${If} $InstallStage == 1
     ${NSD_SetText} $hProgressStatus "写入主程序..."
-    !insertmacro SetProgressWidth 25
+    SendMessage $hProgressFill ${PBM_SETPOS} 25 0
     File "${MAINBINARYSRCPATH}"
     IntOp $InstallStage $InstallStage + 1
     Return
   ${EndIf}
   ${If} $InstallStage == 2
     ${NSD_SetText} $hProgressStatus "创建资源目录..."
-    !insertmacro SetProgressWidth 40
+    SendMessage $hProgressFill ${PBM_SETPOS} 40 0
     {{#each resources_dirs}}
       CreateDirectory "$INSTDIR\\{{this}}"
     {{/each}}
     ${NSD_SetText} $hProgressStatus "写入资源文件..."
-    !insertmacro SetProgressWidth 55
+    SendMessage $hProgressFill ${PBM_SETPOS} 55 0
     {{#each resources}}
       File /a "/oname={{this.[1]}}" "{{no-escape @key}}"
     {{/each}}
@@ -679,7 +673,7 @@ Function fn_DoInstall
   ${EndIf}
   ${If} $InstallStage == 3
     ${NSD_SetText} $hProgressStatus "写入依赖文件..."
-    !insertmacro SetProgressWidth 70
+    SendMessage $hProgressFill ${PBM_SETPOS} 70 0
     {{#each binaries}}
       File /a "/oname={{this}}" "{{no-escape @key}}"
     {{/each}}
@@ -688,14 +682,14 @@ Function fn_DoInstall
   ${EndIf}
   ${If} $InstallStage == 4
     ${NSD_SetText} $hProgressStatus "写入卸载程序..."
-    !insertmacro SetProgressWidth 82
+    SendMessage $hProgressFill ${PBM_SETPOS} 82 0
     WriteUninstaller "$INSTDIR\uninstall.exe"
     IntOp $InstallStage $InstallStage + 1
     Return
   ${EndIf}
   ${If} $InstallStage == 5
     ${NSD_SetText} $hProgressStatus "注册安装信息..."
-    !insertmacro SetProgressWidth 90
+    SendMessage $hProgressFill ${PBM_SETPOS} 90 0
     WriteRegStr SHCTX "${MANUPRODUCTKEY}" "" $INSTDIR
     WriteRegStr SHCTX "${UNINSTKEY}" "MainBinaryName" "${MAINBINARYNAME}.exe"
     WriteRegStr SHCTX "${UNINSTKEY}" "DisplayName" "${PRODUCTNAME}"
@@ -714,7 +708,7 @@ Function fn_DoInstall
   ${EndIf}
   ; 最后阶段：创建快捷方式并收尾
   ${NSD_SetText} $hProgressStatus "创建快捷方式..."
-  !insertmacro SetProgressWidth 100
+  SendMessage $hProgressFill ${PBM_SETPOS} 100 0
   CreateDirectory "$SMPROGRAMS\${PRODUCTNAME}"
   CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}\奶昔.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe" 0
   ; WebView2 检测

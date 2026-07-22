@@ -170,12 +170,14 @@ def main():
     proc = subprocess.Popen([exe])
     print("LAUNCH", exe)
 
-    # 等待主窗口
+    # 等待主窗口（210MB 安装包 NSIS 解压较慢，可能需数十秒；解压对话框标题为“unpacking data”且尺寸很小，会被尺寸过滤）
     hwnd = None
-    for _ in range(30):
+    for i in range(240):  # 最多 120 秒
         hwnd = find_main()
         if hwnd:
             break
+        if i % 10 == 0:
+            print(f"  等待主窗口... {i*0.5:.0f}s")
         time.sleep(0.5)
     if not hwnd:
         print("WINDOW_NOT_FOUND")
