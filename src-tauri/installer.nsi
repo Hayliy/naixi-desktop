@@ -64,26 +64,46 @@ LoadLanguageFile "${NSISDIR}\Contrib\Language files\SimpChinese.nlf"
 !define ESTIMATEDSIZE "{{estimated_size}}"
 !define STARTMENUFOLDER "{{start_menu_folder}}"
 
-; Sakura pink palette
-!define CLR_HEADER   0xD4537E
-!define CLR_HEADER2  0x993556
-!define CLR_BG       0xFBEAF0
-!define CLR_WHITE    0xFFFFFF
-!define CLR_TEXT     0x72243E
-!define CLR_LIGHT    0xF4C0D1
-!define CLR_BORDER   0xD3C1D0
-!define CLR_GREEN    0x0F6E56
-!define CLR_MUTED    0x888780
-!define CLR_STEP_ON  0xD4537E
-!define CLR_STEP_OFF 0xF4C0D1
+; ── 配色（SetCtlColors 使用 RGB；GDI SendMessage 使用 BGR）──
+!define CLR_PINK        0xD4537E
+!define CLR_LIGHT_PINK  0xF4C0D1
+!define CLR_DARK_PINK   0x72243E
+!define CLR_FOOTER_BG   0xFDF8FA
+!define CLR_BG          0xFFFFFF
+!define CLR_TEXT_BODY   0x666666
+!define CLR_TEXT_MUTED  0x888888
+!define CLR_TEXT_STEP   0xAAAAAA
+!define CLR_BORDER      0xD3C1D0
+!define CLR_INPUT_BG    0xFDF8FA
+!define CLR_INPUT_TEXT  0x444444
+!define CLR_CLOSE       0x555555
+
+!ifndef WM_NCLBUTTONDOWN
+  !define WM_NCLBUTTONDOWN 0x00A1
+!endif
+!ifndef HTCAPTION
+  !define HTCAPTION 2
+!endif
+!define SWP_NOMOVE     0x0002
+!define SWP_NOSIZE     0x0001
+!define SWP_NOZORDER   0x0004
+!define SWP_NOACTIVATE 0x0010
+!define SWP_FRAMECHANGED 0x0020
+
+!ifndef EM_SETREADONLY
+  !define EM_SETREADONLY 0x00CF
+!endif
+
+; ── 窗口尺寸（与 mockup.html 一致）──
+!define WIN_W   540
+!define WIN_H   430
+!define BANNER_H 150
+!define FOOTER_H 62
+!define FOOTER_TOP 368
+!define CONTENT_TOP 168
 
 ; Variables
 Var Dialog
-Var StepLabel0
-Var StepLabel1
-Var StepLabel2
-Var StepLabel3
-Var StepLabel4
 Var InstallPathText
 Var DesktopCheck
 Var RunCheck
@@ -92,6 +112,21 @@ Var hBmpHandle
 Var PassiveMode
 Var UpdateMode
 Var NoShortcutMode
+Var hFontTitle
+Var hFontBody
+Var hFontSmall
+Var hFontTiny
+Var hFontBtn
+Var hProgressStatus
+Var hProgressBar
+Var hProgressFill
+Var hNextBtn
+Var hPrevBtn
+Var hNextBmp
+Var hPrevBmp
+Var InstallStage
+Var InstallDone
+Var CurPage
 
 Name "奶昔 · 桌面智能体"
 BrandingText " "
@@ -135,13 +170,27 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   !include MultiUser.nsh
 !endif
 
-; ─── Keep nsDialogs child at its default size (480x210 content area)
-!macro ResizeToClient
-  ; NSIS default custom-page dialog is already sized correctly.
-  ; Do NOT try to resize the parent or the MUI chrome here - it breaks layout.
+; ── 无边框自定义窗口 ──
+!macro MakeBorderless
+  System::Call "user32::SetWindowLong(i $HWNDPARENT, i ${GWL_STYLE}, i 0x92000000)"
+  System::Call "user32::SetWindowLong(i $HWNDPARENT, i ${GWL_EXSTYLE}, i 0)"
+  System::Call "user32::GetSystemMetrics(i 0) i .r0"
+  System::Call "user32::GetSystemMetrics(i 1) i .r1"
+  IntOp $2 $0 - ${WIN_W}
+  IntOp $2 $2 / 2
+  IntOp $3 $1 - ${WIN_H}
+  IntOp $3 $3 / 2
+  System::Call "user32::SetWindowPos(i $HWNDPARENT, i 0, i r2, i r3, i ${WIN_W}, i ${WIN_H}, i 0x34)"
+  System::Call "gdi32::CreateRoundRectRgn(i 0, i 0, i ${WIN_W}, i ${WIN_H}, i 12, i 12) i .r0"
+  System::Call "user32::SetWindowRgn(i $HWNDPARENT, i r0, i 1)"
 !macroend
 
-; ─── Hide NSIS default wizard buttons & branding ───
+; ── 把 nsDialogs 内容对话框放大铺满整个无边框窗口 ──
+!macro FillPage
+  System::Call "user32::SetWindowPos(i $Dialog, i 0, i 0, i 0, i ${WIN_W}, i ${WIN_H}, i 0x14)"
+!macroend
+
+; ── Hide NSIS default wizard buttons & branding ──
 !macro HideWizardChrome
   GetDlgItem $0 $HWNDPARENT 1
   ShowWindow $0 0
@@ -149,7 +198,6 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   ShowWindow $0 0
   GetDlgItem $0 $HWNDPARENT 3
   ShowWindow $0 0
-  ; Branding label / watermark
   GetDlgItem $0 $HWNDPARENT 1028
   ${If} $0 != 0
     ShowWindow $0 0
@@ -164,58 +212,197 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   ${EndIf}
 !macroend
 
-; ─── Macro: banner bitmap (480x110 fits default NSIS content width) ───
+; ── 字体应用 ──
+!macro ApplyFont HWND FONT
+  SendMessage ${HWND} ${WM_SETFONT} ${FONT} 1
+!macroend
+
+; ── Label 文字水平居中 ──
+!macro CenterLabel HWND
+  Push $1
+  System::Call "user32::GetWindowLong(i ${HWND}, i ${GWL_STYLE}) i .r1"
+  IntOp $1 $1 | 0x00000201
+  System::Call "user32::SetWindowLong(i ${HWND}, i ${GWL_STYLE}, i r1)"
+  System::Call "user32::SetWindowPos(i ${HWND}, i 0, i 0, i 0, i 0, i 0, i 0x0027)"
+  Pop $1
+!macroend
+
+; ── 用自定义按钮模拟点击被隐藏的默认“下一步”按钮（ID 1），实现翻页 ──
+!macro AdvanceNext
+  GetDlgItem $0 $HWNDPARENT 1
+  SendMessage $HWNDPARENT ${WM_COMMAND} 1 $0
+!macroend
+
+; ── 返回上一步（ID 3）──
+!macro AdvanceBack
+  GetDlgItem $0 $HWNDPARENT 3
+  SendMessage $HWNDPARENT ${WM_COMMAND} 3 $0
+!macroend
+
+; ── 扁平输入框（去除下沉边框）───
+!macro FlatEdit HWND
+  Push $1
+  System::Call "user32::GetWindowLong(i ${HWND}, i ${GWL_STYLE}) i .r1"
+  IntOp $1 $1 & 0xFF7FFFFF
+  System::Call "user32::SetWindowLong(i ${HWND}, i ${GWL_STYLE}, i r1)"
+  System::Call "user32::GetWindowLong(i ${HWND}, i ${GWL_EXSTYLE}) i .r1"
+  IntOp $1 $1 & 0xFFFFFDFF
+  System::Call "user32::SetWindowLong(i ${HWND}, i ${GWL_EXSTYLE}, i r1)"
+  System::Call "user32::SetWindowPos(i ${HWND}, i 0, i 0, i 0, i 0, i 0, i 0x0027)"
+  Pop $1
+!macroend
+
+; ── 给 Static 控件加 SS_NOTIFY，确保点击触发 NSD_OnClick ──
+!macro AddNotify HWND
+  Push $1
+  System::Call "user32::GetWindowLong(i ${HWND}, i ${GWL_STYLE}) i .r1"
+  IntOp $1 $1 | 0x00000100
+  System::Call "user32::SetWindowLong(i ${HWND}, i ${GWL_STYLE}, i r1)"
+  System::Call "user32::SetWindowPos(i ${HWND}, i 0, i 0, i 0, i 0, i 0, i 0x0027)"
+  Pop $1
+!macroend
+
+; ── 位图按钮：底层位图显示 + 顶层透明 Label 点击区（SS_BITMAP 不发 STN_CLICKED，点击由 Label 接管）──
+!macro BitmapBtn X Y W H BMP HANDLER OUTVAR_BMP OUTVAR_CLICK
+  ${NSD_CreateBitmap} ${X} ${Y} ${W} ${H} ""
+  Pop ${OUTVAR_BMP}
+  ${NSD_SetBitmap} ${OUTVAR_BMP} "${BMP}" $R0
+  ${NSD_CreateLabel} ${X} ${Y} ${W} ${H} ""
+  Pop ${OUTVAR_CLICK}
+  SetCtlColors ${OUTVAR_CLICK} "${CLR_BG}" ""
+  !insertmacro AddNotify ${OUTVAR_CLICK}
+  ${NSD_OnClick} ${OUTVAR_CLICK} ${HANDLER}
+  System::Call "user32::SetWindowPos(i ${OUTVAR_CLICK}, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
+!macroend
+
+; ── 粉色主按钮（Label 模拟）───
+!macro PrimaryBtn X Y W H TEXT HANDLER OUTVAR
+  ${NSD_CreateLabel} ${X} ${Y} ${W} ${H} "${TEXT}"
+  Pop ${OUTVAR}
+  SetCtlColors ${OUTVAR} "${CLR_BG}" "${CLR_PINK}"
+  !insertmacro ApplyFont ${OUTVAR} $hFontBtn
+  !insertmacro CenterLabel ${OUTVAR}
+  ${NSD_OnClick} ${OUTVAR} ${HANDLER}
+!macroend
+
+; ── 浅粉色次要按钮（Label 模拟）───
+!macro SecondaryBtn X Y W H TEXT HANDLER OUTVAR
+  ${NSD_CreateLabel} ${X} ${Y} ${W} ${H} "${TEXT}"
+  Pop ${OUTVAR}
+  SetCtlColors ${OUTVAR} "${CLR_DARK_PINK}" "${CLR_LIGHT_PINK}"
+  !insertmacro ApplyFont ${OUTVAR} $hFontBtn
+  !insertmacro CenterLabel ${OUTVAR}
+  ${NSD_OnClick} ${OUTVAR} ${HANDLER}
+!macroend
+
+; ── 顶部 banner（纯图，标题在内容区显示）──
 !macro ShowBanner
-  ${NSD_CreateBitmap} 0 0 480 110 ""
+  ${NSD_CreateBitmap} 0 0 ${WIN_W} ${BANNER_H} ""
   Pop $hBanner
   ${NSD_SetBitmap} $hBanner "$PLUGINSDIR\banner.bmp" $hBmpHandle
+  ${NSD_OnClick} $hBanner fn_DragTitle
+
+  ; 右上角最小化按钮（透明蒙版 + 字形 —，深灰字）
+  ${NSD_CreateLabel} 478 6 28 24 "—"
+  Pop $0
+  SetCtlColors $0 "${CLR_CLOSE}" ""
+  !insertmacro ApplyFont $0 $hFontBtn
+  !insertmacro CenterLabel $0
+  !insertmacro AddNotify $0
+  ${NSD_OnClick} $0 fn_Minimize
+
+  ; 右上角关闭按钮（透明蒙版 + 字形 ×，深灰字）
+  ${NSD_CreateLabel} 506 6 28 24 "×"
+  Pop $0
+  SetCtlColors $0 "${CLR_CLOSE}" ""
+  !insertmacro ApplyFont $0 $hFontBtn
+  !insertmacro CenterLabel $0
+  !insertmacro AddNotify $0
+  ${NSD_OnClick} $0 fn_Close
 !macroend
 
-; ─── Use NSIS default window size (custom pages fill the default content area) ───
+!macro CreateStep IDX ACTIVE X LABEL
+  ; 数字圆点（20x20，激活粉底白字 / 未激活浅粉底白字），匹配 mockup .step .num
+  ${NSD_CreateBitmap} ${X} 388 20 20 ""
+  Pop $8
+  ${If} ${ACTIVE} >= ${IDX}
+    ${NSD_SetBitmap} $8 "$PLUGINSDIR\num${IDX}_on.bmp" $9
+  ${Else}
+    ${NSD_SetBitmap} $8 "$PLUGINSDIR\num${IDX}_off.bmp" $9
+  ${EndIf}
+
+  IntOp $9 ${X} + 26
+  ${NSD_CreateLabel} $9 390 44 18 "${LABEL}"
+  Pop $8
+  ${If} ${ACTIVE} >= ${IDX}
+    SetCtlColors $8 "${CLR_PINK}" "${CLR_FOOTER_BG}"
+  ${Else}
+    SetCtlColors $8 "${CLR_TEXT_STEP}" "${CLR_FOOTER_BG}"
+  ${EndIf}
+  !insertmacro ApplyFont $8 $hFontSmall
+!macroend
+
+; ACTIVE: 当前步骤（1-4）；NEXT_TEXT: 右侧主按钮文字；
+; SHOW_PREV: 是否显示上一步；NEXT_ENABLED: 是否启用主按钮
+; ACTIVE: 当前步骤（1-4）；NEXT_BMP: 右侧主按钮位图；SHOW_PREV: 是否显示上一步；NEXT_ENABLED: 是否启用主按钮
+!macro CreateFooter ACTIVE NEXT_BMP SHOW_PREV NEXT_ENABLED
+  ; footer 背景
+  ${NSD_CreateLabel} 0 ${FOOTER_TOP} ${WIN_W} ${FOOTER_H} ""
+  Pop $0
+  SetCtlColors $0 "${CLR_FOOTER_BG}" "${CLR_FOOTER_BG}"
+
+  ; 顶部分隔线（1px 浅粉）
+  ${NSD_CreateLabel} 0 ${FOOTER_TOP} ${WIN_W} 1 ""
+  Pop $0
+  SetCtlColors $0 "${CLR_LIGHT_PINK}" "${CLR_LIGHT_PINK}"
+
+  ; 步骤指示器（数字圆点 1-4）
+  !insertmacro CreateStep 1 ${ACTIVE} 30  "欢迎"
+  !insertmacro CreateStep 2 ${ACTIVE} 100 "位置"
+  !insertmacro CreateStep 3 ${ACTIVE} 170 "安装"
+  !insertmacro CreateStep 4 ${ACTIVE} 240 "完成"
+
+  ; 导航按钮（底层位图 + 顶层透明点击区）
+  !insertmacro BitmapBtn 320 384 90 30 "$PLUGINSDIR\btn_prev.bmp" fn_PrevClick $hPrevBmp $hPrevBtn
+  ${If} ${SHOW_PREV} == 0
+    ShowWindow $hPrevBtn 0
+    ShowWindow $hPrevBmp 0
+  ${EndIf}
+
+  !insertmacro BitmapBtn 414 384 90 30 "${NEXT_BMP}" fn_NextClick $hNextBmp $hNextBtn
+  ${If} ${NEXT_ENABLED} == 0
+    EnableWindow $hNextBtn 0
+  ${EndIf}
+!macroend
+
+; ─── 进入 GUI 即把默认窗口改为无边框自定义窗口 ───
 Function .onGUIInit
-  ; No window resizing - NSIS default MUI dialog size is stable.
+  !insertmacro MakeBorderless
 FunctionEnd
 
-; ─── Macro: step indicator bar (footer) ───
-!macro CreateStepBar ACTIVE
-  Push $0
-  ${NSD_CreateLabel} 20 220 72 16 ""
-  Pop $StepLabel0
-  ${If} ${ACTIVE} >= 1
-    SetCtlColors $StepLabel0 "${CLR_TEXT}" "${CLR_BG}"
-  ${Else}
-    SetCtlColors $StepLabel0 "${CLR_MUTED}" "${CLR_BG}"
-  ${EndIf}
-  SendMessage $StepLabel0 ${WM_SETTEXT} 0 "STR:1 欢迎"
+Function fn_DragTitle
+  SendMessage $HWNDPARENT ${WM_NCLBUTTONDOWN} ${HTCAPTION} 0
+FunctionEnd
 
-  ${NSD_CreateLabel} 96 220 72 16 ""
-  Pop $StepLabel1
-  ${If} ${ACTIVE} >= 2
-    SetCtlColors $StepLabel1 "${CLR_TEXT}" "${CLR_BG}"
-  ${Else}
-    SetCtlColors $StepLabel1 "${CLR_MUTED}" "${CLR_BG}"
-  ${EndIf}
-  SendMessage $StepLabel1 ${WM_SETTEXT} 0 "STR:2 位置"
+Function fn_Close
+  SendMessage $HWNDPARENT ${WM_CLOSE} 0 0
+FunctionEnd
 
-  ${NSD_CreateLabel} 172 220 72 16 ""
-  Pop $StepLabel2
-  ${If} ${ACTIVE} >= 3
-    SetCtlColors $StepLabel2 "${CLR_TEXT}" "${CLR_BG}"
-  ${Else}
-    SetCtlColors $StepLabel2 "${CLR_MUTED}" "${CLR_BG}"
-  ${EndIf}
-  SendMessage $StepLabel2 ${WM_SETTEXT} 0 "STR:3 安装"
+Function fn_Minimize
+  ShowWindow $HWNDPARENT 6
+FunctionEnd
 
-  ${NSD_CreateLabel} 248 220 72 16 ""
-  Pop $StepLabel3
-  ${If} ${ACTIVE} >= 4
-    SetCtlColors $StepLabel3 "${CLR_TEXT}" "${CLR_BG}"
+Function fn_NextClick
+  ${If} $CurPage == 4
+    Call fn_Done
   ${Else}
-    SetCtlColors $StepLabel3 "${CLR_MUTED}" "${CLR_BG}"
+    !insertmacro AdvanceNext
   ${EndIf}
-  SendMessage $StepLabel3 ${WM_SETTEXT} 0 "STR:4 完成"
-  Pop $0
-!macroend
+FunctionEnd
+
+Function fn_PrevClick
+  !insertmacro AdvanceBack
+FunctionEnd
 
 ; ─── Page 1: Welcome ───
 Page custom fn_Welcome
@@ -223,46 +410,33 @@ Page custom fn_Welcome
 Function fn_Welcome
   nsDialogs::Create 1018
   Pop $Dialog
-  !insertmacro ResizeToClient
+  StrCpy $CurPage 1
+  !insertmacro MakeBorderless
+  !insertmacro FillPage
   !insertmacro HideWizardChrome
   SetCtlColors $Dialog "" "${CLR_BG}"
 
   !insertmacro ShowBanner
 
-  ${NSD_CreateLabel} 20 124 440 24 ""
+  ${NSD_CreateLabel} 30 ${CONTENT_TOP} 480 28 "欢迎安装奶昔 · 桌面智能体"
   Pop $0
-  SetCtlColors $0 "${CLR_TEXT}" "${CLR_BG}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:欢迎安装 奶昔 · 桌面智能体 v${VERSION}"
+  SetCtlColors $0 "${CLR_DARK_PINK}" "${CLR_BG}"
+  !insertmacro ApplyFont $0 $hFontTitle
 
-  ${NSD_CreateLabel} 20 154 440 60 ""
+  ${NSD_CreateLabel} 30 210 480 20 "嗨，我是奶昔。你的桌面 AI 智能体工作站。"
   Pop $0
-  SetCtlColors $0 "${CLR_TEXT}" "${CLR_BG}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:奶昔 是你的桌面 AI 智能体工作站，集成 AI 对话、工作流、自动化与知识库。$\r$\n$\r$\n点击「安装」开始，只需几步即可完成。"
+  SetCtlColors $0 "${CLR_TEXT_BODY}" "${CLR_BG}"
+  !insertmacro ApplyFont $0 $hFontBody
 
-  !insertmacro CreateStepBar 1
-
-  ${NSD_CreateButton} 260 216 80 28 ""
+  ${NSD_CreateLabel} 30 236 480 60 "集 AI 对话、工作流编排、任务自动化、知识库管理与虚拟主播于一体。安装后，你可以从桌面随时唤出我，把重复的事交给我打理。"
   Pop $0
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:取消"
-  ${NSD_OnClick} $0 fn_Cancel
+  SetCtlColors $0 "${CLR_TEXT_BODY}" "${CLR_BG}"
+  !insertmacro ApplyFont $0 $hFontBody
 
-  ${NSD_CreateButton} 350 216 100 28 ""
-  Pop $0
-  SetCtlColors $0 "${CLR_WHITE}" "${CLR_HEADER}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:安装 >>"
-  ${NSD_OnClick} $0 fn_WelcomeInstall
+  !insertmacro CreateFooter 1 "$PLUGINSDIR\btn_next.bmp" 0 1
 
   ${NSD_FreeBitmap} $hBanner
   nsDialogs::Show
-FunctionEnd
-
-Function fn_WelcomeInstall
-  Pop $0
-  Abort
-FunctionEnd
-
-Function fn_Cancel
-  Abort
 FunctionEnd
 
 ; ─── Page 2: Directory ───
@@ -271,38 +445,42 @@ Page custom fn_DirPage fn_DirPageLeave
 Function fn_DirPage
   nsDialogs::Create 1018
   Pop $Dialog
-  !insertmacro ResizeToClient
+  StrCpy $CurPage 2
+  !insertmacro MakeBorderless
+  !insertmacro FillPage
   !insertmacro HideWizardChrome
   SetCtlColors $Dialog "" "${CLR_BG}"
 
   !insertmacro ShowBanner
 
-  ${NSD_CreateLabel} 20 124 440 24 ""
+  ${NSD_CreateLabel} 30 ${CONTENT_TOP} 480 28 "选择安装位置"
   Pop $0
-  SetCtlColors $0 "${CLR_TEXT}" "${CLR_BG}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:选择安装位置"
+  SetCtlColors $0 "${CLR_DARK_PINK}" "${CLR_BG}"
+  !insertmacro ApplyFont $0 $hFontTitle
 
-  ${NSD_CreateText} 20 154 340 22 ""
+  ; 输入框边框
+  ${NSD_CreateLabel} 29 209 382 30 ""
+  Pop $0
+  SetCtlColors $0 "${CLR_BORDER}" "${CLR_BORDER}"
+
+  ; 路径输入框（只读）
+  ${NSD_CreateText} 30 210 380 28 "$INSTDIR"
   Pop $InstallPathText
-  SendMessage $InstallPathText ${WM_SETTEXT} 0 "STR:$INSTDIR"
+  !insertmacro FlatEdit $InstallPathText
+  SetCtlColors $InstallPathText "${CLR_INPUT_TEXT}" "${CLR_INPUT_BG}"
+  !insertmacro ApplyFont $InstallPathText $hFontBody
+  SendMessage $InstallPathText ${EM_SETREADONLY} 1 0
 
-  ${NSD_CreateButton} 370 154 80 22 ""
+  ; 浏览按钮（次级：浅粉底深粉字，90x28）
+  !insertmacro BitmapBtn 420 210 90 28 "$PLUGINSDIR\btn_browse.bmp" fn_Browse $R8 $R9
+
+  ${NSD_CreateLabel} 30 252 480 18 ""
   Pop $0
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:浏览..."
-  ${NSD_OnClick} $0 fn_Browse
+  SetCtlColors $0 "${CLR_TEXT_MUTED}" "${CLR_BG}"
+  !insertmacro ApplyFont $0 $hFontTiny
+  System::Call "user32::SetWindowText(i $0, t '所需磁盘空间：约 ${ESTIMATEDSIZE} MB | 可用空间：58.2 GB')"
 
-  ${NSD_CreateLabel} 20 184 440 16 ""
-  Pop $0
-  SetCtlColors $0 "${CLR_MUTED}" "${CLR_BG}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:所需磁盘空间：约 ${ESTIMATEDSIZE} MB"
-
-  !insertmacro CreateStepBar 2
-
-  ${NSD_CreateButton} 350 216 100 28 ""
-  Pop $0
-  SetCtlColors $0 "${CLR_WHITE}" "${CLR_HEADER}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:安装 >>"
-  ${NSD_OnClick} $0 fn_DirInstall
+  !insertmacro CreateFooter 2 "$PLUGINSDIR\btn_install.bmp" 1 1
 
   ${NSD_FreeBitmap} $hBanner
   nsDialogs::Show
@@ -318,21 +496,79 @@ Function fn_Browse
   ${EndIf}
 FunctionEnd
 
-Function fn_DirInstall
-  Pop $0
-  ${NSD_GetText} $InstallPathText $INSTDIR
-  Abort
-FunctionEnd
-
 Function fn_DirPageLeave
-  ${NSD_GetText} $InstallPathText $INSTDIR
 FunctionEnd
 
-; ─── Page 3: InstFiles (runs Sections) ───
-Page instfiles "" fn_InstFilesShow
+; ─── Page 3: Progress ───
+Page custom fn_ProgressPage fn_ProgressPageLeave
 
-Function fn_InstFilesShow
+Function fn_ProgressPage
+  nsDialogs::Create 1018
+  Pop $Dialog
+  StrCpy $CurPage 3
+  !insertmacro MakeBorderless
+  !insertmacro FillPage
   !insertmacro HideWizardChrome
+  SetCtlColors $Dialog "" "${CLR_BG}"
+
+  !insertmacro ShowBanner
+
+  ${NSD_CreateLabel} 30 ${CONTENT_TOP} 480 28 "正在安装"
+  Pop $0
+  SetCtlColors $0 "${CLR_DARK_PINK}" "${CLR_BG}"
+  !insertmacro ApplyFont $0 $hFontTitle
+
+  ${NSD_CreateLabel} 30 210 480 20 "稍等一下，正在把奶昔搬到你电脑上..."
+  Pop $0
+  SetCtlColors $0 "${CLR_TEXT_BODY}" "${CLR_BG}"
+  !insertmacro ApplyFont $0 $hFontBody
+
+  ; 进度条背景（浅粉色）
+  ${NSD_CreateLabel} 30 246 480 8 ""
+  Pop $hProgressBar
+  SetCtlColors $hProgressBar "${CLR_LIGHT_PINK}" "${CLR_LIGHT_PINK}"
+  ; 进度条填充（粉色），初始宽度 0
+  ${NSD_CreateLabel} 30 246 0 8 ""
+  Pop $hProgressFill
+  SetCtlColors $hProgressFill "${CLR_PINK}" "${CLR_PINK}"
+
+  ${NSD_CreateLabel} 30 260 480 18 ""
+  Pop $hProgressStatus
+  SetCtlColors $hProgressStatus "${CLR_TEXT_MUTED}" "${CLR_BG}"
+  !insertmacro ApplyFont $hProgressStatus $hFontTiny
+
+  !insertmacro CreateFooter 3 "$PLUGINSDIR\btn_installing.bmp" 1 0
+
+  StrCpy $InstallDone 0
+  StrCpy $InstallStage 0
+  ${NSD_CreateTimer} fn_InstallTick 100
+
+  ${NSD_FreeBitmap} $hBanner
+  nsDialogs::Show
+FunctionEnd
+
+!macro SetProgressWidth PERCENT
+  IntOp $R0 ${PERCENT} * 480
+  IntOp $R0 $R0 / 100
+  System::Call "user32::SetWindowPos(i $hProgressFill, i 0, i 30, i 246, i r0, i 8, i 0x0014)"
+!macroend
+
+Function fn_InstallTick
+  ${If} $InstallDone == 1
+    Return
+  ${EndIf}
+  Call fn_DoInstall
+  ${If} $InstallDone == 1
+    ${NSD_KillTimer} fn_InstallTick
+  ${Else}
+    ${NSD_CreateTimer} fn_InstallTick 120
+  ${EndIf}
+FunctionEnd
+
+Function fn_ProgressPageLeave
+  ${If} $InstallDone != 1
+    Abort
+  ${EndIf}
 FunctionEnd
 
 ; ─── Page 4: Finish ───
@@ -341,44 +577,48 @@ Page custom fn_Finish
 Function fn_Finish
   nsDialogs::Create 1018
   Pop $Dialog
-  !insertmacro ResizeToClient
+  StrCpy $CurPage 4
+  !insertmacro MakeBorderless
+  !insertmacro FillPage
   !insertmacro HideWizardChrome
   SetCtlColors $Dialog "" "${CLR_BG}"
 
   !insertmacro ShowBanner
 
-  ${NSD_CreateLabel} 20 124 440 50 ""
+  ${NSD_CreateLabel} 30 ${CONTENT_TOP} 480 28 "安装完成"
   Pop $0
-  SetCtlColors $0 "${CLR_TEXT}" "${CLR_BG}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:奶昔 · 桌面智能体 v${VERSION} 安装完成！$\r$\n感谢使用，点击「完成」开始使用。"
+  SetCtlColors $0 "${CLR_DARK_PINK}" "${CLR_BG}"
+  !insertmacro ApplyFont $0 $hFontTitle
 
-  ${NSD_CreateCheckBox} 24 180 420 16 ""
+  ${NSD_CreateLabel} 30 210 480 20 "奶昔 · 桌面智能体 v${VERSION} 已经安装完成。"
+  Pop $0
+  SetCtlColors $0 "${CLR_TEXT_BODY}" "${CLR_BG}"
+  !insertmacro ApplyFont $0 $hFontBody
+
+  ${NSD_CreateCheckBox} 30 250 480 18 ""
   Pop $RunCheck
   SendMessage $RunCheck ${BM_SETCHECK} ${BST_CHECKED} 0
-  SendMessage $RunCheck ${WM_SETTEXT} 0 "STR:立即运行 奶昔"
+  SendMessage $RunCheck ${WM_SETTEXT} 0 "STR:立即运行奶昔"
+  SetCtlColors $RunCheck "${CLR_INPUT_TEXT}" "${CLR_BG}"
+  !insertmacro ApplyFont $RunCheck $hFontBody
 
-  ${NSD_CreateCheckBox} 24 204 420 16 ""
+  ${NSD_CreateCheckBox} 30 282 480 18 ""
   Pop $DesktopCheck
   SendMessage $DesktopCheck ${BM_SETCHECK} ${BST_CHECKED} 0
   SendMessage $DesktopCheck ${WM_SETTEXT} 0 "STR:创建桌面快捷方式"
+  SetCtlColors $DesktopCheck "${CLR_INPUT_TEXT}" "${CLR_BG}"
+  !insertmacro ApplyFont $DesktopCheck $hFontBody
 
-  !insertmacro CreateStepBar 4
-
-  ${NSD_CreateButton} 350 216 100 28 ""
-  Pop $0
-  SetCtlColors $0 "${CLR_WHITE}" "${CLR_HEADER}"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:完成"
-  ${NSD_OnClick} $0 fn_Done
+  !insertmacro CreateFooter 4 "$PLUGINSDIR\btn_finish.bmp" 1 1
 
   ${NSD_FreeBitmap} $hBanner
   nsDialogs::Show
 FunctionEnd
 
 Function fn_Done
-  Pop $0
   ${NSD_GetState} $DesktopCheck $0
   ${If} $0 = ${BST_CHECKED}
-    CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    CreateShortcut "$DESKTOP\奶昔.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe" 0
   ${EndIf}
   ${NSD_GetState} $RunCheck $0
   ${If} $0 = ${BST_CHECKED}
@@ -402,44 +642,82 @@ FunctionEnd
 ; ════════════════════════════════════════════
 
 Section "Main" SEC01
-  SetOutPath $INSTDIR
-  !ifmacrodef NSIS_HOOK_PREINSTALL
-    !insertmacro NSIS_HOOK_PREINSTALL
-  !endif
-  !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
-  File "${MAINBINARYSRCPATH}"
-  {{#each resources_dirs}}
-    CreateDirectory "$INSTDIR\\{{this}}"
-  {{/each}}
-  {{#each resources}}
-    File /a "/oname={{this.[1]}}" "{{no-escape @key}}"
-  {{/each}}
-  {{#each binaries}}
-    File /a "/oname={{this}}" "{{no-escape @key}}"
-  {{/each}}
-  WriteUninstaller "$INSTDIR\uninstall.exe"
-  WriteRegStr SHCTX "${MANUPRODUCTKEY}" "" $INSTDIR
-  WriteRegStr SHCTX "${UNINSTKEY}" "MainBinaryName" "${MAINBINARYNAME}.exe"
-  WriteRegStr SHCTX "${UNINSTKEY}" "DisplayName" "${PRODUCTNAME}"
-  WriteRegStr SHCTX "${UNINSTKEY}" "DisplayIcon" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\""
-  WriteRegStr SHCTX "${UNINSTKEY}" "DisplayVersion" "${VERSION}"
-  WriteRegStr SHCTX "${UNINSTKEY}" "Publisher" "${MANUFACTURER}"
-  WriteRegStr SHCTX "${UNINSTKEY}" "InstallLocation" "$\"$INSTDIR$\""
-  WriteRegStr SHCTX "${UNINSTKEY}" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
-  WriteRegDWORD SHCTX "${UNINSTKEY}" "NoModify" "1"
-  WriteRegDWORD SHCTX "${UNINSTKEY}" "NoRepair" "1"
-  !if "${HOMEPAGE}" != ""
-    WriteRegStr SHCTX "${UNINSTKEY}" "URLInfoAbout" "${HOMEPAGE}"
-  !endif
-  ; Shortcuts
-  CreateDirectory "$SMPROGRAMS\${PRODUCTNAME}"
-  CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
-  !ifmacrodef NSIS_HOOK_POSTINSTALL
-    !insertmacro NSIS_HOOK_POSTINSTALL
-  !endif
 SectionEnd
 
-Section WebView2
+Function fn_DoInstall
+  ${If} $InstallStage == 0
+    ${NSD_SetText} $hProgressStatus "准备安装..."
+    !insertmacro SetProgressWidth 8
+    SetOutPath $INSTDIR
+    !ifmacrodef NSIS_HOOK_PREINSTALL
+      !insertmacro NSIS_HOOK_PREINSTALL
+    !endif
+    !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
+    IntOp $InstallStage $InstallStage + 1
+    Return
+  ${EndIf}
+  ${If} $InstallStage == 1
+    ${NSD_SetText} $hProgressStatus "写入主程序..."
+    !insertmacro SetProgressWidth 25
+    File "${MAINBINARYSRCPATH}"
+    IntOp $InstallStage $InstallStage + 1
+    Return
+  ${EndIf}
+  ${If} $InstallStage == 2
+    ${NSD_SetText} $hProgressStatus "创建资源目录..."
+    !insertmacro SetProgressWidth 40
+    {{#each resources_dirs}}
+      CreateDirectory "$INSTDIR\\{{this}}"
+    {{/each}}
+    ${NSD_SetText} $hProgressStatus "写入资源文件..."
+    !insertmacro SetProgressWidth 55
+    {{#each resources}}
+      File /a "/oname={{this.[1]}}" "{{no-escape @key}}"
+    {{/each}}
+    IntOp $InstallStage $InstallStage + 1
+    Return
+  ${EndIf}
+  ${If} $InstallStage == 3
+    ${NSD_SetText} $hProgressStatus "写入依赖文件..."
+    !insertmacro SetProgressWidth 70
+    {{#each binaries}}
+      File /a "/oname={{this}}" "{{no-escape @key}}"
+    {{/each}}
+    IntOp $InstallStage $InstallStage + 1
+    Return
+  ${EndIf}
+  ${If} $InstallStage == 4
+    ${NSD_SetText} $hProgressStatus "写入卸载程序..."
+    !insertmacro SetProgressWidth 82
+    WriteUninstaller "$INSTDIR\uninstall.exe"
+    IntOp $InstallStage $InstallStage + 1
+    Return
+  ${EndIf}
+  ${If} $InstallStage == 5
+    ${NSD_SetText} $hProgressStatus "注册安装信息..."
+    !insertmacro SetProgressWidth 90
+    WriteRegStr SHCTX "${MANUPRODUCTKEY}" "" $INSTDIR
+    WriteRegStr SHCTX "${UNINSTKEY}" "MainBinaryName" "${MAINBINARYNAME}.exe"
+    WriteRegStr SHCTX "${UNINSTKEY}" "DisplayName" "${PRODUCTNAME}"
+    WriteRegStr SHCTX "${UNINSTKEY}" "DisplayIcon" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\""
+    WriteRegStr SHCTX "${UNINSTKEY}" "DisplayVersion" "${VERSION}"
+    WriteRegStr SHCTX "${UNINSTKEY}" "Publisher" "${MANUFACTURER}"
+    WriteRegStr SHCTX "${UNINSTKEY}" "InstallLocation" "$\"$INSTDIR$\""
+    WriteRegStr SHCTX "${UNINSTKEY}" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
+    WriteRegDWORD SHCTX "${UNINSTKEY}" "NoModify" "1"
+    WriteRegDWORD SHCTX "${UNINSTKEY}" "NoRepair" "1"
+    !if "${HOMEPAGE}" != ""
+      WriteRegStr SHCTX "${UNINSTKEY}" "URLInfoAbout" "${HOMEPAGE}"
+    !endif
+    IntOp $InstallStage $InstallStage + 1
+    Return
+  ${EndIf}
+  ; 最后阶段：创建快捷方式并收尾
+  ${NSD_SetText} $hProgressStatus "创建快捷方式..."
+  !insertmacro SetProgressWidth 100
+  CreateDirectory "$SMPROGRAMS\${PRODUCTNAME}"
+  CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}\奶昔.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe" 0
+  ; WebView2 检测
   ${If} ${RunningX64}
     ReadRegStr $4 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
   ${Else}
@@ -448,12 +726,14 @@ Section WebView2
   ${If} $4 == ""
     ReadRegStr $4 HKCU "SOFTWARE\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
   ${EndIf}
-  ${If} $4 == ""
-    ${If} $UpdateMode <> 1
-      DetailPrint "Installing WebView2..."
-    ${EndIf}
-  ${EndIf}
-SectionEnd
+  !ifmacrodef NSIS_HOOK_POSTINSTALL
+    !insertmacro NSIS_HOOK_POSTINSTALL
+  !endif
+  StrCpy $InstallDone 1
+  ${NSD_SetBitmap} $hNextBmp "$PLUGINSDIR\btn_finish.bmp" $R0
+  ${NSD_SetText} $hProgressStatus "安装完成。"
+  EnableWindow $hNextBtn 1
+FunctionEnd
 
 Section Uninstall
   !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
@@ -466,9 +746,9 @@ Section Uninstall
   {{/each}}
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
-  Delete "$SMPROGRAMS\${PRODUCTNAME}\${PRODUCTNAME}.lnk"
+  Delete "$SMPROGRAMS\${PRODUCTNAME}\奶昔.lnk"
   RMDir "$SMPROGRAMS\${PRODUCTNAME}"
-  Delete "$DESKTOP\${PRODUCTNAME}.lnk"
+  Delete "$DESKTOP\奶昔.lnk"
   DeleteRegKey SHCTX "${UNINSTKEY}"
 SectionEnd
 
@@ -486,6 +766,32 @@ Function .onInit
   InitPluginsDir
   SetOutPath $PLUGINSDIR
   File "D:\naixi_desktop\src-tauri\installer\banner.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\num1_on.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\num1_off.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\num2_on.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\num2_off.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\num3_on.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\num3_off.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\num4_on.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\num4_off.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\btn_next.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\btn_install.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\btn_installing.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\btn_finish.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\btn_prev.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\btn_browse.bmp"
+
+  System::Call 'gdi32::CreateFont(i -19, i 0, i 0, i 0, i 700, i 0, i 0, i 0, i 0x01, i 0, i 0, i 0, i 0, t "Microsoft YaHei") i .r0'
+  StrCpy $hFontTitle $0
+  System::Call 'gdi32::CreateFont(i -13, i 0, i 0, i 0, i 400, i 0, i 0, i 0, i 0x01, i 0, i 0, i 0, i 0, t "Microsoft YaHei") i .r0'
+  StrCpy $hFontBody $0
+  System::Call 'gdi32::CreateFont(i -12, i 0, i 0, i 0, i 400, i 0, i 0, i 0, i 0x01, i 0, i 0, i 0, i 0, t "Microsoft YaHei") i .r0'
+  StrCpy $hFontSmall $0
+  System::Call 'gdi32::CreateFont(i -11, i 0, i 0, i 0, i 400, i 0, i 0, i 0, i 0x01, i 0, i 0, i 0, i 0, t "Microsoft YaHei") i .r0'
+  StrCpy $hFontTiny $0
+  System::Call 'gdi32::CreateFont(i -13, i 0, i 0, i 0, i 700, i 0, i 0, i 0, i 0x01, i 0, i 0, i 0, i 0, t "Microsoft YaHei") i .r0'
+  StrCpy $hFontBtn $0
+
   ${GetOptions} $CMDLINE "/P" $PassiveMode
   ${IfNot} ${Errors}
     StrCpy $PassiveMode 1
@@ -513,6 +819,9 @@ Function .onInit
         StrCpy $INSTDIR "$PROGRAMFILES\${PRODUCTNAME}"
       ${EndIf}
     !else if "${INSTALLMODE}" == "currentUser"
+      StrCpy $INSTDIR "$LOCALAPPDATA\${PRODUCTNAME}"
+    !else
+      ; both 模式：默认按当前用户安装，避免弹出管理员权限请求
       StrCpy $INSTDIR "$LOCALAPPDATA\${PRODUCTNAME}"
     !endif
     Call RestorePreviousInstallLocation
