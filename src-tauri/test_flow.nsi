@@ -84,6 +84,10 @@ Var hStepTxt2
 Var hStepTxt3
 Var hStepTxt4
 Var hFooterBg
+Var hRawStepTxt1
+Var hRawStepTxt2
+Var hRawStepTxt3
+Var hRawStepTxt4
 Var TickCount
 
 Name "奶昔 · 桌面智能体"
@@ -282,14 +286,11 @@ RequestExecutionLevel user
   System::Call "user32::SetWindowPos(i $8, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
 
   IntOp $9 ${X} + 24
-  ${NSD_CreateLabel} $9 390 44 18 "${LABEL}"
+  ; 步骤文字改用位图（避免 nsDialogs Label 在手动 UpdateWindow / nsDialogs::Show 切换时被 footer 背景覆盖）
+  ${NSD_CreateBitmap} $9 390 44 18 ""
   Pop $8
-  ${If} ${ACTIVE} >= ${IDX}
-    SetCtlColors $8 "${CLR_PINK}" "${CLR_FOOTER_BG}"
-  ${Else}
-    SetCtlColors $8 "${CLR_TEXT_STEP}" "${CLR_FOOTER_BG}"
-  ${EndIf}
-  !insertmacro ApplyFont $8 $hFontSmall
+  ${NSD_SetBitmap} $8 "$PLUGINSDIR\txt_step${IDX}.bmp" $R0
+  System::Call "user32::SetWindowPos(i $8, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
   ; 记录步骤文字标签句柄，供 P3 单独提到顶层（避免手动 UpdateWindow 时被 footer 背景盖住）
   ${If} ${IDX} == 1
     StrCpy $hStepTxt1 $8
@@ -521,6 +522,12 @@ Function fn_ProgressPage
       SendMessage $hProgressFill ${PBM_SETPOS} $TickCount 0
       ; 同步绘制 nsDialogs 控件（标题/副标题/状态），保证安装中可见
       System::Call "user32::UpdateWindow(i $Dialog)"
+      ; 额外强制 footer 步骤文字标签最后重绘：手动 UpdateWindow 下 footer 背景可能按创建序
+      ; 后画盖住文字，对 4 个文字标签单独 UpdateWindow 确保它们始终在最上层可见。
+      System::Call "user32::UpdateWindow(i $hStepTxt1)"
+      System::Call "user32::UpdateWindow(i $hStepTxt2)"
+      System::Call "user32::UpdateWindow(i $hStepTxt3)"
+      System::Call "user32::UpdateWindow(i $hStepTxt4)"
       ; ── 调试用：env NAIXI_P3PAUSE=1 时在 50% 暂停 6s，便于截图取证 ──
       ${If} $TickCount == 50
         ReadEnvStr $R2 "NAIXI_P3PAUSE"
@@ -543,6 +550,13 @@ Function fn_ProgressPage
     ${EndIf}
     System::Call "kernel32::Sleep(i 30)"
   ${Loop}
+  ; 动画结束、nsDialogs::Show 接管前，再次确保 footer 文字在背景之上（nsDialogs::Show 内部可能重排 z 序）
+  System::Call "user32::SetWindowPos(i $hStepTxt1, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
+  System::Call "user32::SetWindowPos(i $hStepTxt2, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
+  System::Call "user32::SetWindowPos(i $hStepTxt3, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
+  System::Call "user32::SetWindowPos(i $hStepTxt4, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
+  System::Call "user32::SetWindowPos(i $hFooterBg, i 1, i 0, i 0, i 0, i 0, i 0x0003)"
+  System::Call "user32::RedrawWindow(i $Dialog, i 0, i 0, i 0x0485)"
   nsDialogs::Show
 FunctionEnd
 
@@ -631,6 +645,10 @@ Function .onInit
   File "D:\naixi_desktop\src-tauri\installer\btn_min.bmp"
   File "D:\naixi_desktop\src-tauri\installer\btn_close.bmp"
   File "D:\naixi_desktop\src-tauri\installer\addr_border.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\txt_step1.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\txt_step2.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\txt_step3.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\txt_step4.bmp"
 
   System::Call 'gdi32::CreateFont(i -19, i 0, i 0, i 0, i 700, i 0, i 0, i 0, i 0x01, i 0, i 0, i 0, i 0, t "Microsoft YaHei") i .r0'
   StrCpy $hFontTitle $0
