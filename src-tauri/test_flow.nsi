@@ -79,6 +79,10 @@ Var DesktopCheck
 Var InstallDone
 Var CurPage
 Var ProgressPct
+Var hStepTxt1
+Var hStepTxt2
+Var hStepTxt3
+Var hStepTxt4
 Var TickCount
 
 Name "奶昔 · 桌面智能体"
@@ -284,6 +288,16 @@ RequestExecutionLevel user
     SetCtlColors $8 "${CLR_TEXT_STEP}" "${CLR_FOOTER_BG}"
   ${EndIf}
   !insertmacro ApplyFont $8 $hFontSmall
+  ; 记录步骤文字标签句柄，供 P3 单独提到顶层（避免手动 UpdateWindow 时被 footer 背景盖住）
+  ${If} ${IDX} == 1
+    StrCpy $hStepTxt1 $8
+  ${ElseIf} ${IDX} == 2
+    StrCpy $hStepTxt2 $8
+  ${ElseIf} ${IDX} == 3
+    StrCpy $hStepTxt3 $8
+  ${Else}
+    StrCpy $hStepTxt4 $8
+  ${EndIf}
 !macroend
 
 Function .onGUIInit
@@ -461,6 +475,13 @@ Function fn_ProgressPage
   !insertmacro ApplyFont $hProgressStatus $hFontTiny
 
   !insertmacro CreateFooter 3 "$PLUGINSDIR\btn_installing.bmp" 1 0
+
+  ; P3 单独把步骤文字标签提到顶层：手动 UpdateWindow 绘制时 footer 背景标签会按创建序
+  ; 后绘制盖住文字，故仅在本页将文字强制 HWND_TOP（正常页仍走 nsDialogs::Show，不受影响）
+  System::Call "user32::SetWindowPos(i $hStepTxt1, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
+  System::Call "user32::SetWindowPos(i $hStepTxt2, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
+  System::Call "user32::SetWindowPos(i $hStepTxt3, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
+  System::Call "user32::SetWindowPos(i $hStepTxt4, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
 
   StrCpy $InstallDone 0
   StrCpy $ProgressPct 0

@@ -115,6 +115,16 @@ def count_darkpink(img,x0,y0,x1,y1,tol=60):
             if abs(r-114)<tol and abs(g-36)<tol and abs(b-62)<tol: cnt+=1
     return cnt
 
+def footer_text_px(img):
+    # step label rects: x=54,124,194,264 width44 y=390 h18 ; bg near-white (250,248,250)
+    px=img.load(); bg=(250,248,250); tot=0
+    for x0 in (54,124,194,264):
+        for y in range(390,408):
+            for x in range(x0,x0+44):
+                r,g,b=px[x,y][:3]
+                if abs(r-bg[0])+abs(g-bg[1])+abs(b-bg[2])>40: tot+=1
+    return tot
+
 # launch with pause env
 env = os.environ.copy(); env["NAIXI_P3PAUSE"] = "1"
 p = subprocess.Popen([EXE], env=env)
@@ -143,7 +153,8 @@ for i in range(70):
         bar_pink = count_pink(img,30,246,510,254)
         # title color check: dark-pink (114,36,62) vs black (0,0,0)
         title_dp = count_darkpink(img,30,168,510,196)
-        print(f"  frame {i}: title_nonwhite={title_nw} title_darkpink={title_dp} bar_pink={bar_pink}")
+        ft = footer_text_px(img)
+        print(f"  frame {i}: title_nonwhite={title_nw} title_darkpink={title_dp} bar_pink={bar_pink} footer_text={ft}")
         # want a frame where title visible and bar ~half
         score = title_nw + (1 if 1500 < bar_pink < 2500 else 0)*100
         if score > best_score:
