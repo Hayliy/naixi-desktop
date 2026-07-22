@@ -83,6 +83,7 @@ Var hStepTxt1
 Var hStepTxt2
 Var hStepTxt3
 Var hStepTxt4
+Var hFooterBg
 Var TickCount
 
 Name "奶昔 · 桌面智能体"
@@ -243,6 +244,7 @@ RequestExecutionLevel user
   ${NSD_CreateLabel} 0 ${FOOTER_TOP} ${WIN_W} ${FOOTER_H} ""
   Pop $0
   SetCtlColors $0 "${CLR_FOOTER_BG}" "${CLR_FOOTER_BG}"
+  StrCpy $hFooterBg $0
 
   ; 顶部分隔线（1px 浅粉）
   ${NSD_CreateLabel} 0 ${FOOTER_TOP} ${WIN_W} 1 ""
@@ -482,16 +484,21 @@ Function fn_ProgressPage
   System::Call "user32::SetWindowPos(i $hStepTxt2, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
   System::Call "user32::SetWindowPos(i $hStepTxt3, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
   System::Call "user32::SetWindowPos(i $hStepTxt4, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
+  ; footer 背景压到最底层(HWND_BOTTOM=1)，双保险确保步骤文字始终在其上（仅本页，P1/P2/P4 走 nsDialogs::Show 不受影响）
+  System::Call "user32::SetWindowPos(i $hFooterBg, i 1, i 0, i 0, i 0, i 0, i 0x0003)"
 
   StrCpy $InstallDone 0
   StrCpy $ProgressPct 0
 
   ${NSD_FreeBitmap} $hBanner
-  ; 用真实 Win32 消息泵驱动动画：SetTimer + GetMessage/DispatchMessage 循环。
-  ; 用「Do 循环 + Sleep」驱动动画。本环境定时器(nsDialogs::CreateTimer / SetTimer)
-  ; 只触发一次，不可靠，故不依赖定时器。进度条为原生 msctls_progress32，PBM_SETPOS
-  ; 自动重绘；nsDialogs 标题/副标题/状态控件在每轮 UpdateWindow($Dialog) 时同步绘制，
-  ; 故安装全程可见（配色于 100% 后由 nsDialogs::Show 正式接管时为设计色）。
+  ; 消除手动 UpdateWindow 循环下父窗口重绘擦除子控件背景造成的整体闪烁：给对话框加 WS_CLIPCHILDREN(0x02000000)
+  System::Call "user32::GetWindowLong(i $Dialog, i -16) i .r3"
+  IntOp $R4 $3 | 33554432
+  System::Call "user32::SetWindowLong(i $Dialog, i -16, i $R4)"
+  System::Call "user32::SetWindowPos(i $Dialog, i 0, i 0, i 0, i 0, i 0, i 39)"
+  ; 显示前先隐藏并离屏完整 paint 一次，再显示已是完整样式，避免首帧默认样式闪现
+  System::Call "user32::ShowWindow(i $Dialog, i 0)"
+  System::Call "user32::UpdateWindow(i $Dialog)"
   System::Call "user32::ShowWindow(i $HWNDPARENT, i 5)"
   System::Call "user32::ShowWindow(i $Dialog, i 5)"
   System::Call "user32::UpdateWindow(i $Dialog)"

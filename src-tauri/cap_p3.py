@@ -1,6 +1,6 @@
 import subprocess, time, ctypes, sys, os
 from ctypes import wintypes, Structure, byref, sizeof, create_string_buffer, c_int, c_long, c_uint, c_ulong, c_void_p, c_short, c_ushort
-from PIL import Image
+from PIL import Image, ImageGrab
 
 EXE = r"D:\naixi_desktop\src-tauri\test_flow.exe"
 OUT = r"D:\naixi_desktop\src-tauri\p3frames"
@@ -83,6 +83,14 @@ def print_window(hwnd, path):
     gdi32.DeleteObject(bmp); gdi32.DeleteDC(mem_dc); user32.ReleaseDC(hwnd, hwnd_dc)
     return True
 
+def img_grab(hwnd, path):
+    r = wintypes.RECT(); user32.GetWindowRect(hwnd, ctypes.byref(r))
+    try:
+        img = ImageGrab.grab((r.left, r.top, r.right, r.bottom))
+        img.save(path); return True
+    except Exception as e:
+        print("  img_grab err", e); return False
+
 def click_client(hwnd, cx, cy):
     box = wintypes.RECT(); user32.GetWindowRect(hwnd, byref(box))
     sx, sy = box.left+cx, box.top+cy
@@ -147,6 +155,8 @@ for i in range(70):
     f = f"{OUT}/p3_{i:03d}.png"
     ok = print_window(hwnd, f)
     if ok:
+        if i < 12:
+            img_grab(hwnd, f"{OUT}/real_{i:03d}.png")
         img = Image.open(f)
         # title region non-white (should show "正在安装" + subtitle + status)
         title_nw = count_nonwhite(img,30,150,510,280)
@@ -173,4 +183,13 @@ if not user32.IsWindowVisible(hwnd):
 else:
     user32.PostMessageW(hwnd, 0x0010, 0, 0)
 p.terminate()
+print("=== REAL-SCREEN (ImageGrab) footer_text for first 12 frames ===")
+for i in range(12):
+    fn = f"{OUT}/real_{i:03d}.png"
+    try:
+        im = Image.open(fn).convert("RGB")
+        ft = footer_text_px(im)
+        print(f"  real frame {i}: footer_text={ft}  size={im.size}")
+    except Exception as e:
+        print(f"  real frame {i}: MISSING ({e})")
 print("DONE")
