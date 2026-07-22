@@ -93,12 +93,6 @@ LoadLanguageFile "${NSISDIR}\Contrib\Language files\SimpChinese.nlf"
 !ifndef EM_SETREADONLY
   !define EM_SETREADONLY 0x00CF
 !endif
-!ifndef PBM_SETRANGE
-  !define PBM_SETRANGE 0x0401
-!endif
-!ifndef PBM_SETPOS
-  !define PBM_SETPOS 0x0402
-!endif
 
 ; ── 窗口尺寸（与 mockup.html 一致）──
 !define WIN_W   540
@@ -526,14 +520,14 @@ Function fn_ProgressPage
   SetCtlColors $0 "${CLR_TEXT_BODY}" "${CLR_BG}"
   !insertmacro ApplyFont $0 $hFontBody
 
-  ; 进度条轨道（浅粉色）
+  ; 进度条背景（浅粉色）
   ${NSD_CreateLabel} 30 246 480 8 ""
   Pop $hProgressBar
   SetCtlColors $hProgressBar "${CLR_LIGHT_PINK}" "${CLR_LIGHT_PINK}"
-  ; 原生进度条控件（msctls_progress32），PBM_SETPOS 自动重绘，无需消息泵
-  System::Call "user32::CreateWindowEx(i 0, t 'msctls_progress32', i 0, i 0x50000000, i 30, i 246, i 480, i 8, i $Dialog, i 0, i 0, i 0) i .r1"
-  StrCpy $hProgressFill $1
-  SendMessage $hProgressFill ${PBM_SETRANGE} 0 0x00640000
+  ; 进度条填充（粉色），初始宽度 0
+  ${NSD_CreateLabel} 30 246 0 8 ""
+  Pop $hProgressFill
+  SetCtlColors $hProgressFill "${CLR_PINK}" "${CLR_PINK}"
 
   ${NSD_CreateLabel} 30 260 480 18 ""
   Pop $hProgressStatus
@@ -544,19 +538,28 @@ Function fn_ProgressPage
 
   StrCpy $InstallDone 0
   StrCpy $InstallStage 0
+  ${NSD_CreateTimer} fn_InstallTick 100
 
   ${NSD_FreeBitmap} $hBanner
-  ; 手动显示对话框并执行真实安装（分阶段），用 PBM_SETPOS 更新进度
-  System::Call "user32::ShowWindow(i $HWNDPARENT, i 5)"
-  System::Call "user32::ShowWindow(i $Dialog, i 5)"
-  ${Do}
-    ${If} $InstallDone == 1
-      ${Break}
-    ${EndIf}
-    Call fn_DoInstall
-    System::Call "kernel32::Sleep(i 80)"
-  ${Loop}
   nsDialogs::Show
+FunctionEnd
+
+!macro SetProgressWidth PERCENT
+  IntOp $R0 ${PERCENT} * 480
+  IntOp $R0 $R0 / 100
+  System::Call "user32::SetWindowPos(i $hProgressFill, i 0, i 30, i 246, i r0, i 8, i 0x0014)"
+!macroend
+
+Function fn_InstallTick
+  ${If} $InstallDone == 1
+    Return
+  ${EndIf}
+  Call fn_DoInstall
+  ${If} $InstallDone == 1
+    ${NSD_KillTimer} fn_InstallTick
+  ${Else}
+    ${NSD_CreateTimer} fn_InstallTick 120
+  ${EndIf}
 FunctionEnd
 
 Function fn_ProgressPageLeave
@@ -641,7 +644,7 @@ SectionEnd
 Function fn_DoInstall
   ${If} $InstallStage == 0
     ${NSD_SetText} $hProgressStatus "准备安装..."
-    SendMessage $hProgressFill ${PBM_SETPOS} 8 0
+    !insertmacro SetProgressWidth 8
     SetOutPath $INSTDIR
     !ifmacrodef NSIS_HOOK_PREINSTALL
       !insertmacro NSIS_HOOK_PREINSTALL
@@ -652,19 +655,19 @@ Function fn_DoInstall
   ${EndIf}
   ${If} $InstallStage == 1
     ${NSD_SetText} $hProgressStatus "写入主程序..."
-    SendMessage $hProgressFill ${PBM_SETPOS} 25 0
+    !insertmacro SetProgressWidth 25
     File "${MAINBINARYSRCPATH}"
     IntOp $InstallStage $InstallStage + 1
     Return
   ${EndIf}
   ${If} $InstallStage == 2
     ${NSD_SetText} $hProgressStatus "创建资源目录..."
-    SendMessage $hProgressFill ${PBM_SETPOS} 40 0
+    !insertmacro SetProgressWidth 40
     {{#each resources_dirs}}
       CreateDirectory "$INSTDIR\\{{this}}"
     {{/each}}
     ${NSD_SetText} $hProgressStatus "写入资源文件..."
-    SendMessage $hProgressFill ${PBM_SETPOS} 55 0
+    !insertmacro SetProgressWidth 55
     {{#each resources}}
       File /a "/oname={{this.[1]}}" "{{no-escape @key}}"
     {{/each}}
@@ -673,7 +676,7 @@ Function fn_DoInstall
   ${EndIf}
   ${If} $InstallStage == 3
     ${NSD_SetText} $hProgressStatus "写入依赖文件..."
-    SendMessage $hProgressFill ${PBM_SETPOS} 70 0
+    !insertmacro SetProgressWidth 70
     {{#each binaries}}
       File /a "/oname={{this}}" "{{no-escape @key}}"
     {{/each}}
@@ -682,14 +685,14 @@ Function fn_DoInstall
   ${EndIf}
   ${If} $InstallStage == 4
     ${NSD_SetText} $hProgressStatus "写入卸载程序..."
-    SendMessage $hProgressFill ${PBM_SETPOS} 82 0
+    !insertmacro SetProgressWidth 82
     WriteUninstaller "$INSTDIR\uninstall.exe"
     IntOp $InstallStage $InstallStage + 1
     Return
   ${EndIf}
   ${If} $InstallStage == 5
     ${NSD_SetText} $hProgressStatus "注册安装信息..."
-    SendMessage $hProgressFill ${PBM_SETPOS} 90 0
+    !insertmacro SetProgressWidth 90
     WriteRegStr SHCTX "${MANUPRODUCTKEY}" "" $INSTDIR
     WriteRegStr SHCTX "${UNINSTKEY}" "MainBinaryName" "${MAINBINARYNAME}.exe"
     WriteRegStr SHCTX "${UNINSTKEY}" "DisplayName" "${PRODUCTNAME}"
@@ -708,7 +711,7 @@ Function fn_DoInstall
   ${EndIf}
   ; 最后阶段：创建快捷方式并收尾
   ${NSD_SetText} $hProgressStatus "创建快捷方式..."
-  SendMessage $hProgressFill ${PBM_SETPOS} 100 0
+  !insertmacro SetProgressWidth 100
   CreateDirectory "$SMPROGRAMS\${PRODUCTNAME}"
   CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}\奶昔.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe" 0
   ; WebView2 检测
