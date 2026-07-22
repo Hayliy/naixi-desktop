@@ -67,7 +67,6 @@ Var hFontTiny
 Var hFontBtn
 Var InstallPathText
 Var hProgressStatus
-Var hProgressBar
 Var hProgressFill
 Var hNextBtn
 Var hNextBmp
@@ -442,15 +441,19 @@ Function fn_ProgressPage
   SetCtlColors $0 "${CLR_TEXT_BODY}" "${CLR_BG}"
   !insertmacro ApplyFont $0 $hFontBody
 
-  ; 进度条轨道（浅粉 #F4C0D1，匹配 mockup .progress-bar 背景）
-  ${NSD_CreateLabel} 30 246 480 8 ""
-  Pop $hProgressBar
-  SetCtlColors $hProgressBar "${CLR_LIGHT_PINK}" "${CLR_LIGHT_PINK}"
-  ; 原生进度条控件（msctls_progress32），PBM_SETPOS 自动重绘，无需消息泵
-  ; 注：被默认主题（蓝/绿色渐变）染色，PBM_SETBARCOLOR 不生效；功能等价
-  System::Call "user32::CreateWindowEx(i 0, t 'msctls_progress32', i 0, i 0x50000000, i 30, i 246, i 480, i 8, i $Dialog, i 0, i 0, i 0) i .r1"
+  ; 进度条：原生 msctls_progress32（PBM_SETPOS 自动重绘，本环境唯一可靠方案）
+  ; 用 PBS_SMOOTH 连续填充 + 禁用主题上粉色 + SetWindowRgn 圆角(4px) 完全复刻
+  ; mockup 的 .progress-bar（圆角胶囊、浅粉轨道 #F4C0D1 + 粉色填充 #D4537E）
+  ; 注：原生控件无法用 CSS，故用 CreateRoundRectRgn 模拟 border-radius:4px
+  System::Call "user32::CreateWindowEx(i 0, t 'msctls_progress32', i 0, i 0x50000001, i 30, i 246, i 480, i 8, i $Dialog, i 0, i 0, i 0) i .r1"
   StrCpy $hProgressFill $1
+  System::Call "uxtheme::SetWindowTheme(i $hProgressFill, w \"\", w \"\")"
   SendMessage $hProgressFill ${PBM_SETRANGE} 0 0x00640000
+  SendMessage $hProgressFill ${PBM_SETBARCOLOR} 0 0x007E53D4
+  SendMessage $hProgressFill ${PBM_SETBKCOLOR} 0 0x00D1C0F4
+  ; 圆角裁剪：高 8px → 4px 半径即胶囊形，对应 mockup border-radius:4px
+  System::Call "gdi32::CreateRoundRectRgn(i 0, i 0, i 480, i 8, i 4, i 4) i .r2"
+  System::Call "user32::SetWindowRgn(i $hProgressFill, i r2, i 1)"
 
   ${NSD_CreateLabel} 30 260 480 18 ""
   Pop $hProgressStatus
