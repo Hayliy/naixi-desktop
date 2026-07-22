@@ -466,10 +466,15 @@ Function fn_ProgressPage
   StrCpy $ProgressPct 0
 
   ${NSD_FreeBitmap} $hBanner
-  ; 手动显示对话框并开始动画。用原生进度条控件（msctls_progress32）+ PBM_SETPOS 驱动，
-  ; 控件自动重绘，完全无需消息泵或 GDI。
+  ; 用真实 Win32 消息泵驱动动画：SetTimer + GetMessage/DispatchMessage 循环。
+  ; 用「Do 循环 + Sleep」驱动动画。本环境定时器(nsDialogs::CreateTimer / SetTimer)
+  ; 只触发一次，不可靠，故不依赖定时器。进度条为原生 msctls_progress32，PBM_SETPOS
+  ; 自动重绘；nsDialogs 标题/副标题/状态控件在每轮 UpdateWindow($Dialog) 时同步绘制，
+  ; 故安装全程可见（配色于 100% 后由 nsDialogs::Show 正式接管时为设计色）。
   System::Call "user32::ShowWindow(i $HWNDPARENT, i 5)"
   System::Call "user32::ShowWindow(i $Dialog, i 5)"
+  System::Call "user32::UpdateWindow(i $Dialog)"
+  System::Call "user32::UpdateWindow(i $hProgressFill)"
   StrCpy $TickCount 0
   ${Do}
     ${If} $TickCount < 100
@@ -484,9 +489,18 @@ Function fn_ProgressPage
       ${Else}
         ${NSD_SetText} $hProgressStatus "安装完成... 100%"
       ${EndIf}
-      ; 原生进度条自动重绘，PBM_SETPOS 即时更新
+      ; 原生进度条自动重绘
       SendMessage $hProgressFill ${PBM_SETPOS} $TickCount 0
-      ${If} $ProgressPct >= 100
+      ; 同步绘制 nsDialogs 控件（标题/副标题/状态），保证安装中可见
+      System::Call "user32::UpdateWindow(i $Dialog)"
+      ; ── 调试用：env NAIXI_P3PAUSE=1 时在 50% 暂停 6s，便于截图取证 ──
+      ${If} $TickCount == 50
+        ReadEnvStr $R2 "NAIXI_P3PAUSE"
+        ${If} $R2 != ""
+          System::Call "kernel32::Sleep(i 6000)"
+        ${EndIf}
+      ${EndIf}
+      ${If} $TickCount >= 100
         SetOutPath "$INSTDIR"
         FileOpen $R0 "$INSTDIR\installed.txt" w
         FileWrite $R0 "ok"
@@ -501,7 +515,6 @@ Function fn_ProgressPage
     ${EndIf}
     System::Call "kernel32::Sleep(i 30)"
   ${Loop}
-  ; 动画完成，交还 nsDialogs 接管按钮交互
   nsDialogs::Show
 FunctionEnd
 
