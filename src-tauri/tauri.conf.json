@@ -56,7 +56,7 @@
         "template": "installer.nsi",
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/icon.ico",
-        "compression": "none"
+        "compression": "zlib"
       }
     },
     "resources": [

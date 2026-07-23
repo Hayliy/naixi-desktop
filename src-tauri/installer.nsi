@@ -5,7 +5,9 @@ ManifestDPIAwareness PerMonitorV2
 !if "{{compression}}" == "none"
   SetCompress off
 !else
-  SetCompressor /SOLID "{{compression}}"
+  ; 非 SOLID 压缩：每个文件独立压缩、按需解压，避免 SOLID 模式启动时
+  ; 整体解压弹出独立的 "unpacking data" 对话框（该弹窗无法融入自定义安装界面）。
+  SetCompressor "{{compression}}"
 !endif
 
 {{#if signed_plugins_path}}
@@ -147,6 +149,11 @@ Var hCloseBmp
 Var hCloseBtn
 Var InstallStage
 Var InstallDone
+Var ResBatch
+Var ResIdx
+Var BatchStart
+Var BatchEnd
+Var BatchTmp
 Var CurPage
 Var unCurPage
 Var unInstallDone
@@ -1123,10 +1130,15 @@ FunctionEnd
 Section "Main" SEC01
 SectionEnd
 
+; 每批写入的资源文件数：过大→单 tick 磁盘 I/O 阻塞 UI；过小→总耗时增加。
+; 1000 约 40MB/批，单 tick 远低于 Windows 判定“未响应”的 5s 阈值。
+!define RES_BATCH_SIZE 1000
+
 Function fn_DoInstall
   ${If} $InstallStage == 0
     ${NSD_SetText} $hProgressStatus "准备安装..."
     !insertmacro SetProgressWidth 8
+    StrCpy $ResBatch 0
     SetOutPath $INSTDIR
     !ifmacrodef NSIS_HOOK_PREINSTALL
       !insertmacro NSIS_HOOK_PREINSTALL
@@ -1143,17 +1155,41 @@ Function fn_DoInstall
     Return
   ${EndIf}
   ${If} $InstallStage == 2
-    ${NSD_SetText} $hProgressStatus "创建资源目录..."
-    !insertmacro SetProgressWidth 40
-    {{#each resources_dirs}}
-      CreateDirectory "$INSTDIR\\{{this}}"
-    {{/each}}
+    ; 分批写入资源：每个 timer tick 只写 ${RES_BATCH_SIZE} 个文件，
+    ; 写完 Return 让 UI 消息泵刷新，避免 15000+ 文件一次性同步 File 写入卡死（#1/#6）。
+    ${If} $ResBatch == 0
+      ${NSD_SetText} $hProgressStatus "创建资源目录..."
+      !insertmacro SetProgressWidth 40
+      {{#each resources_dirs}}
+        CreateDirectory "$INSTDIR\\{{this}}"
+      {{/each}}
+    ${EndIf}
     ${NSD_SetText} $hProgressStatus "写入资源文件..."
-    !insertmacro SetProgressWidth 55
+    ; 计算本批文件区间 [BatchStart, BatchEnd)
+    IntOp $BatchStart $ResBatch * ${RES_BATCH_SIZE}
+    IntOp $BatchEnd $BatchStart + ${RES_BATCH_SIZE}
+    StrCpy $ResIdx 0
+    ; File 为编译期嵌入 + 运行期解压，包在 ${If} 内即“按批条件解压”，跳过项不做磁盘 I/O
     {{#each resources}}
-      File /a "/oname={{this.[1]}}" "{{no-escape @key}}"
+      ${If} $ResIdx >= $BatchStart
+      ${AndIf} $ResIdx < $BatchEnd
+        File /a "/oname={{this.[1]}}" "{{no-escape @key}}"
+      ${EndIf}
+      IntOp $ResIdx $ResIdx + 1
     {{/each}}
-    IntOp $InstallStage $InstallStage + 1
+    ; 循环结束后 $ResIdx = 资源文件总数；进度按已写比例在 40→68% 间推进
+    IntOp $BatchTmp $BatchEnd * 28
+    IntOp $BatchTmp $BatchTmp / $ResIdx
+    IntOp $BatchTmp $BatchTmp + 40
+    ${If} $BatchTmp > 68
+      StrCpy $BatchTmp 68
+    ${EndIf}
+    !insertmacro SetProgressWidth $BatchTmp
+    IntOp $ResBatch $ResBatch + 1
+    ${If} $BatchEnd >= $ResIdx
+      ; 全部资源写完，进入下一阶段
+      IntOp $InstallStage $InstallStage + 1
+    ${EndIf}
     Return
   ${EndIf}
   ${If} $InstallStage == 3

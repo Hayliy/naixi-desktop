@@ -1,8 +1,51 @@
 use tauri::Emitter;
 use tauri::Manager;
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri_plugin_shell::ShellExt;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
+
+/// 显示并聚焦主窗口（从托盘恢复）
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
+
+/// 构建系统托盘：图标用应用自带图标，菜单含「显示主窗口 / 退出奶昔」，
+/// 左键单击托盘也可唤回主窗口。解决关窗后无托盘图标、只能强制卸载的问题（#4）。
+fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let show_item = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit", "退出奶昔", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+
+    let mut builder = TrayIconBuilder::with_id("naixi-tray")
+        .menu(&menu)
+        .tooltip("奶昔 · 桌面智能体")
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => show_main_window(app),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main_window(tray.app_handle());
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+    builder.build(app)?;
+    Ok(())
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -15,7 +58,21 @@ pub fn run() {
                 let _ = app.emit("backend-error", e.clone());
                 eprintln!("桌面后端启动失败: {}", e);
             }
+            // 创建系统托盘图标（关窗最小化到托盘后可从此处唤回或退出）
+            if let Err(e) = setup_tray(app.handle()) {
+                eprintln!("系统托盘创建失败: {}", e);
+            }
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // 关闭主窗口时不退出进程，改为隐藏到托盘（保留后端与桌宠）；
+            // 需要彻底退出请用托盘菜单「退出奶昔」。
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    let _ = window.hide();
+                    api.prevent_close();
+                }
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -59,9 +116,17 @@ fn resolve_python(app: &tauri::AppHandle) -> String {
     }
     if !cfg!(debug_assertions) {
         if let Ok(rd) = app.path().resource_dir() {
-            let embed = rd.join("python-embed").join("python.exe");
-            if embed.exists() {
-                return embed.to_string_lossy().to_string();
+            // 打包态资源可能落在单层 resources/python-embed，也可能因源路径带
+            // resources/ 前缀而落在双层 resources/resources/python-embed，两种都兜底查找，
+            // 避免找不到嵌入式 Python 而回退系统 python 导致后端起不来、资源库为空。
+            let candidates = [
+                rd.join("python-embed").join("python.exe"),
+                rd.join("resources").join("python-embed").join("python.exe"),
+            ];
+            for embed in candidates.iter() {
+                if embed.exists() {
+                    return embed.to_string_lossy().to_string();
+                }
             }
         }
     }
