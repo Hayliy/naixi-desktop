@@ -55,7 +55,7 @@
         "installMode": "currentUser",
         "template": "installer.nsi",
         "installerIcon": "icons/icon.ico",
-        "uninstallerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/uninstall.ico",
         "compression": "zlib"
       }
     },

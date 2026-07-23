@@ -171,7 +171,9 @@ Name "奶昔 · 桌面智能体"
 BrandingText " "
 OutFile "${OUTFILE}"
 Icon "D:\naixi_desktop\src-tauri\icons\icon.ico"
-UninstallIcon "D:\naixi_desktop\src-tauri\icons\icon.ico"
+; 卸载器图标必须用 BMP(DIB) 格式 ICO：NSIS 在 WriteUninstaller 时替换卸载器桩图标资源，
+; 对 PNG 压缩内嵌的 ICO 兼容性差会静默失败回退默认图标。uninstall.ico 由 make_uninstall_ico.py 生成。
+UninstallIcon "D:\naixi_desktop\src-tauri\icons\uninstall.ico"
 !define PLACEHOLDER_INSTALL_DIR "placeholder\${PRODUCTNAME}"
 InstallDir "${PLACEHOLDER_INSTALL_DIR}"
 
@@ -1062,21 +1064,51 @@ Function un.DoUninstallStage
   ${EndIf}
   ${If} $unInstallStage == 0
     ${IfNot} ${Silent}
-      ${NSD_SetText} $unProgStatus "正在检查程序是否在运行... 10%"
-      SendMessage $hProgressFill ${PBM_SETPOS} 10 0
+      ${NSD_SetText} $unProgStatus "正在检查程序是否在运行... 5%"
+      SendMessage $hProgressFill ${PBM_SETPOS} 5 0
     ${EndIf}
+    StrCpy $ResBatch 0
     IntOp $unInstallStage $unInstallStage + 1
     Return
   ${EndIf}
   ${If} $unInstallStage == 1
+    ; 分批删除资源文件：每个 tick 只删 ${RES_BATCH_SIZE} 个后 Return，让 UI 消息泵刷新，
+    ; 避免一次性同步删 15000+ 文件（python-embed 等）导致鼠标转圈卡死（#6）。
     ${IfNot} ${Silent}
-      ${NSD_SetText} $unProgStatus "正在删除程序文件... 40%"
-      SendMessage $hProgressFill ${PBM_SETPOS} 40 0
+      ${NSD_SetText} $unProgStatus "正在删除资源文件..."
+    ${EndIf}
+    IntOp $BatchStart $ResBatch * ${RES_BATCH_SIZE}
+    IntOp $BatchEnd $BatchStart + ${RES_BATCH_SIZE}
+    StrCpy $ResIdx 0
+    {{#each resources}}
+      ${If} $ResIdx >= $BatchStart
+      ${AndIf} $ResIdx < $BatchEnd
+        Delete "$INSTDIR\\{{this.[1]}}"
+      ${EndIf}
+      IntOp $ResIdx $ResIdx + 1
+    {{/each}}
+    ; 进度按已删比例在 5→70% 间推进
+    IntOp $BatchTmp $BatchEnd * 65
+    IntOp $BatchTmp $BatchTmp / $ResIdx
+    IntOp $BatchTmp $BatchTmp + 5
+    ${If} $BatchTmp > 70
+      StrCpy $BatchTmp 70
+    ${EndIf}
+    ${IfNot} ${Silent}
+      SendMessage $hProgressFill ${PBM_SETPOS} $BatchTmp 0
+    ${EndIf}
+    IntOp $ResBatch $ResBatch + 1
+    ${If} $BatchEnd >= $ResIdx
+      IntOp $unInstallStage $unInstallStage + 1
+    ${EndIf}
+    Return
+  ${EndIf}
+  ${If} $unInstallStage == 2
+    ${IfNot} ${Silent}
+      ${NSD_SetText} $unProgStatus "正在删除主程序与依赖... 80%"
+      SendMessage $hProgressFill ${PBM_SETPOS} 80 0
     ${EndIf}
     Delete "$INSTDIR\${MAINBINARYNAME}.exe"
-    {{#each resources}}
-    Delete "$INSTDIR\\{{this.[1]}}"
-    {{/each}}
     {{#each binaries}}
     Delete "$INSTDIR\\{{this}}"
     {{/each}}
@@ -1085,10 +1117,10 @@ Function un.DoUninstallStage
     IntOp $unInstallStage $unInstallStage + 1
     Return
   ${EndIf}
-  ${If} $unInstallStage == 2
+  ${If} $unInstallStage == 3
     ${IfNot} ${Silent}
-      ${NSD_SetText} $unProgStatus "正在删除快捷方式与注册表... 70%"
-      SendMessage $hProgressFill ${PBM_SETPOS} 70 0
+      ${NSD_SetText} $unProgStatus "正在删除快捷方式与注册表... 90%"
+      SendMessage $hProgressFill ${PBM_SETPOS} 90 0
     ${EndIf}
     Delete "$SMPROGRAMS\${PRODUCTNAME}\奶昔.lnk"
     RMDir "$SMPROGRAMS\${PRODUCTNAME}"
@@ -1104,8 +1136,7 @@ Function un.DoUninstallStage
     ${NSD_SetText} $unProgStatus "正在清理目录... 100%"
     SendMessage $hProgressFill ${PBM_SETPOS} 100 0
   ${EndIf}
-  ; 清理可能残留的嵌套子目录（resources / sidecar 等仅 Delete 文件后目录仍空留，
-  ; 单纯 RMDir "$INSTDIR" 因非空会失败，故先递归清理再删根目录）。
+  ; 此时资源文件已分批删空，下面 RMDir /r 只清理空目录残壳，速度快、不会卡。
   RMDir /r "$INSTDIR\resources"
   RMDir /r "$INSTDIR\sidecar"
   RMDir "$INSTDIR"

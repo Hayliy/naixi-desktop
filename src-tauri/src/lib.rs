@@ -4,7 +4,60 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri_plugin_shell::ShellExt;
 use std::net::{TcpStream, ToSocketAddrs};
+use std::sync::Mutex;
 use std::time::Duration;
+
+/// 后端 Python sidecar 进程 PID（托盘退出时用它杀掉整棵进程树，避免残留）
+#[derive(Default)]
+struct BackendPid(Mutex<Option<u32>>);
+
+/// 彻底结束后端：按存下的 PID 杀掉 Python 子进程树（含 SearXNG 等子进程），
+/// 解决关闭/退出后仍残留 python.exe 进程的问题（#3）。
+fn kill_backend(app: &tauri::AppHandle) {
+    let pid = app
+        .state::<BackendPid>()
+        .0
+        .lock()
+        .ok()
+        .and_then(|g| *g);
+    if let Some(pid) = pid {
+        // /T 连同子进程树一起结束，/F 强制结束
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &pid.to_string()])
+            .status();
+    } else {
+        // 兜底：PID 没存上（例如本次启动时端口已被上次残留占用而直接复用），
+        // 按监听 9845 的进程再清一次，避免残留 python.exe。只杀监听该端口者，不误杀其它 python。
+        if let Some(port_pid) = pid_listening_on(9845) {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/F", "/T", "/PID", &port_pid.to_string()])
+                .status();
+        }
+    }
+}
+
+/// 查找监听指定端口的进程 PID（Windows netstat 解析），用于退出时兜底清理残留后端
+#[cfg(windows)]
+fn pid_listening_on(port: u16) -> Option<u32> {
+    let out = std::process::Command::new("netstat").args(["-ano"]).output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let needle = format!(":{}", port);
+    for line in text.lines() {
+        if line.contains(&needle) && line.to_uppercase().contains("LISTENING") {
+            if let Some(pid) = line.split_whitespace().last() {
+                if let Ok(pid) = pid.trim().parse::<u32>() {
+                    return Some(pid);
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+fn pid_listening_on(_port: u16) -> Option<u32> {
+    None
+}
 
 /// 显示并聚焦主窗口（从托盘恢复）
 fn show_main_window(app: &tauri::AppHandle) {
@@ -27,7 +80,10 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         .tooltip("奶昔 · 桌面智能体")
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => show_main_window(app),
-            "quit" => app.exit(0),
+            "quit" => {
+                kill_backend(app);
+                app.exit(0);
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
@@ -51,6 +107,7 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .manage(BackendPid::default())
         .invoke_handler(tauri::generate_handler![start_backend])
         .setup(|app| {
             // 启动 Python 桌面后端；失败（如未检测到 Python）时通知前端显示提示，而非静默退出
@@ -161,7 +218,15 @@ fn spawn_backend(app: &tauri::AppHandle) -> Result<(), String> {
         .arg(script.to_string_lossy().to_string())
         .spawn()
     {
-        Ok((_rx, _child)) => Ok(()),
+        Ok((_rx, child)) => {
+            // 记录 Python 子进程 PID，供退出时杀进程树用（解决残留进程 #3）
+            if let Some(state) = app.try_state::<BackendPid>() {
+                if let Ok(mut g) = state.0.lock() {
+                    *g = Some(child.pid());
+                }
+            }
+            Ok(())
+        }
         Err(e) => Err(format!("后端进程启动失败: {}", e)),
     }
 }

@@ -2074,74 +2074,100 @@ async def api_providers(request):
 
 # ── 提示词 / 专家 / Skill API ──
 
+def _load_builtin_resource(filename: str) -> list:
+    """加载内置资源库 JSON（专家/Skill/提示词），任何异常都返回空列表并写中文日志。
+
+    多路径兜底：优先 _DESKTOP_DIR/data/prompts；再退到当前文件上级的
+    resources/data/prompts（应对开发态与打包态单/双层 resources 目录差异），
+    确保打包后资源库一定能被找到，而不是静默为空。
+    """
+    import os, json as _json
+    candidates = [
+        os.path.join(_DESKTOP_DIR, "data", "prompts", filename),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "prompts", filename),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resources", "data", "prompts", filename),
+    ]
+    for fp in candidates:
+        try:
+            if os.path.exists(fp):
+                with open(fp, "r", encoding="utf-8") as f:
+                    return _json.load(f)
+        except Exception as e:
+            logging.getLogger("桌面端").warning(f"读取内置资源库失败（尝试下一个路径）: {fp}: {e}")
+    logging.getLogger("桌面端").warning(f"内置资源库未找到: {filename}，返回空列表")
+    return []
+
 async def api_prompts_github(request):
     """返回从 GitHub 下载的所有提示词（合并自定义）"""
-    import os, json as _json
-    fp = os.path.join(_DESKTOP_DIR, "data", "prompts", "prompts.json")
-    data = []
-    if os.path.exists(fp):
-        with open(fp, 'r', encoding='utf-8') as f:
-            data = _json.load(f)
-    # 合并自定义
-    custom = _load_custom("custom_prompts")
-    data = custom + data
-    category = request.query.get("category", "")
-    search = request.query.get("search", "")
-    if category:
-        data = [p for p in data if p.get("category") == category]
-    if search:
-        kw = search.lower()
-        data = [p for p in data if kw in p.get("act", "").lower() or kw in p.get("prompt", "").lower()]
-    return web.json_response({"prompts": data, "total": len(data)})
+    try:
+        data = _load_builtin_resource("prompts.json")
+        data = _load_custom("custom_prompts") + data
+        category = request.query.get("category", "")
+        search = request.query.get("search", "")
+        if category:
+            data = [p for p in data if p.get("category") == category]
+        if search:
+            kw = search.lower()
+            data = [p for p in data if kw in p.get("act", "").lower() or kw in p.get("prompt", "").lower()]
+        return web.json_response({"prompts": data, "total": len(data)})
+    except Exception as e:
+        logging.getLogger("桌面端").warning(f"提示词列表接口异常（返回空）: {e}")
+        return web.json_response({"prompts": [], "total": 0})
 
 async def api_experts_list(request):
     """返回专家列表（合并自定义）"""
-    import os, json as _json
-    fp = os.path.join(_DESKTOP_DIR, "data", "prompts", "experts.json")
-    data = []
-    if os.path.exists(fp):
-        with open(fp, 'r', encoding='utf-8') as f:
-            data = _json.load(f)
-    custom = _load_custom("custom_experts")
-    data = custom + data
-    category = request.query.get("category", "")
-    search = request.query.get("search", "")
-    if category:
-        data = [e for e in data if e.get("category") == category]
-    if search:
-        kw = search.lower()
-        data = [e for e in data if kw in e.get("name", "").lower()]
-    return web.json_response({"experts": data, "total": len(data)})
+    try:
+        data = _load_builtin_resource("experts.json")
+        data = _load_custom("custom_experts") + data
+        category = request.query.get("category", "")
+        search = request.query.get("search", "")
+        if category:
+            data = [e for e in data if e.get("category") == category]
+        if search:
+            kw = search.lower()
+            data = [e for e in data if kw in e.get("name", "").lower()]
+        return web.json_response({"experts": data, "total": len(data)})
+    except Exception as e:
+        logging.getLogger("桌面端").warning(f"专家列表接口异常（返回空）: {e}")
+        return web.json_response({"experts": [], "total": 0})
 
 async def api_skills_list(request):
     """返回 Skill 列表（合并自定义）"""
-    import os, json as _json
-    fp = os.path.join(_DESKTOP_DIR, "data", "prompts", "skills.json")
-    data = []
-    if os.path.exists(fp):
-        with open(fp, 'r', encoding='utf-8') as f:
-            data = _json.load(f)
-    custom = _load_custom("custom_skills")
-    data = custom + data
-    category = request.query.get("category", "")
-    search = request.query.get("search", "")
-    if category:
-        data = [s for s in data if s.get("category") == category]
-    if search:
-        kw = search.lower()
-        data = [s for s in data if kw in s.get("name", "").lower()]
-    return web.json_response({"skills": data, "total": len(data)})
+    try:
+        data = _load_builtin_resource("skills.json")
+        data = _load_custom("custom_skills") + data
+        category = request.query.get("category", "")
+        search = request.query.get("search", "")
+        if category:
+            data = [s for s in data if s.get("category") == category]
+        if search:
+            kw = search.lower()
+            data = [s for s in data if kw in s.get("name", "").lower()]
+        return web.json_response({"skills": data, "total": len(data)})
+    except Exception as e:
+        logging.getLogger("桌面端").warning(f"Skill 列表接口异常（返回空）: {e}")
+        return web.json_response({"skills": [], "total": 0})
 
 
 # ── 自定义 CRUD ──
 
 def _load_custom(meta_key: str) -> list:
-    """从 meta 表加载自定义数据"""
-    from desktop_core.storage import meta_get
-    raw = meta_get(meta_key)
+    """从 meta 表加载自定义数据。
+
+    任何异常（meta 表尚未建、数据库被锁、路径不对、JSON 损坏）都吞掉并返回空列表，
+    绝不向上抛出——否则会连累 experts/skills/prompts 端点整体 500、资源库空白。
+    """
+    try:
+        from desktop_core.storage import meta_get
+        raw = meta_get(meta_key)
+    except Exception as e:
+        logging.getLogger("桌面端").warning(f"读取自定义数据失败（已忽略）: {meta_key}: {e}")
+        return []
     if raw:
-        try: return json.loads(raw)
-        except: pass
+        try:
+            return json.loads(raw)
+        except Exception:
+            pass
     return []
 
 def _save_custom(meta_key: str, items: list):
