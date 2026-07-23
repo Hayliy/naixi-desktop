@@ -56,6 +56,9 @@ LoadLanguageFile "${NSISDIR}\Contrib\Language files\SimpChinese.nlf"
 !ifndef EM_SETREADONLY
   !define EM_SETREADONLY 0x00CF
 !endif
+!ifndef EM_SETRECT
+  !define EM_SETRECT 0x00B3
+!endif
 
 Var Dialog
 Var hBanner
@@ -74,6 +77,8 @@ Var hPrevBtn
 Var hPrevBmp
 Var hMinBmp
 Var hMinBtn
+Var hCloseBmp
+Var hCloseBtn
 Var RunCheck
 Var DesktopCheck
 Var InstallDone
@@ -95,6 +100,7 @@ BrandingText " "
 OutFile "test_flow.exe"
 InstallDir "$LOCALAPPDATA\奶昔"
 RequestExecutionLevel user
+Icon "D:/naixi_desktop/src-tauri/icons/icon.ico"
 
 !macro ApplyFont HWND FONT
   SendMessage ${HWND} ${WM_SETFONT} ${FONT} 1
@@ -231,12 +237,13 @@ RequestExecutionLevel user
   ${NSD_CreateBitmap} 0 0 ${WIN_W} ${BANNER_H} ""
   Pop $hBanner
   ${NSD_SetBitmap} $hBanner "$PLUGINSDIR\banner.bmp" $hBmpBanner
-  !insertmacro AddNotify $hBanner
-  ${NSD_OnClick} $hBanner fn_BannerClick
+  ; 注意：banner 不再响应点击拖拽。NSIS 脚本无法安全创建原生 WndProc 子类，而
+  ; "NSD_OnClick + WM_NCLBUTTONDOWN" 会在鼠标抬起时进入模态标题栏移动循环，导致
+  ; 卸载/安装完成页点击完成后出现重入/需多点一次。去掉拖拽是最稳定可验证的方案。
 
   ; 右上角 最小化/关闭 作为独立位图按钮叠加在 banner 上（位图+NSD_OnClick 已验证可用）
   !insertmacro BitmapBtn 478 6 28 24 "$PLUGINSDIR\btn_min.bmp" fn_Minimize $hMinBmp $hMinBtn
-  !insertmacro BitmapBtn 506 6 28 24 "$PLUGINSDIR\btn_close.bmp" fn_Close $hMinBmp $hMinBtn
+  !insertmacro BitmapBtn 506 6 28 24 "$PLUGINSDIR\btn_close.bmp" fn_Close $hCloseBmp $hCloseBtn
 !macroend
 
 ; ACTIVE: 当前激活的步骤编号（1-4）
@@ -317,11 +324,6 @@ Function fn_Close
   SendMessage $HWNDPARENT ${WM_CLOSE} 0 0
 FunctionEnd
 
-Function fn_BannerClick
-  ; banner 其余区域拖动窗口
-  SendMessage $HWNDPARENT ${WM_NCLBUTTONDOWN} ${HTCAPTION} 0
-FunctionEnd
-
 Function fn_NextClick
   !insertmacro LogEvent "next"
   ${If} $CurPage == 4
@@ -381,6 +383,7 @@ Function fn_DirPage
   nsDialogs::Create 1018
   Pop $Dialog
   StrCpy $CurPage 2
+  ; P2 地址框预填默认安装路径（依赖脚本顶部 InstallDir "$LOCALAPPDATA\奶昔"）
   !insertmacro HideWizardChrome
   !insertmacro FillPage
   SetCtlColors $Dialog "" "${CLR_BG}"
@@ -397,12 +400,15 @@ Function fn_DirPage
   Pop $0
   ${NSD_SetBitmap} $0 "$PLUGINSDIR\addr_border.bmp" $R0
 
-  ; 路径显示框（左对齐，12px，#444，背景 #FDF8FA，左侧留 10px padding 匹配 mockup）
-  ${NSD_CreateLabel} 40 210 360 30 "$INSTDIR"
+  ; 路径输入框：用原生 Text 控件（匹配 mockup .path-row input），预填默认安装路径，渲染稳定且可编辑
+  ${NSD_CreateText} 40 215 360 22 "$INSTDIR"
   Pop $InstallPathText
   SetCtlColors $InstallPathText "${CLR_INPUT_TEXT}" "${CLR_INPUT_BG}"
   !insertmacro ApplyFont $InstallPathText $hFontSmall
-  !insertmacro LeftVCenter $InstallPathText
+  ; 去掉原生凹陷/实线边框，改用底层 addr_border.bmp 圆角边框作装饰，避免双重边框
+  !insertmacro FlatEdit $InstallPathText
+  ; 提到顶层，确保不被 addr_border.bmp 边框位图按创建序覆盖
+  System::Call "user32::SetWindowPos(i $InstallPathText, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
 
   ; 浏览按钮
   !insertmacro BitmapBtn 420 210 90 28 "$PLUGINSDIR\btn_browse.bmp" fn_Browse $0 $0
@@ -431,6 +437,8 @@ Function fn_Browse
 FunctionEnd
 
 Function fn_DirPageLeave
+  ${NSD_GetText} $InstallPathText $0
+  StrCpy $INSTDIR $0
 FunctionEnd
 
 ; ═══════════════════════════════════════════════════════════
@@ -608,13 +616,14 @@ Function fn_FinishClick
   ${NSD_GetState} $DesktopCheck $0
   ${If} $0 = ${BST_CHECKED}
     ; 快捷方式名称固定为「奶昔」，图标复用安装目录内的主程序图标
-    CreateShortcut "$DESKTOP\奶昔.lnk" "$INSTDIR\奶昔.exe" "" "$INSTDIR\奶昔.exe" 0
+    CreateShortcut "$DESKTOP\奶昔.lnk" "$INSTDIR\奶昔.exe" "" "$INSTDIR\icon.ico" 0
   ${EndIf}
   ${NSD_GetState} $RunCheck $0
   ${If} $0 = ${BST_CHECKED}
     ExecShell "" "$INSTDIR\奶昔.exe"
   ${EndIf}
-  Quit
+  ; 关闭安装器：给主窗口发 WM_CLOSE（与 fn_Close 一致，已验证可关闭无边框窗口）。
+  SendMessage $HWNDPARENT ${WM_CLOSE} 0 0
 FunctionEnd
 
 Function .onInit
@@ -642,6 +651,7 @@ Function .onInit
   File "D:\naixi_desktop\src-tauri\installer\txt_step2.bmp"
   File "D:\naixi_desktop\src-tauri\installer\txt_step3.bmp"
   File "D:\naixi_desktop\src-tauri\installer\txt_step4.bmp"
+  File "D:\naixi_desktop\src-tauri\icons\icon.ico"
 
   System::Call 'gdi32::CreateFont(i -19, i 0, i 0, i 0, i 700, i 0, i 0, i 0, i 0x01, i 0, i 0, i 0, i 0, t "Microsoft YaHei") i .r0'
   StrCpy $hFontTitle $0
@@ -656,10 +666,13 @@ Function .onInit
 FunctionEnd
 
 Section "Main" SEC01
+  SetOutPath $INSTDIR
+  File "D:\naixi_desktop\src-tauri\icons\icon.ico"
 SectionEnd
 
 Section Uninstall
   Delete "$INSTDIR\installed.txt"
+  Delete "$INSTDIR\icon.ico"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
 SectionEnd

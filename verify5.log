@@ -1,0 +1,22 @@
+setup.exe = D:\naixi_desktop\src-tauri\target\release\bundle\nsis\奶昔_0.1.0_x64-setup.exe
+[A] 启动 setup.exe（非静默安装）
+    已清除旧安装目录
+    安装窗口: 奶昔 · 桌面智能体 安装 d:\naixi_desktop\src-tauri\target\release\bundle\nsis\奶昔_0.1.0_x64-setup.exe
+  shot -> D:\naixi_desktop\verify_shots\i1_welcome.png
+    点 欢迎->下一步
+  点击 (459,399)
+  shot -> D:\naixi_desktop\verify_shots\i2_location.png
+    点 位置->安装
+  点击 (459,399)
+    等待安装进度（约 150s）...
+  shot -> D:\naixi_desktop\verify_shots\i3_progress_or_finish.png
+    点 完成
+  点击 (459,399)
+    兜底关闭窗口
+  点击 (520,18)
+[B] 确认 uninstall.exe
+    uninstall.exe 存在: True
+    时间戳: 07-23 14:12
+[C] 启动 uninstall.exe（GUI）
+ERROR: 未找到卸载窗口
+VERIFY5_EXIT=6

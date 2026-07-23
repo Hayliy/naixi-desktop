@@ -341,6 +341,10 @@ export default function SetupGuide({ onClose, standalone }: { onClose: () => voi
                 }`}>{step > i ? "✓" : i + 1}</div>
               ))}
             </div>
+            {/* 稍后配置：明确可跳过的关闭入口 */}
+            <button onClick={onClose} className="text-xs text-sakura-500 hover:text-sakura-600 px-2.5 py-1 rounded-lg hover:bg-sakura-50 transition-colors whitespace-nowrap">
+              稍后配置
+            </button>
             {/* 关闭按钮 */}
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100 transition-colors" title="关闭">
               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>

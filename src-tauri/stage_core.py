@@ -38,7 +38,20 @@ def main():
     for stale in staged:
         (DST / stale).unlink()
 
-    print(f"已暂存 {count} 个 .py 文件到 {DST}（仅代码，不含任何数据/模型/日志）")
+    # 3. 复制内置「资源库」内容（专家 / Skill / 专家团队 JSON）
+    #    这些是应用自带内容，必须打进安装包；
+    #    用户私有数据（对话、日志、模型、知识库）仍严格排除。
+    prompt_src = ROOT / "data" / "prompts"
+    prompt_dst = DST.parent / "data" / "prompts"
+    if prompt_src.is_dir():
+        prompt_dst.mkdir(parents=True, exist_ok=True)
+        for name in ("prompts.json", "experts.json", "skills.json"):
+            sp = prompt_src / name
+            if sp.exists():
+                shutil.copy2(sp, prompt_dst / name)
+        print(f"已暂存内置资源库（专家/Skill/专家团队）到 {prompt_dst}")
+
+    print(f"已暂存 {count} 个 .py 文件到 {DST}（仅代码，不含用户私有数据/模型/日志）")
 
 
 if __name__ == "__main__":

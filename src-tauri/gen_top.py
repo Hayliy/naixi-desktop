@@ -70,11 +70,12 @@ def draw_banner(src_path: str, out_path: str, size: tuple):
     print("saved", out_path, size)
 
 
-def draw_corner_btn(out_path: str, symbol: str, region: tuple):
+def draw_corner_btn(out_path: str, symbol: str, region: tuple, bar: bool = False):
     """右上角按钮：80% 半透明蒙版（叠加 banner 角像素 + 20% 暗化），白色字形。
 
     region = (x0, y0, w, h) 为该按钮在 banner 上的实际覆盖区域，
     从已生成的 banner.bmp 取对应像素做混合，使位图覆盖后呈现「半透明」观感。
+    bar=True 时绘制 12x2 圆角白条（用于最小化，避免字体短横过细）。
     """
     bx0, by0, bw, bh = region
     banner = Image.open(os.path.join(OUT_DIR, "banner.bmp")).convert("RGB")
@@ -89,8 +90,13 @@ def draw_corner_btn(out_path: str, symbol: str, region: tuple):
             b = int(b * 0.8 + 45 * 0.2)
             px[x, y] = (r, g, b)
     d = ImageDraw.Draw(im)
-    font = get_font(16)
-    draw_text_centered(d, symbol, font, bw // 2, bh // 2 + 1, (255, 255, 255))
+    if bar:
+        # 居中 12x2 圆角白条，与 × 视觉粗细接近
+        d.rounded_rectangle([(bw // 2 - 6, bh // 2 - 1), (bw // 2 + 5, bh // 2 + 1)],
+                            radius=1, fill=(255, 255, 255))
+    else:
+        font = get_font(16)
+        draw_text_centered(d, symbol, font, bw // 2, bh // 2 + 1, (255, 255, 255))
     im.save(out_path, "BMP")
     print("saved", out_path, (bw, bh), symbol)
 
@@ -169,6 +175,9 @@ def main():
                 CLR_PINK, CLR_WHITE, CLR_FOOTER_BG, BTN_W, BTN_H, 13, bold=True)
     draw_button(os.path.join(OUT_DIR, "btn_finish.bmp"), "完成",
                 CLR_PINK, CLR_WHITE, CLR_FOOTER_BG, BTN_W, BTN_H, 13, bold=True)
+    # 卸载页「卸载」主按钮（粉底白字，与 安装 同款）
+    draw_button(os.path.join(OUT_DIR, "btn_uninstall.bmp"), "卸载",
+                CLR_PINK, CLR_WHITE, CLR_FOOTER_BG, BTN_W, BTN_H, 13, bold=True)
     # 安装中（禁用态：灰底灰字）
     draw_button(os.path.join(OUT_DIR, "btn_installing.bmp"), "安装中",
                 CLR_DISABLE_BG, CLR_DISABLE_TEXT, CLR_FOOTER_BG, BTN_W, BTN_H, 13)
@@ -180,8 +189,9 @@ def main():
     draw_button(os.path.join(OUT_DIR, "btn_browse.bmp"), "浏览...",
                 CLR_LIGHT_PINK, CLR_DARK_PINK, CLR_BG, BROWSE_W, BROWSE_H, 12)
 
-    # 右上角 最小化 / 关闭 按钮（80% 半透明蒙版，白色 — / ×）
-    draw_corner_btn(os.path.join(OUT_DIR, "btn_min.bmp"), "—", (478, 6, 28, 24))
+    # 右上角 最小化 / 关闭 按钮（80% 半透明蒙版，白色 - / ×）
+    # 最小化用自定义粗横线（12x2 圆角白条），避免字体渲染出过细短横
+    draw_corner_btn(os.path.join(OUT_DIR, "btn_min.bmp"), "-", (478, 6, 28, 24), bar=True)
     draw_corner_btn(os.path.join(OUT_DIR, "btn_close.bmp"), "×", (506, 6, 28, 24))
 
     # 地址输入框圆角边框

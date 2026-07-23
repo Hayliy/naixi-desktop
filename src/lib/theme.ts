@@ -83,6 +83,12 @@ export function applyTheme(theme: ThemeMode, hue: number) {
     lines.push(".bg-gradient-to-br,.bg-gradient-to-r{opacity:0.7}");
   }
   _styleEl.textContent = lines.join("");
+  // 同步 Tailwind 的 dark class：light 模式移除（避免系统深色偏好误触发 dark: 变体），dark 模式加上
+  if (theme === "dark") {
+    document.documentElement.classList.add("dark");
+  } else {
+    document.documentElement.classList.remove("dark");
+  }
   localStorage.setItem("naixi_theme", theme);
   localStorage.setItem("naixi_theme_hue", String(hue));
 }

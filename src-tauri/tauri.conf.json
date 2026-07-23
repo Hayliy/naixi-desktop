@@ -31,6 +31,7 @@
         "alwaysOnTop": true,
         "resizable": false,
         "center": true,
+        "visible": false,
         "url": "/pet"
       }
     ],
@@ -53,12 +54,15 @@
       "nsis": {
         "installMode": "currentUser",
         "template": "installer.nsi",
-        "installerIcon": "icons/icon.ico"
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "compression": "none"
       }
     },
     "resources": [
       "sidecar/*.py",
       "resources/desktop_core/**/*.py",
+      "resources/data/**/*",
       "resources/python-embed/**/*"
     ]
   },

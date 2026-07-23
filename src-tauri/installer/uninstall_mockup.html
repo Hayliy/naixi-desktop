@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>奶昔卸载器 mockup</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #e8e8e8;
+  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+}
+.window {
+  width: 540px;
+  height: 430px;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 10px 32px rgba(0,0,0,0.18);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+/* 顶部横幅：猫娘立绘 + 蒙版 + 白字 */
+.banner {
+  width: 100%;
+  height: 124px;
+  position: relative;
+  overflow: hidden;
+  flex: none;
+}
+.banner-img {
+  width: 100%; height: 124px;
+  object-fit: cover; object-position: center 28%;
+  display: block;
+}
+.banner-overlay {
+  position: absolute; inset: 0;
+  background: linear-gradient(180deg, rgba(40,12,24,0.35) 0%, rgba(40,12,24,0.72) 100%);
+}
+.banner-text {
+  position: absolute; left: 30px; bottom: 12px; color: #fff;
+}
+.banner-title { font-size: 22px; font-weight: 700; letter-spacing: 2px; }
+.banner-sub { font-size: 12px; opacity: 0.85; margin-top: 3px; letter-spacing: 1px; }
+/* 右上角 最小/关闭 */
+.win-ctl {
+  position: absolute; top: 10px; right: 12px;
+  display: flex; gap: 6px; z-index: 5;
+}
+.win-ctl button {
+  width: 26px; height: 22px; border: none; cursor: pointer;
+  background: rgba(255,255,255,0.16); border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+}
+.win-ctl button:hover { background: rgba(255,255,255,0.30); }
+.win-ctl svg { stroke: #fff; stroke-width: 2; fill: none; }
+
+.content { flex: 1; padding: 16px 30px 14px; position: relative; overflow-y: auto; }
+.page { display: none; }
+.page.active { display: block; }
+h2 { font-size: 18px; color: #72243E; margin-bottom: 9px; font-weight: 600; }
+p { font-size: 13px; color: #666; line-height: 1.6; margin-bottom: 6px; }
+
+/* 组件清单 */
+.component-list { margin: 4px 0 2px; padding-left: 0; list-style: none; }
+.component-list li {
+  font-size: 13px; color: #555; line-height: 1.7;
+  display: flex; align-items: center; gap: 8px;
+}
+.dot { width: 6px; height: 6px; border-radius: 50%; background: #D4537E; flex: none; }
+
+.check-row {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 10px; font-size: 13px; color: #555; cursor: pointer;
+}
+.check-row input { width: 15px; height: 15px; accent-color: #D4537E; }
+
+.warn {
+  margin-top: 10px; padding: 8px 11px;
+  background: #FDEEF2; border-left: 3px solid #D4537E;
+  border-radius: 4px; font-size: 12px; color: #9b3252; line-height: 1.5;
+}
+
+/* 进度 */
+.progress-wrap { margin-top: 22px; }
+.progress-bar {
+  width: 100%; height: 8px; background: #F4C0D1;
+  border-radius: 4px; overflow: hidden;
+}
+.progress-fill {
+  width: 0%; height: 100%; background: #D4537E;
+  transition: width 0.08s linear;
+}
+.progress-text { font-size: 11px; color: #888; margin-top: 8px; }
+
+/* 底部 */
+.footer {
+  height: 62px; border-top: 1px solid #F4C0D1;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 30px; background: #FDF8FA;
+}
+.steps { display: flex; gap: 14px; }
+.step {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 12px; color: #aaa;
+}
+.step .num {
+  width: 18px; height: 18px; border-radius: 50%;
+  background: #F4C0D1; color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px;
+}
+.step.active { color: #D4537E; }
+.step.active .num { background: #D4537E; }
+.footer-btns { display: flex; gap: 10px; }
+.btn {
+  height: 30px; padding: 0 18px; border: none; border-radius: 5px;
+  background: #D4537E; color: #fff; font-size: 13px; cursor: pointer;
+}
+.btn:hover { background: #b9446c; }
+.btn.secondary { background: #F4C0D1; color: #72243E; }
+.btn.danger { background: #C2405F; }
+.btn.danger:hover { background: #a8344f; }
+.btn:disabled { opacity: 0.55; cursor: default; }
+</style>
+</head>
+<body>
+<div class="window">
+  <!-- 顶部横幅 -->
+  <div class="banner">
+    <img class="banner-img" src="file:///D:/naixi_desktop/data/avatars/avatar-0.png" alt="奶昔">
+    <div class="banner-overlay"></div>
+    <div class="banner-text">
+      <div class="banner-title">奶昔</div>
+      <div class="banner-sub">桌面智能体 · 卸载</div>
+    </div>
+  </div>
+  <div class="win-ctl">
+    <button title="最小化" onclick="alert('最小化（设计稿占位）')">
+      <svg width="12" height="12" viewBox="0 0 12 12"><line x1="2" y1="9" x2="10" y2="9"/></svg>
+    </button>
+    <button title="关闭" onclick="alert('关闭（设计稿占位）')">
+      <svg width="12" height="12" viewBox="0 0 12 12"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
+    </button>
+  </div>
+
+  <!-- 内容区 -->
+  <div class="content">
+    <!-- 页1 确认 -->
+    <div class="page active" id="p1">
+      <h2>准备卸载奶昔 · 桌面智能体</h2>
+      <p>即将移除以下组件：</p>
+      <ul class="component-list">
+        <li><span class="dot"></span>奶昔 · 桌面智能体 主程序</li>
+        <li><span class="dot"></span>桌面快捷方式与开始菜单项</li>
+        <li><span class="dot"></span>本地缓存、日志与临时文件</li>
+      </ul>
+      <label class="check-row"><input type="checkbox" id="delData"> 同时删除我的个人配置与数据（对话历史、知识库、偏好设置）</label>
+      <div class="warn">此操作不可撤销。确定要继续卸载吗？</div>
+    </div>
+
+    <!-- 页2 进度 -->
+    <div class="page" id="p2">
+      <h2>正在卸载</h2>
+      <p>正在把奶昔从你的电脑移除，请稍候...</p>
+      <div class="progress-wrap">
+        <div class="progress-bar"><div class="progress-fill" id="fill"></div></div>
+        <div class="progress-text" id="ptext">正在删除文件... 0%</div>
+      </div>
+    </div>
+
+    <!-- 页3 完成 -->
+    <div class="page" id="p3">
+      <h2>卸载完成</h2>
+      <p>奶昔 · 桌面智能体 已从你的电脑移除。</p>
+      <p id="p3note" style="color:#9b3252;"></p>
+    </div>
+  </div>
+
+  <!-- 底部 -->
+  <div class="footer">
+    <div class="steps">
+      <div class="step active" data-i="1"><span class="num">1</span>确认</div>
+      <div class="step" data-i="2"><span class="num">2</span>卸载</div>
+      <div class="step" data-i="3"><span class="num">3</span>完成</div>
+    </div>
+    <div class="footer-btns">
+      <button class="btn secondary" id="prevBtn" onclick="prev()">上一步</button>
+      <button class="btn danger" id="nextBtn" onclick="next()">卸载</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let page = 1;
+let timer = null;
+
+function show(n){
+  page = n;
+  document.querySelectorAll('.page').forEach(el => el.classList.remove('active'));
+  document.getElementById('p'+n).classList.add('active');
+  document.querySelectorAll('.step').forEach(el => {
+    el.classList.toggle('active', parseInt(el.dataset.i) <= n);
+  });
+  const nextBtn = document.getElementById('nextBtn');
+  const prevBtn = document.getElementById('prevBtn');
+  prevBtn.style.visibility = (n === 1 || n === 2) ? 'hidden' : 'visible';
+
+  if(n === 1){
+    nextBtn.textContent = '卸载';
+    nextBtn.className = 'btn danger';
+    nextBtn.disabled = false;
+    nextBtn.onclick = startUninstall;
+  } else if(n === 2){
+    nextBtn.textContent = '卸载中';
+    nextBtn.className = 'btn danger';
+    nextBtn.disabled = true;
+  } else if(n === 3){
+    nextBtn.textContent = '完成';
+    nextBtn.className = 'btn';
+    nextBtn.disabled = false;
+    nextBtn.onclick = finish;
+  }
+}
+
+function startUninstall(){
+  show(2);
+  let pct = 0;
+  const fill = document.getElementById('fill');
+  const txt = document.getElementById('ptext');
+  const phases = [
+    [0, 35, '正在删除主程序文件'],
+    [35, 70, '正在清理缓存与日志'],
+    [70, 95, '正在移除快捷方式与菜单项'],
+    [95, 100, '正在收尾']
+  ];
+  timer = setInterval(() => {
+    pct += 1.5;
+    if(pct > 100) pct = 100;
+    fill.style.width = pct + '%';
+    let label = phases[phases.length-1][2];
+    for(const [a,b,l] of phases){ if(pct >= a && pct < b){ label = l; break; } }
+    txt.textContent = label + '... ' + Math.floor(pct) + '%';
+    if(pct >= 100){
+      clearInterval(timer);
+      txt.textContent = '卸载完成 100%';
+      setTimeout(() => show(3), 500);
+    }
+  }, 45);
+}
+
+function finish(){
+  const del = document.getElementById('delData').checked;
+  document.getElementById('p3note').textContent = del
+    ? '已同时删除你的个人配置与数据。'
+    : '已保留你的个人配置与数据，如需重装可继续使用。';
+  alert('完成（设计稿占位：实际会关闭卸载程序）');
+}
+
+function next(){ if(page === 1) startUninstall(); }
+function prev(){ if(page > 1){ /* 设计稿仅第1页可回退，进度页不可回退 */ } }
+
+show(1);
+</script>
+</body>
+</html>

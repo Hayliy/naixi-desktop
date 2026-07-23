@@ -84,6 +84,9 @@ LoadLanguageFile "${NSISDIR}\Contrib\Language files\SimpChinese.nlf"
 !ifndef HTCAPTION
   !define HTCAPTION 2
 !endif
+!ifndef WM_CLOSE
+  !define WM_CLOSE 0x0010
+!endif
 !define SWP_NOMOVE     0x0002
 !define SWP_NOSIZE     0x0001
 !define SWP_NOZORDER   0x0004
@@ -92,6 +95,20 @@ LoadLanguageFile "${NSISDIR}\Contrib\Language files\SimpChinese.nlf"
 
 !ifndef EM_SETREADONLY
   !define EM_SETREADONLY 0x00CF
+!endif
+
+; 原生进度条消息常量（WinMessages.nsh 已定义则沿用，否则兜底）
+!ifndef PBM_SETRANGE
+  !define PBM_SETRANGE 0x0401
+!endif
+!ifndef PBM_SETPOS
+  !define PBM_SETPOS 0x0402
+!endif
+!ifndef PBM_SETBARCOLOR
+  !define PBM_SETBARCOLOR 0x0409
+!endif
+!ifndef PBM_SETBKCOLOR
+  !define PBM_SETBKCOLOR 0x040D
 !endif
 
 ; ── 窗口尺寸（与 mockup.html 一致）──
@@ -124,13 +141,30 @@ Var hNextBtn
 Var hPrevBtn
 Var hNextBmp
 Var hPrevBmp
+Var hMinBmp
+Var hMinBtn
+Var hCloseBmp
+Var hCloseBtn
 Var InstallStage
 Var InstallDone
 Var CurPage
+Var unCurPage
+Var unInstallDone
+Var unInstallStage
+Var unDeleteData
+Var unDeleteChk
+Var unProgStatus
+Var hStepTxt1
+Var hStepTxt2
+Var hStepTxt3
+Var hFooterBg
+Var unProg
 
 Name "奶昔 · 桌面智能体"
 BrandingText " "
 OutFile "${OUTFILE}"
+Icon "D:\naixi_desktop\src-tauri\icons\icon.ico"
+UninstallIcon "D:\naixi_desktop\src-tauri\icons\icon.ico"
 !define PLACEHOLDER_INSTALL_DIR "placeholder\${PRODUCTNAME}"
 InstallDir "${PLACEHOLDER_INSTALL_DIR}"
 
@@ -307,15 +341,31 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 !macroend
 
 ; ── 顶部 banner（纯图，标题在内容区显示）──
-!macro ShowBanner
+!macro ShowBanner MIN_HANDLER CLOSE_HANDLER
   ${NSD_CreateBitmap} 0 0 ${WIN_W} ${BANNER_H} ""
   Pop $hBanner
   ${NSD_SetBitmap} $hBanner "$PLUGINSDIR\banner.bmp" $hBmpHandle
-  ${NSD_OnClick} $hBanner fn_DragTitle
+  !insertmacro AddNotify $hBanner
 
-  ; 右上角最小化/关闭按钮：banner 位图上已绘制半透明蒙版 + 字形，这里只加透明点击区
-  !insertmacro ClickArea 478 6 28 24 fn_Minimize $0
-  !insertmacro ClickArea 506 6 28 24 fn_Close $0
+  ; 注意：banner 不再响应点击拖拽。NSIS 脚本无法安全创建原生 WndProc 子类，
+  ; 且 "NSD_OnClick + WM_NCLBUTTONDOWN" 会在鼠标抬起时进入模态标题栏移动循环，
+  ; 导致完成页点击完成后出现重入 / 需多点一次。去除拖拽是最稳定可验证的方案。
+
+  ; 右上角 最小化/关闭 作为独立位图按钮叠加在 banner 上（位图+NSD_OnClick 已验证可用）
+  !insertmacro BitmapBtn 478 6 28 24 "$PLUGINSDIR\btn_min.bmp" ${MIN_HANDLER} $hMinBmp $hMinBtn
+  !insertmacro BitmapBtn 506 6 28 24 "$PLUGINSDIR\btn_close.bmp" ${CLOSE_HANDLER} $hCloseBmp $hCloseBtn
+!macroend
+
+; ── 卸载专属 banner（卸载页用 banner_uninstall.bmp）──
+!macro ShowBannerU MIN_HANDLER CLOSE_HANDLER
+  ${NSD_CreateBitmap} 0 0 ${WIN_W} ${BANNER_H} ""
+  Pop $hBanner
+  ${NSD_SetBitmap} $hBanner "$PLUGINSDIR\banner_uninstall.bmp" $hBmpHandle
+  !insertmacro AddNotify $hBanner
+
+  ; 注意：banner 不再响应点击拖拽（原因同 ShowBanner，避免出现重入 / 需多点一次）。
+  !insertmacro BitmapBtn 478 6 28 24 "$PLUGINSDIR\btn_min.bmp" ${MIN_HANDLER} $hMinBmp $hMinBtn
+  !insertmacro BitmapBtn 506 6 28 24 "$PLUGINSDIR\btn_close.bmp" ${CLOSE_HANDLER} $hCloseBmp $hCloseBtn
 !macroend
 
 !macro CreateStep IDX ACTIVE X LABEL
@@ -343,7 +393,7 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 ; ACTIVE: 当前步骤（1-4）；NEXT_TEXT: 右侧主按钮文字；
 ; SHOW_PREV: 是否显示上一步；NEXT_ENABLED: 是否启用主按钮
 ; ACTIVE: 当前步骤（1-4）；NEXT_BMP: 右侧主按钮位图；SHOW_PREV: 是否显示上一步；NEXT_ENABLED: 是否启用主按钮
-!macro CreateFooter ACTIVE NEXT_BMP SHOW_PREV NEXT_ENABLED
+!macro CreateFooter ACTIVE NEXT_BMP SHOW_PREV NEXT_ENABLED PREV_HANDLER NEXT_HANDLER
   ; footer 背景
   ${NSD_CreateLabel} 0 ${FOOTER_TOP} ${WIN_W} ${FOOTER_H} ""
   Pop $0
@@ -361,13 +411,69 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   !insertmacro CreateStep 4 ${ACTIVE} 240 "完成"
 
   ; 导航按钮（底层位图 + 顶层透明点击区）
-  !insertmacro BitmapBtn 320 384 90 30 "$PLUGINSDIR\btn_prev.bmp" fn_PrevClick $hPrevBmp $hPrevBtn
+  !insertmacro BitmapBtn 320 384 90 30 "$PLUGINSDIR\btn_prev.bmp" ${PREV_HANDLER} $hPrevBmp $hPrevBtn
   ${If} ${SHOW_PREV} == 0
     ShowWindow $hPrevBtn 0
     ShowWindow $hPrevBmp 0
   ${EndIf}
 
-  !insertmacro BitmapBtn 414 384 90 30 "${NEXT_BMP}" fn_NextClick $hNextBmp $hNextBtn
+  !insertmacro BitmapBtn 414 384 90 30 "${NEXT_BMP}" ${NEXT_HANDLER} $hNextBmp $hNextBtn
+  ${If} ${NEXT_ENABLED} == 0
+    EnableWindow $hNextBtn 0
+  ${EndIf}
+!macroend
+
+; ── 卸载步骤指示器（3 步：确认/卸载/完成），左对齐位图，与 test_flow 同构 ──
+!macro CreateStepU IDX ACTIVE X
+  ${NSD_CreateBitmap} ${X} 389 18 18 ""
+  Pop $8
+  ${If} ${ACTIVE} >= ${IDX}
+    ${NSD_SetBitmap} $8 "$PLUGINSDIR\num${IDX}_on.bmp" $9
+  ${Else}
+    ${NSD_SetBitmap} $8 "$PLUGINSDIR\num${IDX}_off.bmp" $9
+  ${EndIf}
+  System::Call "user32::SetWindowPos(i $8, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
+
+  IntOp $9 ${X} + 24
+  ${NSD_CreateBitmap} $9 390 44 18 ""
+  Pop $8
+  ${If} ${ACTIVE} >= ${IDX}
+    ${NSD_SetBitmap} $8 "$PLUGINSDIR\txt_step_u${IDX}_on.bmp" $R0
+  ${Else}
+    ${NSD_SetBitmap} $8 "$PLUGINSDIR\txt_step_u${IDX}_off.bmp" $R0
+  ${EndIf}
+  System::Call "user32::SetWindowPos(i $8, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
+  ${If} ${IDX} == 1
+    StrCpy $hStepTxt1 $8
+  ${ElseIf} ${IDX} == 2
+    StrCpy $hStepTxt2 $8
+  ${Else}
+    StrCpy $hStepTxt3 $8
+  ${EndIf}
+!macroend
+
+; ── 卸载底部导航（3 步 + 主按钮），与 test_flow 同构 ──
+!macro CreateFooterU ACTIVE NEXT_BMP SHOW_PREV NEXT_ENABLED PREV_HANDLER NEXT_HANDLER
+  ${NSD_CreateLabel} 0 ${FOOTER_TOP} ${WIN_W} ${FOOTER_H} ""
+  Pop $0
+  SetCtlColors $0 "${CLR_FOOTER_BG}" "${CLR_FOOTER_BG}"
+  StrCpy $hFooterBg $0
+
+  ${NSD_CreateLabel} 0 ${FOOTER_TOP} ${WIN_W} 1 ""
+  Pop $0
+  SetCtlColors $0 "${CLR_LIGHT_PINK}" "${CLR_LIGHT_PINK}"
+
+  !insertmacro CreateStepU 1 ${ACTIVE} 30
+  !insertmacro CreateStepU 2 ${ACTIVE} 100
+  !insertmacro CreateStepU 3 ${ACTIVE} 170
+
+  !insertmacro BitmapBtn 320 384 90 30 "$PLUGINSDIR\btn_prev.bmp" ${PREV_HANDLER} $hPrevBmp $hPrevBtn
+  ${If} ${SHOW_PREV} == 0
+    ShowWindow $hPrevBtn 0
+    ShowWindow $hPrevBmp 0
+  ${EndIf}
+
+  !insertmacro BitmapBtn 414 384 90 30 "${NEXT_BMP}" ${NEXT_HANDLER} $hNextBmp $hNextBtn
   ${If} ${NEXT_ENABLED} == 0
     EnableWindow $hNextBtn 0
   ${EndIf}
@@ -376,10 +482,6 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 ; ─── 进入 GUI 即把默认窗口改为无边框自定义窗口 ───
 Function .onGUIInit
   !insertmacro MakeBorderless
-FunctionEnd
-
-Function fn_DragTitle
-  SendMessage $HWNDPARENT ${WM_NCLBUTTONDOWN} ${HTCAPTION} 0
 FunctionEnd
 
 Function fn_Close
@@ -414,7 +516,7 @@ Function fn_Welcome
   !insertmacro HideWizardChrome
   SetCtlColors $Dialog "" "${CLR_BG}"
 
-  !insertmacro ShowBanner
+  !insertmacro ShowBanner fn_Minimize fn_Close
 
   ${NSD_CreateLabel} 30 ${CONTENT_TOP} 480 28 "欢迎安装奶昔 · 桌面智能体"
   Pop $0
@@ -431,7 +533,7 @@ Function fn_Welcome
   SetCtlColors $0 "${CLR_TEXT_BODY}" "${CLR_BG}"
   !insertmacro ApplyFont $0 $hFontBody
 
-  !insertmacro CreateFooter 1 "$PLUGINSDIR\btn_next.bmp" 0 1
+  !insertmacro CreateFooter 1 "$PLUGINSDIR\btn_next.bmp" 0 1 fn_PrevClick fn_NextClick
 
   ${NSD_FreeBitmap} $hBanner
   nsDialogs::Show
@@ -449,24 +551,27 @@ Function fn_DirPage
   !insertmacro HideWizardChrome
   SetCtlColors $Dialog "" "${CLR_BG}"
 
-  !insertmacro ShowBanner
+  !insertmacro ShowBanner fn_Minimize fn_Close
 
   ${NSD_CreateLabel} 30 ${CONTENT_TOP} 480 28 "选择安装位置"
   Pop $0
   SetCtlColors $0 "${CLR_DARK_PINK}" "${CLR_BG}"
   !insertmacro ApplyFont $0 $hFontTitle
 
-  ; 输入框边框
-  ${NSD_CreateLabel} 29 209 382 32 ""
+  ; 地址输入框：圆角边框位图（1px #D3C1D0 + 圆角 5px + 内部 #FDF8FA），匹配 mockup .path-row input
+  ${NSD_CreateBitmap} 29 209 382 32 ""
   Pop $0
-  SetCtlColors $0 "${CLR_BORDER}" "${CLR_BORDER}"
+  ${NSD_SetBitmap} $0 "$PLUGINSDIR\addr_border.bmp" $R0
 
-  ; 路径显示框（用 Label 模拟输入框，确保配色完全可控）
-  ${NSD_CreateLabel} 30 210 380 30 "$INSTDIR"
+  ; 路径输入框：用原生 Text 控件（匹配 mockup .path-row input），预填默认安装路径，渲染稳定且可编辑
+  ${NSD_CreateText} 40 215 360 22 "$INSTDIR"
   Pop $InstallPathText
   SetCtlColors $InstallPathText "${CLR_INPUT_TEXT}" "${CLR_INPUT_BG}"
-  !insertmacro ApplyFont $InstallPathText $hFontBody
-  !insertmacro CenterLabel $InstallPathText
+  !insertmacro ApplyFont $InstallPathText $hFontSmall
+  ; 去掉原生凹陷/实线边框，改用底层 addr_border.bmp 圆角边框作装饰，避免双重边框
+  !insertmacro FlatEdit $InstallPathText
+  ; 提到顶层，确保不被 addr_border.bmp 边框位图按创建序覆盖
+  System::Call "user32::SetWindowPos(i $InstallPathText, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
 
   ; 浏览按钮（次级：浅粉底深粉字，90x28）
   !insertmacro BitmapBtn 420 210 90 28 "$PLUGINSDIR\btn_browse.bmp" fn_Browse $R8 $R9
@@ -475,9 +580,11 @@ Function fn_DirPage
   Pop $0
   SetCtlColors $0 "${CLR_TEXT_MUTED}" "${CLR_BG}"
   !insertmacro ApplyFont $0 $hFontTiny
-  System::Call "user32::SetWindowText(i $0, t '所需磁盘空间：约 ${ESTIMATEDSIZE} MB | 可用空间：58.2 GB')"
+  ; ${ESTIMATEDSIZE} 是 Windows 标准 KB 单位，转成 MB 显示
+  IntOp $R0 ${ESTIMATEDSIZE} / 1024
+  System::Call "user32::SetWindowText(i $0, t '所需磁盘空间：约 $R0 MB')"
 
-  !insertmacro CreateFooter 2 "$PLUGINSDIR\btn_install.bmp" 1 1
+  !insertmacro CreateFooter 2 "$PLUGINSDIR\btn_install.bmp" 1 1 fn_PrevClick fn_NextClick
 
   ${NSD_FreeBitmap} $hBanner
   nsDialogs::Show
@@ -494,6 +601,8 @@ Function fn_Browse
 FunctionEnd
 
 Function fn_DirPageLeave
+  ${NSD_GetText} $InstallPathText $0
+  StrCpy $INSTDIR $0
 FunctionEnd
 
 ; ─── Page 3: Progress ───
@@ -508,7 +617,7 @@ Function fn_ProgressPage
   !insertmacro HideWizardChrome
   SetCtlColors $Dialog "" "${CLR_BG}"
 
-  !insertmacro ShowBanner
+  !insertmacro ShowBanner fn_Minimize fn_Close
 
   ${NSD_CreateLabel} 30 ${CONTENT_TOP} 480 28 "正在安装"
   Pop $0
@@ -520,24 +629,55 @@ Function fn_ProgressPage
   SetCtlColors $0 "${CLR_TEXT_BODY}" "${CLR_BG}"
   !insertmacro ApplyFont $0 $hFontBody
 
-  ; 进度条背景（浅粉色）
-  ${NSD_CreateLabel} 30 246 480 8 ""
-  Pop $hProgressBar
-  SetCtlColors $hProgressBar "${CLR_LIGHT_PINK}" "${CLR_LIGHT_PINK}"
-  ; 进度条填充（粉色），初始宽度 0
-  ${NSD_CreateLabel} 30 246 0 8 ""
-  Pop $hProgressFill
-  SetCtlColors $hProgressFill "${CLR_PINK}" "${CLR_PINK}"
+  ; 进度条：原生 msctls_progress32（与卸载 P2 / test_flow P3 同机制）
+  ; 修复此前用 Label + SetWindowPos 模拟导致的“看不到进度/无样式/突兀长条”
+  System::Call "user32::CreateWindowEx(i 0, t 'msctls_progress32', i 0, i 0x50000001, i 30, i 246, i 480, i 8, i $Dialog, i 0, i 0, i 0) i .r1"
+  StrCpy $hProgressFill $1
+  System::Call "uxtheme::SetWindowTheme(i $hProgressFill, w \"\", w \"\")"
+  SendMessage $hProgressFill ${PBM_SETRANGE} 0 0x00640000
+  SendMessage $hProgressFill ${PBM_SETBARCOLOR} 0 0x007E53D4
+  SendMessage $hProgressFill ${PBM_SETBKCOLOR} 0 0x00D1C0F4
+  System::Call "gdi32::CreateRoundRectRgn(i 0, i 0, i 480, i 8, i 4, i 4) i .r2"
+  System::Call "user32::SetWindowRgn(i $hProgressFill, i r2, i 1)"
 
   ${NSD_CreateLabel} 30 260 480 18 ""
   Pop $hProgressStatus
   SetCtlColors $hProgressStatus "${CLR_TEXT_MUTED}" "${CLR_BG}"
   !insertmacro ApplyFont $hProgressStatus $hFontTiny
 
-  !insertmacro CreateFooter 3 "$PLUGINSDIR\btn_installing.bmp" 1 0
+  !insertmacro CreateFooter 3 "$PLUGINSDIR\btn_installing.bmp" 1 0 fn_PrevClick fn_NextClick
 
   StrCpy $InstallDone 0
   StrCpy $InstallStage 0
+
+  ; 一次性检测程序是否占用（不在 timer 内，避免循环弹窗）
+  !if "${INSTALLMODE}" == "currentUser"
+    nsis_tauri_utils::FindProcessCurrentUser "${MAINBINARYNAME}.exe"
+  !else
+    nsis_tauri_utils::FindProcess "${MAINBINARYNAME}.exe"
+  !endif
+  Pop $R0
+  ${If} $R0 = 0
+    MessageBox MB_OKCANCEL "奶昔正在运行，建议先关闭后再安装。$\n点击「确定」自动关闭，或「取消」退出安装。" IDOK kill_i IDCANCEL quit_i
+    kill_i:
+      !if "${INSTALLMODE}" == "currentUser"
+        nsis_tauri_utils::KillProcessCurrentUser "${MAINBINARYNAME}.exe"
+      !else
+        nsis_tauri_utils::KillProcess "${MAINBINARYNAME}.exe"
+      !endif
+      Pop $R0
+      Sleep 500
+      ${If} $R0 != 0
+      ${AndIf} $R0 != 2
+        MessageBox MB_OK "无法自动关闭奶昔，请手动关闭后重试安装。"
+        Quit
+      ${EndIf}
+      Goto app_checked_i
+    quit_i:
+      Quit
+  ${EndIf}
+  app_checked_i:
+
   ${NSD_CreateTimer} fn_InstallTick 100
 
   ${NSD_FreeBitmap} $hBanner
@@ -545,19 +685,16 @@ Function fn_ProgressPage
 FunctionEnd
 
 !macro SetProgressWidth PERCENT
-  IntOp $R0 ${PERCENT} * 480
-  IntOp $R0 $R0 / 100
-  System::Call "user32::SetWindowPos(i $hProgressFill, i 0, i 30, i 246, i r0, i 8, i 0x0014)"
+  SendMessage $hProgressFill ${PBM_SETPOS} ${PERCENT} 0
+  ; 立即重绘父窗口（含进度条），避免大文件写入阻塞 UI 线程时进度条“假死”
+  System::Call "user32::UpdateWindow(i $HWNDPARENT)"
 !macroend
 
 Function fn_InstallTick
-  ${If} $InstallDone == 1
-    Return
-  ${EndIf}
+  ; 先杀掉当前计时器再重建，避免每次 tick 都新增一个计时器造成泄漏累积（曾导致 UI 卡顿/转圈）。
+  ${NSD_KillTimer} fn_InstallTick
   Call fn_DoInstall
-  ${If} $InstallDone == 1
-    ${NSD_KillTimer} fn_InstallTick
-  ${Else}
+  ${If} $InstallDone != 1
     ${NSD_CreateTimer} fn_InstallTick 120
   ${EndIf}
 FunctionEnd
@@ -580,7 +717,7 @@ Function fn_Finish
   !insertmacro HideWizardChrome
   SetCtlColors $Dialog "" "${CLR_BG}"
 
-  !insertmacro ShowBanner
+  !insertmacro ShowBanner fn_Minimize fn_Close
 
   ${NSD_CreateLabel} 30 ${CONTENT_TOP} 480 28 "安装完成"
   Pop $0
@@ -606,7 +743,7 @@ Function fn_Finish
   SetCtlColors $DesktopCheck "${CLR_INPUT_TEXT}" "${CLR_BG}"
   !insertmacro ApplyFont $DesktopCheck $hFontBody
 
-  !insertmacro CreateFooter 4 "$PLUGINSDIR\btn_finish.bmp" 1 1
+  !insertmacro CreateFooter 4 "$PLUGINSDIR\btn_finish.bmp" 1 1 fn_PrevClick fn_NextClick
 
   ${NSD_FreeBitmap} $hBanner
   nsDialogs::Show
@@ -615,13 +752,18 @@ FunctionEnd
 Function fn_Done
   ${NSD_GetState} $DesktopCheck $0
   ${If} $0 = ${BST_CHECKED}
-    CreateShortcut "$DESKTOP\奶昔.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe" 0
+    ; 快捷方式名称固定为「奶昔」，图标复用安装目录内的主程序图标
+    CreateShortcut "$DESKTOP\奶昔.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\icon.ico" 0
   ${EndIf}
   ${NSD_GetState} $RunCheck $0
   ${If} $0 = ${BST_CHECKED}
     nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" ""
   ${EndIf}
-  Quit
+  ; 关闭安装器：给主窗口发 WM_CLOSE（与 fn_Close 一致，已验证可关闭无边框窗口）。
+  ; 完成页是最后一页，关闭主窗口即正常结束安装。
+  ; （直接 Quit 在 nsDialogs 模态循环内不关闭对话框会卡死；本 NSIS 无 nsDialogs::Close；
+  ;  WM_CLOSE 发 $Dialog 无效，故发 $HWNDPARENT。）
+  SendMessage $HWNDPARENT ${WM_CLOSE} 0 0
 FunctionEnd
 
 ; ─── Languages (disabled - custom nsDialogs pages don't need MUI) ───
@@ -633,6 +775,346 @@ FunctionEnd
   !include "{{this}}"
 {{/each}}
 {{/if}}
+
+; ═══════════════════════════════════════════════════════════
+; 卸载 GUI（三页：确认 / 卸载进度 / 完成）
+; ═══════════════════════════════════════════════════════════
+
+UninstPage custom un.Confirm un.ConfirmLeave
+UninstPage custom un.Progress un.ProgressLeave
+UninstPage custom un.Done
+
+Function un.onInit
+  InitPluginsDir
+  SetOutPath $PLUGINSDIR
+  File "D:\naixi_desktop\src-tauri\installer\banner_uninstall.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\num1_on.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\num1_off.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\num2_on.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\num2_off.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\num3_on.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\num3_off.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\btn_next.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\btn_finish.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\btn_uninstalling.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\btn_prev.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\btn_uninstall.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\btn_min.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\btn_close.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\txt_step_u1_on.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\txt_step_u1_off.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\txt_step_u2_on.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\txt_step_u2_off.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\txt_step_u3_on.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\txt_step_u3_off.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\dot_uninstall.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\warn_uninstall.bmp"
+
+  System::Call 'gdi32::CreateFont(i -19, i 0, i 0, i 0, i 700, i 0, i 0, i 0, i 0x01, i 0, i 0, i 0, i 0, t "Microsoft YaHei") i .r0'
+  StrCpy $hFontTitle $0
+  System::Call 'gdi32::CreateFont(i -13, i 0, i 0, i 0, i 400, i 0, i 0, i 0, i 0x01, i 0, i 0, i 0, i 0, t "Microsoft YaHei") i .r0'
+  StrCpy $hFontBody $0
+  System::Call 'gdi32::CreateFont(i -12, i 0, i 0, i 0, i 400, i 0, i 0, i 0, i 0x01, i 0, i 0, i 0, i 0, t "Microsoft YaHei") i .r0'
+  StrCpy $hFontSmall $0
+  System::Call 'gdi32::CreateFont(i -11, i 0, i 0, i 0, i 400, i 0, i 0, i 0, i 0x01, i 0, i 0, i 0, i 0, t "Microsoft YaHei") i .r0'
+  StrCpy $hFontTiny $0
+  System::Call 'gdi32::CreateFont(i -13, i 0, i 0, i 0, i 700, i 0, i 0, i 0, i 0x01, i 0, i 0, i 0, i 0, t "Microsoft YaHei") i .r0'
+  StrCpy $hFontBtn $0
+
+  !insertmacro SetContext
+FunctionEnd
+
+Function un.fn_Minimize
+  ShowWindow $HWNDPARENT 6
+FunctionEnd
+
+Function un.fn_Close
+  SendMessage $HWNDPARENT ${WM_CLOSE} 0 0
+FunctionEnd
+
+Function un.fn_NextClick
+  ${If} $unCurPage == 3
+    Call un.fn_Done
+  ${Else}
+    !insertmacro AdvanceNext
+  ${EndIf}
+FunctionEnd
+
+Function un.fn_PrevClick
+  !insertmacro AdvanceBack
+FunctionEnd
+
+Function un.fn_Done
+  SendMessage $HWNDPARENT ${WM_CLOSE} 0 0
+FunctionEnd
+
+; ─── 卸载第 1 页：确认 ───
+Function un.Confirm
+  nsDialogs::Create 1018
+  Pop $Dialog
+  StrCpy $unCurPage 1
+  !insertmacro MakeBorderless
+  !insertmacro FillPage
+  !insertmacro HideWizardChrome
+  SetCtlColors $Dialog "" "${CLR_BG}"
+  !insertmacro ShowBannerU un.fn_Minimize un.fn_Close
+
+  ${NSD_CreateLabel} 30 ${CONTENT_TOP} 480 28 "准备卸载奶昔 · 桌面智能体"
+  Pop $0
+  SetCtlColors $0 "${CLR_DARK_PINK}" "${CLR_BG}"
+  !insertmacro ApplyFont $0 $hFontTitle
+
+  ${NSD_CreateLabel} 30 210 480 20 "即将移除以下组件："
+  Pop $0
+  SetCtlColors $0 "${CLR_TEXT_BODY}" "${CLR_BG}"
+  !insertmacro ApplyFont $0 $hFontBody
+
+  ; 组件清单（粉色圆点 + 文字，匹配 mockup .component-list）
+  ${NSD_CreateBitmap} 30 242 6 6 ""
+  Pop $0
+  ${NSD_SetBitmap} $0 "$PLUGINSDIR\dot_uninstall.bmp" $R0
+  ${NSD_CreateLabel} 44 240 466 18 "奶昔 · 桌面智能体 主程序"
+  Pop $0
+  SetCtlColors $0 "${CLR_TEXT_BODY}" "${CLR_BG}"
+  !insertmacro ApplyFont $0 $hFontTiny
+
+  ${NSD_CreateBitmap} 30 266 6 6 ""
+  Pop $0
+  ${NSD_SetBitmap} $0 "$PLUGINSDIR\dot_uninstall.bmp" $R0
+  ${NSD_CreateLabel} 44 264 466 18 "桌面快捷方式与开始菜单项"
+  Pop $0
+  SetCtlColors $0 "${CLR_TEXT_BODY}" "${CLR_BG}"
+  !insertmacro ApplyFont $0 $hFontTiny
+
+  ${NSD_CreateBitmap} 30 290 6 6 ""
+  Pop $0
+  ${NSD_SetBitmap} $0 "$PLUGINSDIR\dot_uninstall.bmp" $R0
+  ${NSD_CreateLabel} 44 288 466 18 "本地缓存、日志与临时文件"
+  Pop $0
+  SetCtlColors $0 "${CLR_TEXT_BODY}" "${CLR_BG}"
+  !insertmacro ApplyFont $0 $hFontTiny
+
+  ; 删除数据勾选
+  ${NSD_CreateCheckBox} 30 310 480 18 "同时删除我的个人配置与数据（对话历史、知识库、偏好设置）"
+  Pop $unDeleteChk
+  SendMessage $unDeleteChk ${BM_SETCHECK} ${BST_UNCHECKED} 0
+  SetCtlColors $unDeleteChk "${CLR_INPUT_TEXT}" "${CLR_BG}"
+  !insertmacro ApplyFont $unDeleteChk $hFontBody
+
+  ; 警告框（浅粉底 + 左粉边 + 圆角，匹配 mockup .warn）
+  ${NSD_CreateBitmap} 30 336 480 30 ""
+  Pop $0
+  ${NSD_SetBitmap} $0 "$PLUGINSDIR\warn_uninstall.bmp" $R0
+
+  !insertmacro CreateFooterU 1 "$PLUGINSDIR\btn_uninstall.bmp" 0 1 un.fn_PrevClick un.fn_NextClick
+
+  ${NSD_FreeBitmap} $hBanner
+  nsDialogs::Show
+FunctionEnd
+
+Function un.ConfirmLeave
+  ${NSD_GetState} $unDeleteChk $0
+  StrCpy $unDeleteData $0
+FunctionEnd
+
+; ─── 卸载第 2 页：进度 ───
+Function un.Progress
+  nsDialogs::Create 1018
+  Pop $Dialog
+  StrCpy $unCurPage 2
+  !insertmacro MakeBorderless
+  !insertmacro FillPage
+  !insertmacro HideWizardChrome
+  SetCtlColors $Dialog "" "${CLR_BG}"
+  !insertmacro ShowBannerU un.fn_Minimize un.fn_Close
+
+  ${NSD_CreateLabel} 30 ${CONTENT_TOP} 480 28 "正在卸载"
+  Pop $0
+  SetCtlColors $0 "${CLR_DARK_PINK}" "${CLR_BG}"
+  !insertmacro ApplyFont $0 $hFontTitle
+
+  ${NSD_CreateLabel} 30 210 480 20 "稍等一下，正在把奶昔从你的电脑移除..."
+  Pop $0
+  SetCtlColors $0 "${CLR_TEXT_BODY}" "${CLR_BG}"
+  !insertmacro ApplyFont $0 $hFontBody
+
+  ; 进度条：原生 msctls_progress32（与 test_flow P3 完全一致）
+  System::Call "user32::CreateWindowEx(i 0, t 'msctls_progress32', i 0, i 0x50000001, i 30, i 246, i 480, i 8, i $Dialog, i 0, i 0, i 0) i .r1"
+  StrCpy $hProgressFill $1
+  System::Call "uxtheme::SetWindowTheme(i $hProgressFill, w \"\", w \"\")"
+  SendMessage $hProgressFill ${PBM_SETRANGE} 0 0x00640000
+  SendMessage $hProgressFill ${PBM_SETBARCOLOR} 0 0x007E53D4
+  SendMessage $hProgressFill ${PBM_SETBKCOLOR} 0 0x00D1C0F4
+  System::Call "gdi32::CreateRoundRectRgn(i 0, i 0, i 480, i 8, i 4, i 4) i .r2"
+  System::Call "user32::SetWindowRgn(i $hProgressFill, i r2, i 1)"
+
+  ${NSD_CreateLabel} 30 262 480 18 ""
+  Pop $unProgStatus
+  SetCtlColors $unProgStatus "${CLR_TEXT_MUTED}" "${CLR_BG}"
+  !insertmacro ApplyFont $unProgStatus $hFontTiny
+
+  !insertmacro CreateFooterU 2 "$PLUGINSDIR\btn_uninstalling.bmp" 0 0 un.fn_PrevClick un.fn_NextClick
+
+  ; 步骤文字提到顶层、footer 背景压底（与 test_flow P3 一致，避免被 footer 盖住）
+  System::Call "user32::SetWindowPos(i $hStepTxt1, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
+  System::Call "user32::SetWindowPos(i $hStepTxt2, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
+  System::Call "user32::SetWindowPos(i $hStepTxt3, i 0, i 0, i 0, i 0, i 0, i 0x0003)"
+  System::Call "user32::SetWindowPos(i $hFooterBg, i 1, i 0, i 0, i 0, i 0, i 0x0003)"
+
+  StrCpy $unInstallDone 0
+  StrCpy $unInstallStage 0
+  StrCpy $unProg 0
+
+  ; 一次性检测程序是否占用（不在 timer 内，避免循环弹窗）
+  !if "${INSTALLMODE}" == "currentUser"
+    nsis_tauri_utils::FindProcessCurrentUser "${MAINBINARYNAME}.exe"
+  !else
+    nsis_tauri_utils::FindProcess "${MAINBINARYNAME}.exe"
+  !endif
+  Pop $R0
+  ${If} $R0 = 0
+    MessageBox MB_OKCANCEL "奶昔正在运行，建议先关闭后再卸载。$\n点击「确定」自动关闭，或「取消」退出卸载。" IDOK kill_u IDCANCEL quit_u
+    kill_u:
+      !if "${INSTALLMODE}" == "currentUser"
+        nsis_tauri_utils::KillProcessCurrentUser "${MAINBINARYNAME}.exe"
+      !else
+        nsis_tauri_utils::KillProcess "${MAINBINARYNAME}.exe"
+      !endif
+      Pop $R0
+      Sleep 500
+      ${If} $R0 != 0
+      ${AndIf} $R0 != 2
+        MessageBox MB_OK "无法自动关闭奶昔，请手动关闭后重试卸载。"
+        Quit
+      ${EndIf}
+      Goto app_checked_u
+    quit_u:
+      Quit
+  ${EndIf}
+  app_checked_u:
+
+  ${NSD_CreateTimer} un.UninstallTick 100
+
+  ${NSD_FreeBitmap} $hBanner
+  nsDialogs::Show
+FunctionEnd
+
+Function un.UninstallTick
+  ; 先杀掉当前计时器再重建，避免每次 tick 都新增一个计时器造成泄漏累积（曾导致卸载时 UI 卡顿/转圈）。
+  ${NSD_KillTimer} un.UninstallTick
+  Call un.DoUninstallStage
+  ${If} $unInstallDone != 1
+    ${NSD_CreateTimer} un.UninstallTick 120
+  ${EndIf}
+FunctionEnd
+
+Function un.ProgressLeave
+  ${If} $unInstallDone != 1
+    Abort
+  ${EndIf}
+FunctionEnd
+
+; ─── 卸载第 3 页：完成 ───
+Function un.Done
+  nsDialogs::Create 1018
+  Pop $Dialog
+  StrCpy $unCurPage 3
+  !insertmacro MakeBorderless
+  !insertmacro FillPage
+  !insertmacro HideWizardChrome
+  SetCtlColors $Dialog "" "${CLR_BG}"
+  !insertmacro ShowBannerU un.fn_Minimize un.fn_Close
+
+  ${NSD_CreateLabel} 30 ${CONTENT_TOP} 480 28 "卸载完成"
+  Pop $0
+  SetCtlColors $0 "${CLR_DARK_PINK}" "${CLR_BG}"
+  !insertmacro ApplyFont $0 $hFontTitle
+
+  ${NSD_CreateLabel} 30 210 480 20 "奶昔 · 桌面智能体 已从你的电脑移除。"
+  Pop $0
+  SetCtlColors $0 "${CLR_TEXT_BODY}" "${CLR_BG}"
+  !insertmacro ApplyFont $0 $hFontBody
+
+  ${If} $unDeleteData == ${BST_CHECKED}
+    ${NSD_CreateLabel} 30 236 480 20 "已同时删除你的个人配置与数据。"
+    Pop $0
+    SetCtlColors $0 "${CLR_TEXT_BODY}" "${CLR_BG}"
+    !insertmacro ApplyFont $0 $hFontBody
+  ${EndIf}
+
+  !insertmacro CreateFooterU 3 "$PLUGINSDIR\btn_finish.bmp" 0 1 un.fn_PrevClick un.fn_NextClick
+
+  ${NSD_FreeBitmap} $hBanner
+  nsDialogs::Show
+FunctionEnd
+
+; ─── 卸载实际删除逻辑（分阶段；GUI 由 timer 驱动，静默由 Section Uninstall 驱动）───
+Function un.DoUninstallStage
+  ${If} $unInstallDone == 1
+    Return
+  ${EndIf}
+  ${If} $unInstallStage == 0
+    ${IfNot} ${Silent}
+      ${NSD_SetText} $unProgStatus "正在检查程序是否在运行... 10%"
+      SendMessage $hProgressFill ${PBM_SETPOS} 10 0
+    ${EndIf}
+    IntOp $unInstallStage $unInstallStage + 1
+    Return
+  ${EndIf}
+  ${If} $unInstallStage == 1
+    ${IfNot} ${Silent}
+      ${NSD_SetText} $unProgStatus "正在删除程序文件... 40%"
+      SendMessage $hProgressFill ${PBM_SETPOS} 40 0
+    ${EndIf}
+    Delete "$INSTDIR\${MAINBINARYNAME}.exe"
+    {{#each resources}}
+    Delete "$INSTDIR\\{{this.[1]}}"
+    {{/each}}
+    {{#each binaries}}
+    Delete "$INSTDIR\\{{this}}"
+    {{/each}}
+    Delete "$INSTDIR\icon.ico"
+    Delete "$INSTDIR\uninstall.exe"
+    IntOp $unInstallStage $unInstallStage + 1
+    Return
+  ${EndIf}
+  ${If} $unInstallStage == 2
+    ${IfNot} ${Silent}
+      ${NSD_SetText} $unProgStatus "正在删除快捷方式与注册表... 70%"
+      SendMessage $hProgressFill ${PBM_SETPOS} 70 0
+    ${EndIf}
+    Delete "$SMPROGRAMS\${PRODUCTNAME}\奶昔.lnk"
+    RMDir "$SMPROGRAMS\${PRODUCTNAME}"
+    Delete "$DESKTOP\奶昔.lnk"
+    DeleteRegKey SHCTX "${UNINSTKEY}"
+    ${If} $unDeleteData == ${BST_CHECKED}
+      RMDir /r "$APPDATA\${PRODUCTNAME}"
+    ${EndIf}
+    IntOp $unInstallStage $unInstallStage + 1
+    Return
+  ${EndIf}
+  ${IfNot} ${Silent}
+    ${NSD_SetText} $unProgStatus "正在清理目录... 100%"
+    SendMessage $hProgressFill ${PBM_SETPOS} 100 0
+  ${EndIf}
+  ; 清理可能残留的嵌套子目录（resources / sidecar 等仅 Delete 文件后目录仍空留，
+  ; 单纯 RMDir "$INSTDIR" 因非空会失败，故先递归清理再删根目录）。
+  RMDir /r "$INSTDIR\resources"
+  RMDir /r "$INSTDIR\sidecar"
+  RMDir "$INSTDIR"
+  StrCpy $unInstallDone 1
+  ${IfNot} ${Silent}
+    ${NSD_SetBitmap} $hNextBmp "$PLUGINSDIR\btn_finish.bmp" $R0
+    ${NSD_SetText} $unProgStatus "卸载完成 100%"
+    EnableWindow $hNextBtn 1
+  ${EndIf}
+FunctionEnd
+
+Function un.DoUninstallAll
+  ${Do}
+    Call un.DoUninstallStage
+  ${LoopUntil} $unInstallDone == 1
+FunctionEnd
 
 ; ════════════════════════════════════════════
 ; Sections (install logic)
@@ -649,7 +1131,6 @@ Function fn_DoInstall
     !ifmacrodef NSIS_HOOK_PREINSTALL
       !insertmacro NSIS_HOOK_PREINSTALL
     !endif
-    !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
     IntOp $InstallStage $InstallStage + 1
     Return
   ${EndIf}
@@ -657,6 +1138,7 @@ Function fn_DoInstall
     ${NSD_SetText} $hProgressStatus "写入主程序..."
     !insertmacro SetProgressWidth 25
     File "${MAINBINARYSRCPATH}"
+    File "D:\naixi_desktop\src-tauri\icons\icon.ico"
     IntOp $InstallStage $InstallStage + 1
     Return
   ${EndIf}
@@ -713,7 +1195,7 @@ Function fn_DoInstall
   ${NSD_SetText} $hProgressStatus "创建快捷方式..."
   !insertmacro SetProgressWidth 100
   CreateDirectory "$SMPROGRAMS\${PRODUCTNAME}"
-  CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}\奶昔.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe" 0
+  CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}\奶昔.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\icon.ico" 0
   ; WebView2 检测
   ${If} ${RunningX64}
     ReadRegStr $4 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
@@ -733,20 +1215,11 @@ Function fn_DoInstall
 FunctionEnd
 
 Section Uninstall
-  !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
-  Delete "$INSTDIR\${MAINBINARYNAME}.exe"
-  {{#each resources}}
-    Delete "$INSTDIR\\{{this.[1]}}"
-  {{/each}}
-  {{#each binaries}}
-    Delete "$INSTDIR\\{{this}}"
-  {{/each}}
-  Delete "$INSTDIR\uninstall.exe"
-  RMDir "$INSTDIR"
-  Delete "$SMPROGRAMS\${PRODUCTNAME}\奶昔.lnk"
-  RMDir "$SMPROGRAMS\${PRODUCTNAME}"
-  Delete "$DESKTOP\奶昔.lnk"
-  DeleteRegKey SHCTX "${UNINSTKEY}"
+  ; GUI 卸载时删除逻辑由自定义页 timer 驱动（un.DoUninstallStage）；
+  ; 仅静默卸载（/S）时在此直接执行，保证「无界面卸载」也能正常清理。
+  ${If} ${Silent}
+    Call un.DoUninstallAll
+  ${EndIf}
 SectionEnd
 
 ; ════════════════════════════════════════════
@@ -777,6 +1250,10 @@ Function .onInit
   File "D:\naixi_desktop\src-tauri\installer\btn_finish.bmp"
   File "D:\naixi_desktop\src-tauri\installer\btn_prev.bmp"
   File "D:\naixi_desktop\src-tauri\installer\btn_browse.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\btn_min.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\btn_close.bmp"
+  File "D:\naixi_desktop\src-tauri\installer\addr_border.bmp"
+  File "D:\naixi_desktop\src-tauri\icons\icon.ico"
 
   System::Call 'gdi32::CreateFont(i -19, i 0, i 0, i 0, i 700, i 0, i 0, i 0, i 0x01, i 0, i 0, i 0, i 0, t "Microsoft YaHei") i .r0'
   StrCpy $hFontTitle $0

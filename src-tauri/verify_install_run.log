@@ -1,0 +1,38 @@
+LAUNCH D:\naixi_desktop\src-tauri\target\release\bundle\nsis\奶昔_0.1.0_x64-setup.exe
+  等待主窗口... 0s
+  等待主窗口... 5s
+  等待主窗口... 10s
+  等待主窗口... 15s
+  等待主窗口... 20s
+  等待主窗口... 25s
+  等待主窗口... 30s
+  等待主窗口... 35s
+WINDOW_OK
+  SAVED D:\naixi_desktop\src-tauri\v_page1.png (540, 430)
+P1 min/close/chk: False False True
+  SAVED D:\naixi_desktop\src-tauri\v_page2.png (540, 430)
+P2 next/addr: True 'C:\\Users\\21222\\AppData\\Local\\奶昔'
+P2 browse dialog: False
+  SAVED D:\naixi_desktop\src-tauri\v_page3_a.png (540, 430)
+  SAVED D:\naixi_desktop\src-tauri\v_page3_b.png (540, 430)
+P3 status: '选择安装位置' -> '选择安装位置' pink 0 0
+  SAVED D:\naixi_desktop\src-tauri\v_page3_c.png (540, 430)
+  SAVED D:\naixi_desktop\src-tauri\v_page4.png (540, 430)
+
+==== 验证结果 ====
+  [FAIL] 右上角_最小化可见
+  [FAIL] 右上角_关闭可见
+  [PASS] 步骤指示_欢迎
+  [PASS] 翻页_下一步
+  [PASS] 步骤指示_位置
+  [PASS] 地址框_显示路径
+  [FAIL] 浏览按钮_可点击弹窗
+  [FAIL] 翻页_到进度页
+  [FAIL] 进度条_未消失_填充可见
+  [FAIL] 进度条_持续推进
+  [FAIL] 安装_完成
+  [FAIL] 翻页_到完成页
+  [PASS] 快捷方式_开始菜单_奶昔.lnk
+  [FAIL] 快捷方式_开始菜单_指向exe
+  [FAIL] 快捷方式_桌面_奶昔.lnk
+  [FAIL] 快捷方式_桌面_指向exe

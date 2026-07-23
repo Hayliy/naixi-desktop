@@ -1,0 +1,14 @@
+uninstall.exe = C:\naixi_test_install\uninstall.exe
+[1] 启动 uninstall.exe（GUI）
+    卸载窗口: 奶昔 · 桌面智能体 安装
+  shot -> D:\naixi_desktop\verify_shots\u1_confirm.png
+    点 确认->卸载
+  点击 (459,399)
+  shot -> D:\naixi_desktop\verify_shots\u2_progress_early.png
+    等待卸载进度（约 45s）
+  shot -> D:\naixi_desktop\verify_shots\u3_done.png
+    点 完成
+  点击 (459,399)
+    卸载窗口仍在: 1
+DONE. 截图目录: D:\naixi_desktop\verify_shots
+VERIFY4_EXIT=0

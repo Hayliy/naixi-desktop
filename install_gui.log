@@ -1,0 +1,18 @@
+[1] 启动 setup.exe (非静默)
+[2] 等待安装窗口
+    安装窗口: 奶昔 · 桌面智能体 安装
+[3] 先点 5 次主按钮翻过 欢迎+位置 页
+  点主按钮 (414,384)
+  shot -> D:\naixi_desktop\verify_shots\install_step_00.png
+  点主按钮 (414,384)
+  点主按钮 (414,384)
+  shot -> D:\naixi_desktop\verify_shots\install_step_02.png
+  点主按钮 (414,384)
+Traceback (most recent call last):
+  File "D:\naixi_desktop\install_gui.py", line 129, in <module>
+    click_client(hwnd, 414, 384)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "D:\naixi_desktop\install_gui.py", line 95, in click_client
+    win32api.SetCursorPos((ax, ay))
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+pywintypes.error: (0, 'SetCursorPos', 'No error message is available')

@@ -138,7 +138,14 @@ export default function ChatPage() {
       setAvailableModels([{ key: "auto", label: "自动路由（默认）", provider_id: 0 }, ...models]);
       const savedKey = localStorage.getItem("naixi_model_key");
       if (savedKey && models.find(m => m.key === savedKey)) { /* keep */ }
-      else if (models[0]) { setModelKey(models[0].key); localStorage.setItem("naixi_model_key", models[0].key); }
+      else { setModelKey("auto"); localStorage.setItem("naixi_model_key", "auto"); }
+    } else {
+      // 无可用供应商时，强制回到「自动路由」，避免残留旧模型名（如 qwen3.5-flash）被显示
+      setAvailableModels(MODELS);
+      if (localStorage.getItem("naixi_model_key") !== "auto") {
+        setModelKey("auto");
+        localStorage.setItem("naixi_model_key", "auto");
+      }
     }
   }, [config, loaded]);
 

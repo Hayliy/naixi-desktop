@@ -1065,7 +1065,7 @@ async def api_generate_image(request):
 
 # ── 头像生成与缓存 ──
 
-ANIME_AVATAR_PROMPT = "二次元猫娘萝莉风格头像，半身肖像或者是头部肖像，猫耳，可爱萌系，精致插画风，柔和光影"
+ANIME_AVATAR_PROMPT = "二次元猫娘少女风格头像，半身肖像或者是头部肖像，猫耳，可爱萌系，精致插画风，柔和光影"
 
 # 后台生成进度追踪
 _generation_task: asyncio.Task | None = None
