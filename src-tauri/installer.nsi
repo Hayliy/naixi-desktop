@@ -29,6 +29,13 @@ ManifestDPIAwareness PerMonitorV2
 ${StrCase}
 ${StrLoc}
 
+; 窗口子类化插件（来源可靠，已下载至 src-tauri/nsis_plugins/），用于让 banner 可原生拖动
+; 注意：必须用绝对路径。Tauri 打包时会把 installer.nsi 复制到 target/release/nsis/x64/ 再编译，
+; 此时 ${__FILEDIR__} 指向临时目录，相对路径无法找到插件。
+!addplugindir "D:\naixi_desktop\src-tauri\nsis_plugins\WndSubclass\Plugins\x86-unicode"
+!addincludedir "D:\naixi_desktop\src-tauri\nsis_plugins\WndSubclass\Include"
+!include "D:\naixi_desktop\src-tauri\nsis_plugins\WndSubclass\Include\WndSubclass.nsh"
+
 ; 默认简体中文（安装进度页等内置界面）
 LoadLanguageFile "${NSISDIR}\Contrib\Language files\SimpChinese.nlf"
 
@@ -83,6 +90,9 @@ LoadLanguageFile "${NSISDIR}\Contrib\Language files\SimpChinese.nlf"
 !ifndef WM_NCLBUTTONDOWN
   !define WM_NCLBUTTONDOWN 0x00A1
 !endif
+!ifndef WM_LBUTTONDOWN
+  !define WM_LBUTTONDOWN 0x0201
+!endif
 !ifndef HTCAPTION
   !define HTCAPTION 2
 !endif
@@ -128,6 +138,7 @@ Var DesktopCheck
 Var RunCheck
 Var hBanner
 Var hBmpHandle
+Var BannerProc
 Var PassiveMode
 Var UpdateMode
 Var NoShortcutMode
@@ -356,9 +367,10 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   ${NSD_SetBitmap} $hBanner "$PLUGINSDIR\banner.bmp" $hBmpHandle
   !insertmacro AddNotify $hBanner
 
-  ; 注意：banner 不再响应点击拖拽。NSIS 脚本无法安全创建原生 WndProc 子类，
-  ; 且 "NSD_OnClick + WM_NCLBUTTONDOWN" 会在鼠标抬起时进入模态标题栏移动循环，
-  ; 导致完成页点击完成后出现重入 / 需多点一次。去除拖拽是最稳定可验证的方案。
+  ; 子类化 banner：捕获 WM_LBUTTONDOWN，向父对话框发送 WM_NCLBUTTONDOWN+HTCAPTION，
+  ; 由系统以"真实标题栏"机制接管拖动（按下即开始、抬起即结束），根治"拖动后重入 p3"。
+  ; 用 WndSubclass 插件（已下载至 nsis_plugins/），不干扰 min/close 按钮。
+  ${WndSubclass_Subclass} $hBanner BannerDragProc $BannerProc $BannerProc
 
   ; 右上角 最小化/关闭 作为独立位图按钮叠加在 banner 上（位图+NSD_OnClick 已验证可用）
   !insertmacro BitmapBtn 478 6 28 24 "$PLUGINSDIR\btn_min.bmp" ${MIN_HANDLER} $hMinBmp $hMinBtn
@@ -372,7 +384,8 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   ${NSD_SetBitmap} $hBanner "$PLUGINSDIR\banner_uninstall.bmp" $hBmpHandle
   !insertmacro AddNotify $hBanner
 
-  ; 注意：banner 不再响应点击拖拽（原因同 ShowBanner，避免出现重入 / 需多点一次）。
+  ; 子类化 banner：同 ShowBanner，卸载页 banner 也可原生拖动（根治重入）
+  ${WndSubclass_Subclass} $hBanner un.BannerDragProc $BannerProc $BannerProc
   !insertmacro BitmapBtn 478 6 28 24 "$PLUGINSDIR\btn_min.bmp" ${MIN_HANDLER} $hMinBmp $hMinBtn
   !insertmacro BitmapBtn 506 6 28 24 "$PLUGINSDIR\btn_close.bmp" ${CLOSE_HANDLER} $hCloseBmp $hCloseBtn
 !macroend
@@ -499,6 +512,21 @@ FunctionEnd
 
 Function fn_Minimize
   ShowWindow $HWNDPARENT 6
+FunctionEnd
+
+; banner 拖动回调：鼠标在 banner 上按下时，向父对话框发送"非客户区左键按下+标题栏"，
+; 系统按真实标题栏逻辑启动拖动循环（按下即动、抬起即停），彻底规避重入。
+Function BannerDragProc
+  ${If} $2 = ${WM_LBUTTONDOWN}
+    SendMessage $HWNDPARENT ${WM_NCLBUTTONDOWN} ${HTCAPTION} 0
+  ${EndIf}
+FunctionEnd
+
+; 卸载版拖动回调（卸载段函数必须带 un. 前缀）
+Function un.BannerDragProc
+  ${If} $2 = ${WM_LBUTTONDOWN}
+    SendMessage $HWNDPARENT ${WM_NCLBUTTONDOWN} ${HTCAPTION} 0
+  ${EndIf}
 FunctionEnd
 
 Function fn_NextClick
