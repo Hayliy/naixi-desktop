@@ -44,6 +44,9 @@ src-tauri/resources/
 
 # Godot 导出缓存（纯生成物，含空值导出凭据）
 godot_renderer/.godot/
+# Godot 导出产物与模型资源（体积大，不入库）
+godot_renderer/export/
+godot_renderer/models/
 
 # 通用 Rust 构建目录（防子目录遗漏）
 /target/
