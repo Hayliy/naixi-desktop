@@ -47,6 +47,8 @@ godot_renderer/.godot/
 # Godot 导出产物与模型资源（体积大，不入库）
 godot_renderer/export/
 godot_renderer/models/
+# Godot 场景引用的 3D 模型本体（单文件超 GitHub 100MB 上限，不入库，需自备）
+godot_renderer/scenes/*.vrm
 
 # 通用 Rust 构建目录（防子目录遗漏）
 /target/

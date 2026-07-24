@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://b7nxs2m2nx0jy"]
+
+[ext_resource type="Script" path="res://scripts/vrm_renderer.gd" id="1_vugif"]
+
+[node name="Main" type="Node3D"]
+script = ExtResource("1_vugif")
