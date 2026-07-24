@@ -1199,11 +1199,64 @@ FunctionEnd
 Section "Main" SEC01
 SectionEnd
 
+; ─── WebView2 运行时检测与安装 ───
+; 调用时机：fn_DoInstall stage 0（资源写入之前），仅执行一次。
+; 模式：INSTALLWEBVIEW2MODE 默认 downloadBootstrapper（tauri.conf.json 未设 webviewInstallMode），
+;   故缺失时从微软官方 Evergreen Bootstrapper 链接联网下载并静默安装。
+Function InstallWebView2
+  ; 1) 检测是否已安装 WebView2 运行时（HKLM 优先，回退 HKCU）
+  ${If} ${RunningX64}
+    ReadRegStr $4 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
+  ${Else}
+    ReadRegStr $4 HKLM "SOFTWARE\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
+  ${EndIf}
+  ${If} $4 == ""
+    ReadRegStr $4 HKCU "SOFTWARE\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
+  ${EndIf}
+
+  ; 已安装则直接返回，无需处理
+  ${If} $4 != ""
+    Return
+  ${EndIf}
+
+  ; 配置为 skip 时不处理（当前构建不会进入此分支）
+  ${If} ${INSTALLWEBVIEW2MODE} == "skip"
+    Return
+  ${EndIf}
+
+  ; 2) 缺失：联网下载 Evergreen Bootstrapper 到插件临时目录
+  ${NSD_SetText} $hProgressStatus "正在准备 WebView2 运行时..."
+  NSISdl::download "https://go.microsoft.com/fwlink/p/?LinkId=2124703" "$PLUGINSDIR\MicrosoftEdgeWebview2Setup.exe"
+  Pop $0
+  ${If} $0 == 0
+    ; 3) 静默执行引导器（/silent 由 WEBVIEW2INSTALLERARGS 提供），联网安装运行时。
+    ;    以注册表复检为权威判定（引导器在“已安装/需重启”时可能返回非 0）。
+    nsExec::ExecToStack "$\"$PLUGINSDIR\MicrosoftEdgeWebview2Setup.exe$\" ${WEBVIEW2INSTALLERARGS}"
+    Pop $0
+    ${If} ${RunningX64}
+      ReadRegStr $4 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
+    ${Else}
+      ReadRegStr $4 HKLM "SOFTWARE\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
+    ${EndIf}
+    ${If} $4 == ""
+      ReadRegStr $4 HKCU "SOFTWARE\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
+    ${EndIf}
+    ${If} $4 == ""
+      MessageBox MB_OK "WebView2 运行时自动安装失败。请手动从微软官网下载并安装 WebView2 运行时后重试安装。"
+    ${EndIf}
+  ${Else}
+    MessageBox MB_OK "无法下载 WebView2 运行时安装程序。请检查网络连接，或手动从微软官网下载并安装 WebView2 运行时后再试。"
+  ${EndIf}
+FunctionEnd
+
 Function fn_DoInstall
   ${If} $InstallStage == 0
     ${NSD_SetText} $hProgressStatus "准备安装..."
     !insertmacro SetProgressWidth 8
     StrCpy $ResBatch 0
+    ; 安装前确保 WebView2 运行时存在（干净机器缺它会起不来）。
+    ; stage 0 仅执行一次（执行后 InstallStage 置 1），故此处只跑一次。
+    Call InstallWebView2
     SetOutPath $INSTDIR
     !ifmacrodef NSIS_HOOK_PREINSTALL
       !insertmacro NSIS_HOOK_PREINSTALL
@@ -1297,15 +1350,6 @@ Function fn_DoInstall
   !insertmacro SetProgressWidth 100
   CreateDirectory "$SMPROGRAMS\${PRODUCTNAME}"
   CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}\奶昔.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\icon.ico" 0
-  ; WebView2 检测
-  ${If} ${RunningX64}
-    ReadRegStr $4 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
-  ${Else}
-    ReadRegStr $4 HKLM "SOFTWARE\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
-  ${EndIf}
-  ${If} $4 == ""
-    ReadRegStr $4 HKCU "SOFTWARE\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
-  ${EndIf}
   !ifmacrodef NSIS_HOOK_POSTINSTALL
     !insertmacro NSIS_HOOK_POSTINSTALL
   !endif
