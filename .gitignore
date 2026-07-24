@@ -41,3 +41,18 @@ pet_init.log
 
 # 打包生成的资源（自包含 Python 运行时 + 暂存的纯代码桌面核心，体积大不入库）
 src-tauri/resources/
+
+# Godot 导出缓存（纯生成物，含空值导出凭据）
+godot_renderer/.godot/
+
+# 通用 Rust 构建目录（防子目录遗漏）
+/target/
+
+# 构建/运行日志与临时产物（不入库，可能含本地路径）
+*.log
+tauri_err.txt
+tauri_out.txt
+build_log_*.txt
+verify_shots/
+install_gui.log
+verify2.log

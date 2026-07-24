@@ -1,8 +1,0 @@
-setup.exe = D:\naixi_desktop\src-tauri\target\release\bundle\nsis\奶昔_0.1.0_x64-setup.exe
-[0] 备份旧安装
-    无旧安装
-[1] 静默重装今天版本 -> C:\Users\21222\AppData\Local\奶昔
-    安装退出码: 0
-    uninstall.exe 存在: False
-ERROR: 重装后未生成 uninstall.exe
-VERIFY2_EXIT=3

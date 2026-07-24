@@ -1,0 +1,14 @@
+奶昔 · 桌面智能体 (Naixi Desktop)
+Copyright 2026 木枝
+
+本项目以 Apache License, Version 2.0 发布。
+
+本产品打包时附带以下第三方组件，各组件以其自身许可证发布：
+
+- Tauri (https://tauri.app/) — MIT OR Apache-2.0
+- React (https://react.dev/) — MIT
+- Python (https://www.python.org/) — Python Software Foundation License
+- SearXNG (https://searxng.org/) — AGPL-3.0（构建时下载，不随源码仓库分发）
+
+上述组件的版权与许可证详情见各自官方仓库。本 NOTICE 文件仅作信息归集，
+不改变 Apache License 2.0 对本项目自有代码的适用。
