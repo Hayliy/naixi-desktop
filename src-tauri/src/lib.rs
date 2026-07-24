@@ -21,17 +21,19 @@ fn kill_backend(app: &tauri::AppHandle) {
         .ok()
         .and_then(|g| *g);
     if let Some(pid) = pid {
-        // /T 连同子进程树一起结束，/F 强制结束
+        // /T 连同子进程树一起结束，/F 强制结束。
+        // 用 spawn 非阻塞发起：taskkill 是独立进程，发起后本进程即可退出，
+        // 由它在后台继续清理进程树，避免同步等待 taskkill 杀树导致托盘退出卡顿（#3）。
         let _ = std::process::Command::new("taskkill")
             .args(["/F", "/T", "/PID", &pid.to_string()])
-            .status();
+            .spawn();
     } else {
         // 兜底：PID 没存上（例如本次启动时端口已被上次残留占用而直接复用），
         // 按监听 9845 的进程再清一次，避免残留 python.exe。只杀监听该端口者，不误杀其它 python。
         if let Some(port_pid) = pid_listening_on(9845) {
             let _ = std::process::Command::new("taskkill")
                 .args(["/F", "/T", "/PID", &port_pid.to_string()])
-                .status();
+                .spawn();
         }
     }
 }

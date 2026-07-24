@@ -73,6 +73,12 @@ LoadLanguageFile "${NSISDIR}\Contrib\Language files\SimpChinese.nlf"
 !define ESTIMATEDSIZE "{{estimated_size}}"
 !define STARTMENUFOLDER "{{start_menu_folder}}"
 
+; 每批写入/删除的资源文件数：过大→单 tick 磁盘 I/O 阻塞 UI；过小→总耗时增加。
+; 1000 约 40MB/批，单 tick 远低于 Windows 判定“未响应”的 5s 阈值。
+; 必须定义在卸载函数之前（NSIS 预处理器按源顺序展开 !define），
+; 否则卸载 stage 里宏为空 → IntOp 操作数为空 → 删除卡死在“正在删除资源文件”。
+!define RES_BATCH_SIZE 1000
+
 ; ── 配色（SetCtlColors 使用 RGB；GDI SendMessage 使用 BGR）──
 !define CLR_PINK        0xD4537E
 !define CLR_LIGHT_PINK  0xF4C0D1
@@ -952,6 +958,33 @@ FunctionEnd
 Function un.ConfirmLeave
   ${NSD_GetState} $unDeleteChk $0
   StrCpy $unDeleteData $0
+
+  ; 在离开确认页时检测并关闭正在运行的奶昔：
+  ; 1) 避免进度页 nsDialogs::Show 前弹窗遮挡未绘制页面导致空白(#2)；
+  ; 2) 避免主程序/子进程占用文件导致删除失败/进度卡住(#4)；
+  ; 3) 无弹窗自动关闭，确认页直接翻到进度页，不卡用户。
+  !if "${INSTALLMODE}" == "currentUser"
+    nsis_tauri_utils::FindProcessCurrentUser "${MAINBINARYNAME}.exe"
+  !else
+    nsis_tauri_utils::FindProcess "${MAINBINARYNAME}.exe"
+  !endif
+  Pop $R0
+  ${If} $R0 = 0
+    ; 用 taskkill /F /T 杀整棵进程树（主程序 + sidecar 子进程），比插件单进程 KillProcess 更彻底。
+    ExecWait '"taskkill" /F /T /IM "${MAINBINARYNAME}.exe"' $R1
+    Sleep 1000
+    ; 再次确认，仍杀不掉才提示并阻止翻页
+    !if "${INSTALLMODE}" == "currentUser"
+      nsis_tauri_utils::FindProcessCurrentUser "${MAINBINARYNAME}.exe"
+    !else
+      nsis_tauri_utils::FindProcess "${MAINBINARYNAME}.exe"
+    !endif
+    Pop $R0
+    ${If} $R0 = 0
+      MessageBox MB_OK "无法自动关闭奶昔，请手动关闭后重试卸载。"
+      Abort
+    ${EndIf}
+  ${EndIf}
 FunctionEnd
 
 ; ─── 卸载第 2 页：进度 ───
@@ -1002,33 +1035,10 @@ Function un.Progress
   StrCpy $unInstallStage 0
   StrCpy $unProg 0
 
-  ; 一次性检测程序是否占用（不在 timer 内，避免循环弹窗）
-  !if "${INSTALLMODE}" == "currentUser"
-    nsis_tauri_utils::FindProcessCurrentUser "${MAINBINARYNAME}.exe"
-  !else
-    nsis_tauri_utils::FindProcess "${MAINBINARYNAME}.exe"
-  !endif
-  Pop $R0
-  ${If} $R0 = 0
-    MessageBox MB_OKCANCEL "奶昔正在运行，建议先关闭后再卸载。$\n点击「确定」自动关闭，或「取消」退出卸载。" IDOK kill_u IDCANCEL quit_u
-    kill_u:
-      !if "${INSTALLMODE}" == "currentUser"
-        nsis_tauri_utils::KillProcessCurrentUser "${MAINBINARYNAME}.exe"
-      !else
-        nsis_tauri_utils::KillProcess "${MAINBINARYNAME}.exe"
-      !endif
-      Pop $R0
-      Sleep 500
-      ${If} $R0 != 0
-      ${AndIf} $R0 != 2
-        MessageBox MB_OK "无法自动关闭奶昔，请手动关闭后重试卸载。"
-        Quit
-      ${EndIf}
-      Goto app_checked_u
-    quit_u:
-      Quit
-  ${EndIf}
-  app_checked_u:
+  ; 进程占用检测与关闭已前移到 un.ConfirmLeave（离开确认页时执行）。
+  ; 原因：若在此处 nsDialogs::Show 之前弹出 MessageBox，会盖在尚未绘制的
+  ; 无边框进度页上导致页面空白(#2)，且弹窗后页面/timer 状态被破坏使进度停住(#4)。
+  ; 到达本页时进程已被关闭，进度页可干净绘制、timer 正常触发。
 
   ${NSD_CreateTimer} un.UninstallTick 100
 
@@ -1188,10 +1198,6 @@ FunctionEnd
 
 Section "Main" SEC01
 SectionEnd
-
-; 每批写入的资源文件数：过大→单 tick 磁盘 I/O 阻塞 UI；过小→总耗时增加。
-; 1000 约 40MB/批，单 tick 远低于 Windows 判定“未响应”的 5s 阈值。
-!define RES_BATCH_SIZE 1000
 
 Function fn_DoInstall
   ${If} $InstallStage == 0
