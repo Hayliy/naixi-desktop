@@ -3083,6 +3083,9 @@ def setup_routes(app):
     app.router.add_post("/api/live/models/import", api_live_models_import)
     app.router.add_get("/api/live2d-model/{path:.*}", api_live2d_model)
     app.router.add_get("/api/live2d-model-list", api_live2d_model_list)
+    app.router.add_get("/api/live/connectors", api_live_connectors)
+    app.router.add_post("/api/live/connectors/register", api_live_connector_register)
+    app.router.add_post("/api/live/connectors/unregister", api_live_connector_unregister)
 
     # 启动时连接 MCP 服务器
     app.on_startup.append(_on_startup_mcp)
@@ -3223,6 +3226,38 @@ async def api_live_test_tts(request):
     engine._load_config()
     err = await engine.test_tts()
     return web.json_response({"ok": not err, "error": err or ""})
+
+async def api_live_connectors(request):
+    """列出当前在台的角色（奶昔 + 已接入的外部 agent）"""
+    from desktop_core.live_engine import engine
+    return web.json_response({"connectors": engine.list_connectors()})
+
+async def api_live_connector_register(request):
+    """接入一个外部 agent 角色（HTTP 端点）。QQ 机器人配好地址即可上台。
+
+    body: {agent_id, name, endpoint, priority?, token?}
+    """
+    from desktop_core.live_engine import engine
+    body = await request.json() if request.can_read_body else {}
+    agent_id = (body.get("agent_id") or "").strip()
+    name = (body.get("name") or "").strip()
+    endpoint = (body.get("endpoint") or "").strip()
+    if not agent_id or not name or not endpoint:
+        return web.json_response({"ok": False, "error": "缺少 agent_id / name / endpoint"}, status=400)
+    ok = engine.register_http_connector(
+        agent_id, name, endpoint,
+        priority=int(body.get("priority", 50)),
+        token=body.get("token", ""),
+    )
+    return web.json_response({"ok": ok, "connectors": engine.list_connectors()})
+
+async def api_live_connector_unregister(request):
+    """让一个外部角色下台。body: {agent_id}"""
+    from desktop_core.live_engine import engine
+    body = await request.json() if request.can_read_body else {}
+    agent_id = (body.get("agent_id") or "").strip()
+    ok = await engine.unregister_connector(agent_id)
+    return web.json_response({"ok": ok, "connectors": engine.list_connectors()})
 
 async def api_live_start_stream(request):
     """启动 RTMP 推流"""

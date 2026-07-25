@@ -7,6 +7,12 @@ from datetime import datetime
 from typing import Optional
 from aiohttp import WSMsgType
 
+from desktop_core.live_bus import (
+    LiveBus, SpeechArbiter, AgentConnector, NaixiConnector, HttpAgentConnector,
+    make_speech_request, normalize_utterance, should_react_to_cue,
+    PRIORITY_HOST, PRIORITY_GUEST,
+)
+
 DEFAULT_LIVE_PROMPT = """你是奶昔，一个虚拟主播。你正在B站直播，以下是你的设定：
 
 性格：可爱、活泼、有点傲娇。语气自然口语化，像在和朋友聊天。
@@ -31,6 +37,9 @@ MAX_DANMAKU = 200             # 弹幕缓存上限
 STREAM_WIDTH = 1280
 STREAM_HEIGHT = 720
 STREAM_FPS = 15
+PCM_RATE = 44100             # 推流音频采样率（Hz）
+PCM_CHANNELS = 1             # 推流音频声道数（单声道）
+PCM_CHUNK_MS = 100           # 音频喂帧粒度（毫秒），用于实时节流
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 AVATARS_DIR = os.path.join(DATA_DIR, "avatars")
 
@@ -89,7 +98,11 @@ class LiveEngine:
         # 数据
         self._danmaku_cache: list[dict] = []
         self._last_error = ""
-        self._ffmpeg_proc: Optional[subprocess.Popen] = None
+        self._ffmpeg_proc = None                       # 单常驻推流 ffmpeg（asyncio 子进程）
+        self._stream_running = False                    # 常驻推流循环开关
+        self._pcm_queue: asyncio.Queue = asyncio.Queue()  # 待播 PCM 段队列
+        self._audio_pump_task: Optional[asyncio.Task] = None  # 实时喂音任务
+        self._subtitle_file = ""                        # drawtext 字幕文件（reload=1 防注入）
         self._current_text = ""
         self._current_emotion = "开心"
         self._audio_playlist: list[str] = []
@@ -125,6 +138,144 @@ class LiveEngine:
             self._sd_available = True
         except:
             pass
+
+        # 多角色舞台：总线 + 麦位仲裁 + 角色连接器注册表（Lumi_Nox 多角色整合）
+        self._bus = LiveBus()
+        self._arbiter = SpeechArbiter()
+        self._connectors: dict[str, AgentConnector] = {}
+        self._register_builtin_connectors()
+
+    # ── 多角色连接器 ────────────────────────────────────────────────────────
+
+    def _register_builtin_connectors(self):
+        """注册内置角色：奶昔本体（主咖）。外部 agent 通过 register_connector 上台。"""
+        self._connectors["naixi"] = NaixiConnector(self._decide_reply)
+
+    def register_connector(self, connector: AgentConnector) -> bool:
+        """注册一个外部角色连接器（其他人的 agent 上台）。同名 agent_id 覆盖。"""
+        if not getattr(connector, "agent_id", ""):
+            return False
+        self._connectors[connector.agent_id] = connector
+        log.info(f"[舞台] 角色已上台: {connector.name}({connector.agent_id}) 优先级={connector.priority}")
+        return True
+
+    async def unregister_connector(self, agent_id: str) -> bool:
+        """让一个外部角色下台。内置奶昔不可下台。"""
+        if agent_id == "naixi":
+            return False
+        c = self._connectors.pop(agent_id, None)
+        if c:
+            try: await c.close()
+            except: pass
+            log.info(f"[舞台] 角色已下台: {agent_id}")
+            return True
+        return False
+
+    def register_http_connector(self, agent_id: str, name: str, endpoint: str,
+                                priority: int = PRIORITY_GUEST, token: str = "") -> bool:
+        """便捷注册一个 HTTP 外部角色（QQ 机器人等）。供 API 调用。"""
+        if not agent_id or not name or not endpoint:
+            return False
+        conn = HttpAgentConnector(agent_id, name, endpoint, priority=priority, token=token)
+        return self.register_connector(conn)
+
+    def list_connectors(self) -> list:
+        """列出当前在台的角色（供前端/API 展示）。"""
+        out = []
+        for c in self._connectors.values():
+            item = {"agent_id": c.agent_id, "name": c.name, "priority": c.priority,
+                    "builtin": c.agent_id == "naixi"}
+            if isinstance(c, HttpAgentConnector):
+                item["endpoint"] = c.endpoint
+            out.append(item)
+        return out
+
+    async def _enqueue_speak(self, req: dict):
+        """把仲裁通过的发言请求投入既有语音管道（_scene_queue），携带角色元数据。"""
+        await self._scene_queue.put({
+            "type": "speak",
+            "text": req.get("text", ""),
+            "emotion": req.get("emotion", "开心"),
+            "action": req.get("action", ""),
+            "agent_id": req.get("agent_id", "naixi"),
+            "name": req.get("name", "奶昔"),
+            "source_id": req.get("source_id", req.get("agent_id", "naixi")),
+            "cue_depth": req.get("cue_depth", 0),
+        })
+
+    async def _emit(self, connector: AgentConnector, utt: dict, *, source_id: str = "", cue_depth: int = 0):
+        """一个角色产出一句发言 → 占麦仲裁 → 抢到则入语音管道，否则排队/丢弃。"""
+        req = make_speech_request(connector, utt, source_id=source_id, cue_depth=cue_depth)
+        admitted = await self._arbiter.submit(req)
+        if admitted:
+            await self._enqueue_speak(admitted)
+
+    def _match_mention(self, text: str):
+        """解析 @路由：弹幕含 @角色名/agent_id 时只投给该角色。返回 (目标连接器, 去掉@后的文本)。"""
+        if not text or "@" not in text:
+            return None, text
+        for connector in self._connectors.values():
+            for tag in (connector.name, connector.agent_id):
+                if tag and f"@{tag}" in text:
+                    cleaned = text.replace(f"@{tag}", "").strip()
+                    return connector, cleaned
+        return None, text
+
+    async def _dispatch_danmaku(self, danmaku: dict):
+        """把一条（或一批）弹幕分发给在台角色。含 @路由 则定向，否则全体判断是否接。"""
+        target, cleaned = self._match_mention(danmaku.get("text", ""))
+        if target is not None:
+            danmaku = {**danmaku, "text": cleaned}
+            targets = [target]
+        else:
+            targets = list(self._connectors.values())
+        for connector in targets:
+            try:
+                utt = normalize_utterance(await connector.handle_danmaku(danmaku))
+            except Exception as e:
+                log.warning(f"[舞台] {connector.name} 处理弹幕异常: {e}")
+                utt = None
+            if utt:
+                await self._emit(connector, utt, source_id=connector.agent_id, cue_depth=0)
+
+    async def _broadcast_cue(self, cue: dict):
+        """一句话说完后，广播舞台提示给"其他"角色（D4 回声防护：过滤自己+限深+概率衰减）。"""
+        if not should_react_to_cue(cue):
+            return
+        for connector in list(self._connectors.values()):
+            if connector.agent_id == cue.get("source_id"):
+                continue  # 不回应自己引发的链
+            try:
+                utt = normalize_utterance(await connector.handle_cue(cue))
+            except Exception as e:
+                log.warning(f"[舞台] {connector.name} 处理舞台提示异常: {e}")
+                utt = None
+            if utt:
+                # 反应句继承 source_id（仍算同一条链），链深 +1
+                await self._emit(connector, utt, source_id=cue.get("source_id", ""), cue_depth=cue.get("cue_depth", 1))
+
+    async def _after_speak(self, action: dict, spoken: bool):
+        """一句发言处理完：广播舞台提示给其他角色，并释放麦位、放行下一句。"""
+        # 只有真正说出口的话才广播为舞台提示（合成失败的不算"说过"）
+        if spoken:
+            cue = {
+                "name": action.get("name", "奶昔"),
+                "text": action.get("text", ""),
+                "source_id": action.get("source_id", action.get("agent_id", "naixi")),
+                "agent_id": action.get("agent_id", "naixi"),
+                "cue_depth": action.get("cue_depth", 0) + 1,
+            }
+            try:
+                await self._broadcast_cue(cue)
+            except Exception as e:
+                log.warning(f"[舞台] 广播舞台提示失败: {e}")
+        # 释放麦位，取出下一句排队发言
+        try:
+            nxt = await self._arbiter.release()
+            if nxt:
+                await self._enqueue_speak(nxt)
+        except Exception as e:
+            log.warning(f"[舞台] 释放麦位失败: {e}")
 
     # ── 状态快照 ──────────────────────────────────────────────────────────
 
@@ -314,6 +465,9 @@ class LiveEngine:
         await self._vts_disconnect()
         self._stop_pet()
         await self._stop_ffmpeg()
+        # 清空占麦仲裁状态，避免上一场残留 busy 卡住下一场
+        try: self._arbiter.clear()
+        except: pass
         for aid in list(self._agent_tasks.keys()):
             t = self._agent_tasks.pop(aid, None)
             if t and not t.done():
@@ -424,6 +578,8 @@ class LiveEngine:
 
         # 先关掉之前可能残留的 session
         await self._close_old_session()
+        # 取消上一轮残留的心跳/读取任务，避免重连时任务泄漏（旧实现直接覆盖 task 引用）
+        await self._cancel_bili_tasks()
 
         try:
             import aiohttp
@@ -671,9 +827,8 @@ class LiveEngine:
                 return
         log.warning("[直播] 自动重连失败")
 
-    async def disconnect_bilibili(self):
-        """断开 B站 连接"""
-        self._connected = False
+    async def _cancel_bili_tasks(self):
+        """取消 B站 心跳/读取后台任务（重连与断开共用，避免 task 泄漏）。"""
         if self._ws_task and not self._ws_task.done():
             self._ws_task.cancel()
             try: await self._ws_task
@@ -684,6 +839,11 @@ class LiveEngine:
             try: await self._hb_task
             except: pass
         self._hb_task = None
+
+    async def disconnect_bilibili(self):
+        """断开 B站 连接"""
+        self._connected = False
+        await self._cancel_bili_tasks()
         if self._ws:
             try: await self._ws.close()
             except: pass
@@ -914,7 +1074,7 @@ class LiveEngine:
 
             msg_type = msg.get("type", "")
 
-            # 高优：礼物/上舰/SC → 立即处理，不排队
+            # 高优：礼物/上舰/SC/进入 → 奶昔主咖立即回应（走占麦仲裁，主咖高优可插队）
             if msg_type in ("gift", "guard", "super_chat", "enter"):
                 if msg_type in ("gift", "guard"):
                     reply = f"感谢{msg['user']}的{'礼物' if msg_type=='gift' else '大航海'}！"
@@ -923,8 +1083,10 @@ class LiveEngine:
                 else:
                     reply = f"欢迎{msg['user']}进入直播间～"
                 emotion = "开心" if msg_type in ("gift", "guard") else "欢迎"
-                action = "wave" if msg_type in ("gift", "guard") else "wave"
-                await self._scene_queue.put({"type": "speak", "text": reply, "emotion": emotion, "action": action})
+                naixi = self._connectors.get("naixi")
+                if naixi:
+                    await self._emit(naixi, {"text": reply, "emotion": emotion, "action": "wave"},
+                                     source_id="naixi", cue_depth=0)
                 continue
 
             # 弹幕：削峰 + 批量
@@ -932,7 +1094,6 @@ class LiveEngine:
                 continue
 
             now = time.time()
-            batch_window = 1.0  # 1 秒内的弹幕合并处理
 
             # 如果距离上次处理不足间隔，加入批量缓冲
             if now - self._last_process_time < self._process_interval:
@@ -947,36 +1108,32 @@ class LiveEngine:
             self._danmaku_batch.clear()
             self._last_process_time = now
 
-            # 采样：弹幕太多时只取前 N 条 + 统计
-            if len(batch) > 5:
-                # 统计高频词
-                from collections import Counter
-                words = []
-                for b in batch:
-                    words.extend(b.get("text", "")[:20])
-                top_words = Counter(words).most_common(3)
-                # 取前 3 条代表性的 + 统计数据
-                samples = batch[:3]
-                summary = f"（共{len(batch)}条弹幕，高频词:{' '.join(w for w,_ in top_words)}）"
-                prompt = summary + "\n".join(f"[弹幕] {b['user']}: {b['text'][:60]}" for b in samples)
-            else:
-                prompt = "\n".join(f"[弹幕] {b['user']}: {b['text'][:60]}" for b in batch)
+            danmaku = self._build_danmaku_event(batch)
+            await self._dispatch_danmaku(danmaku)
 
-                reply, emotion, action = await self._decide_reply(prompt, "")
-                if reply:
-                    await self._scene_queue.put({"type": "speak", "text": reply, "emotion": emotion, "action": action})
+    def _build_danmaku_event(self, batch: list) -> dict:
+        """把一批弹幕合成一个分发事件：太多时采样 + 高频词统计。"""
+        if len(batch) > 5:
+            from collections import Counter
+            words = []
+            for b in batch:
+                words.extend(b.get("text", "")[:20])
+            top_words = Counter(words).most_common(3)
+            samples = batch[:3]
+            summary = f"（共{len(batch)}条弹幕，高频词:{' '.join(w for w,_ in top_words)}）"
+            text = summary + "\n".join(f"[弹幕] {b['user']}: {b['text'][:60]}" for b in samples)
+        else:
+            text = "\n".join(f"[弹幕] {b['user']}: {b['text'][:60]}" for b in batch)
+        return {"type": "danmaku", "user": "", "text": text, "batch": batch}
 
     async def _process_batch(self):
-        """处理积压的批量缓冲"""
+        """处理积压的批量缓冲（超时触发）"""
         batch = list(self._danmaku_batch)
         self._danmaku_batch.clear()
         if not batch:
             return
-        samples = batch[:3]
-        prompt = f"（共{len(batch)}条弹幕）\n" + "\n".join(f"[弹幕] {b['user']}: {b['text'][:60]}" for b in samples)
-        reply, emotion, action = await self._decide_reply(prompt, "")
-        if reply:
-            await self._scene_queue.put({"type": "speak", "text": reply, "emotion": emotion, "action": action})
+        danmaku = self._build_danmaku_event(batch)
+        await self._dispatch_danmaku(danmaku)
 
     # ── 音频设备管理（sounddevice + VB-Cable） ──────────────────────────
 
@@ -1183,19 +1340,25 @@ class LiveEngine:
             if not text:
                 continue
 
-            audio_bytes = await self._synthesize(text)
-            if audio_bytes:
-                await self._vts_speak(audio_bytes, text, action.get("emotion", "开心"), action.get("action", ""))
-                tmp = os.path.join(tempfile.gettempdir(), f"live_push_{int(time.time()*1000)}.wav")
-                try:
-                    with open(tmp, "wb") as f:
-                        f.write(audio_bytes)
-                except:
-                    tmp = ""
-                await self._tts_queue.put({
-                    "type": "audio", "audio_path": tmp, "text": text,
-                    "emotion": action.get("emotion", "开心")
-                })
+            spoken = False
+            try:
+                audio_bytes = await self._synthesize(text)
+                if audio_bytes:
+                    await self._vts_speak(audio_bytes, text, action.get("emotion", "开心"), action.get("action", ""))
+                    tmp = os.path.join(tempfile.gettempdir(), f"live_push_{int(time.time()*1000)}.wav")
+                    try:
+                        with open(tmp, "wb") as f:
+                            f.write(audio_bytes)
+                    except:
+                        tmp = ""
+                    await self._tts_queue.put({
+                        "type": "audio", "audio_path": tmp, "text": text,
+                        "emotion": action.get("emotion", "开心")
+                    })
+                    spoken = True
+            finally:
+                # 无论合成成功与否都必须释放麦位，否则占麦仲裁会永久卡死
+                await self._after_speak(action, spoken)
 
     def _resolve_tts_config(self) -> dict:
         """解析 TTS 配置（api_key/api_url/model），优先对话页audio供应商"""
@@ -1354,32 +1517,114 @@ class LiveEngine:
                 except: pass
 
     async def _composite_and_push(self, audio_path: str, text: str):
-        """合成音视频并推流"""
-        # 用 ffmpeg drawtext 叠上文字+背景推流
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "lavfi", "-i", f"color=c=0x1a1a2e:s={STREAM_WIDTH}x{STREAM_HEIGHT}:r={STREAM_FPS}",
-            "-i", audio_path,
-            "-filter_complex",
-            f"drawtext=text='{text[:60]}':fontcolor=white:fontsize=24:x=(w-text_w)/2:y=h-80:"
-            f"box=1:boxcolor=black@0.4:boxborderw=8, "
-            f"drawtext=text='奶昔直播 {_fmt_time(time.time())}':fontcolor=gray:fontsize=14:x=10:y=10",
-            "-c:v", "libx264", "-preset", "ultrafast", "-b:v", "2000k",
-            "-c:a", "aac", "-b:a", "128k", "-shortest",
-            "-f", "flv", self._rtmp_url,
-        ]
+        """把一句语音送进常驻推流：更新字幕文件 + 解码 PCM 入播放队列。
+
+        不再每句新开 ffmpeg（旧实现每句一进程 + -shortest 会导致每句掉线、
+        双进程抢同一 RTMP 地址）。字幕改走 textfile + reload=1，彻底避免把
+        弹幕文本直接拼进 filter 字符串带来的注入风险。
+        """
+        # 确保常驻推流已在运行（未开则按需拉起）
+        if not (self._ffmpeg_proc and self._ffmpeg_proc.returncode is None):
+            ok = await self.start_stream()
+            if not ok:
+                log.warning(f"[推流] 常驻推流未就绪，丢弃本句: {text[:20]}")
+                return
+        # 更新字幕（写文件，drawtext reload=1 会自动读取，避免注入）
+        self._set_subtitle(text)
+        # 解码音频为 raw PCM 并入队，由 _audio_pump_loop 实时喂给 ffmpeg
+        pcm = await self._decode_to_pcm(audio_path)
+        if pcm:
+            await self._pcm_queue.put(pcm)
+            log.info(f"[推流] 已入队语音 {_fmt_size(len(pcm))}: {text[:20]}")
+
+    async def _decode_to_pcm(self, audio_path: str) -> bytes:
+        """用一次性 ffmpeg 把任意音频文件解码为 s16le 单声道 raw PCM。"""
         try:
             proc = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+                "ffmpeg", "-y", "-i", audio_path,
+                "-f", "s16le", "-ar", str(PCM_RATE), "-ac", str(PCM_CHANNELS), "pipe:1",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             )
-            await asyncio.sleep(0.5)
-            if proc.returncode is not None and proc.returncode != 0:
-                log.warning(f"[推流] ffmpeg 异常退出: {proc.returncode}")
+            pcm, _ = await proc.communicate()
+            return pcm or b""
+        except FileNotFoundError:
+            log.warning("[推流] ffmpeg 未安装，无法解码音频")
+            return b""
         except Exception as e:
-            log.warning(f"[推流] 合成失败: {e}")
+            log.warning(f"[推流] 音频解码失败: {e}")
+            return b""
+
+    def _ensure_subtitle_file(self):
+        """确保字幕文件存在（drawtext reload=1 要求文件常在，空文件写一个空格占位）。"""
+        if not self._subtitle_file:
+            self._subtitle_file = os.path.join(tempfile.gettempdir(), "naixi_live_subtitle.txt")
+        if not os.path.exists(self._subtitle_file):
+            try:
+                with open(self._subtitle_file, "w", encoding="utf-8") as f:
+                    f.write(" ")
+            except Exception as e:
+                log.warning(f"[推流] 创建字幕文件失败: {e}")
+
+    def _set_subtitle(self, text: str):
+        """更新字幕文件内容（限长 60 字，纯文件写入，天然免疫 filter 注入）。"""
+        self._ensure_subtitle_file()
+        try:
+            safe = (text or " ")[:60] or " "
+            with open(self._subtitle_file, "w", encoding="utf-8") as f:
+                f.write(safe)
+        except Exception as e:
+            log.warning(f"[推流] 更新字幕失败: {e}")
+
+    def _subtitle_filter(self) -> str:
+        """构造 drawtext filter：从字幕文件读，Windows 路径按 ffmpeg 规则转义。"""
+        esc = self._subtitle_file.replace("\\", "/").replace(":", "\\:")
+        return (
+            f"drawtext=textfile='{esc}':reload=1:fontcolor=white:fontsize=24:"
+            f"x=(w-text_w)/2:y=h-80:box=1:boxcolor=black@0.4:boxborderw=8"
+        )
+
+    async def _audio_pump_loop(self):
+        """实时向常驻 ffmpeg 的 stdin 喂 PCM：有语音喂语音，空闲喂静音。
+
+        以 PCM_CHUNK_MS 为粒度按真实时间节流，避免一次性灌爆缓冲；空闲时持续
+        喂静音帧，保证音频流不断（否则观众端会卡顿/断流）。
+        """
+        chunk_samples = PCM_RATE * PCM_CHUNK_MS // 1000
+        chunk_bytes = chunk_samples * 2 * PCM_CHANNELS      # s16le = 2 字节/采样
+        silence = b"\x00" * chunk_bytes
+        interval = PCM_CHUNK_MS / 1000.0
+        current = b""
+        while self._stream_running and self._ffmpeg_proc and self._ffmpeg_proc.returncode is None:
+            t0 = time.monotonic()
+            if not current:
+                try:
+                    current = self._pcm_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    current = b""
+            if current:
+                chunk = current[:chunk_bytes]
+                current = current[chunk_bytes:]
+                if len(chunk) < chunk_bytes:
+                    chunk = chunk + silence[len(chunk):]
+            else:
+                chunk = silence
+            try:
+                self._ffmpeg_proc.stdin.write(chunk)
+                await self._ffmpeg_proc.stdin.drain()
+            except Exception as e:
+                log.warning(f"[推流] 写入音频流失败，停止喂音: {e}")
+                break
+            dt = time.monotonic() - t0
+            if dt < interval:
+                await asyncio.sleep(interval - dt)
 
     async def start_stream(self, rtmp_url: str = "") -> bool:
-        """启动持续推流（背景循环画面）"""
+        """启动单常驻推流：一个 ffmpeg 全程在线，画面 + 字幕(reload) + stdin 音频。
+
+        画面用 lavfi 无限背景，字幕从 textfile 每帧 reload，音频从 stdin 管道喂
+        （由 _audio_pump_loop 持续供给，空闲静音垫底）。全程只有这一个 ffmpeg
+        进程，杜绝旧实现每句新开进程 + 双进程抢 RTMP 导致的掉线。
+        """
         if rtmp_url:
             self._rtmp_url = rtmp_url
             self.save_config(rtmp_url=rtmp_url)
@@ -1388,17 +1633,26 @@ class LiveEngine:
             return False
         if self._ffmpeg_proc and self._ffmpeg_proc.returncode is None:
             return True
+        self._ensure_subtitle_file()
+        self._set_subtitle(" ")
         try:
-            self._ffmpeg_proc = subprocess.Popen(
-                ["ffmpeg", "-y",
-                 "-f", "lavfi", "-i", f"color=c=0x1a1a2e:s={STREAM_WIDTH}x{STREAM_HEIGHT}:r=5",
-                 "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
-                 "-c:v", "libx264", "-preset", "ultrafast", "-b:v", "1000k",
-                 "-c:a", "aac", "-b:a", "64k", "-shortest",
-                 "-f", "flv", self._rtmp_url],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            self._ffmpeg_proc = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-y",
+                "-f", "lavfi", "-i", f"color=c=0x1a1a2e:s={STREAM_WIDTH}x{STREAM_HEIGHT}:r={STREAM_FPS}",
+                "-f", "s16le", "-ar", str(PCM_RATE), "-ac", str(PCM_CHANNELS), "-i", "pipe:0",
+                "-vf", self._subtitle_filter(),
+                "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+                "-pix_fmt", "yuv420p", "-g", str(STREAM_FPS * 2), "-b:v", "2000k",
+                "-c:a", "aac", "-b:a", "128k",
+                "-f", "flv", self._rtmp_url,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
             )
-            log.info(f"[直播] 持续推流已启动")
+            self._stream_running = True
+            # 启动实时喂音循环（有语音喂语音，空闲喂静音）
+            self._audio_pump_task = asyncio.create_task(self._audio_pump_loop())
+            log.info("[直播] 单常驻推流已启动")
             return True
         except FileNotFoundError:
             self._last_error = "ffmpeg 未安装"
@@ -1412,8 +1666,27 @@ class LiveEngine:
         await self._stop_ffmpeg()
 
     async def _stop_ffmpeg(self):
+        """停止常驻推流：先停喂音循环，关 stdin，再优雅结束 ffmpeg。"""
+        self._stream_running = False
+        # 停止喂音任务
+        if self._audio_pump_task:
+            self._audio_pump_task.cancel()
+            try:
+                await self._audio_pump_task
+            except: pass
+            self._audio_pump_task = None
+        # 清空待播队列
+        try:
+            while True:
+                self._pcm_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
         if self._ffmpeg_proc:
             try:
+                if self._ffmpeg_proc.stdin:
+                    try:
+                        self._ffmpeg_proc.stdin.close()
+                    except: pass
                 self._ffmpeg_proc.terminate()
                 await asyncio.sleep(0.5)
                 if self._ffmpeg_proc.returncode is None:
