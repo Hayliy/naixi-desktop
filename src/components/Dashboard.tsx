@@ -1958,8 +1958,7 @@ function LivePage() {
       const r = await apiGet<any>('/api/live/connect_credentials');
       if (r?.ok) {
         setCred(r);
-        setRegForm({ agent_id: r.agent_id, name: r.name, endpoint: r.endpoint, type: r.type, token: r.token });
-        notify('凭证已生成并已填入表单', 'success');
+        notify('凭证已生成（复制给外部 agent 即可连入）', 'success');
       } else notify('生成失败', 'error');
     } catch { notify('生成失败', 'error'); }
   };
@@ -2345,42 +2344,17 @@ function LivePage() {
             </div>
           </div>
 
-          {/* 接入外部角色 */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-[10px] font-medium text-sakura-500">接入外部 agent（HTTP / WebSocket，远程需 token）</p>
-              <button onClick={genCred} className="shrink-0 px-2.5 py-1 rounded-lg text-[10px] font-medium bg-sakura-500 text-white hover:bg-sakura-600 transition-colors">生成接入凭证</button>
-            </div>
-            <p className="text-[9px] text-sakura-300 leading-relaxed">不知道怎么填？点"生成接入凭证"一键生成（自动初始化密钥、给出端点），把凭证复制给外部 agent 即可连入。</p>
-            <div className="space-y-2.5">
-              <div>
-                <label className="block text-[10px] text-sakura-500 font-medium mb-1">agent_id</label>
-                <input value={regForm.agent_id} onChange={e => setRegForm({ ...regForm, agent_id: e.target.value })} placeholder="唯一标识" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white" />
+          {/* 接入外部角色 —— 拆成反向（推荐）与正向两个独立区块，避免误点 */}
+          <div className="space-y-3">
+            {/* 反向连入（外部连奶昔，推荐）：外部 agent 用凭证主动连引擎 */}
+            <div className="rounded-lg border border-sakura-200 bg-sakura-50/40 p-2.5 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-medium text-sakura-600">外部连奶昔（反向连入 · 推荐）</p>
+                <button onClick={genCred} className="shrink-0 px-2.5 py-1 rounded-lg text-[10px] font-medium bg-sakura-500 text-white hover:bg-sakura-600 transition-colors">生成接入凭证</button>
               </div>
-              <div>
-                <label className="block text-[10px] text-sakura-500 font-medium mb-1">显示名</label>
-                <input value={regForm.name} onChange={e => setRegForm({ ...regForm, name: e.target.value })} placeholder="展示用名称" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white" />
-              </div>
-              <div>
-                <label className="block text-[10px] text-sakura-500 font-medium mb-1">端点</label>
-                <input value={regForm.endpoint} onChange={e => setRegForm({ ...regForm, endpoint: e.target.value })} placeholder="http:// 或 ws:// 端点" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" />
-              </div>
-              <div>
-                <label className="block text-[10px] text-sakura-500 font-medium mb-1">类型</label>
-                <select value={regForm.type} onChange={e => setRegForm({ ...regForm, type: e.target.value })} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white">
-                  <option value="http">HTTP</option>
-                  <option value="ws">WebSocket</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] text-sakura-500 font-medium mb-1">token（远程必填）</label>
-                <input value={regForm.token} onChange={e => setRegForm({ ...regForm, token: e.target.value })} placeholder="鉴权 token" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" />
-              </div>
-              {regMsg && <p className="text-[9px] text-red-400">{regMsg}</p>}
-              <button onClick={registerAgent} className="w-full px-3 py-2 rounded-lg text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 transition-colors">接入角色</button>
-              <p className="text-[9px] text-sakura-300 leading-relaxed">提示：远端 agent 也可主动"反向连入"引擎的 /api/live/ws_agent（需服务端密钥 live_ws_secret），连上即自动上台、断开即下台，标记为 WS(反向连入)，无需在此手填。</p>
+              <p className="text-[9px] text-sakura-400 leading-relaxed">外部 agent 用本凭证主动连引擎 <code className="font-mono">/api/live/ws_agent</code>，连上即自动上台、断开即下台（标记 WS 反向连入），无需在此手填。复制凭证给外部 agent 即可。</p>
               {cred && (
-                <div className="mt-1 rounded-lg border border-sakura-100 bg-sakura-50/30 p-2.5 space-y-2">
+                <div className="rounded-lg border border-sakura-100 bg-white p-2.5 space-y-2">
                   <p className="text-[10px] font-medium text-sakura-600">已生成凭证（复制给外部 agent）</p>
                   <div className="space-y-1 text-[10px]">
                     <div className="flex items-center gap-2"><span className="text-sakura-400 w-14 shrink-0">本机端点</span><code className="flex-1 truncate font-mono text-sakura-600">{cred.endpoint}</code><button onClick={() => copyText(cred.endpoint)} className="shrink-0 text-sakura-400 hover:text-sakura-600">复制</button></div>
@@ -2388,9 +2362,41 @@ function LivePage() {
                     <div className="flex items-center gap-2"><span className="text-sakura-400 w-14 shrink-0">密钥</span><code className="flex-1 truncate font-mono text-sakura-600">{cred.token}</code><button onClick={() => copyText(cred.token)} className="shrink-0 text-sakura-400 hover:text-sakura-600">复制</button></div>
                   </div>
                   <button onClick={() => setShowSample(s => !s)} className="text-[10px] text-sakura-500 hover:text-sakura-700 underline underline-offset-2">{showSample ? '收起' : '查看'}外部 agent 连接示例</button>
-                  {showSample && <pre className="text-[9px] leading-relaxed bg-white border border-sakura-100 rounded-lg p-2 overflow-x-auto whitespace-pre font-mono text-sakura-600 max-h-64">{cred.sample}</pre>}
+                  {showSample && <pre className="text-[9px] leading-relaxed bg-sakura-50 border border-sakura-100 rounded-lg p-2 overflow-x-auto whitespace-pre font-mono text-sakura-600 max-h-64">{cred.sample}</pre>}
                 </div>
               )}
+            </div>
+            {/* 正向连入（奶昔连外部）：外部 agent 提供 HTTP/WS 端点，引擎主动推事件 */}
+            <div className="rounded-lg border border-sakura-100 p-2.5 space-y-2.5">
+              <p className="text-[10px] font-medium text-sakura-500">让奶昔连外部（正向连入）</p>
+              <p className="text-[9px] text-sakura-300 leading-relaxed">外部 agent 提供一个 HTTP POST 或 WebSocket 端点，奶昔主动把弹幕/线索事件推过去，外部返回文本即上台发言。远程端点需填 token 鉴权。</p>
+              <div className="space-y-2.5">
+                <div>
+                  <label className="block text-[10px] text-sakura-500 font-medium mb-1">agent_id</label>
+                  <input value={regForm.agent_id} onChange={e => setRegForm({ ...regForm, agent_id: e.target.value })} placeholder="唯一标识" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white" />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-sakura-500 font-medium mb-1">显示名</label>
+                  <input value={regForm.name} onChange={e => setRegForm({ ...regForm, name: e.target.value })} placeholder="展示用名称" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white" />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-sakura-500 font-medium mb-1">端点</label>
+                  <input value={regForm.endpoint} onChange={e => setRegForm({ ...regForm, endpoint: e.target.value })} placeholder="http:// 或 ws:// 端点" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-sakura-500 font-medium mb-1">类型</label>
+                  <select value={regForm.type} onChange={e => setRegForm({ ...regForm, type: e.target.value })} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white">
+                    <option value="http">HTTP</option>
+                    <option value="ws">WebSocket</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] text-sakura-500 font-medium mb-1">token（远程必填）</label>
+                  <input value={regForm.token} onChange={e => setRegForm({ ...regForm, token: e.target.value })} placeholder="鉴权 token" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" />
+                </div>
+                {regMsg && <p className="text-[9px] text-red-400">{regMsg}</p>}
+                <button onClick={registerAgent} className="w-full px-3 py-2 rounded-lg text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 transition-colors">接入角色</button>
+              </div>
             </div>
           </div>
             </div>
