@@ -1923,6 +1923,8 @@ function LivePage() {
   const [humanText, setHumanText] = useState('');
   const [regForm, setRegForm] = useState<{ agent_id: string; name: string; endpoint: string; type: string; token: string }>({ agent_id: '', name: '', endpoint: '', type: 'http', token: '' });
   const [regMsg, setRegMsg] = useState('');
+  const [cred, setCred] = useState<any>(null);
+  const [showSample, setShowSample] = useState(false);
 
   const loadConnectors = useCallback(async () => {
     try { const r = await apiGet<any>('/api/live/connectors'); setConnectors(r.connectors || []); } catch {}
@@ -1949,6 +1951,21 @@ function LivePage() {
       else setRegMsg(r?.error || '注册失败（远程需 token）');
     } catch { setRegMsg('请求失败'); }
     loadConnectors();
+  };
+
+  const genCred = async () => {
+    try {
+      const r = await apiGet<any>('/api/live/connect_credentials');
+      if (r?.ok) {
+        setCred(r);
+        setRegForm({ agent_id: r.agent_id, name: r.name, endpoint: r.endpoint, type: r.type, token: r.token });
+        notify('凭证已生成并已填入表单', 'success');
+      } else notify('生成失败', 'error');
+    } catch { notify('生成失败', 'error'); }
+  };
+
+  const copyText = async (t: string) => {
+    try { await navigator.clipboard.writeText(t); notify('已复制', 'success'); } catch { notify('复制失败', 'error'); }
   };
 
   const unregisterAgent = async (id: string) => {
@@ -2330,7 +2347,11 @@ function LivePage() {
 
           {/* 接入外部角色 */}
           <div className="space-y-2">
-            <p className="text-[10px] font-medium text-sakura-500">接入外部 agent（HTTP / WebSocket，远程需 token）</p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[10px] font-medium text-sakura-500">接入外部 agent（HTTP / WebSocket，远程需 token）</p>
+              <button onClick={genCred} className="shrink-0 px-2.5 py-1 rounded-lg text-[10px] font-medium bg-sakura-500 text-white hover:bg-sakura-600 transition-colors">生成接入凭证</button>
+            </div>
+            <p className="text-[9px] text-sakura-300 leading-relaxed">不知道怎么填？点"生成接入凭证"一键生成（自动初始化密钥、给出端点），把凭证复制给外部 agent 即可连入。</p>
             <div className="space-y-2.5">
               <div>
                 <label className="block text-[10px] text-sakura-500 font-medium mb-1">agent_id</label>
@@ -2358,6 +2379,18 @@ function LivePage() {
               {regMsg && <p className="text-[9px] text-red-400">{regMsg}</p>}
               <button onClick={registerAgent} className="w-full px-3 py-2 rounded-lg text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 transition-colors">接入角色</button>
               <p className="text-[9px] text-sakura-300 leading-relaxed">提示：远端 agent 也可主动"反向连入"引擎的 /api/live/ws_agent（需服务端密钥 live_ws_secret），连上即自动上台、断开即下台，标记为 WS(反向连入)，无需在此手填。</p>
+              {cred && (
+                <div className="mt-1 rounded-lg border border-sakura-100 bg-sakura-50/30 p-2.5 space-y-2">
+                  <p className="text-[10px] font-medium text-sakura-600">已生成凭证（复制给外部 agent）</p>
+                  <div className="space-y-1 text-[10px]">
+                    <div className="flex items-center gap-2"><span className="text-sakura-400 w-14 shrink-0">本机端点</span><code className="flex-1 truncate font-mono text-sakura-600">{cred.endpoint}</code><button onClick={() => copyText(cred.endpoint)} className="shrink-0 text-sakura-400 hover:text-sakura-600">复制</button></div>
+                    <div className="flex items-center gap-2"><span className="text-sakura-400 w-14 shrink-0">局域网</span><code className="flex-1 truncate font-mono text-sakura-600">{cred.lan_endpoint}</code><button onClick={() => copyText(cred.lan_endpoint)} className="shrink-0 text-sakura-400 hover:text-sakura-600">复制</button></div>
+                    <div className="flex items-center gap-2"><span className="text-sakura-400 w-14 shrink-0">密钥</span><code className="flex-1 truncate font-mono text-sakura-600">{cred.token}</code><button onClick={() => copyText(cred.token)} className="shrink-0 text-sakura-400 hover:text-sakura-600">复制</button></div>
+                  </div>
+                  <button onClick={() => setShowSample(s => !s)} className="text-[10px] text-sakura-500 hover:text-sakura-700 underline underline-offset-2">{showSample ? '收起' : '查看'}外部 agent 连接示例</button>
+                  {showSample && <pre className="text-[9px] leading-relaxed bg-white border border-sakura-100 rounded-lg p-2 overflow-x-auto whitespace-pre font-mono text-sakura-600 max-h-64">{cred.sample}</pre>}
+                </div>
+              )}
             </div>
           </div>
             </div>

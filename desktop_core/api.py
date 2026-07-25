@@ -3219,6 +3219,7 @@ def setup_routes(app):
     app.router.add_post("/api/live/connectors/unregister", api_live_connector_unregister)
     app.router.add_post("/api/live/human_speak", api_live_human_speak)
     app.router.add_get("/api/live/ws_agent", api_live_ws_agent)
+    app.router.add_get("/api/live/connect_credentials", api_live_connect_credentials)
 
     # 启动时连接 MCP 服务器
     app.on_startup.append(_on_startup_mcp)
@@ -3431,6 +3432,60 @@ def _live_ws_secret() -> str:
     except Exception:
         pass
     return os.environ.get("NAIXI_LIVE_WS_SECRET", "")
+
+
+async def api_live_connect_credentials(request):
+    """生成/读取接入外部 agent 的凭证，便于前端一键获取（免手填 endpoint/token）。
+
+    返回 agent_id/name/type/endpoint(本机)/lan_endpoint(局域网)/token(live_ws_secret)/
+    sample(复制即用的外部 agent Python 连接示例)。
+    live_ws_secret 缺失时自动生成并落库，启用反向连入。
+    """
+    from desktop_core import storage
+    import secrets
+    secret = storage.meta_get("live_ws_secret", "")
+    if not secret:
+        secret = secrets.token_hex(16)
+        storage.meta_set("live_ws_secret", secret)
+    lan_ip = "127.0.0.1"
+    try:
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        lan_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        pass
+    ws_endpoint = "ws://127.0.0.1:9845/api/live/ws_agent"
+    lan_ws_endpoint = "ws://{}:9845/api/live/ws_agent".format(lan_ip)
+    agent_id = "ext_agent"
+    name = "外部角色"
+    sample = (
+        "# 外部 agent 连接示例（Python，需安装 websocket-client：pip install websocket-client）\n"
+        "import websocket, json\n\n"
+        "WS_URL = \"{}\"\n"
+        "SECRET = \"{}\"\n"
+        "AGENT_ID = \"{}\"\n"
+        "NAME = \"{}\"\n\n"
+        "ws = websocket.create_connection(WS_URL)\n"
+        "ws.send(json.dumps({{\"type\":\"register\",\"agent_id\":AGENT_ID,\"name\":NAME,\"token\":SECRET,\"priority\":50}}))\n"
+        "print(ws.recv())  # 应收到 register_ack ok:true\n\n"
+        "while True:\n"
+        "    msg = json.loads(ws.recv())\n"
+        "    if msg.get(\"type\") == \"request\":\n"
+        "        # 引擎下发的 danmaku/cue 请求，回一句话即可上台发言\n"
+        "        ws.send(json.dumps({{\"type\":\"reply\",\"req_id\":msg[\"req_id\"],\"data\":{{\"text\":\"我是外部角色，收到啦\",\"emotion\":\"开心\",\"action\":\"\"}}}}))\n"
+    ).format(ws_endpoint, secret, agent_id, name)
+    return web.json_response({
+        "ok": True,
+        "agent_id": agent_id,
+        "name": name,
+        "type": "ws",
+        "endpoint": ws_endpoint,
+        "lan_endpoint": lan_ws_endpoint,
+        "token": secret,
+        "sample": sample,
+    })
 
 
 async def api_live_ws_agent(request):
