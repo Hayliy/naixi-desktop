@@ -6,7 +6,7 @@ import asyncio
 import random
 
 from desktop_core.live_bus import (
-    LiveBus, SpeechArbiter, AgentConnector, NaixiConnector,
+    LiveBus, SpeechArbiter, AgentConnector, NaixiConnector, HttpAgentConnector,
     normalize_utterance, should_react_to_cue, make_speech_request,
     PRIORITY_HOST, PRIORITY_GUEST, PRIORITY_LOW, MAX_CUE_DEPTH,
 )
@@ -136,8 +136,114 @@ async def test_engine_flow():
     ok(tgt is bot and cleaned == "在吗", "@路由 命中指定角色并清理@标记")
 
 
+async def test_evict():
+    print("[6] SpeechArbiter.evict 下台清理麦位")
+    arb = SpeechArbiter(queue_cap=5)
+    await arb.submit({"name": "奶昔", "agent_id": "naixi", "priority": PRIORITY_HOST, "text": "h"})
+    g1 = {"name": "甲", "agent_id": "g1", "priority": PRIORITY_GUEST, "text": "a"}
+    g2 = {"name": "乙", "agent_id": "g2", "priority": PRIORITY_GUEST, "text": "b"}
+    await arb.submit(g1)
+    await arb.submit(g2)
+    ok(arb.busy and len(arb._pending) == 2, "初始化：主咖占麦，两嘉宾排队")
+    # 拔掉排队中的 g1 → 其排队请求被丢弃，g2 仍在
+    await arb.evict("g1")
+    pending_ids = [r["agent_id"] for r in arb._pending]
+    ok("g1" not in pending_ids and len(arb._pending) == 1, "evict 丢弃排队中的目标请求")
+    # 拔掉当前占麦的主咖 → 麦位顺给下一等待者(g2)，不卡死
+    await arb.evict("naixi")
+    ok(arb._current is not None and arb._current["agent_id"] == "g2", "evict 当前占麦者，麦位交给下一等待者")
+    ok(arb.busy, "evict 后仍忙碌（下一句接管）")
+
+
+def _make_http_stub(fail_first_n=0, status=200, body='{"text": "ok"}'):
+    """构造可用的 aiohttp 桩：前 fail_first_n 次 post 抛 ClientError，之后返回指定响应。"""
+    import sys, types, json as _json
+    stub = types.ModuleType("aiohttp")
+    class ClientError(Exception):
+        pass
+    stub.ClientError = ClientError
+    class ClientTimeout:
+        def __init__(self, total=None):
+            self.total = total
+    stub.ClientTimeout = ClientTimeout
+    counter = {"n": 0}
+    class FakeResp:
+        def __init__(self, status, body):
+            self.status = status
+            self._body = body
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            return False
+        async def json(self):
+            return _json.loads(self._body) if isinstance(self._body, str) else self._body
+        async def text(self):
+            return self._body if isinstance(self._body, str) else ""
+    class FakeSession:
+        def __init__(self):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            return False
+        def post(self, *a, **k):
+            counter["n"] += 1
+            if counter["n"] <= fail_first_n:
+                raise ClientError(f"simulated transient #{counter['n']}")
+            return FakeResp(status, body)
+    stub.ClientSession = FakeSession
+    return stub, counter
+
+
+async def test_http_retry():
+    print("[7] HttpAgentConnector 抗瞬时故障 + 逻辑跳过")
+    import sys
+    saved = sys.modules.get("aiohttp")
+
+    # 场景1：首次 ClientError，二次成功 → 重试后拿到文本
+    try:
+        stub, counter = _make_http_stub(fail_first_n=1, body='{"text": "你好我是外部角色"}')
+        sys.modules["aiohttp"] = stub
+        conn = HttpAgentConnector("ext1", "外部甲", "http://x/y", max_retries=2, timeout=5)
+        res = await conn.handle_danmaku({"text": "hi", "user": "u"})
+    finally:
+        if saved is not None:
+            sys.modules["aiohttp"] = saved
+        else:
+            sys.modules.pop("aiohttp", None)
+    ok(res is not None and "你好" in str(res), "瞬时故障后重试成功拿到回复")
+
+    # 场景2：持续失败 → 安全返回 None，不崩溃（重试耗尽）
+    try:
+        stub2, counter2 = _make_http_stub(fail_first_n=99, body='{}')
+        sys.modules["aiohttp"] = stub2
+        conn2 = HttpAgentConnector("ext2", "外部乙", "http://x/y", max_retries=2, timeout=5)
+        res2 = await conn2.handle_danmaku({"text": "hi", "user": "u"})
+    finally:
+        if saved is not None:
+            sys.modules["aiohttp"] = saved
+        else:
+            sys.modules.pop("aiohttp", None)
+    ok(res2 is None, "持续失败后安全返回 None（不崩溃）")
+    ok(counter2["n"] == 3, "重试次数 = max_retries+1（共3次尝试）")
+
+    # 场景3：HTTP 非200 → 逻辑不可达，不重试直接跳过
+    try:
+        stub3, counter3 = _make_http_stub(fail_first_n=0, status=500, body='err')
+        sys.modules["aiohttp"] = stub3
+        conn3 = HttpAgentConnector("ext3", "外部丙", "http://x/y", max_retries=2, timeout=5)
+        res3 = await conn3.handle_danmaku({"text": "hi", "user": "u"})
+    finally:
+        if saved is not None:
+            sys.modules["aiohttp"] = saved
+        else:
+            sys.modules.pop("aiohttp", None)
+    ok(res3 is None and counter3["n"] == 1, "HTTP 非200 不重试直接跳过本轮")
+
+
 async def main():
-    for t in (test_bus, test_arbiter, test_echo, test_normalize, test_engine_flow):
+    for t in (test_bus, test_arbiter, test_echo, test_normalize, test_engine_flow,
+              test_evict, test_http_retry):
         await t()
     print(f"\n结果: {len(PASS)} 通过 / {len(FAIL)} 失败")
     if FAIL:

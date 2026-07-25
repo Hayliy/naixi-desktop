@@ -205,6 +205,23 @@ class SpeechArbiter:
         self._current = None
         self._pending.clear()
 
+    async def evict(self, agent_id: str):
+        """某角色下台时清掉它的麦位占用：丢弃其排队请求；若正占用麦位则把麦位
+        顺手交给下一个等待者（或置空闲），避免孤儿发言与麦位卡死。
+
+        与 release 的区别：release 是"当前这句说完了"自然让位；evict 是"这个角色
+        被强制拔掉"时的紧急清理，二者都保证麦位最终能继续往前走。
+        """
+        async with self._lock:
+            self._pending = [r for r in self._pending if r.get("agent_id") != agent_id]
+            if self._current and self._current.get("agent_id") == agent_id:
+                self._current = None
+                if self._pending:
+                    self._current = self._pending.pop(0)
+                    self._busy = True
+                else:
+                    self._busy = False
+
 
 def should_react_to_cue(cue: dict) -> bool:
     """回声防护：是否要对一条舞台提示做出反应（D4 概率衰减 + 限深）。
@@ -259,38 +276,60 @@ class HttpAgentConnector(AgentConnector):
     """
 
     def __init__(self, agent_id: str, name: str, endpoint: str, *,
-                 priority: int = PRIORITY_GUEST, token: str = "", timeout: float = 12.0):
+                 priority: int = PRIORITY_GUEST, token: str = "", timeout: float = 12.0,
+                 max_retries: int = 2):
         super().__init__(agent_id=agent_id, name=name, priority=priority)
         self.endpoint = endpoint
         self.token = token
         self.timeout = timeout
+        self.max_retries = max_retries
 
     async def _ask(self, event: str, text: str, user: str):
         if not self.endpoint or not text:
             return None
         try:
             import aiohttp
-            headers = {"Content-Type": "application/json"}
-            if self.token:
-                headers["Authorization"] = f"Bearer {self.token}"
-            payload = {"event": event, "text": text, "user": user,
-                       "agent_id": self.agent_id, "name": self.name}
-            async with aiohttp.ClientSession() as s:
-                async with s.post(self.endpoint, json=payload, headers=headers,
-                                  timeout=self.timeout) as r:
-                    if r.status != 200:
-                        log.warning(f"[外部角色 {self.name}] HTTP {r.status}")
-                        return None
-                    try:
-                        data = await r.json()
-                    except Exception:
-                        return (await r.text()).strip() or None
-            if isinstance(data, dict):
-                return data.get("text") and data or None
-            return str(data).strip() or None
         except Exception as e:
-            log.warning(f"[外部角色 {self.name}] 调用失败: {e}")
+            log.warning(f"[外部角色 {self.name}] aiohttp 不可用: {e}")
             return None
+        headers = {"Content-Type": "application/json"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        payload = {"event": event, "text": text, "user": user,
+                   "agent_id": self.agent_id, "name": self.name}
+        timeout = aiohttp.ClientTimeout(total=self.timeout)
+        last_err = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                async with aiohttp.ClientSession() as s:
+                    async with s.post(self.endpoint, json=payload, headers=headers,
+                                      timeout=timeout) as r:
+                        if r.status != 200:
+                            # 逻辑不可达（agent 拒绝/未就绪）→ 不重试，直接跳过本轮
+                            log.warning(f"[外部角色 {self.name}] HTTP {r.status}，跳过本轮")
+                            return None
+                        try:
+                            data = await r.json()
+                        except Exception:
+                            raw = (await r.text()).strip()
+                            return raw or None
+                if isinstance(data, dict):
+                    return data.get("text") and data or None
+                return str(data).strip() or None
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                # 瞬时网络故障（断连/超时）→ 有限重试，避免直播中一次抖动丢整轮
+                last_err = e
+                if attempt < self.max_retries:
+                    log.warning(f"[外部角色 {self.name}] 调用瞬时失败，重试 {attempt+1}/{self.max_retries}: {e}")
+                    await asyncio.sleep(min(0.5 * (attempt + 1), 2.0))
+                    continue
+                break
+            except Exception as e:
+                # 非网络类异常（解析/编码等）→ 不重试
+                log.warning(f"[外部角色 {self.name}] 调用失败: {e}")
+                return None
+        log.warning(f"[外部角色 {self.name}] 重试耗尽，放弃本轮: {last_err}")
+        return None
 
     async def handle_danmaku(self, danmaku: dict):
         return await self._ask("danmaku", danmaku.get("text", ""), danmaku.get("user", ""))

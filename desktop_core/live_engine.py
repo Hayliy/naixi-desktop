@@ -167,6 +167,11 @@ class LiveEngine:
         if c:
             try: await c.close()
             except: pass
+            # 干净释放该角色占用的麦位：丢弃其排队请求，若正占麦则把麦位顺给下一等待者
+            try:
+                await self._arbiter.evict(agent_id)
+            except Exception as e:
+                log.warning(f"[舞台] 下台时清理麦位失败: {e}")
             log.info(f"[舞台] 角色已下台: {agent_id}")
             return True
         return False
