@@ -24,6 +24,174 @@ def _win_hide_kwargs():
         return {"creationflags": subprocess.CREATE_NO_WINDOW, "startupinfo": si}
     return {}
 
+# ── Windows 原生系统信息采集（ctypes 直接调 API，零子进程，不触发安全软件拦截 powershell 弹窗）──
+import ctypes
+from ctypes import wintypes, Structure, byref, sizeof
+
+def _win_cpu_times():
+    """返回 (idle, kernel, user) 的 64 位 FILETIME 计数值；失败返回 (0,0,0)。"""
+    idle = wintypes.FILETIME()
+    kernel = wintypes.FILETIME()
+    user = wintypes.FILETIME()
+    if not ctypes.windll.kernel32.GetSystemTimes(byref(idle), byref(kernel), byref(user)):
+        return (0, 0, 0)
+    def _ft2ull(ft):
+        return (ft.dwHighDateTime << 32) | ft.dwLowDateTime
+    return (_ft2ull(idle), _ft2ull(kernel), _ft2ull(user))
+
+def _win_memory():
+    """返回 (memory_load_pct, total_bytes, avail_bytes)；失败返回 (0,0,0)。"""
+    class MEMORYSTATUSEX(Structure):
+        _fields_ = [
+            ("dwLength", wintypes.DWORD),
+            ("dwMemoryLoad", wintypes.DWORD),
+            ("ullTotalPhys", ctypes.c_ulonglong),
+            ("ullAvailPhys", ctypes.c_ulonglong),
+            ("ullTotalPageFile", ctypes.c_ulonglong),
+            ("ullAvailPageFile", ctypes.c_ulonglong),
+            ("ullTotalVirtual", ctypes.c_ulonglong),
+            ("ullAvailVirtual", ctypes.c_ulonglong),
+            ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+        ]
+    stat = MEMORYSTATUSEX()
+    stat.dwLength = sizeof(MEMORYSTATUSEX)
+    if not ctypes.windll.kernel32.GlobalMemoryStatusEx(byref(stat)):
+        return (0, 0, 0)
+    return (stat.dwMemoryLoad, stat.ullTotalPhys, stat.ullAvailPhys)
+
+def _win_disk(drive):
+    """返回 (total_bytes, free_bytes)；失败返回 (0,0)。"""
+    free = ctypes.c_ulonglong()
+    total = ctypes.c_ulonglong()
+    avail = ctypes.c_ulonglong()
+    if not ctypes.windll.kernel32.GetDiskFreeSpaceExW(ctypes.c_wchar_p(drive), byref(free), byref(total), byref(avail)):
+        return (0, 0)
+    return (total.value, free.value)
+
+def _win_list_disks():
+    """枚举所有本地固定盘，返回 [{DeviceID, SizeGB, FreeGB, UsedGB}]。"""
+    buf = ctypes.create_unicode_buffer(256)
+    ctypes.windll.kernel32.GetLogicalDriveStringsW(255, buf)
+    drives = [d for d in buf.value.split("\x00") if d]
+    out = []
+    for d in drives:
+        if ctypes.windll.kernel32.GetDriveTypeW(ctypes.c_wchar_p(d)) != 3:  # DRIVE_FIXED = 3
+            continue
+        total, free = _win_disk(d)
+        if total <= 0:
+            continue
+        out.append({
+            "DeviceID": d,
+            "SizeGB": round(total / (1024 ** 3), 1),
+            "FreeGB": round(free / (1024 ** 3), 1),
+            "UsedGB": round((total - free) / (1024 ** 3), 1),
+        })
+    return out
+
+def _win_proc_ws(pid):
+    """查询进程工作集内存（字节），失败返回 0。"""
+    h = ctypes.windll.kernel32.OpenProcess(0x0400 | 0x0010, False, pid)  # PROCESS_QUERY_INFORMATION | PROCESS_VM_READ
+    if not h:
+        return 0
+    class PROCESS_MEMORY_COUNTERS(Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+            ("PrivateUsage", ctypes.c_size_t),
+        ]
+    try:
+        mc = PROCESS_MEMORY_COUNTERS()
+        mc.cb = sizeof(PROCESS_MEMORY_COUNTERS)
+        if ctypes.windll.psapi.GetProcessMemoryInfo(h, byref(mc), sizeof(mc)):
+            return mc.WorkingSetSize
+        return 0
+    except Exception:
+        return 0
+    finally:
+        ctypes.windll.kernel32.CloseHandle(h)
+
+def _win_list_processes():
+    """枚举 python / node 进程，返回 [{Id, ProcessName, MemMB, CPU, StartTime}]。"""
+    TH32CS_SNAPPROCESS = 0x00000002
+    class PROCESSENTRY32(Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.CHAR * 260),
+        ]
+    out = []
+    h = ctypes.windll.kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if h in (0, -1):
+        return out
+    try:
+        pe = PROCESSENTRY32()
+        pe.dwSize = sizeof(PROCESSENTRY32)
+        if ctypes.windll.kernel32.Process32First(h, byref(pe)):
+            while True:
+                name = pe.szExeFile.decode("ascii", "ignore")
+                nl = name.lower()
+                if "python" in nl or "node" in nl:
+                    out.append({
+                        "Id": pe.th32ProcessID,
+                        "ProcessName": name,
+                        "MemMB": round(_win_proc_ws(pe.th32ProcessID) / (1024 ** 2), 1),
+                        "CPU": 0.0,
+                        "StartTime": "",
+                    })
+                if not ctypes.windll.kernel32.Process32Next(h, byref(pe)):
+                    break
+    finally:
+        ctypes.windll.kernel32.CloseHandle(h)
+    return out
+
+# GPU 查询缓存：避免每次轮询都 spawn nvidia-smi（进程稳固，降低安全软件误报）
+_gpu_cache: dict = {"value": None, "ts": 0}
+
+async def _get_gpu_info():
+    """查询 NVIDIA GPU 信息，60 秒内复用缓存，避免高频 spawn 子进程。"""
+    now = time.time()
+    if _gpu_cache["value"] is not None and (now - _gpu_cache["ts"]) < 60:
+        return _gpu_cache["value"]
+    gpu = {"gpu_util": 0, "gpu_name": "N/A", "gpu_mem_total": 0, "gpu_mem_used": 0}
+    try:
+        gproc = await asyncio.create_subprocess_exec(
+            "nvidia-smi", "--query-gpu=utilization.gpu,name,memory.total,memory.used",
+            "--format=csv,noheader,nounits",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            **_win_hide_kwargs()
+        )
+        gout, _ = await asyncio.wait_for(gproc.communicate(), timeout=5)
+        gl = gout.decode("gbk", errors="ignore").strip().split("\n")[0]
+        if gl:
+            parts = [x.strip() for x in gl.split(",")]
+            if len(parts) >= 4:
+                gpu = {
+                    "gpu_util": float(parts[0] or 0),
+                    "gpu_name": parts[1] or "N/A",
+                    "gpu_mem_total": float(parts[2] or 0),
+                    "gpu_mem_used": float(parts[3] or 0),
+                }
+    except Exception:
+        pass
+    _gpu_cache["value"] = gpu
+    _gpu_cache["ts"] = now
+    return gpu
+
 # 高危工具列表（执行前需要用户确认）— 以 tools 模块为单一来源，避免两处定义漂移
 from desktop_core.tools import HIGH_RISK_TOOLS
 
@@ -529,47 +697,23 @@ async def api_stats(request):
     })
 
 async def api_system_resources(request):
-    """返回系统资源使用情况（通过 PowerShell 获取）"""
-    import asyncio
+    """返回系统资源使用情况（ctypes 直接调 Windows API，零子进程，不触发安全软件拦截）"""
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "powershell", "-NoProfile", "-Command",
-            "Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average | Select-Object -ExpandProperty Average; "
-            "Get-CimInstance Win32_OperatingSystem | Select-Object @{N='Total';E={[math]::Round($_.TotalVisibleMemorySize/1024,1)}},@{N='Free';E={[math]::Round($_.FreePhysicalMemory/1024,1)}} | ConvertTo-Json -Compress; "
-            "Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | Select-Object DeviceID,@{N='TotalGB';E={[math]::Round($_.Size/1GB,1)}},@{N='FreeGB';E={[math]::Round($_.FreeSpace/1GB,1)}} | ConvertTo-Json -Compress",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **_win_hide_kwargs()
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-        lines = stdout.decode("gbk", errors="ignore").strip().split("\n")
-        cpu = float(lines[0].strip()) if lines and lines[0].strip() else 50
-        mem_info = json.loads(lines[1]) if len(lines) > 1 else {"Total": 32, "Free": 12.8}
-        disk_info = json.loads(lines[2]) if len(lines) > 2 else [{"TotalGB": 500, "FreeGB": 200}]
-        mem_total = float(mem_info.get("Total", 32))
-        mem_free = float(mem_info.get("Free", 12.8))
-        mem_used_pct = round((1 - mem_free / mem_total) * 100, 1) if mem_total > 0 else 50
-        disk = disk_info[0] if isinstance(disk_info, list) else disk_info
-        disk_used_pct = round((1 - float(disk.get("FreeGB", 200)) / float(disk.get("TotalGB", 500))) * 100, 1)
-        # GPU：nvidia-smi 真实查询，缺失或异常时优雅降级为 0
-        gpu = {"gpu_util": 0, "gpu_name": "N/A", "gpu_mem_total": 0, "gpu_mem_used": 0}
-        try:
-            gproc = await asyncio.create_subprocess_exec(
-                "nvidia-smi", "--query-gpu=utilization.gpu,name,memory.total,memory.used",
-                "--format=csv,noheader,nounits",
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-            gout, _ = await asyncio.wait_for(gproc.communicate(), timeout=5)
-            gl = gout.decode("gbk", errors="ignore").strip().split("\n")[0]
-            if gl:
-                parts = [x.strip() for x in gl.split(",")]
-                if len(parts) >= 4:
-                    gpu = {
-                        "gpu_util": float(parts[0] or 0),
-                        "gpu_name": parts[1] or "N/A",
-                        "gpu_mem_total": float(parts[2] or 0),
-                        "gpu_mem_used": float(parts[3] or 0),
-                    }
-        except Exception:
-            pass
+        # CPU：两次采样 GetSystemTimes 求时间片占用
+        idle1, k1, u1 = _win_cpu_times()
+        await asyncio.sleep(0.3)
+        idle2, k2, u2 = _win_cpu_times()
+        sys_total = (k2 - k1) + (u2 - u1)
+        sys_idle = idle2 - idle1
+        cpu = round((1 - sys_idle / sys_total) * 100, 1) if sys_total > 0 else 0.0
+        # 内存
+        mem_load, mem_total, mem_avail = _win_memory()
+        mem_used_pct = round((1 - mem_avail / mem_total) * 100, 1) if mem_total > 0 else 0.0
+        # 系统盘（C:）使用率
+        disk_total, disk_free = _win_disk("C:\\")
+        disk_used_pct = round((1 - disk_free / disk_total) * 100, 1) if disk_total > 0 else 0.0
+        # GPU：走 60 秒缓存的 nvidia-smi 查询（进程稳固，不每轮询都 spawn）
+        gpu = await _get_gpu_info()
         return web.json_response({
             "cpu": cpu, "memory": mem_used_pct, "disk": disk_used_pct,
             "gpu_util": gpu["gpu_util"], "gpu_name": gpu["gpu_name"],
@@ -598,41 +742,18 @@ async def api_system_info(request):
 
 
 async def api_system_processes(request):
-    """当前系统中的 Python 和 Node 进程列表"""
-    import asyncio
+    """当前系统中的 Python 和 Node 进程列表（ctypes Toolhelp 快照，零子进程）"""
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "powershell", "-NoProfile", "-Command",
-            "Get-Process | Where-Object { $_.ProcessName -match 'python|node' } | "
-            "Select-Object Id, ProcessName, @{N='MemMB';E={[math]::Round($_.WorkingSet64/1MB,1)}}, CPU, StartTime | "
-            "ConvertTo-Json -Compress",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **_win_hide_kwargs()
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-        data = json.loads(stdout.decode("gbk", errors="ignore"))
-        if not isinstance(data, list):
-            data = [data]
+        data = _win_list_processes()
         return web.json_response({"processes": data})
     except Exception as e:
         return web.json_response({"processes": [], "error": str(e)[:50]})
 
 
 async def api_system_disks(request):
-    """磁盘分区详细信息"""
-    import asyncio
+    """磁盘分区详细信息（ctypes 直接查询，零子进程）"""
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "powershell", "-NoProfile", "-Command",
-            "Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | "
-            "Select-Object DeviceID, @{N='SizeGB';E={[math]::Round($_.Size/1GB,1)}}, "
-            "@{N='FreeGB';E={[math]::Round($_.FreeSpace/1GB,1)}}, "
-            "@{N='UsedGB';E={[math]::Round(($_.Size-$_.FreeSpace)/1GB,1)}} | ConvertTo-Json -Compress",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **_win_hide_kwargs()
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-        data = json.loads(stdout.decode("gbk", errors="ignore"))
-        if not isinstance(data, list):
-            data = [data]
+        data = _win_list_disks()
         return web.json_response({"disks": data})
     except Exception as e:
         return web.json_response({"disks": [], "error": str(e)[:50]})
