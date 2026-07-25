@@ -9,6 +9,7 @@ from aiohttp import WSMsgType
 
 from desktop_core.live_bus import (
     LiveBus, SpeechArbiter, AgentConnector, NaixiConnector, HttpAgentConnector,
+    WsAgentConnector, HumanConnector, ConnectorGuard,
     make_speech_request, normalize_utterance, should_react_to_cue,
     PRIORITY_HOST, PRIORITY_GUEST,
 )
@@ -142,18 +143,27 @@ class LiveEngine:
         # 多角色舞台：总线 + 麦位仲裁 + 角色连接器注册表（Lumi_Nox 多角色整合）
         self._bus = LiveBus()
         self._arbiter = SpeechArbiter()
+        self._guard = ConnectorGuard(trusted_ids=("naixi", "human"))
         self._connectors: dict[str, AgentConnector] = {}
         self._register_builtin_connectors()
 
     # ── 多角色连接器 ────────────────────────────────────────────────────────
 
     def _register_builtin_connectors(self):
-        """注册内置角色：奶昔本体（主咖）。外部 agent 通过 register_connector 上台。"""
+        """注册内置角色：奶昔本体（主咖）+ 人类副播（操作员手动上麦的槽位）。"""
         self._connectors["naixi"] = NaixiConnector(self._decide_reply)
+        self._connectors["human"] = HumanConnector("human", "人类副播")
 
     def register_connector(self, connector: AgentConnector) -> bool:
-        """注册一个外部角色连接器（其他人的 agent 上台）。同名 agent_id 覆盖。"""
+        """注册一个外部角色连接器（其他人的 agent 上台）。同名 agent_id 覆盖。
+
+        注册前经治理层校验：远程连接器必须带 token（不可信面），否则拒绝上台。
+        """
         if not getattr(connector, "agent_id", ""):
+            return False
+        ok_reg, reason = self._guard.check_register(connector)
+        if not ok_reg:
+            log.warning(f"[舞台] 注册被拒 {connector.name}({connector.agent_id}): {reason}")
             return False
         self._connectors[connector.agent_id] = connector
         log.info(f"[舞台] 角色已上台: {connector.name}({connector.agent_id}) 优先级={connector.priority}")
@@ -184,14 +194,44 @@ class LiveEngine:
         conn = HttpAgentConnector(agent_id, name, endpoint, priority=priority, token=token)
         return self.register_connector(conn)
 
+    def register_ws_connector(self, agent_id: str, name: str, ws_url: str,
+                              priority: int = PRIORITY_GUEST, token: str = "") -> bool:
+        """便捷注册一个远程 ws 外部角色（常驻双向连接的远端 agent）。供 API 调用。"""
+        if not agent_id or not name or not ws_url:
+            return False
+        conn = WsAgentConnector(agent_id, name, ws_url, priority=priority, token=token)
+        return self.register_connector(conn)
+
+    async def inject_human_speech(self, agent_id: str, text: str,
+                                  emotion: str = "开心", action: str = "") -> bool:
+        """人类副播上麦：把一个人工输入当作某人类连接器角色的发言，直接占麦。
+
+        操作员在副播面板输入后调用。受信任，不受限流隔离。返回是否成功投放。
+        """
+        connector = self._connectors.get(agent_id)
+        if not connector or not isinstance(connector, HumanConnector):
+            return False
+        text = (text or "").strip()
+        if not text:
+            return False
+        utt = {"text": text, "emotion": emotion, "action": action}
+        await self._emit(connector, utt, source_id=agent_id, cue_depth=0)
+        return True
+
     def list_connectors(self) -> list:
-        """列出当前在台的角色（供前端/API 展示）。"""
+        """列出当前在台的角色（供前端/API 展示），含传输方式与治理状态。"""
         out = []
         for c in self._connectors.values():
             item = {"agent_id": c.agent_id, "name": c.name, "priority": c.priority,
-                    "builtin": c.agent_id == "naixi"}
-            if isinstance(c, HttpAgentConnector):
+                    "builtin": c.agent_id in ("naixi", "human"),
+                    "transport": "http" if isinstance(c, HttpAgentConnector)
+                                 else "ws" if isinstance(c, WsAgentConnector)
+                                 else "local"}
+            if getattr(c, "endpoint", ""):
                 item["endpoint"] = c.endpoint
+            g = self._guard.status(c.agent_id)
+            item["quarantined"] = g["quarantined"]
+            item["emits_in_window"] = g["emits_in_window"]
             out.append(item)
         return out
 
@@ -235,6 +275,9 @@ class LiveEngine:
         else:
             targets = list(self._connectors.values())
         for connector in targets:
+            if not self._guard.allow_emit(connector.agent_id):
+                log.warning(f"[舞台] {connector.name} 被限流隔离，跳过本轮弹幕")
+                continue
             try:
                 utt = normalize_utterance(await connector.handle_danmaku(danmaku))
             except Exception as e:
@@ -250,6 +293,8 @@ class LiveEngine:
         for connector in list(self._connectors.values()):
             if connector.agent_id == cue.get("source_id"):
                 continue  # 不回应自己引发的链
+            if not self._guard.allow_emit(connector.agent_id):
+                continue  # 限流隔离中，本轮不接话
             try:
                 utt = normalize_utterance(await connector.handle_cue(cue))
             except Exception as e:

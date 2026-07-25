@@ -3086,6 +3086,7 @@ def setup_routes(app):
     app.router.add_get("/api/live/connectors", api_live_connectors)
     app.router.add_post("/api/live/connectors/register", api_live_connector_register)
     app.router.add_post("/api/live/connectors/unregister", api_live_connector_unregister)
+    app.router.add_post("/api/live/human_speak", api_live_human_speak)
 
     # 启动时连接 MCP 服务器
     app.on_startup.append(_on_startup_mcp)
@@ -3233,9 +3234,13 @@ async def api_live_connectors(request):
     return web.json_response({"connectors": engine.list_connectors()})
 
 async def api_live_connector_register(request):
-    """接入一个外部 agent 角色（HTTP 端点）。QQ 机器人配好地址即可上台。
+    """接入一个外部 agent 角色。支持两种传输：
 
-    body: {agent_id, name, endpoint, priority?, token?}
+    - type=http（默认）：远程 HTTP 端点，QQ 机器人配好地址即可上台
+    - type=ws：远程 WebSocket 端点（常驻双向连接）
+
+    body: {agent_id, name, endpoint, type?, priority?, token?}
+    远程连接器必须带 token，否则注册被治理层拒绝。
     """
     from desktop_core.live_engine import engine
     body = await request.json() if request.can_read_body else {}
@@ -3244,10 +3249,33 @@ async def api_live_connector_register(request):
     endpoint = (body.get("endpoint") or "").strip()
     if not agent_id or not name or not endpoint:
         return web.json_response({"ok": False, "error": "缺少 agent_id / name / endpoint"}, status=400)
-    ok = engine.register_http_connector(
-        agent_id, name, endpoint,
-        priority=int(body.get("priority", 50)),
-        token=body.get("token", ""),
+    ctype = (body.get("type") or "http").lower()
+    priority = int(body.get("priority", 50))
+    token = body.get("token", "")
+    if ctype == "ws":
+        ok = engine.register_ws_connector(agent_id, name, endpoint, priority=priority, token=token)
+    else:
+        ok = engine.register_http_connector(agent_id, name, endpoint, priority=priority, token=token)
+    if not ok:
+        return web.json_response({"ok": False, "error": "注册被拒（远程连接器需配置 token，或参数非法）"}, status=400)
+    return web.json_response({"ok": ok, "connectors": engine.list_connectors()})
+
+
+async def api_live_human_speak(request):
+    """人类副播上麦：操作员在副播面板输入后调用，把一句话当作人类角色发言投到麦位。
+
+    body: {agent_id?, text, emotion?, action?}
+    """
+    from desktop_core.live_engine import engine
+    body = await request.json() if request.can_read_body else {}
+    text = (body.get("text") or "").strip()
+    if not text:
+        return web.json_response({"ok": False, "error": "缺少 text"}, status=400)
+    agent_id = (body.get("agent_id") or "human").strip()
+    ok = await engine.inject_human_speech(
+        agent_id, text,
+        emotion=body.get("emotion", "开心"),
+        action=body.get("action", ""),
     )
     return web.json_response({"ok": ok, "connectors": engine.list_connectors()})
 

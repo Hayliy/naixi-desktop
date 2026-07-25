@@ -7,6 +7,7 @@ import random
 
 from desktop_core.live_bus import (
     LiveBus, SpeechArbiter, AgentConnector, NaixiConnector, HttpAgentConnector,
+    WsAgentConnector, HumanConnector, ConnectorGuard,
     normalize_utterance, should_react_to_cue, make_speech_request,
     PRIORITY_HOST, PRIORITY_GUEST, PRIORITY_LOW, MAX_CUE_DEPTH,
 )
@@ -110,7 +111,7 @@ async def test_engine_flow():
             return None  # 不接舞台提示，避免无限
     bot = EchoBot()
     e.register_connector(bot)
-    ok("bot" in e._connectors and len(e.list_connectors()) == 2, "外部角色成功上台")
+    ok("bot" in e._connectors and len(e.list_connectors()) == 3, "外部角色成功上台（含内置奶昔+人类副播）")
 
     # 分发一条弹幕：两个角色都想说 → 一个占麦，一个排队
     await e._dispatch_danmaku({"type": "danmaku", "text": "大家好", "user": "路人"})
@@ -241,9 +242,133 @@ async def test_http_retry():
     ok(res3 is None and counter3["n"] == 1, "HTTP 非200 不重试直接跳过本轮")
 
 
+def _make_ws_stub(fail_first_n=0, reply=None):
+    """构造可用的 aiohttp 桩（ws 版）：前 fail_first_n 次 ws_connect 抛 ClientError，之后返回给定回复。"""
+    import sys, types
+    stub = types.ModuleType("aiohttp")
+    class ClientError(Exception):
+        pass
+    stub.ClientError = ClientError
+    class ClientTimeout:
+        def __init__(self, total=None):
+            self.total = total
+    stub.ClientTimeout = ClientTimeout
+    counter = {"n": 0}
+    class FakeWS:
+        def __init__(self, reply):
+            self._reply = reply
+        async def send_json(self, p):
+            pass
+        async def receive_json(self):
+            return self._reply
+        async def close(self):
+            pass
+    class FakeSession:
+        def __init__(self):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            return False
+        async def ws_connect(self, *a, **k):
+            counter["n"] += 1
+            if counter["n"] <= fail_first_n:
+                raise ClientError(f"ws transient #{counter['n']}")
+            return FakeWS(reply)
+    stub.ClientSession = FakeSession
+    return stub, counter
+
+
+async def test_ws_connector():
+    print("[8] WsAgentConnector 协议 + 抗瞬时故障")
+    import sys
+    saved = sys.modules.get("aiohttp")
+    # 场景1：首次 ClientError → 二次成功
+    try:
+        stub, counter = _make_ws_stub(fail_first_n=1, reply={"text": "ws回复内容"})
+        sys.modules["aiohttp"] = stub
+        conn = WsAgentConnector("w1", "远程甲", "ws://x/y", max_retries=2, timeout=5)
+        res = await conn.handle_danmaku({"text": "hi", "user": "u"})
+    finally:
+        if saved is not None:
+            sys.modules["aiohttp"] = saved
+        else:
+            sys.modules.pop("aiohttp", None)
+    ok(res is not None and "ws回复内容" in str(res), "ws 瞬时故障后重试拿到回复")
+    # 场景2：远端 ok=false → 跳过本轮
+    try:
+        stub2, _ = _make_ws_stub(fail_first_n=0, reply={"ok": False})
+        sys.modules["aiohttp"] = stub2
+        conn2 = WsAgentConnector("w2", "远程乙", "ws://x/y")
+        res2 = await conn2.handle_danmaku({"text": "hi", "user": "u"})
+    finally:
+        if saved is not None:
+            sys.modules["aiohttp"] = saved
+        else:
+            sys.modules.pop("aiohttp", None)
+    ok(res2 is None, "ws 远端拒答(ok=false) 跳过本轮")
+    # 场景3：持续故障 → None 不崩溃
+    try:
+        stub3, c3 = _make_ws_stub(fail_first_n=99, reply={})
+        sys.modules["aiohttp"] = stub3
+        conn3 = WsAgentConnector("w3", "远程丙", "ws://x/y", max_retries=2)
+        res3 = await conn3.handle_danmaku({"text": "hi", "user": "u"})
+    finally:
+        if saved is not None:
+            sys.modules["aiohttp"] = saved
+        else:
+            sys.modules.pop("aiohttp", None)
+    ok(res3 is None and c3["n"] == 3, "ws 持续失败安全返回 None（3次尝试）")
+
+
+async def test_human_inject():
+    print("[9] 人类副播 inject_human_speech")
+    import sys, types
+    if "aiohttp" not in sys.modules:
+        stub = types.ModuleType("aiohttp")
+        stub.WSMsgType = types.SimpleNamespace(TEXT=1)
+        stub.ClientSession = object
+        stub.ClientWebSocketResponse = object
+        stub.WebSocketResponse = object
+        sys.modules["aiohttp"] = stub
+    from desktop_core.live_engine import LiveEngine
+    e = LiveEngine()
+    async def fake(text, user):
+        return (f"奶昔:{text[:6]}", "开心", "wave")
+    e._decide_reply = fake
+    e._connectors["naixi"] = NaixiConnector(e._decide_reply)
+    ok("human" in e._connectors, "内置人类副播槽位存在")
+    ok(isinstance(e._connectors["human"], HumanConnector), "human 是 HumanConnector")
+    ok(await e.inject_human_speech("human", "大家好我是真人") is True, "注入人类发言成功")
+    ok(e._scene_queue.qsize() == 1, "注入的发言进入语音管道")
+    item = await e._scene_queue.get()
+    ok(item.get("text") == "大家好我是真人" and item.get("agent_id") == "human", "注入内容正确带 agent_id=human")
+    ok(await e.inject_human_speech("human", "   ") is False, "空文本注入被拒")
+    ok(await e.inject_human_speech("naixi", "x") is False, "对非人类连接器注入被拒")
+
+
+async def test_guard():
+    print("[10] ConnectorGuard 鉴权 + 限流隔离")
+    g = ConnectorGuard(require_token_for_remote=True)
+    ok(g.check_register(HttpAgentConnector("x", "X", "http://x", token=""))[0] is False, "远程无 token 注册被拒")
+    ok(g.check_register(HttpAgentConnector("x", "X", "http://x", token="sec"))[0] is True, "带 token 注册通过")
+    ok(g.check_register(NaixiConnector(lambda t, u: (t, "开心", "")))[0] is True, "本地连接器免 token")
+    # 限流：注入可控时钟
+    clock = {"t": 0.0}
+    g2 = ConnectorGuard(rate_window=10.0, rate_max=3, quarantine_secs=30.0,
+                        trusted_ids=("naixi", "human"), clock=lambda: clock["t"])
+    results = [g2.allow_emit("bot") for _ in range(4)]
+    ok(results == [True, True, True, False], "超过速率上限第4次被拒并隔离")
+    ok(g2.is_quarantined("bot") is True, "隔离生效")
+    ok(g2.allow_emit("naixi") is True and g2.allow_emit("human") is True, "信任角色不受限流")
+    clock["t"] = 31.0
+    ok(g2.is_quarantined("bot") is False, "冷却结束后解除隔离")
+    ok(g2.allow_emit("bot") is True, "解除后可再次发言")
+
+
 async def main():
     for t in (test_bus, test_arbiter, test_echo, test_normalize, test_engine_flow,
-              test_evict, test_http_retry):
+              test_evict, test_http_retry, test_ws_connector, test_human_inject, test_guard):
         await t()
     print(f"\n结果: {len(PASS)} 通过 / {len(FAIL)} 失败")
     if FAIL:

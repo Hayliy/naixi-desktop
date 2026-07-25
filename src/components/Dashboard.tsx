@@ -1916,6 +1916,44 @@ function LivePage() {
   const [nowTime, setNowTime] = useState(Date.now());
   const { notify } = useToast();
 
+  // ── 多角色舞台：连接器列表 / 人类副播 / 接入外部角色 ──
+  const [connectors, setConnectors] = useState<any[]>([]);
+  const [humanText, setHumanText] = useState('');
+  const [regForm, setRegForm] = useState<{ agent_id: string; name: string; endpoint: string; type: string; token: string }>({ agent_id: '', name: '', endpoint: '', type: 'http', token: '' });
+  const [regMsg, setRegMsg] = useState('');
+
+  const loadConnectors = useCallback(async () => {
+    try { const r = await apiGet<any>('/api/live/connectors'); setConnectors(r.connectors || []); } catch {}
+  }, []);
+
+  useEffect(() => { loadConnectors(); const iv = setInterval(loadConnectors, 5000); return () => clearInterval(iv); }, [loadConnectors]);
+
+  const humanSpeak = async () => {
+    const t = humanText.trim(); if (!t) return;
+    try {
+      const r = await apiPost<any>('/api/live/human_speak', { text: t });
+      if (r?.ok) { setHumanText(''); notify('已上麦', 'success'); } else notify('上麦失败', 'error');
+    } catch { notify('请求失败', 'error'); }
+    loadConnectors();
+  };
+
+  const registerAgent = async () => {
+    setRegMsg('');
+    const { agent_id, name, endpoint } = regForm;
+    if (!agent_id || !name || !endpoint) { setRegMsg('请填全 agent_id / name / endpoint'); return; }
+    try {
+      const r = await apiPost<any>('/api/live/connectors/register', regForm);
+      if (r?.ok) { notify('角色已上台', 'success'); setRegForm({ agent_id: '', name: '', endpoint: '', type: 'http', token: '' }); }
+      else setRegMsg(r?.error || '注册失败（远程需 token）');
+    } catch { setRegMsg('请求失败'); }
+    loadConnectors();
+  };
+
+  const unregisterAgent = async (id: string) => {
+    try { await apiPost('/api/live/connectors/unregister', { agent_id: id }); notify('已下台', 'success'); } catch { notify('下台失败', 'error'); }
+    loadConnectors();
+  };
+
   useEffect(() => { const iv = setInterval(() => setNowTime(Date.now()), 1000); return () => clearInterval(iv); }, []);
 
   const loadConfig = useCallback(async () => {
@@ -2239,6 +2277,57 @@ function LivePage() {
           <p className="text-[9px] text-red-400 mt-0.5">{s.last_error}</p>
         </div>
       )}
+
+      {/* 多角色舞台 */}
+      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+        <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
+          <span className="text-[10px] font-medium text-sakura-500">多角色舞台</span>
+          <span className="text-[8px] text-sakura-400">{connectors.length} 个角色在台</span>
+        </div>
+        <div className="p-3 space-y-3">
+          {/* 当前角色列表 */}
+          <div className="space-y-1.5">
+            {connectors.length === 0 ? <p className="text-[9px] text-sakura-300 text-center py-2">暂无角色</p> : connectors.map((c: any) => (
+              <div key={c.agent_id} className="flex items-center gap-2 text-[10px]">
+                <span className={"w-2 h-2 rounded-full " + (c.quarantined ? "bg-red-400" : "bg-green-400")} />
+                <span className="font-medium text-sakura-600">{c.name}</span>
+                <span className="text-[8px] px-1 py-0.5 rounded bg-sakura-100 text-sakura-500">{c.transport}</span>
+                {c.builtin && <span className="text-[8px] text-sakura-300">内置</span>}
+                {c.quarantined && <span className="text-[8px] text-red-400">限流隔离中</span>}
+                {!c.builtin && (
+                  <button onClick={() => unregisterAgent(c.agent_id)} className="ml-auto text-[8px] text-red-400 hover:text-red-500">下台</button>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* 人类副播上麦 */}
+          <div className="border-t border-sakura-50 pt-2.5">
+            <p className="text-[9px] text-sakura-400 mb-1">人类副播（手动上麦）</p>
+            <div className="flex gap-2">
+              <input value={humanText} onChange={e => setHumanText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') humanSpeak(); }} placeholder="输入一句让副播说出口…" className="flex-1 px-2 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-white" />
+              <button onClick={humanSpeak} disabled={!humanText.trim()} className="px-3 py-1.5 rounded-lg text-[10px] font-medium bg-sakura-500 text-white hover:bg-sakura-600 disabled:opacity-40 transition-colors shrink-0">上麦</button>
+            </div>
+          </div>
+
+          {/* 接入外部角色 */}
+          <div className="border-t border-sakura-50 pt-2.5 space-y-1.5">
+            <p className="text-[9px] text-sakura-400">接入外部 agent（HTTP / WebSocket，远程需 token）</p>
+            <div className="grid grid-cols-2 gap-1.5">
+              <input value={regForm.agent_id} onChange={e => setRegForm({ ...regForm, agent_id: e.target.value })} placeholder="agent_id" className="px-2 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-white" />
+              <input value={regForm.name} onChange={e => setRegForm({ ...regForm, name: e.target.value })} placeholder="显示名" className="px-2 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-white" />
+              <input value={regForm.endpoint} onChange={e => setRegForm({ ...regForm, endpoint: e.target.value })} placeholder="http:// 或 ws:// 端点" className="px-2 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-white" />
+              <select value={regForm.type} onChange={e => setRegForm({ ...regForm, type: e.target.value })} className="px-2 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-white">
+                <option value="http">HTTP</option>
+                <option value="ws">WebSocket</option>
+              </select>
+              <input value={regForm.token} onChange={e => setRegForm({ ...regForm, token: e.target.value })} placeholder="token（远程必填）" className="col-span-2 px-2 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-white" />
+            </div>
+            {regMsg && <p className="text-[8px] text-red-400">{regMsg}</p>}
+            <button onClick={registerAgent} className="w-full px-3 py-1.5 rounded-lg text-[10px] font-medium bg-blue-500 text-white hover:bg-blue-600 transition-colors">接入角色</button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

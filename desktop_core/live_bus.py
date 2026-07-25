@@ -236,6 +236,70 @@ def should_react_to_cue(cue: dict) -> bool:
     return random.random() < prob
 
 
+class ConnectorGuard:
+    """连接器治理（D3：远程连接器是不可信输入面）：注册鉴权 + 每连接器速率限制 + 越限隔离。
+
+    - 注册鉴权：远程连接器（带 endpoint）必须配置 token，否则拒绝上台。
+    - 速率限制：滑动窗口内发言次数超上限 → 自动 quarantine（挂起），冷却后自动解除。
+    - 信任豁免：主咖(naixi)与操作员(人类副播 human)不受限流影响。
+
+    时钟可注入（测试用），逻辑纯同步，离线可验。
+    """
+
+    def __init__(self, require_token_for_remote: bool = True,
+                 rate_window: float = 10.0, rate_max: int = 20,
+                 quarantine_secs: float = 30.0, trusted_ids: tuple = ("naixi",),
+                 clock=None):
+        self.require_token_for_remote = require_token_for_remote
+        self.rate_window = rate_window
+        self.rate_max = rate_max
+        self.quarantine_secs = quarantine_secs
+        self.trusted_ids = set(trusted_ids)
+        self._clock = clock or time.monotonic
+        self._counts: dict[str, list] = {}
+        self._quarantine: dict[str, float] = {}
+
+    def check_register(self, connector: AgentConnector) -> tuple[bool, str]:
+        """注册前校验：远程连接器必须带 token（不可信面）。返回 (ok, 原因)。"""
+        if self.require_token_for_remote and getattr(connector, "endpoint", ""):
+            if not getattr(connector, "token", ""):
+                return False, "远程连接器必须配置 token"
+        return True, ""
+
+    def allow_emit(self, agent_id: str) -> bool:
+        """发言前检查：信任角色直接放行；隔离中拒绝；否则记一次并判断是否越限。"""
+        if agent_id in self.trusted_ids:
+            return True
+        now = self._clock()
+        if agent_id in self._quarantine:
+            if now < self._quarantine[agent_id]:
+                return False
+            del self._quarantine[agent_id]  # 冷却结束，解除隔离
+        buf = self._counts.setdefault(agent_id, [])
+        buf.append(now)
+        cutoff = now - self.rate_window
+        self._counts[agent_id] = [t for t in buf if t >= cutoff]
+        if len(self._counts[agent_id]) > self.rate_max:
+            self._quarantine[agent_id] = now + self.quarantine_secs
+            log.warning(f"[治理] 连接器 {agent_id} 触发速率上限，已隔离 {self.quarantine_secs}s")
+            return False
+        return True
+
+    def is_quarantined(self, agent_id: str) -> bool:
+        now = self._clock()
+        if agent_id in self._quarantine and now < self._quarantine[agent_id]:
+            return True
+        if agent_id in self._quarantine:
+            del self._quarantine[agent_id]
+        return False
+
+    def status(self, agent_id: str) -> dict:
+        now = self._clock()
+        quarantined = agent_id in self._quarantine and now < self._quarantine[agent_id]
+        return {"quarantined": quarantined,
+                "emits_in_window": len([t for t in self._counts.get(agent_id, []) if t >= now - self.rate_window])}
+
+
 class NaixiConnector(AgentConnector):
     """内置"奶昔"角色连接器 —— 复用引擎已有的 _decide_reply 决策大脑。
 
@@ -329,6 +393,89 @@ class HttpAgentConnector(AgentConnector):
                 log.warning(f"[外部角色 {self.name}] 调用失败: {e}")
                 return None
         log.warning(f"[外部角色 {self.name}] 重试耗尽，放弃本轮: {last_err}")
+        return None
+
+    async def handle_danmaku(self, danmaku: dict):
+        return await self._ask("danmaku", danmaku.get("text", ""), danmaku.get("user", ""))
+
+    async def handle_cue(self, cue: dict):
+        return await self._ask("cue", cue.get("text", ""), cue.get("name", "同台"))
+
+
+class HumanConnector(AgentConnector):
+    """人类副播连接器 —— 操作员经引擎 inject_human_speech 手动上麦。
+
+    不自动接弹幕/舞台提示（handle_* 恒返 None），只由人工触发发言。优先级默认
+    副播级；操作员若想插话打断，可在注册时调高 priority。受信任，不受限流隔离。
+    """
+
+    def __init__(self, agent_id: str = "human", name: str = "人类副播",
+                 priority: int = PRIORITY_GUEST):
+        super().__init__(agent_id=agent_id, name=name, priority=priority)
+
+    async def handle_danmaku(self, danmaku: dict):
+        return None
+
+    async def handle_cue(self, cue: dict):
+        return None
+
+
+class WsAgentConnector(AgentConnector):
+    """远程 ws 外部 agent 连接器 —— 经 WebSocket 把事件发给别人的 agent 取回复。
+
+    与 HttpAgentConnector 对称（引擎作为客户端连出去），适合需要双向流式/常驻
+    连接的远端角色。连接时把 token 放在 Authorization 头做鉴权；远端拒答(ok=false)
+    或网络故障按与 HTTP 版一致的重试/跳过策略处理。
+    """
+
+    def __init__(self, agent_id: str, name: str, ws_url: str, *,
+                 priority: int = PRIORITY_GUEST, token: str = "", timeout: float = 12.0,
+                 max_retries: int = 2):
+        super().__init__(agent_id=agent_id, name=name, priority=priority)
+        self.endpoint = ws_url            # 复用 endpoint 字段供治理层判定"远程"
+        self.ws_url = ws_url
+        self.token = token
+        self.timeout = timeout
+        self.max_retries = max_retries
+
+    async def _ask(self, event: str, text: str, user: str):
+        if not self.ws_url or not text:
+            return None
+        try:
+            import aiohttp
+        except Exception as e:
+            log.warning(f"[ws外部角色 {self.name}] aiohttp 不可用: {e}")
+            return None
+        payload = {"event": event, "text": text, "user": user,
+                   "agent_id": self.agent_id, "name": self.name}
+        headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
+        timeout = aiohttp.ClientTimeout(total=self.timeout)
+        last_err = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                async with aiohttp.ClientSession() as s:
+                    ws = await s.ws_connect(self.ws_url, headers=headers, timeout=timeout)
+                    try:
+                        await ws.send_json(payload)
+                        reply = await ws.receive_json()
+                    finally:
+                        await ws.close()
+                if isinstance(reply, dict):
+                    if reply.get("ok") is False:
+                        return None  # 远端明确拒答（如未就绪），跳过本轮
+                    return reply.get("text") and reply or None
+                return str(reply).strip() or None
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                last_err = e
+                if attempt < self.max_retries:
+                    log.warning(f"[ws外部角色 {self.name}] 瞬时故障，重试 {attempt+1}/{self.max_retries}: {e}")
+                    await asyncio.sleep(min(0.5 * (attempt + 1), 2.0))
+                    continue
+                break
+            except Exception as e:
+                log.warning(f"[ws外部角色 {self.name}] 调用失败: {e}")
+                return None
+        log.warning(f"[ws外部角色 {self.name}] 重试耗尽，放弃本轮: {last_err}")
         return None
 
     async def handle_danmaku(self, danmaku: dict):
