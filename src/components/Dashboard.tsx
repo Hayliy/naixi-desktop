@@ -2293,46 +2293,72 @@ function LivePage() {
                 <button onClick={() => setShowStage(false)} className="p-1 hover:bg-sakura-50 rounded text-sakura-400"><X size={14} /></button>
               </div>
           {/* 当前角色列表 */}
-          <div className="space-y-1.5">
-            {connectors.length === 0 ? <p className="text-[9px] text-sakura-300 text-center py-2">暂无角色</p> : connectors.map((c: any) => (
-              <div key={c.agent_id} className="flex items-center gap-2 text-[10px]">
-                <span className={"w-2 h-2 rounded-full " + (c.quarantined ? "bg-red-400" : "bg-green-400")} />
-                <span className="font-medium text-sakura-600">{c.name}</span>
-                <span className={"text-[8px] px-1 py-0.5 rounded " + liveTransportBadge(c.transport).cls}>{liveTransportBadge(c.transport).label}</span>
-                {c.builtin && <span className="text-[8px] text-sakura-300">内置</span>}
-                {c.quarantined && <span className="text-[8px] text-red-400">限流隔离中</span>}
-                {!c.builtin && (
-                  <button onClick={() => unregisterAgent(c.agent_id)} className="ml-auto text-[8px] text-red-400 hover:text-red-500">下台</button>
-                )}
+          <div className="space-y-2">
+            <p className="text-[10px] font-medium text-sakura-500">当前角色（{connectors.length}）</p>
+            {connectors.length === 0 ? (
+              <p className="text-[10px] text-sakura-300 py-1">暂无角色在台</p>
+            ) : (
+              <div className="space-y-1.5">
+                {connectors.map((c: any) => (
+                  <div key={c.agent_id} className="flex items-center gap-2.5 py-1.5">
+                    <span className={"w-2 h-2 rounded-full shrink-0 " + (c.quarantined ? "bg-red-400" : "bg-green-400")} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-medium text-sakura-600 truncate">{c.name}</span>
+                        {c.builtin && <span className="text-[8px] text-sakura-300 shrink-0">内置</span>}
+                        {c.quarantined && <span className="text-[8px] text-red-400 shrink-0">限流隔离中</span>}
+                      </div>
+                    </div>
+                    <span className={"text-[8px] px-1.5 py-0.5 rounded shrink-0 " + liveTransportBadge(c.transport).cls}>{liveTransportBadge(c.transport).label}</span>
+                    {!c.builtin && (
+                      <button onClick={() => unregisterAgent(c.agent_id)} className="text-[9px] text-red-400 hover:text-red-500 shrink-0">下台</button>
+                    )}
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
 
           {/* 人类副播上麦 */}
-          <div className="border-t border-sakura-50 pt-2.5">
-            <p className="text-[9px] text-sakura-400 mb-1">人类副播（手动上麦）</p>
+          <div className="space-y-2">
+            <p className="text-[10px] font-medium text-sakura-500">人类副播（手动上麦）</p>
             <div className="flex gap-2">
-              <input value={humanText} onChange={e => setHumanText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') humanSpeak(); }} placeholder="输入一句让副播说出口…" className="flex-1 px-2 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-white" />
-              <button onClick={humanSpeak} disabled={!humanText.trim()} className="px-3 py-1.5 rounded-lg text-[10px] font-medium bg-sakura-500 text-white hover:bg-sakura-600 disabled:opacity-40 transition-colors shrink-0">上麦</button>
+              <input value={humanText} onChange={e => setHumanText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') humanSpeak(); }} placeholder="输入一句让副播说出口…" className="flex-1 px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white" />
+              <button onClick={humanSpeak} disabled={!humanText.trim()} className="px-3 py-2 rounded-lg text-xs font-medium bg-sakura-500 text-white hover:bg-sakura-600 disabled:opacity-40 transition-colors shrink-0">上麦</button>
             </div>
           </div>
 
           {/* 接入外部角色 */}
-          <div className="border-t border-sakura-50 pt-2.5 space-y-1.5">
-            <p className="text-[9px] text-sakura-400">接入外部 agent（HTTP / WebSocket，远程需 token）</p>
-            <div className="grid grid-cols-2 gap-1.5">
-              <input value={regForm.agent_id} onChange={e => setRegForm({ ...regForm, agent_id: e.target.value })} placeholder="agent_id" className="px-2 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-white" />
-              <input value={regForm.name} onChange={e => setRegForm({ ...regForm, name: e.target.value })} placeholder="显示名" className="px-2 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-white" />
-              <input value={regForm.endpoint} onChange={e => setRegForm({ ...regForm, endpoint: e.target.value })} placeholder="http:// 或 ws:// 端点" className="px-2 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-white" />
-              <select value={regForm.type} onChange={e => setRegForm({ ...regForm, type: e.target.value })} className="px-2 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-white">
-                <option value="http">HTTP</option>
-                <option value="ws">WebSocket</option>
-              </select>
-              <input value={regForm.token} onChange={e => setRegForm({ ...regForm, token: e.target.value })} placeholder="token（远程必填）" className="col-span-2 px-2 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-white" />
+          <div className="space-y-2">
+            <p className="text-[10px] font-medium text-sakura-500">接入外部 agent（HTTP / WebSocket，远程需 token）</p>
+            <div className="space-y-2.5">
+              <div>
+                <label className="block text-[10px] text-sakura-500 font-medium mb-1">agent_id</label>
+                <input value={regForm.agent_id} onChange={e => setRegForm({ ...regForm, agent_id: e.target.value })} placeholder="唯一标识" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-sakura-500 font-medium mb-1">显示名</label>
+                <input value={regForm.name} onChange={e => setRegForm({ ...regForm, name: e.target.value })} placeholder="展示用名称" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-sakura-500 font-medium mb-1">端点</label>
+                <input value={regForm.endpoint} onChange={e => setRegForm({ ...regForm, endpoint: e.target.value })} placeholder="http:// 或 ws:// 端点" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-sakura-500 font-medium mb-1">类型</label>
+                <select value={regForm.type} onChange={e => setRegForm({ ...regForm, type: e.target.value })} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white">
+                  <option value="http">HTTP</option>
+                  <option value="ws">WebSocket</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] text-sakura-500 font-medium mb-1">token（远程必填）</label>
+                <input value={regForm.token} onChange={e => setRegForm({ ...regForm, token: e.target.value })} placeholder="鉴权 token" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" />
+              </div>
+              {regMsg && <p className="text-[9px] text-red-400">{regMsg}</p>}
+              <button onClick={registerAgent} className="w-full px-3 py-2 rounded-lg text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 transition-colors">接入角色</button>
+              <p className="text-[9px] text-sakura-300 leading-relaxed">提示：远端 agent 也可主动"反向连入"引擎的 /api/live/ws_agent（需服务端密钥 live_ws_secret），连上即自动上台、断开即下台，标记为 WS(反向连入)，无需在此手填。</p>
             </div>
-            {regMsg && <p className="text-[8px] text-red-400">{regMsg}</p>}
-            <button onClick={registerAgent} className="w-full px-3 py-1.5 rounded-lg text-[10px] font-medium bg-blue-500 text-white hover:bg-blue-600 transition-colors">接入角色</button>
-            <p className="text-[8px] text-sakura-300 leading-relaxed">提示：远端 agent 也可主动"反向连入"引擎的 /api/live/ws_agent（需服务端密钥 live_ws_secret），连上即自动上台、断开即下台，标记为 WS(反向连入)，无需在此手填。</p>
           </div>
             </div>
           </div>
