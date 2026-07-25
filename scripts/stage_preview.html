@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>副播面板视觉走查</title>
+<style>
+* { box-sizing: border-box; }
+body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; background:#f1f5f9; color:#1e293b; }
+.wrap { max-width: 660px; margin: 36px auto; padding: 28px; background:#fff; border-radius:18px; box-shadow:0 6px 30px rgba(15,23,42,.08); }
+h1 { font-size:21px; margin:0 0 6px; color:#0f172a; }
+.sub { color:#64748b; font-size:13px; margin:0 0 6px; }
+.note { color:#94a3b8; font-size:12px; margin:0 0 22px; }
+.panel { display:flex; flex-direction:column; gap:10px; }
+.row { display:flex; align-items:center; gap:10px; padding:11px 14px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:11px; }
+.dot { width:9px; height:9px; border-radius:9999px; flex:0 0 auto; }
+.bg-green-400 { background:#4ade80; }
+.bg-red-400 { background:#f87171; }
+.name { font-weight:500; font-size:14px; }
+.badge { font-size:11px; padding:2px 7px; border-radius:7px; font-weight:600; white-space:nowrap; }
+.text-\[8px\] { font-size:11px; }
+.px-1 { padding-left:4px; padding-right:4px; }
+.py-0.5 { padding-top:2px; padding-bottom:2px; }
+.rounded { border-radius:7px; }
+.bg-sakura-100 { background:#ffe4ef; } .text-sakura-500 { color:#d4537e; } .text-sakura-300 { color:#f9a8d4; }
+.bg-blue-100 { background:#dbeafe; } .text-blue-500 { color:#3b82f6; }
+.bg-indigo-100 { background:#e0e7ff; } .text-indigo-500 { color:#6366f1; }
+.bg-purple-100 { background:#f3e8ff; } .text-purple-500 { color:#a855f7; }
+.text-red-400 { color:#f87171; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>多角色舞台 · 视觉走查</h1>
+    <p class="sub">内置 / HTTP / WS(连出) / WS(反向连入) / 隔离 五态一览</p>
+    <p class="note">离线演示页（不依赖 Tauri / 后端），用于核对徽章配色与隔离红点视觉。真实数据由引擎 /api/live/connectors 提供。</p>
+    <div class="panel"><div class="row flex items-center gap-2"><span class="dot bg-green-400"></span><span class="name font-medium">奶昔(主控)</span><span class="badge text-[8px] px-1 py-0.5 rounded bg-sakura-100 text-sakura-500">内置</span><span class="text-[8px] text-sakura-300">内置</span></div><div class="row flex items-center gap-2"><span class="dot bg-green-400"></span><span class="name font-medium">百科助手</span><span class="badge text-[8px] px-1 py-0.5 rounded bg-blue-100 text-blue-500">HTTP</span></div><div class="row flex items-center gap-2"><span class="dot bg-green-400"></span><span class="name font-medium">弹幕姬(连出)</span><span class="badge text-[8px] px-1 py-0.5 rounded bg-indigo-100 text-indigo-500">WS(连出)</span></div><div class="row flex items-center gap-2"><span class="dot bg-green-400"></span><span class="name font-medium">示例副播(反向连入)</span><span class="badge text-[8px] px-1 py-0.5 rounded bg-purple-100 text-purple-500">WS(反向连入)</span></div><div class="row flex items-center gap-2"><span class="dot bg-red-400"></span><span class="name font-medium">刷屏怪</span><span class="badge text-[8px] px-1 py-0.5 rounded bg-blue-100 text-blue-500">HTTP</span><span class="text-[8px] text-red-400">限流隔离中</span></div></div>
+  </div>
+</body>
+</html>
