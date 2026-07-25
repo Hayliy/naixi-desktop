@@ -1915,6 +1915,7 @@ function LivePage() {
   const [showRtmp, setShowRtmp] = useState(false);
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   const [nowTime, setNowTime] = useState(Date.now());
+  const [showStage, setShowStage] = useState(true);
   const { notify } = useToast();
 
   // ── 多角色舞台：连接器列表 / 人类副播 / 接入外部角色 ──
@@ -2054,6 +2055,8 @@ function LivePage() {
     <div className="space-y-3">
       <p className="text-sm font-semibold text-sakura-600">虚拟主播</p>
 
+      <div className="flex gap-3 items-start">
+        <div className="flex-1 min-w-0 space-y-3">
       <div className="flex items-center gap-2">
         <div className={"flex-1 rounded-xl p-3 border "+(s?.running?s?.connected?"bg-green-50 border-green-200":"bg-amber-50 border-amber-200":"bg-sakura-50 border-sakura-100")}>
           <div className="flex items-center gap-2.5">
@@ -2092,6 +2095,9 @@ function LivePage() {
         </button>
         <button onClick={()=>setShowRtmp(!showRtmp)} className={"px-3 py-1.5 rounded-lg text-[10px] border "+(showRtmp?"bg-sakura-100 border-sakura-300 text-sakura-600":"bg-white border-sakura-100 text-sakura-500 hover:border-sakura-300")}>
           RTMP 推流
+        </button>
+        <button onClick={()=>setShowStage(!showStage)} className={"px-3 py-1.5 rounded-lg text-[10px] border "+(showStage?"bg-sakura-100 border-sakura-300 text-sakura-600":"bg-white border-sakura-100 text-sakura-500 hover:border-sakura-300")}>
+          多角色舞台
         </button>
       </div>
 
@@ -2278,14 +2284,20 @@ function LivePage() {
           <p className="text-[9px] text-red-400 mt-0.5">{s.last_error}</p>
         </div>
       )}
+        </div>{/* 结束左主区 */}
 
-      {/* 多角色舞台 */}
-      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-        <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
-          <span className="text-[10px] font-medium text-sakura-500">多角色舞台</span>
-          <span className="text-[8px] text-sakura-400">{connectors.length} 个角色在台</span>
-        </div>
-        <div className="p-3 space-y-3">
+      {/* 右：多角色舞台常驻栏（可折叠，对齐 B站配置/RTMP 右侧栏范式，宽 420px） */}
+      {showStage && (
+        <div className="w-[420px] shrink-0">
+          <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden sticky top-2">
+            <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
+              <span className="text-[10px] font-medium text-sakura-500">多角色舞台</span>
+              <div className="flex items-center gap-2">
+                <span className="text-[8px] text-sakura-400">{connectors.length} 个角色在台</span>
+                <button onClick={()=>setShowStage(false)} className="p-1 hover:bg-sakura-50 rounded text-sakura-400" title="收起"><X size={14} /></button>
+              </div>
+            </div>
+            <div className="p-3 space-y-3 max-h-[calc(100vh-7rem)] overflow-y-auto">
           {/* 当前角色列表 */}
           <div className="space-y-1.5">
             {connectors.length === 0 ? <p className="text-[9px] text-sakura-300 text-center py-2">暂无角色</p> : connectors.map((c: any) => (
@@ -2329,8 +2341,11 @@ function LivePage() {
             <p className="text-[8px] text-sakura-300 leading-relaxed">提示：远端 agent 也可主动"反向连入"引擎的 /api/live/ws_agent（需服务端密钥 live_ws_secret），连上即自动上台、断开即下台，标记为 WS(反向连入)，无需在此手填。</p>
           </div>
         </div>
+          </div>
+        </div>
+      )}
+        </div>
       </div>
-    </div>
   );
 }
 function SchedulerPage() {
