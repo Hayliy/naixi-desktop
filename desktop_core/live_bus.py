@@ -249,21 +249,74 @@ class ConnectorGuard:
     def __init__(self, require_token_for_remote: bool = True,
                  rate_window: float = 10.0, rate_max: int = 20,
                  quarantine_secs: float = 30.0, trusted_ids: tuple = ("naixi",),
-                 clock=None):
+                 clock=None, mem_get=None, mem_set=None, wall_clock=None):
         self.require_token_for_remote = require_token_for_remote
         self.rate_window = rate_window
         self.rate_max = rate_max
         self.quarantine_secs = quarantine_secs
         self.trusted_ids = set(trusted_ids)
+        # 内部限流用单调时钟（可注入，测试友好）；持久化用墙钟时钟（跨进程可比较）
         self._clock = clock or time.monotonic
+        self._wall = wall_clock or time.time
+        # 隔离状态持久化钩子：默认为 None（离线/测试无副作用），引擎会注入 SQLite meta 读写
+        self._mem_get = mem_get
+        self._mem_set = mem_set
         self._counts: dict[str, list] = {}
         self._quarantine: dict[str, float] = {}
+
+    # ── 隔离状态持久化（SQLite meta，键 live_q:{agent_id} 存墙钟到期时间戳）──
+    @staticmethod
+    def _q_key(agent_id: str) -> str:
+        return f"live_q:{agent_id}"
+
+    def _persist_quarantine(self, agent_id: str, wall_expiry: float):
+        """把某连接器的隔离到期墙钟时间落库，重启后仍可恢复剩余隔离时长。"""
+        if not self._mem_set:
+            return
+        try:
+            self._mem_set(self._q_key(agent_id), f"{wall_expiry:.3f}")
+        except Exception as e:
+            log.warning(f"[治理] 隔离状态持久化失败 {agent_id}: {e}")
+
+    def _clear_persisted(self, agent_id: str):
+        """隔离自然解除时清掉库里的记录，避免下次误恢复。"""
+        if not self._mem_set:
+            return
+        try:
+            self._mem_set(self._q_key(agent_id), "")
+        except Exception as e:
+            log.warning(f"[治理] 隔离状态清除失败 {agent_id}: {e}")
+
+    def restore(self, agent_id: str):
+        """从库里恢复某连接器的隔离状态（注册/重连时调用）：
+        用墙钟算出剩余隔离时长，再折算回内部单调时钟，保证重启/重连的刷屏 agent 仍在隔离期。"""
+        if not self._mem_get or agent_id in self.trusted_ids:
+            return
+        try:
+            raw = self._mem_get(self._q_key(agent_id))
+        except Exception as e:
+            log.warning(f"[治理] 隔离状态读取失败 {agent_id}: {e}")
+            return
+        if not raw:
+            return
+        try:
+            wall_expiry = float(raw)
+        except (TypeError, ValueError):
+            return
+        remaining = wall_expiry - self._wall()
+        if remaining > 0:
+            self._quarantine[agent_id] = self._clock() + remaining
+            log.warning(f"[治理] 连接器 {agent_id} 恢复隔离状态，剩余 {remaining:.1f}s")
+        else:
+            self._clear_persisted(agent_id)
 
     def check_register(self, connector: AgentConnector) -> tuple[bool, str]:
         """注册前校验：远程连接器必须带 token（不可信面）。返回 (ok, 原因)。"""
         if self.require_token_for_remote and getattr(connector, "endpoint", ""):
             if not getattr(connector, "token", ""):
                 return False, "远程连接器必须配置 token"
+        # 注册即尝试恢复隔离态：重连的刷屏 agent 不能靠断线重连洗白
+        self.restore(getattr(connector, "agent_id", ""))
         return True, ""
 
     def allow_emit(self, agent_id: str) -> bool:
@@ -275,12 +328,14 @@ class ConnectorGuard:
             if now < self._quarantine[agent_id]:
                 return False
             del self._quarantine[agent_id]  # 冷却结束，解除隔离
+            self._clear_persisted(agent_id)
         buf = self._counts.setdefault(agent_id, [])
         buf.append(now)
         cutoff = now - self.rate_window
         self._counts[agent_id] = [t for t in buf if t >= cutoff]
         if len(self._counts[agent_id]) > self.rate_max:
             self._quarantine[agent_id] = now + self.quarantine_secs
+            self._persist_quarantine(agent_id, self._wall() + self.quarantine_secs)
             log.warning(f"[治理] 连接器 {agent_id} 触发速率上限，已隔离 {self.quarantine_secs}s")
             return False
         return True
@@ -291,6 +346,7 @@ class ConnectorGuard:
             return True
         if agent_id in self._quarantine:
             del self._quarantine[agent_id]
+            self._clear_persisted(agent_id)
         return False
 
     def status(self, agent_id: str) -> dict:
@@ -483,6 +539,90 @@ class WsAgentConnector(AgentConnector):
 
     async def handle_cue(self, cue: dict):
         return await self._ask("cue", cue.get("text", ""), cue.get("name", "同台"))
+
+
+class WsServerConnector(AgentConnector):
+    """服务端热插拔连接器 —— 远端 agent 主动"反向连入"引擎（引擎是 ws 服务端）。
+
+    与 WsAgentConnector（客户端：引擎连出去）方向相反：远端 agent 主动连到引擎的
+    /api/live/ws_agent 端点，握手鉴权通过后由引擎动态注册为本连接器；断开即注销，
+    实现真正的热插拔（远端上下线不需改配置、不需引擎重启）。
+
+    引擎持有这条常驻 socket。每次要问远端"这条弹幕/舞台提示接不接"时，用一个自增
+    req_id 发出请求并挂起一个 asyncio.Future；远端把带同一 req_id 的回复发回来，
+    读循环调用 feed_reply 唤醒对应 Future。req_id 多路复用，允许并发多问不串答。
+    """
+
+    def __init__(self, agent_id: str, name: str, ws, *,
+                 priority: int = PRIORITY_GUEST, token: str = "", timeout: float = 10.0):
+        super().__init__(agent_id=agent_id, name=name, priority=priority)
+        self._ws = ws                          # aiohttp WebSocketResponse（服务端侧句柄）
+        self.token = token
+        self.endpoint = f"ws-in:{agent_id}"    # 复用 endpoint 字段供治理层判定"远程"（需 token）
+        self.timeout = timeout
+        self._pending: dict[str, asyncio.Future] = {}
+        self._seq = 0
+        self._closed = False
+
+    def _next_id(self) -> str:
+        self._seq += 1
+        return f"{self.agent_id}-{self._seq}"
+
+    async def _ask(self, kind: str, payload: dict):
+        # socket 已关或无文本 → 不打扰远端
+        if self._closed or self._ws is None:
+            return None
+        text = (payload.get("text") or "").strip()
+        if not text:
+            return None
+        req_id = self._next_id()
+        loop = asyncio.get_event_loop()
+        fut = loop.create_future()
+        self._pending[req_id] = fut
+        try:
+            await self._ws.send_json({"type": "request", "kind": kind,
+                                      "req_id": req_id, "data": payload})
+        except Exception as e:
+            self._pending.pop(req_id, None)
+            log.warning(f"[ws服务端 {self.name}] 向远端发请求失败: {e}")
+            return None
+        try:
+            resp = await asyncio.wait_for(fut, timeout=self.timeout)
+        except asyncio.TimeoutError:
+            log.warning(f"[ws服务端 {self.name}] 等待远端回复超时，跳过本轮")
+            return None
+        except asyncio.CancelledError:
+            return None
+        finally:
+            self._pending.pop(req_id, None)
+        if isinstance(resp, dict) and resp.get("ok") is False:
+            return None  # 远端明确拒答（未就绪等）
+        return normalize_utterance(resp)
+
+    def feed_reply(self, req_id: str, payload):
+        """读循环收到远端回复时调用：按 req_id 唤醒对应挂起的请求。"""
+        fut = self._pending.get(req_id)
+        if fut and not fut.done():
+            fut.set_result(payload)
+
+    async def handle_danmaku(self, danmaku: dict):
+        return await self._ask("danmaku", danmaku)
+
+    async def handle_cue(self, cue: dict):
+        return await self._ask("cue", cue)
+
+    async def close(self):
+        """注销时：标记关闭、取消所有挂起请求、关掉 socket（幂等）。"""
+        self._closed = True
+        for fut in list(self._pending.values()):
+            if not fut.done():
+                fut.cancel()
+        self._pending.clear()
+        try:
+            if self._ws is not None and not self._ws.closed:
+                await self._ws.close()
+        except Exception:
+            pass
 
 
 def make_speech_request(connector: AgentConnector, utt: dict, *,

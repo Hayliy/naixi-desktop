@@ -5,6 +5,7 @@ import { AppProvider } from "@/contexts/AppContext";
 import { ToastProvider, useToast } from "@/components/Toast";
 import { Card } from "@/components/ui";
 import { loadAvatarCache } from "@/lib/avatar";
+import { liveTransportBadge } from "@/lib/liveBadge";
 import ChatPage from "@/components/Chat";
 import WorkflowEditor from "@/components/WorkflowEditor";
 import { ReactFlowProvider } from "@xyflow/react";
@@ -2291,7 +2292,7 @@ function LivePage() {
               <div key={c.agent_id} className="flex items-center gap-2 text-[10px]">
                 <span className={"w-2 h-2 rounded-full " + (c.quarantined ? "bg-red-400" : "bg-green-400")} />
                 <span className="font-medium text-sakura-600">{c.name}</span>
-                <span className="text-[8px] px-1 py-0.5 rounded bg-sakura-100 text-sakura-500">{c.transport}</span>
+                <span className={"text-[8px] px-1 py-0.5 rounded " + liveTransportBadge(c.transport).cls}>{liveTransportBadge(c.transport).label}</span>
                 {c.builtin && <span className="text-[8px] text-sakura-300">内置</span>}
                 {c.quarantined && <span className="text-[8px] text-red-400">限流隔离中</span>}
                 {!c.builtin && (
@@ -2325,6 +2326,7 @@ function LivePage() {
             </div>
             {regMsg && <p className="text-[8px] text-red-400">{regMsg}</p>}
             <button onClick={registerAgent} className="w-full px-3 py-1.5 rounded-lg text-[10px] font-medium bg-blue-500 text-white hover:bg-blue-600 transition-colors">接入角色</button>
+            <p className="text-[8px] text-sakura-300 leading-relaxed">提示：远端 agent 也可主动"反向连入"引擎的 /api/live/ws_agent（需服务端密钥 live_ws_secret），连上即自动上台、断开即下台，标记为 WS(反向连入)，无需在此手填。</p>
           </div>
         </div>
       </div>

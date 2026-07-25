@@ -9,7 +9,7 @@ from aiohttp import WSMsgType
 
 from desktop_core.live_bus import (
     LiveBus, SpeechArbiter, AgentConnector, NaixiConnector, HttpAgentConnector,
-    WsAgentConnector, HumanConnector, ConnectorGuard,
+    WsAgentConnector, WsServerConnector, HumanConnector, ConnectorGuard,
     make_speech_request, normalize_utterance, should_react_to_cue,
     PRIORITY_HOST, PRIORITY_GUEST,
 )
@@ -143,9 +143,31 @@ class LiveEngine:
         # 多角色舞台：总线 + 麦位仲裁 + 角色连接器注册表（Lumi_Nox 多角色整合）
         self._bus = LiveBus()
         self._arbiter = SpeechArbiter()
-        self._guard = ConnectorGuard(trusted_ids=("naixi", "human"))
+        # 隔离状态持久化到 SQLite meta（按 agent_id 单行），重启/重连的刷屏 agent 仍在隔离期
+        self._guard = ConnectorGuard(
+            trusted_ids=("naixi", "human"),
+            mem_get=self._guard_mem_get, mem_set=self._guard_mem_set,
+        )
         self._connectors: dict[str, AgentConnector] = {}
         self._register_builtin_connectors()
+
+    @staticmethod
+    def _guard_mem_get(key: str) -> str:
+        """治理层隔离状态读取（默认落 SQLite meta；storage 不可用时静默降级为无持久化）。"""
+        try:
+            from desktop_core import storage
+            return storage.meta_get(key, "")
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _guard_mem_set(key: str, value: str):
+        """治理层隔离状态写入（默认落 SQLite meta；storage 不可用时静默降级）。"""
+        try:
+            from desktop_core import storage
+            storage.meta_set(key, value)
+        except Exception:
+            pass
 
     # ── 多角色连接器 ────────────────────────────────────────────────────────
 
@@ -224,7 +246,8 @@ class LiveEngine:
         for c in self._connectors.values():
             item = {"agent_id": c.agent_id, "name": c.name, "priority": c.priority,
                     "builtin": c.agent_id in ("naixi", "human"),
-                    "transport": "http" if isinstance(c, HttpAgentConnector)
+                    "transport": "ws-in" if isinstance(c, WsServerConnector)
+                                 else "http" if isinstance(c, HttpAgentConnector)
                                  else "ws" if isinstance(c, WsAgentConnector)
                                  else "local"}
             if getattr(c, "endpoint", ""):

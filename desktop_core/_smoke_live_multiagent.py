@@ -366,9 +366,111 @@ async def test_guard():
     ok(g2.allow_emit("bot") is True, "解除后可再次发言")
 
 
+async def test_guard_persist():
+    print("[11] ConnectorGuard 隔离状态持久化（重启/重连不洗白）")
+    store = {}
+    def mget(k): return store.get(k, "")
+    def mset(k, v): store[k] = v
+    clock = {"t": 0.0}       # 内部单调时钟
+    wall = {"t": 1000.0}     # 墙钟
+    g = ConnectorGuard(rate_window=10.0, rate_max=3, quarantine_secs=30.0,
+                       trusted_ids=("naixi",), clock=lambda: clock["t"],
+                       wall_clock=lambda: wall["t"], mem_get=mget, mem_set=mset)
+    res = [g.allow_emit("bot") for _ in range(4)]
+    ok(res == [True, True, True, False], "刷屏第4次触发隔离")
+    ok(bool(store.get("live_q:bot")), "隔离到期墙钟已落库")
+
+    # 模拟重启：新建 guard（内部单调时钟归零），墙钟前进 10s → 隔离剩 20s
+    g2 = ConnectorGuard(rate_window=10.0, rate_max=3, quarantine_secs=30.0,
+                        trusted_ids=("naixi",), clock=lambda: 0.0,
+                        wall_clock=lambda: 1010.0, mem_get=mget, mem_set=mset)
+    g2.restore("bot")
+    ok(g2.is_quarantined("bot") is True, "重启后恢复隔离态（剩余约20s仍隔离）")
+
+    # 墙钟越过隔离结束点再新建 → 恢复为不隔离并清库
+    g3 = ConnectorGuard(clock=lambda: 0.0, wall_clock=lambda: 1031.0,
+                        trusted_ids=("naixi",), mem_get=mget, mem_set=mset)
+    g3.restore("bot")
+    ok(g3.is_quarantined("bot") is False, "隔离期已过：恢复为不隔离")
+    ok(store.get("live_q:bot", "") == "", "过期后清除持久化记录")
+
+    # check_register 也触发 restore：重连不能靠断线洗白
+    store["live_q:bot"] = f"{1000.0 + 25:.3f}"   # 手动置一个未到期隔离
+    g4 = ConnectorGuard(clock=lambda: 0.0, wall_clock=lambda: 1000.0,
+                        trusted_ids=("naixi",), mem_get=mget, mem_set=mset)
+    g4.check_register(HttpAgentConnector("bot", "刷屏bot", "http://x", token="t"))
+    ok(g4.is_quarantined("bot") is True, "重连(check_register)自动恢复隔离，不能靠断线洗白")
+
+
+async def test_ws_server():
+    print("[12] WsServerConnector 服务端热插拔 + req_id 多路复用")
+    from desktop_core.live_bus import WsServerConnector
+
+    class FakeServerWS:
+        def __init__(self):
+            self.sent = []
+            self.closed = False
+            self.on_send = None
+        async def send_json(self, obj):
+            self.sent.append(obj)
+            if self.on_send:
+                self.on_send(obj)
+        async def close(self):
+            self.closed = True
+
+    # 场景1：正常问答，远端按 req_id 回复被正确路由
+    ws = FakeServerWS()
+    conn = WsServerConnector("rbot", "反向bot", ws, token="t", timeout=2.0)
+    ws.on_send = lambda obj: conn.feed_reply(
+        obj["req_id"], {"text": "反向回复:" + obj["data"].get("text", ""), "emotion": "开心"})
+    res = await conn.handle_danmaku({"text": "hi", "user": "u"})
+    ok(res is not None and "反向回复:hi" in res["text"], "反向连入：req_id 关联的回复被正确路由")
+    ok(conn.endpoint == "ws-in:rbot", "endpoint 标记为 ws-in（治理层判定远程需 token）")
+
+    # 场景2：远端回 None → 不接话
+    ws2 = FakeServerWS()
+    conn2 = WsServerConnector("rbot2", "反向bot2", ws2, token="t", timeout=2.0)
+    ws2.on_send = lambda obj: conn2.feed_reply(obj["req_id"], None)
+    ok(await conn2.handle_cue({"text": "x", "name": "同台"}) is None, "远端回 None → 不接话")
+
+    # 场景3：远端 ok=false → 不接话
+    ws3 = FakeServerWS()
+    conn3 = WsServerConnector("rbot3", "反向bot3", ws3, token="t", timeout=2.0)
+    ws3.on_send = lambda obj: conn3.feed_reply(obj["req_id"], {"ok": False})
+    ok(await conn3.handle_danmaku({"text": "y", "user": "u"}) is None, "远端 ok=false → 不接话")
+
+    # 场景4：远端不回复 → 超时安全返回 None，不卡死
+    ws4 = FakeServerWS()
+    conn4 = WsServerConnector("rbot4", "反向bot4", ws4, token="t", timeout=0.2)
+    ok(await conn4.handle_danmaku({"text": "z", "user": "u"}) is None, "远端不回复 → 超时安全返回 None")
+
+    # 场景5：并发多问乱序回复不串答（req_id 多路复用）
+    ws5 = FakeServerWS()
+    conn5 = WsServerConnector("rbot5", "反向bot5", ws5, token="t", timeout=2.0)
+    pend = []
+    ws5.on_send = lambda obj: pend.append(obj)
+    ta = asyncio.create_task(conn5.handle_danmaku({"text": "AAA", "user": "u"}))
+    tb = asyncio.create_task(conn5.handle_danmaku({"text": "BBB", "user": "u"}))
+    await asyncio.sleep(0.05)                       # 让两请求都发出
+    for obj in reversed(pend):                      # 乱序回复：先回后发的
+        conn5.feed_reply(obj["req_id"], {"text": "R:" + obj["data"]["text"]})
+    ra, rb = await ta, await tb
+    ok(ra["text"] == "R:AAA" and rb["text"] == "R:BBB", "并发多问乱序回复不串答（req_id 隔离）")
+
+    # 场景6：close 取消挂起请求并关闭 socket
+    ws6 = FakeServerWS()
+    conn6 = WsServerConnector("rbot6", "反向bot6", ws6, token="t", timeout=5.0)
+    t6 = asyncio.create_task(conn6.handle_danmaku({"text": "hang", "user": "u"}))
+    await asyncio.sleep(0.02)
+    await conn6.close()
+    r6 = await t6
+    ok(r6 is None and ws6.closed, "close 取消挂起请求并关闭 socket")
+
+
 async def main():
     for t in (test_bus, test_arbiter, test_echo, test_normalize, test_engine_flow,
-              test_evict, test_http_retry, test_ws_connector, test_human_inject, test_guard):
+              test_evict, test_http_retry, test_ws_connector, test_human_inject, test_guard,
+              test_guard_persist, test_ws_server):
         await t()
     print(f"\n结果: {len(PASS)} 通过 / {len(FAIL)} 失败")
     if FAIL:

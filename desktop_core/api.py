@@ -3087,6 +3087,7 @@ def setup_routes(app):
     app.router.add_post("/api/live/connectors/register", api_live_connector_register)
     app.router.add_post("/api/live/connectors/unregister", api_live_connector_unregister)
     app.router.add_post("/api/live/human_speak", api_live_human_speak)
+    app.router.add_get("/api/live/ws_agent", api_live_ws_agent)
 
     # 启动时连接 MCP 服务器
     app.on_startup.append(_on_startup_mcp)
@@ -3286,6 +3287,122 @@ async def api_live_connector_unregister(request):
     agent_id = (body.get("agent_id") or "").strip()
     ok = await engine.unregister_connector(agent_id)
     return web.json_response({"ok": ok, "connectors": engine.list_connectors()})
+
+
+def _live_ws_secret() -> str:
+    """服务端反向连入的鉴权密钥：优先读 SQLite meta(live_ws_secret)，兜底环境变量。
+    未配置返回空串（handler 据此安全拒绝所有反向连接）。"""
+    try:
+        from desktop_core import storage
+        s = storage.meta_get("live_ws_secret", "")
+        if s:
+            return s
+    except Exception:
+        pass
+    return os.environ.get("NAIXI_LIVE_WS_SECRET", "")
+
+
+async def api_live_ws_agent(request):
+    """ws 服务端热插拔端点 —— 远端 agent 主动"反向连入"引擎（引擎作为 ws 服务端）。
+
+    握手协议（全 JSON 文本帧）：
+      1) 客户端连上后先发注册帧：
+         {"type":"register","agent_id":"...","name":"...","token":"...","priority":50}
+      2) 引擎校验：token 必须与服务端密钥一致（constant-time 比较）；agent_id/name 必填。
+         通过则动态注册为 WsServerConnector 上台，回 {"type":"register_ack","ok":true}；
+         失败回 {"type":"register_ack","ok":false,"error":"..."} 并关闭。
+      3) 之后引擎按需下发请求帧：{"type":"request","kind":"danmaku|cue","req_id":"...","data":{...}}
+         客户端处理后回复：{"type":"reply","req_id":"...","data":{"text","emotion","action"}}
+         不想接话则回 data:null 或 {"ok":false}。
+      4) 断开（客户端关闭 / 网络异常）即自动注销下台，实现真正热插拔。
+    """
+    from desktop_core.live_engine import engine
+    from desktop_core.live_bus import WsServerConnector, PRIORITY_GUEST
+
+    ws = web.WebSocketResponse(heartbeat=30.0)
+    await ws.prepare(request)
+
+    # ── 握手：等首帧 register ──
+    agent_id = ""
+    conn = None
+    try:
+        first = await ws.receive(timeout=15.0)
+        if first.type != web.WSMsgType.TEXT:
+            await ws.send_json({"type": "register_ack", "ok": False, "error": "首帧必须为文本 register"})
+            await ws.close()
+            return ws
+        reg = json.loads(first.data)
+        if (reg.get("type") or "") != "register":
+            await ws.send_json({"type": "register_ack", "ok": False, "error": "首帧类型必须为 register"})
+            await ws.close()
+            return ws
+        agent_id = (reg.get("agent_id") or "").strip()
+        name = (reg.get("name") or "").strip()
+        token = reg.get("token") or ""
+        priority = int(reg.get("priority", PRIORITY_GUEST))
+        if not agent_id or not name:
+            await ws.send_json({"type": "register_ack", "ok": False, "error": "缺少 agent_id / name"})
+            await ws.close()
+            return ws
+        # 鉴权：反向连入是不可信面，token 必须与服务端密钥一致
+        secret = _live_ws_secret()
+        if not secret:
+            await ws.send_json({"type": "register_ack", "ok": False,
+                                "error": "服务端未配置反向连入密钥(live_ws_secret)，已拒绝"})
+            await ws.close()
+            return ws
+        if not token or not hmac.compare_digest(str(token), str(secret)):
+            log.warning(f"[ws服务端] 反向连入鉴权失败: {agent_id}")
+            await ws.send_json({"type": "register_ack", "ok": False, "error": "token 校验失败"})
+            await ws.close()
+            return ws
+        # 动态注册上台（token 传给连接器以过治理层"远程需 token"校验）
+        conn = WsServerConnector(agent_id, name, ws, priority=priority, token=token)
+        ok = engine.register_connector(conn)
+        if not ok:
+            await ws.send_json({"type": "register_ack", "ok": False,
+                                "error": "注册被拒（可能被限流隔离或参数非法）"})
+            await ws.close()
+            return ws
+        await ws.send_json({"type": "register_ack", "ok": True})
+        log.info(f"[ws服务端] 远端角色反向连入并上台: {name}({agent_id})")
+
+        # ── 读循环：把远端回复喂回对应请求的 Future ──
+        async for msg in ws:
+            if msg.type == web.WSMsgType.TEXT:
+                try:
+                    m = json.loads(msg.data)
+                except Exception:
+                    continue
+                mtype = m.get("type") or ""
+                if mtype == "reply":
+                    req_id = m.get("req_id") or ""
+                    if req_id:
+                        conn.feed_reply(req_id, m.get("data"))
+                elif mtype == "ping":
+                    try:
+                        await ws.send_json({"type": "pong"})
+                    except Exception:
+                        break
+            elif msg.type in (web.WSMsgType.CLOSE, web.WSMsgType.CLOSING,
+                              web.WSMsgType.CLOSED, web.WSMsgType.ERROR):
+                break
+    except asyncio.TimeoutError:
+        try:
+            await ws.send_json({"type": "register_ack", "ok": False, "error": "握手超时"})
+        except Exception:
+            pass
+    except Exception as e:
+        log.warning(f"[ws服务端] 连接异常: {e}")
+    finally:
+        # 断开即注销下台，实现热插拔
+        if agent_id:
+            try:
+                await engine.unregister_connector(agent_id)
+            except Exception:
+                pass
+            log.info(f"[ws服务端] 远端角色已断开下台: {agent_id}")
+    return ws
 
 async def api_live_start_stream(request):
     """启动 RTMP 推流"""
