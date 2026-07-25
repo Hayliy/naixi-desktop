@@ -6,6 +6,7 @@ use tauri_plugin_shell::ShellExt;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Mutex;
 use std::time::Duration;
+use std::env;
 
 /// 后端 Python sidecar 进程 PID（托盘退出时用它杀掉整棵进程树，避免残留）
 #[derive(Default)]
@@ -137,18 +138,64 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-/// 解析后端脚本路径（开发模式用项目目录，打包后用资源目录）
+/// 从可执行文件所在目录及其父目录、resources 子目录向上查找某个相对子路径。
+/// 用于双击裸 exe（target/release/naixi-desktop.exe）或安装目录下，
+/// 当 resource_dir() 解析不到 sidecar / python-embed 时的兜底，
+/// 保证「双击 exe 即自启后端」在任意放置位置都能成立。
+fn find_from_exe(sub: &[&str]) -> Option<std::path::PathBuf> {
+    let exe = env::current_exe().ok()?;
+    let exe_dir = exe.parent()?;
+    let bases = [
+        exe_dir.to_path_buf(),
+        exe_dir
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| exe_dir.to_path_buf()),
+        exe_dir.join("resources"),
+        exe_dir
+            .parent()
+            .map(|p| p.join("resources"))
+            .unwrap_or_else(|| exe_dir.join("resources")),
+    ];
+    for base in bases.iter() {
+        let mut p = base.clone();
+        for s in sub {
+            p = p.join(s);
+        }
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// 解析后端脚本路径（开发模式用项目目录，打包后用资源目录，并兜底 exe 所在目录）
 fn backend_script(app: &tauri::AppHandle) -> std::path::PathBuf {
     if cfg!(debug_assertions) {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("sidecar")
             .join("naixi_api.py")
     } else {
-        app.path()
+        // 优先资源目录（单层/双层 resources 都试），其次从 exe 所在目录向上查找。
+        // 这样无论双击 target/release 下的裸 exe，还是 NSIS 安装目录，都能定位到 sidecar 脚本。
+        let res = app
+            .path()
             .resource_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("."))
-            .join("sidecar")
-            .join("naixi_api.py")
+            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let candidates = [
+            res.join("sidecar").join("naixi_api.py"),
+            res.join("resources").join("sidecar").join("naixi_api.py"),
+        ];
+        for c in candidates.iter() {
+            if c.exists() {
+                return c.clone();
+            }
+        }
+        if let Some(p) = find_from_exe(&["sidecar", "naixi_api.py"]) {
+            return p;
+        }
+        // 最终回退（若仍不存在，由调用方报中文错误）
+        res.join("sidecar").join("naixi_api.py")
     }
 }
 
@@ -165,7 +212,8 @@ fn port_in_use(addr: &str) -> bool {
 /// 解析 Python 解释器路径：
 /// 1. 环境变量 NAIXI_PYTHON_PATH 优先（调试/自定义）
 /// 2. 打包后优先用自包含的嵌入式 Python（resources/python-embed/python.exe）
-/// 3. 回退系统 PATH 中的 python
+/// 3. 再从 exe 所在目录向上查找嵌入式 Python（双击裸 exe 兜底）
+/// 4. 回退系统 PATH 中的 python
 /// 不硬编码任何用户专属绝对路径，保证换机/换用户仍可启动
 fn resolve_python(app: &tauri::AppHandle) -> String {
     if let Ok(p) = std::env::var("NAIXI_PYTHON_PATH") {
@@ -174,18 +222,24 @@ fn resolve_python(app: &tauri::AppHandle) -> String {
         }
     }
     if !cfg!(debug_assertions) {
+        let mut candidates: Vec<std::path::PathBuf> = Vec::new();
         if let Ok(rd) = app.path().resource_dir() {
-            // 打包态资源可能落在单层 resources/python-embed，也可能因源路径带
+            // 打包态资源可能落在单层 python-embed，也可能因源路径带
             // resources/ 前缀而落在双层 resources/resources/python-embed，两种都兜底查找，
             // 避免找不到嵌入式 Python 而回退系统 python 导致后端起不来、资源库为空。
-            let candidates = [
-                rd.join("python-embed").join("python.exe"),
-                rd.join("resources").join("python-embed").join("python.exe"),
-            ];
-            for embed in candidates.iter() {
-                if embed.exists() {
-                    return embed.to_string_lossy().to_string();
-                }
+            candidates.push(rd.join("python-embed").join("python.exe"));
+            candidates.push(rd.join("resources").join("python-embed").join("python.exe"));
+        }
+        // 从 exe 所在目录向上查找（双击裸 exe / 安装目录兜底）
+        if let Some(p) = find_from_exe(&["python-embed", "python.exe"]) {
+            candidates.push(p);
+        }
+        if let Some(p) = find_from_exe(&["resources", "python-embed", "python.exe"]) {
+            candidates.push(p);
+        }
+        for embed in candidates.iter() {
+            if embed.exists() {
+                return embed.to_string_lossy().to_string();
             }
         }
     }

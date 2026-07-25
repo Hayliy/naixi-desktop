@@ -14,6 +14,16 @@ _session_trust: dict[str, set[str]] = {}
 _active_agent_tasks: dict[str, asyncio.Task] = {}
 _agent_cancel_events: dict[str, asyncio.Event] = {}
 
+import subprocess
+def _win_hide_kwargs():
+    """Windows 下隐藏子进程控制台窗口，避免轮询类接口（系统资源/进程/磁盘）频繁弹窗。"""
+    if os.name == "nt":
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = subprocess.SW_HIDE
+        return {"creationflags": subprocess.CREATE_NO_WINDOW, "startupinfo": si}
+    return {}
+
 # 高危工具列表（执行前需要用户确认）— 以 tools 模块为单一来源，避免两处定义漂移
 from desktop_core.tools import HIGH_RISK_TOOLS
 
@@ -527,7 +537,7 @@ async def api_system_resources(request):
             "Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average | Select-Object -ExpandProperty Average; "
             "Get-CimInstance Win32_OperatingSystem | Select-Object @{N='Total';E={[math]::Round($_.TotalVisibleMemorySize/1024,1)}},@{N='Free';E={[math]::Round($_.FreePhysicalMemory/1024,1)}} | ConvertTo-Json -Compress; "
             "Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | Select-Object DeviceID,@{N='TotalGB';E={[math]::Round($_.Size/1GB,1)}},@{N='FreeGB';E={[math]::Round($_.FreeSpace/1GB,1)}} | ConvertTo-Json -Compress",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **_win_hide_kwargs()
         )
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
         lines = stdout.decode("gbk", errors="ignore").strip().split("\n")
@@ -596,7 +606,7 @@ async def api_system_processes(request):
             "Get-Process | Where-Object { $_.ProcessName -match 'python|node' } | "
             "Select-Object Id, ProcessName, @{N='MemMB';E={[math]::Round($_.WorkingSet64/1MB,1)}}, CPU, StartTime | "
             "ConvertTo-Json -Compress",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **_win_hide_kwargs()
         )
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
         data = json.loads(stdout.decode("gbk", errors="ignore"))
@@ -617,7 +627,7 @@ async def api_system_disks(request):
             "Select-Object DeviceID, @{N='SizeGB';E={[math]::Round($_.Size/1GB,1)}}, "
             "@{N='FreeGB';E={[math]::Round($_.FreeSpace/1GB,1)}}, "
             "@{N='UsedGB';E={[math]::Round(($_.Size-$_.FreeSpace)/1GB,1)}} | ConvertTo-Json -Compress",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **_win_hide_kwargs()
         )
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
         data = json.loads(stdout.decode("gbk", errors="ignore"))
