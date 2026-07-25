@@ -5,6 +5,7 @@
 import asyncio, hashlib, hmac, json, logging, os, re, subprocess, sys, tempfile, time
 from datetime import datetime
 from typing import Optional
+import aiohttp
 from aiohttp import WSMsgType
 
 from desktop_core.live_bus import (
@@ -565,7 +566,7 @@ class LiveEngine:
             stats = {
                 "uptime": round(elapsed),
                 "danmaku": len(self._danmaku_cache),
-                "erros": len(self._agent_errors),
+                "errors": len(self._agent_errors),
                 "last_run": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "room_id": self._room_id,
             }
@@ -573,7 +574,6 @@ class LiveEngine:
             old = meta_get("live_stats")
             if old:
                 try:
-                    import json
                     all_stats = json.loads(old)
                 except: all_stats = []
             else:
@@ -1307,6 +1307,7 @@ class LiveEngine:
 
     async def _vts_connect(self):
         """连接 VTube Studio WebSocket API（含认证 + 自省表情/动作列表）"""
+        import aiohttp
         if self._vts_ws and not self._vts_ws.closed:
             return True
         try:
@@ -1474,27 +1475,64 @@ class LiveEngine:
             pass
 
     def _audio_to_mouth_data(self, audio_bytes: bytes, frame_ms: int = 80) -> list[float]:
-        """分析音频 bytes 生成 MouthOpen 值序列（0.0~1.0）"""
-        import numpy as np, io, wave
-        try:
-            with io.BytesIO(audio_bytes) as buf:
+        """分析音频 bytes 生成 MouthOpen 值序列（0.0~1.0）。
+
+        支持 WAV 与压缩格式（如 Edge-TTS 输出的 MP3）：非 WAV 时先用 ffmpeg
+        转码为标准 WAV 再解析，避免口型序列退化为 [0.0]（此前 MP3 直读 wave
+        模块会抛 "file does not start with RIFF id"，导致口型全平）。
+        """
+        import numpy as np, io, wave, subprocess, tempfile, os
+
+        def _parse(wav_bytes: bytes):
+            with io.BytesIO(wav_bytes) as buf:
                 with wave.open(buf, 'rb') as wf:
                     frames = wf.readframes(wf.getnframes())
                     data = np.frombuffer(frames, dtype=np.int16).astype(np.float32)
                     rate = wf.getframerate()
-            frame_size = int(rate * frame_ms / 1000)
-            mouth_values = []
-            for i in range(0, len(data), frame_size):
-                chunk = data[i:i + frame_size]
-                if len(chunk) == 0:
-                    break
-                rms = float(np.sqrt(np.mean(chunk ** 2)))
-                # 映射到 0.0~1.0（阈值 500~8000）
-                mouth = min(1.0, max(0.0, (rms - 500) / 8000))
-                mouth_values.append(mouth)
-            return mouth_values if mouth_values else [0.0]
-        except:
+            return data, rate
+
+        pcm = None
+        rate = None
+        try:
+            pcm, rate = _parse(audio_bytes)
+        except Exception:
+            # 非 WAV（如 Edge-TTS 的 MP3）：ffmpeg 转码为 WAV 后解析
+            try:
+                tmp_in = os.path.join(tempfile.gettempdir(), f"mouth_in_{int(time.time() * 1000)}")
+                tmp_out = os.path.join(tempfile.gettempdir(), f"mouth_out_{int(time.time() * 1000)}.wav")
+                with open(tmp_in, "wb") as f:
+                    f.write(audio_bytes)
+                subprocess.run(
+                    ["ffmpeg", "-y", "-i", tmp_in, "-ar", "24000", "-ac", "1",
+                     "-sample_fmt", "s16", "-f", "wav", tmp_out],
+                    capture_output=True, timeout=10,
+                )
+                if os.path.exists(tmp_out):
+                    with open(tmp_out, "rb") as f:
+                        pcm, rate = _parse(f.read())
+                try:
+                    os.remove(tmp_in)
+                except Exception:
+                    pass
+                try:
+                    os.remove(tmp_out)
+                except Exception:
+                    pass
+            except Exception:
+                return [0.0]
+        if pcm is None or rate is None:
             return [0.0]
+        frame_size = int(rate * frame_ms / 1000)
+        mouth_values = []
+        for i in range(0, len(pcm), frame_size):
+            chunk = pcm[i:i + frame_size]
+            if len(chunk) == 0:
+                break
+            rms = float(np.sqrt(np.mean(chunk ** 2)))
+            # 映射到 0.0~1.0（阈值 500~8000）
+            mouth = min(1.0, max(0.0, (rms - 500) / 8000))
+            mouth_values.append(mouth)
+        return mouth_values if mouth_values else [0.0]
 
     async def _vts_speak(self, audio_bytes: bytes, text: str = "", emotion: str = "", action: str = ""):
         """TTS 音频播放 + 口型同步（VTS + 桌宠双通道）"""

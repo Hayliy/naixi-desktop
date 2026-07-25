@@ -13,6 +13,12 @@ from desktop_core.storage import _get_conn, DB_PATH
 
 log = logging.getLogger("ops")
 
+# psutil 为可选依赖：打包的 embedded python 未内置，缺失时相关指标降级而非抛 500
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
 # ────────────────────────────────────────────
 # 1. 数据表初始化
 # ────────────────────────────────────────────
@@ -574,9 +580,9 @@ async def _restart_searxng() -> tuple[bool, str]:
 async def _cleanup_disk(threshold: int = 85) -> tuple[bool, str]:
     """磁盘空间清理：当日志/磁盘超过阈值时自动清理"""
     try:
-        import psutil
-        disk = psutil.disk_usage("/")
-        used_pct = disk.percent
+        import shutil
+        disk = shutil.disk_usage("/")
+        used_pct = round(disk.used / disk.total * 100, 1) if disk.total else 0
 
         if used_pct < threshold:
             return True, f"磁盘使用率 {used_pct}%，无需清理"
@@ -628,25 +634,24 @@ async def try_self_heal(trigger_type: str = "auto") -> dict:
     recovered = False
 
     try:
-        import psutil
+        if psutil is not None:
+            # 1. 检查后端自身
+            self_proc = psutil.Process(os.getpid())
+            mem_mb = round(self_proc.memory_info().rss / (1024**2), 1)
+            cpu_pct = self_proc.cpu_percent(interval=0.2)
 
-        # 1. 检查后端自身
-        self_proc = psutil.Process(os.getpid())
-        mem_mb = round(self_proc.memory_info().rss / (1024**2), 1)
-        cpu_pct = self_proc.cpu_percent(interval=0.2)
-
-        if cpu_pct > 95 or mem_mb > 500:
-            # 资源占用过高，尝试恢复
-            ok, msg = await _restart_backend()
-            if ok:
-                result_data["action"] = "后端资源回收"
-                result_data["message"] = msg
-                recovered = True
-                add_changelog("自愈", "后端进程", msg)
-            else:
-                result_data["result"] = "failed"
-                result_data["message"] = msg
-                add_incident("critical", "自愈失败", "后端自愈失败", msg)
+            if cpu_pct > 95 or mem_mb > 500:
+                # 资源占用过高，尝试恢复
+                ok, msg = await _restart_backend()
+                if ok:
+                    result_data["action"] = "后端资源回收"
+                    result_data["message"] = msg
+                    recovered = True
+                    add_changelog("自愈", "后端进程", msg)
+                else:
+                    result_data["result"] = "failed"
+                    result_data["message"] = msg
+                    add_incident("critical", "自愈失败", "后端自愈失败", msg)
 
         # 2. 检查 SearXNG
         try:
@@ -695,7 +700,6 @@ async def run_inspection() -> dict:
     执行一次全面巡检，生成结构化报告
     检查维度：系统资源、服务连通性、提供商、数据库、错误率、安全
     """
-    import psutil
     from desktop_core.storage import meta_get
 
     start_ts = time.time()
@@ -704,25 +708,28 @@ async def run_inspection() -> dict:
     summary = {}
 
     # ── 1. 系统资源 ──
-    try:
-        sys_cpu = psutil.cpu_percent(interval=0.5)
-        sys_mem = psutil.virtual_memory().percent
-        sys_disk = psutil.disk_usage("/").percent
-        details["system"] = {
-            "cpu": sys_cpu,
-            "memory": sys_mem,
-            "disk": sys_disk,
-        }
-        if sys_cpu > 90:
-            issues.append({"severity": "warning", "item": "CPU 使用率过高", "value": f"{sys_cpu}%"})
-        if sys_mem > 90:
-            issues.append({"severity": "warning", "item": "内存使用率过高", "value": f"{sys_mem}%"})
-        if sys_disk > 90:
-            issues.append({"severity": "critical", "item": "磁盘空间不足", "value": f"{sys_disk}%"})
-        elif sys_disk > 80:
-            issues.append({"severity": "warning", "item": "磁盘空间即将不足", "value": f"{sys_disk}%"})
-    except Exception as e:
-        issues.append({"severity": "error", "item": "系统资源检测失败", "value": str(e)})
+    if psutil is not None:
+        try:
+            sys_cpu = psutil.cpu_percent(interval=0.5)
+            sys_mem = psutil.virtual_memory().percent
+            sys_disk = psutil.disk_usage("/").percent
+            details["system"] = {
+                "cpu": sys_cpu,
+                "memory": sys_mem,
+                "disk": sys_disk,
+            }
+            if sys_cpu > 90:
+                issues.append({"severity": "warning", "item": "CPU 使用率过高", "value": f"{sys_cpu}%"})
+            if sys_mem > 90:
+                issues.append({"severity": "warning", "item": "内存使用率过高", "value": f"{sys_mem}%"})
+            if sys_disk > 90:
+                issues.append({"severity": "critical", "item": "磁盘空间不足", "value": f"{sys_disk}%"})
+            elif sys_disk > 80:
+                issues.append({"severity": "warning", "item": "磁盘空间即将不足", "value": f"{sys_disk}%"})
+        except Exception as e:
+            issues.append({"severity": "error", "item": "系统资源检测失败", "value": str(e)})
+    else:
+        details["system"] = {"cpu": None, "memory": None, "disk": None, "note": "未安装 psutil，系统指标不可用"}
 
     # ── 2. 服务连通性 ──
     services = {}
@@ -797,22 +804,25 @@ async def run_inspection() -> dict:
         pass
 
     # ── 6. 安全检查 ──
-    try:
-        # 简单安全扫描：检查是否有异常端口监听
-        conns = psutil.net_connections()
-        unexpected_ports = []
-        for c in conns:
-            if c.status == "LISTEN" and c.laddr and c.laddr.port not in (9845, 8899):
-                unexpected_ports.append(c.laddr.port)
-        if unexpected_ports:
-            issues.append({
-                "severity": "info",
-                "item": "非常规端口监听",
-                "value": f"发现额外监听端口：{unexpected_ports[:5]}",
-            })
-        details["security"] = {"listening_ports": [c.laddr.port for c in conns if c.status == "LISTEN" and c.laddr]}
-    except:
-        pass
+    if psutil is not None:
+        try:
+            # 简单安全扫描：检查是否有异常端口监听
+            conns = psutil.net_connections()
+            unexpected_ports = []
+            for c in conns:
+                if c.status == "LISTEN" and c.laddr and c.laddr.port not in (9845, 8899):
+                    unexpected_ports.append(c.laddr.port)
+            if unexpected_ports:
+                issues.append({
+                    "severity": "info",
+                    "item": "非常规端口监听",
+                    "value": f"发现额外监听端口：{unexpected_ports[:5]}",
+                })
+            details["security"] = {"listening_ports": [c.laddr.port for c in conns if c.status == "LISTEN" and c.laddr]}
+        except:
+            details["security"] = {}
+    else:
+        details["security"] = {}
 
     # ── 汇总 ──
     issue_count = len(issues)
@@ -952,7 +962,6 @@ async def run_maintenance(actions: list[str] | None = None) -> dict:
 
 async def get_ops_dashboard() -> dict:
     """获取运维总览数据（供前端展示）"""
-    import psutil
 
     # 后端自身状态
     self_pid = os.getpid()
@@ -1047,6 +1056,7 @@ async def get_ops_dashboard() -> dict:
     return {
         "health_score": score,
         "breakdown": breakdown,
+        "psutil_available": psutil is not None,
         "uptime_24h": uptime_24h,
         "uptime_seconds": uptime_seconds,
         "backend": {

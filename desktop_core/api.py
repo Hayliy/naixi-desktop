@@ -634,7 +634,11 @@ async def api_desktop_status(request):
 
 async def api_stats(request):
     """奶昔桌面端运维数据：后端自身状态 + 服务 + 数据库 + 提供商"""
-    import psutil, os as _os, json, time as _time, asyncio
+    import os as _os, json, time as _time, asyncio
+    try:
+        import psutil
+    except ImportError:
+        psutil = None
     from desktop_core.storage import meta_get, _get_conn
     
     self_pid = _os.getpid()
@@ -4061,7 +4065,16 @@ async def api_config_trust(request):
 
 async def api_logs(request):
     """返回后端日志文件内容（过滤掉 HTTP 访问日志）"""
-    log_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs", "naixi_desktop.log")
+    # 优先从已挂载的 RotatingFileHandler 取得真实日志路径（与后端写日志处完全一致，
+    # 不受 api.py 在不同形态下的加载位置影响）
+    log_path = None
+    for h in logging.getLogger().handlers:
+        bf = getattr(h, "baseFilename", None)
+        if bf and bf.endswith("naixi_desktop.log"):
+            log_path = bf
+            break
+    if not log_path:
+        log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "logs", "naixi_desktop.log")
     try:
         with open(log_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
