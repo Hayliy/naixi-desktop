@@ -112,6 +112,9 @@ class LiveEngine:
         self._vts_authenticated: bool = False
         self._vts_host: str = "127.0.0.1"
         self._vts_port: int = 8001
+        self._vts_expressions: list = []   # VTS 自省到的表情文件名列表
+        self._vts_motions: list = []       # VTS 自省到的动作热键名列表
+        self._vts_req_seq: int = 0          # VTS 请求自增序号（requestID）
         # 桌宠 WebSocket（前端 Live2D 窗口）
         self._live2d_ws: Optional[aiohttp.WebSocketResponse] = None
         # 桌宠子进程（PySide6 独立窗口）
@@ -1303,29 +1306,150 @@ class LiveEngine:
     # ── VTube Studio 控制（WebSocket API） ───────────────────────────────
 
     async def _vts_connect(self):
-        """连接 VTube Studio WebSocket API"""
+        """连接 VTube Studio WebSocket API（含认证 + 自省表情/动作列表）"""
         if self._vts_ws and not self._vts_ws.closed:
             return True
         try:
             ws = await aiohttp.ClientSession().ws_connect(f"ws://{self._vts_host}:{self._vts_port}", heartbeat=10)
             self._vts_ws = ws
-            # 认证
-            auth_req = json.dumps({
-                "apiName": "VTubeStudioPublicAPI", "apiVersion": "1.0",
-                "messageType": "AuthenticationRequest",
-                "data": {"pluginName": "奶昔直播", "pluginDeveloper": "Naixi", "authenticationToken": ""}
-            })
-            await ws.send_str(auth_req)
-            resp = json.loads(await ws.receive_str())
+            # 完整认证握手：先取临时 token，再带 token 认证（VTS 1.0 标准流程）
+            token = ""
+            try:
+                await self._vts_request("AuthenticationTokenRequest",
+                                        {"pluginName": "奶昔直播", "pluginDeveloper": "Naixi"})
+                resp = json.loads(await asyncio.wait_for(ws.receive_str(), timeout=5))
+                token = resp.get("data", {}).get("authenticationToken", "")
+            except Exception as e:
+                log.info(f"[VTS] 获取临时 token 失败（尝试无 token 认证）: {e}")
+            await self._vts_request("AuthenticationRequest",
+                                    {"pluginName": "奶昔直播", "pluginDeveloper": "Naixi", "authenticationToken": token})
+            resp = json.loads(await asyncio.wait_for(ws.receive_str(), timeout=5))
             if resp.get("data", {}).get("authenticated"):
                 self._vts_authenticated = True
                 log.info("[VTS] 已连接并认证")
-                return True
-            log.info("[VTS] 已连接（未认证，需在 VTS 中点击确认）")
+            else:
+                log.info("[VTS] 已连接（未认证，需在 VTS 中点击确认授权）")
+            # 自省可用表情/动作列表，供情绪/动作模糊匹配
+            await self._vts_introspect()
+            # 启动后台读取循环，消费 VTS 响应，避免未读消息堆积
+            asyncio.create_task(self._vts_read_loop())
             return True
         except Exception as e:
             log.warning(f"[VTS] 连接失败: {e}")
             return False
+
+    async def _vts_request(self, message_type: str, data: dict):
+        """向 VTS 发送一条请求（不等待响应，由后台读取循环消费）"""
+        if not self._vts_ws or self._vts_ws.closed:
+            return
+        try:
+            self._vts_req_seq += 1
+            req = json.dumps({
+                "apiName": "VTubeStudioPublicAPI", "apiVersion": "1.0",
+                "requestID": f"naixi_{self._vts_req_seq}", "messageType": message_type, "data": data
+            })
+            await self._vts_ws.send_str(req)
+        except Exception as e:
+            log.info(f"[VTS] 发送 {message_type} 失败: {e}")
+
+    async def _vts_read_loop(self):
+        """后台消费 VTS 响应，避免未读消息堆积导致连接异常"""
+        try:
+            while self._vts_ws and not self._vts_ws.closed:
+                msg = await self._vts_ws.receive()
+                if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                    break
+        except Exception:
+            pass
+        self._vts_authenticated = False
+        log.info("[VTS] 读取循环结束，连接已断开")
+
+    async def _vts_introspect(self):
+        """自省 VTS 模型可用表情(ExpressionStateRequest)/动作热键(HotkeysInCurrentModelRequest)"""
+        self._vts_expressions = []
+        self._vts_motions = []
+        # 1) 表情列表
+        try:
+            await self._vts_request("ExpressionStateRequest", {})
+            resp = json.loads(await asyncio.wait_for(self._vts_ws.receive_str(), timeout=5))
+            exprs = resp.get("data", {}).get("expressions", []) or []
+            # 每个表情含 file（完整文件名，如 xxx.exp3.json）与 name
+            self._vts_expressions = [e.get("file", e.get("name", "")) for e in exprs if isinstance(e, dict)]
+        except Exception as e:
+            log.info(f"[VTS] 读取表情列表失败: {e}")
+        # 2) 动作热键（type=TriggerAnimation 的热键即为可触发的动作）
+        try:
+            await self._vts_request("HotkeysInCurrentModelRequest", {})
+            resp = json.loads(await asyncio.wait_for(self._vts_ws.receive_str(), timeout=5))
+            hotkeys = resp.get("data", {}).get("availableHotkeys", []) or []
+            self._vts_motions = [
+                h.get("name", "") for h in hotkeys
+                if isinstance(h, dict) and h.get("type") == "TriggerAnimation" and h.get("name")
+            ]
+        except Exception as e:
+            log.info(f"[VTS] 读取动作热键失败: {e}")
+        if self._vts_expressions or self._vts_motions:
+            log.info(f"[VTS] 自省完成：表情 {len(self._vts_expressions)} 个，动作热键 {len(self._vts_motions)} 个")
+
+    # 情绪/动作关键词 → VTS 表情/动作文件名子串（中英对照，覆盖常见命名）
+    _VTS_EMOTION_MAP = {
+        "开心": ["happy", "joy", "smile"],
+        "欢迎": ["welcome", "hello", "wave", "happy"],
+        "惊讶": ["surprise", "shock"],
+        "悲伤": ["sad", "cry", "tear"],
+        "害羞": ["shy", "blush", "embarrass"],
+        "生气": ["angry", "mad", "rage"],
+        "卖萌": ["joy", "cute", "love", "happy"],
+        "无奈": ["neutral", "tired", "sigh"],
+    }
+    _VTS_ACTION_MAP = {
+        "wave": ["wave"], "bye": ["bye", "wave"], "nod": ["nod", "bow"],
+        "think": ["think", "ponder"], "surprise": ["surprise"],
+        "shake": ["shake", "no"], "kime": ["kime", "pose"], "sing": ["sing", "song"],
+        "angry": ["angry"], "cry": ["cry", "tear"], "smile": ["smile", "happy"],
+        "sad": ["sad"],
+    }
+
+    def _vts_match(self, keyword: str, candidates: list) -> str:
+        """在候选文件名（VTS 表情/动作）中按关键词模糊匹配，命中返回文件名"""
+        if not keyword or not candidates:
+            return ""
+        subs = self._VTS_EMOTION_MAP.get(keyword) or self._VTS_ACTION_MAP.get(keyword) or [keyword.lower()]
+        for sub in subs:
+            sub = sub.lower()
+            for c in candidates:
+                cname = c if isinstance(c, str) else str(c)
+                if sub in cname.lower():
+                    return c
+        return ""
+
+    async def _vts_send_expression(self, emotion: str):
+        """按情绪触发 VTS 表情（ExpressionActivationRequest，active=true）"""
+        if not self._vts_ws or self._vts_ws.closed or not self._vts_authenticated:
+            return
+        name = self._vts_match(emotion, self._vts_expressions)
+        if not name:
+            return
+        try:
+            await self._vts_request("ExpressionActivationRequest",
+                                    {"expressionFile": name, "fadeTime": 0.5, "active": True})
+            log.info(f"[VTS] 表情触发: {emotion} → {name}")
+        except Exception as e:
+            log.info(f"[VTS] 表情触发失败: {e}")
+
+    async def _vts_send_motion(self, action: str):
+        """按动作标签触发 VTS 动作（HotkeyTriggerRequest，匹配 TriggerAnimation 热键名）"""
+        if not self._vts_ws or self._vts_ws.closed or not self._vts_authenticated:
+            return
+        name = self._vts_match(action, self._vts_motions)
+        if not name:
+            return
+        try:
+            # VTS 允许直接用热键名称（不区分大小写）作为 hotkeyID 触发
+            await self._vts_request("HotkeyTriggerRequest", {"hotkeyID": name})
+            log.info(f"[VTS] 动作触发: {action} → 热键[{name}]")
+        except Exception as e:
+            log.info(f"[VTS] 动作触发失败: {e}")
 
     async def _vts_disconnect(self):
         """断开 VTube Studio 连接"""
@@ -1386,6 +1510,11 @@ class LiveEngine:
                 })
             except:
                 pass
+        # VTS 表情/动作触发（与桌宠内渲共用同一份 emotion/action）
+        if emotion:
+            await self._vts_send_expression(emotion)
+        if action:
+            await self._vts_send_motion(action)
         # 逐帧发送口型参数到 VTube Studio（80ms/帧）
         frame_interval = 0.08
         for mouth in mouth_data:
