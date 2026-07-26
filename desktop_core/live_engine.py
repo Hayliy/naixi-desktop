@@ -423,6 +423,8 @@ class LiveEngine:
         sample_rate = 16000
         rec = KaldiRecognizer(model, sample_rate)
         rec.SetWords(False)
+        # 捕获主线程事件循环，供 sounddevice 回调线程安全地把任务丢回
+        loop = asyncio.get_running_loop()
 
         def _callback(indata, frames, time_info, status):
             if status:
@@ -438,7 +440,7 @@ class LiveEngine:
                         # 跨线程安全地把任务丢回事件循环
                         asyncio.run_coroutine_threadsafe(
                             self.inject_human_speech("human", text, emotion="开心", action="wave"),
-                            asyncio.get_event_loop())
+                            loop)
                 else:
                     # 部分结果（可选）：可用于实时字幕，这里不处理
                     pass
