@@ -429,7 +429,7 @@ class LiveEngine:
             cfg = {
                 "access_key_id": _real(kwargs.get("access_key_id"), base.get("access_key_id", self._access_key_id)),
                 "access_key_secret": _real(kwargs.get("access_key_secret"), base.get("access_key_secret", self._access_key_secret)),
-                "app_id": _real(kwargs.get("app_id"), base.get("app_id", self._app_id)),
+                "app_id": (kwargs.get("app_id") if (kwargs.get("app_id") and str(kwargs.get("app_id")).isdigit() and "****" not in str(kwargs.get("app_id"))) else base.get("app_id", self._app_id)),
                 "room_id": kwargs.get("room_id", base.get("room_id", self._room_id)),
                 "code": _real(kwargs.get("code"), base.get("code", self._code)),
                 "rtmp_url": kwargs.get("rtmp_url", base.get("rtmp_url", self._rtmp_url)),

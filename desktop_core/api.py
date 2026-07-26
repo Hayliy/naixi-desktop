@@ -3309,8 +3309,9 @@ async def api_live_connect(request):
         engine._access_key_id = body["access_key_id"]
     if body.get("access_key_secret") and "****" not in str(body.get("access_key_secret","")):
         engine._access_key_secret = body["access_key_secret"]
-    if body.get("app_id") and "****" not in str(body.get("app_id","")):
-        engine._app_id = body["app_id"]
+    _app_id = body.get("app_id")
+    if _app_id and str(_app_id).isdigit() and "****" not in str(_app_id):
+        engine._app_id = _app_id
     if body.get("code") and "****" not in str(body.get("code","")):
         engine._code = body["code"]
     if body.get("room_id"):
@@ -3335,8 +3336,9 @@ async def api_live_start(request):
         engine._access_key_id = body["access_key_id"]
     if body.get("access_key_secret") and "****" not in str(body.get("access_key_secret","")):
         engine._access_key_secret = body["access_key_secret"]
-    if body.get("app_id") and "****" not in str(body.get("app_id","")):
-        engine._app_id = body["app_id"]
+    _app_id = body.get("app_id")
+    if _app_id and str(_app_id).isdigit() and "****" not in str(_app_id):
+        engine._app_id = _app_id
     if body.get("code") and "****" not in str(body.get("code","")):
         engine._code = body["code"]
     if body.get("room_id"): engine._room_id = body["room_id"]
