@@ -12,7 +12,7 @@ from desktop_core.live_bus import (
     LiveBus, SpeechArbiter, AgentConnector, NaixiConnector, HttpAgentConnector,
     WsAgentConnector, WsServerConnector, HumanConnector, ConnectorGuard,
     make_speech_request, normalize_utterance, should_react_to_cue,
-    PRIORITY_HOST, PRIORITY_GUEST,
+    PRIORITY_HOST, PRIORITY_GUEST, MAX_CUE_DEPTH,
 )
 
 DEFAULT_LIVE_PROMPT = """你是奶昔，一个虚拟主播。你正在B站直播，以下是你的设定：
@@ -118,6 +118,13 @@ class LiveEngine:
         self._vts_req_seq: int = 0          # VTS 请求自增序号（requestID）
         self._vts_models: dict = {}         # modelID -> modelName（VTS 已加载模型）
         self._vts_current_model: str = ""   # 当前激活模型 GUID（用于 model_id 未绑定时回退）
+
+        # 层3 真人语音闭环（麦克风 ASR → 自动上麦）
+        self._human_voice_task: Optional[asyncio.Task] = None   # 麦克风采集协程
+        self._asr_model: str = "vosk-model-small-cn-0.22"    # 默认中文小模型（42MB，离线）
+        self._asr_device: str = ""                            # 留空=系统默认输入设备
+        self._asr_status: dict = {"enabled": False, "state": "idle",
+                                 "model": "", "error": ""}     # 前端轮询的状态
         self._model_bindings: dict = {}     # agent_id -> modelID（持久化，重启后恢复绑定）
         # 桌宠 WebSocket（前端 Live2D 窗口）
         self._live2d_ws: Optional[aiohttp.WebSocketResponse] = None
@@ -288,6 +295,172 @@ class LiveEngine:
         await self._emit(connector, utt, source_id=agent_id, cue_depth=0)
         return True
 
+    # ── 层3 真人语音闭环（麦克风 ASR → 自动上麦） ─────────────────────────
+
+    def _asr_model_dir(self) -> str:
+        """语音识别模型本地目录（data/vosk_models/<模型名>）。"""
+        return os.path.join(DATA_DIR, "vosk_models", self._asr_model)
+
+    def human_voice_status(self) -> dict:
+        """返回真人语音识别状态，供前端轮询展示（是否开启/模型是否就绪/报错）。"""
+        st = dict(self._asr_status)
+        st["model_ready"] = os.path.isdir(self._asr_model_dir())
+        st["model"] = self._asr_model
+        st["running"] = self._human_voice_task is not None and not self._human_voice_task.done()
+        return st
+
+    def _ensure_human_connector(self) -> bool:
+        """确保"human"人类副播连接器存在（真人语音/手动上麦都依赖它）。不存在则自动注册。"""
+        if "human" in self._connectors:
+            return True
+        try:
+            human = HumanConnector()
+            self.register_connector(human)
+            log.info("[真人语音] 已自动注册人类副播连接器")
+            return True
+        except Exception as e:
+            log.warning(f"[真人语音] 注册人类副播失败: {e}")
+            return False
+
+    async def start_human_voice(self, device: str = "") -> dict:
+        """开启真人语音闭环：麦克风采集 → VAD → ASR 转文字 → 自动当 human_speak 上麦。
+
+        依赖：vosk（已装）+ 中文模型（首次自动下载，需联网）。返回状态字典。
+        device 留空=系统默认输入设备；也可传设备名/索引。
+        """
+        if self._human_voice_task is not None and not self._human_voice_task.done():
+            return {"ok": False, "msg": "真人语音已在运行"}
+        if device:
+            self._asr_device = device
+        # 确保人类副播连接器存在
+        if not self._ensure_human_connector():
+            self._asr_status = {"enabled": False, "state": "error",
+                                "model": self._asr_model, "error": "人类副播注册失败"}
+            return {"ok": False, "msg": "人类副播注册失败"}
+        # 模型未就绪则先下载（用户已授权下载模型）
+        model_dir = self._asr_model_dir()
+        if not os.path.isdir(model_dir):
+            self._asr_status = {"enabled": True, "state": "downloading",
+                                "model": self._asr_model, "error": ""}
+            try:
+                await self._download_asr_model(self._asr_model)
+            except Exception as e:
+                self._asr_status = {"enabled": False, "state": "error",
+                                    "model": self._asr_model, "error": f"模型下载失败: {e}"}
+                return {"ok": False, "msg": f"模型下载失败: {e}"}
+        self._asr_status = {"enabled": True, "state": "listening",
+                            "model": self._asr_model, "error": ""}
+        self._human_voice_task = asyncio.create_task(
+            self._agent_human_voice(model_dir, self._asr_device))
+        log.info("[真人语音] 已开启（模型=%s，设备=%s）" % (self._asr_model, self._asr_device or "默认"))
+        return {"ok": True, "msg": "真人语音已开启"}
+
+    async def stop_human_voice(self) -> dict:
+        """关闭真人语音闭环，取消麦克风采集协程。"""
+        if self._human_voice_task is None or self._human_voice_task.done():
+            self._asr_status = {"enabled": False, "state": "idle",
+                                "model": self._asr_model, "error": ""}
+            return {"ok": True, "msg": "真人语音本就未运行"}
+        self._human_voice_task.cancel()
+        try:
+            await self._human_voice_task
+        except (asyncio.CancelledError, Exception):
+            pass
+        self._human_voice_task = None
+        self._asr_status = {"enabled": False, "state": "idle",
+                            "model": self._asr_model, "error": ""}
+        log.info("[真人语音] 已关闭")
+        return {"ok": True, "msg": "真人语音已关闭"}
+
+    async def _download_asr_model(self, model_name: str):
+        """下载并解压 vosk 语音识别模型到 data/vosk_models/（仅首次需要，用户已授权）。"""
+        import urllib.request, zipfile
+        base = os.path.join(DATA_DIR, "vosk_models")
+        os.makedirs(base, exist_ok=True)
+        url = f"https://alphacephei.com/vosk/models/{model_name}.zip"
+        dst = os.path.join(base, f"{model_name}.zip")
+        log.info(f"[真人语音] 下载语音模型 {model_name} ...")
+        urllib.request.urlretrieve(url, dst)
+        with zipfile.ZipFile(dst) as z:
+            z.extractall(base)
+        try:
+            os.remove(dst)
+        except Exception:
+            pass
+        log.info(f"[真人语音] 模型 {model_name} 已就绪")
+
+    async def _agent_human_voice(self, model_dir: str, device: str):
+        """麦克风采集 → VAD(端点检测) → vosk ASR → 转写文本自动上麦为人类副播发言。
+
+        流式识别：vosk 的 KaldiRecognizer 自带端点检测，部分结果丢弃、最终结果才上麦，
+        避免半句话打断。识别到的整句经 inject_human_speech 注入舞台，行为与手动输入一致
+        （其它 agent 会接话、被点名模型会做被搭话反应）。
+        """
+        try:
+            import sounddevice as sd
+            from vosk import Model, KaldiRecognizer
+        except Exception as e:
+            self._asr_status = {"enabled": False, "state": "error",
+                                "model": self._asr_model, "error": f"依赖缺失: {e}"}
+            log.warning(f"[真人语音] ASR 依赖缺失: {e}")
+            return
+        try:
+            model = Model(model_dir)
+        except Exception as e:
+            self._asr_status = {"enabled": False, "state": "error",
+                                "model": self._asr_model, "error": f"模型加载失败: {e}"}
+            log.warning(f"[真人语音] 模型加载失败: {e}")
+            return
+
+        # 解析输入设备（名称/索引），默认系统输入
+        dev_idx = None
+        if device:
+            try:
+                dev_idx = int(device)
+            except ValueError:
+                dev_idx = device  # 传名称
+
+        sample_rate = 16000
+        rec = KaldiRecognizer(model, sample_rate)
+        rec.SetWords(False)
+
+        def _callback(indata, frames, time_info, status):
+            if status:
+                log.warning(f"[真人语音] 音频状态: {status}")
+            try:
+                data = bytes(indata)
+                # 部分结果忽略；仅最终结果（句末）触发上麦
+                if rec.AcceptWaveform(data):
+                    res = json.loads(rec.Result())
+                    text = (res.get("text") or "").strip()
+                    if text:
+                        log.info(f"[真人语音] 识别到: {text}")
+                        # 跨线程安全地把任务丢回事件循环
+                        asyncio.run_coroutine_threadsafe(
+                            self.inject_human_speech("human", text, emotion="开心", action="wave"),
+                            asyncio.get_event_loop())
+                else:
+                    # 部分结果（可选）：可用于实时字幕，这里不处理
+                    pass
+            except Exception as e:
+                log.warning(f"[真人语音] 识别异常: {e}")
+
+        log.info("[真人语音] 开始监听麦克风（说话即可自动上麦）")
+        try:
+            with sd.RawInputStream(samplerate=sample_rate, blocksize=4000,
+                                   device=dev_idx, dtype="int16",
+                                   channels=1, callback=_callback):
+                while True:
+                    await asyncio.sleep(0.2)
+        except asyncio.CancelledError:
+            log.info("[真人语音] 监听被取消")
+        except Exception as e:
+            self._asr_status = {"enabled": False, "state": "error",
+                                "model": self._asr_model, "error": f"麦克风打开失败: {e}"}
+            log.warning(f"[真人语音] 麦克风打开失败: {e}")
+        finally:
+            self._human_voice_task = None
+
     def list_connectors(self) -> list:
         """列出当前在台的角色（供前端/API 展示），含传输方式与治理状态。"""
         out = []
@@ -343,15 +516,25 @@ class LiveEngine:
             "cue_depth": req.get("cue_depth", 0),
             "model_key": req.get("model_key", "__current__"),
             "human_controlled": req.get("human_controlled", False),
+            "target_id": req.get("target_id", ""),  # 层1：这句话对着谁说
         })
+        # 层2 肢体反馈：某模型开麦 → 台上其它模型做"倾听"姿态（不抢麦、不 TTS）
+        try:
+            await self._vts_ambient_to_others("listen", req.get("agent_id", ""))
+        except Exception as e:
+            log.warning(f"[舞台] 倾听姿态广播失败: {e}")
 
-    async def _emit(self, connector: AgentConnector, utt: dict, *, source_id: str = "", cue_depth: int = 0):
+    async def _emit(self, connector: AgentConnector, utt: dict, *,
+                    source_id: str = "", cue_depth: int = 0, target_id: str = ""):
         """一个角色产出一句发言 → 占麦仲裁 → 抢到则入语音管道，否则排队/丢弃。
 
         真人独占模型(human_controlled)：奶昔不合成/不写 VTS，仅把这句当作舞台提示
         广播给其它角色，让其它 agent 能在各自的模型上接话（真人自己在真机/真模型上说话）。
+
+        target_id：层1 语音对话指向增强——这句话对着谁说（被点名角色会做"被搭话"反应）。
         """
-        req = make_speech_request(connector, utt, source_id=source_id, cue_depth=cue_depth)
+        req = make_speech_request(connector, utt, source_id=source_id,
+                                  cue_depth=cue_depth, target_id=target_id)
         if getattr(connector, "human_controlled", False):
             await self._broadcast_human_cue(req)
             return
@@ -368,11 +551,21 @@ class LiveEngine:
             "source_id": req.get("source_id", req.get("agent_id", "human")),
             "agent_id": req.get("agent_id", "human"),
             "cue_depth": req.get("cue_depth", 0) + 1,
+            "target_id": req.get("target_id", ""),  # 层1：真人这句话若点名某角色
         }
         try:
             await self._broadcast_cue(cue)
         except Exception as e:
             log.warning(f"[舞台] 广播真人提示失败: {e}")
+
+    def _looks_like_question(self, text: str) -> bool:
+        """粗略判断一句话是否像提问（用于层1 对话回合增强，驱动 A↔B 你来我往）。"""
+        if not text:
+            return False
+        t = text.rstrip()
+        if t.endswith(("？", "?", "吗", "呢", "啥", "咋")):
+            return True
+        return any(w in text for w in ("谁", "什么", "为什么", "怎么", "干嘛", "几", "多少"))
 
     def _match_mention(self, text: str):
         """解析 @路由：弹幕含 @角色名/agent_id 时只投给该角色。返回 (目标连接器, 去掉@后的文本)。"""
@@ -406,22 +599,45 @@ class LiveEngine:
                 await self._emit(connector, utt, source_id=connector.agent_id, cue_depth=0)
 
     async def _broadcast_cue(self, cue: dict):
-        """一句话说完后，广播舞台提示给"其他"角色（D4 回声防护：过滤自己+限深+概率衰减）。"""
-        if not should_react_to_cue(cue):
+        """一句话说完后，广播舞台提示给"其他"角色（D4 回声防护 + 层1 指向增强）。
+
+        - 普通角色：按概率衰减（should_react_to_cue）接话，防无限对喷。
+        - 被点名角色(target_id==该角色 agent_id)：强制接话（做"被搭话"反应），但仍受链深上限
+          约束，形成 A→B 的对话回合而不失控。
+        """
+        target_id = cue.get("target_id", "")
+        if not should_react_to_cue(cue) and not target_id:
+            # 没有任何角色被点名，且原始链已衰减到不反应 → 整轮不接话
             return
         for connector in list(self._connectors.values()):
             if connector.agent_id == cue.get("source_id"):
                 continue  # 不回应自己引发的链
             if not self._guard.allow_emit(connector.agent_id):
                 continue  # 限流隔离中，本轮不接话
+            addressed = bool(target_id) and connector.agent_id == target_id
+            if addressed:
+                # 被点名强制接话，但链深到顶则停（防 A↔B 无限对喷）
+                if cue.get("cue_depth", 0) >= MAX_CUE_DEPTH:
+                    continue
+            else:
+                if not should_react_to_cue(cue):
+                    continue
+            c = dict(cue)
+            c["addressed"] = addressed  # 告知被点名角色：这是"被搭话"
             try:
-                utt = normalize_utterance(await connector.handle_cue(cue))
+                utt = normalize_utterance(await connector.handle_cue(c))
             except Exception as e:
                 log.warning(f"[舞台] {connector.name} 处理舞台提示异常: {e}")
                 utt = None
             if utt:
+                tid = utt.get("target_id", "")
+                # 层1 回合增强：若这句是提问且未显式指定被搭话对象，则把上一位发言者设为目标，
+                # 实现"我问你→你回问→我再答"的自然对话。
+                if not tid and self._looks_like_question(utt.get("text", "")) and cue.get("source_id"):
+                    tid = cue.get("source_id")
                 # 反应句继承 source_id（仍算同一条链），链深 +1
-                await self._emit(connector, utt, source_id=cue.get("source_id", ""), cue_depth=cue.get("cue_depth", 1))
+                await self._emit(connector, utt, source_id=cue.get("source_id", ""),
+                                 cue_depth=cue.get("cue_depth", 1), target_id=tid)
 
     async def _after_speak(self, action: dict, spoken: bool):
         """一句发言处理完：广播舞台提示给其他角色，并释放麦位、放行下一句。"""
@@ -433,11 +649,17 @@ class LiveEngine:
                 "source_id": action.get("source_id", action.get("agent_id", "naixi")),
                 "agent_id": action.get("agent_id", "naixi"),
                 "cue_depth": action.get("cue_depth", 0) + 1,
+                "target_id": action.get("target_id", ""),  # 层1：把"这句话对着谁说"带进舞台提示
             }
             try:
                 await self._broadcast_cue(cue)
             except Exception as e:
                 log.warning(f"[舞台] 广播舞台提示失败: {e}")
+            # 层2 肢体反馈：某模型说完 → 其它模型做"点头/鼓掌"反应姿态
+            try:
+                await self._vts_ambient_to_others("react", action.get("agent_id", ""))
+            except Exception as e:
+                log.warning(f"[舞台] 反应姿态广播失败: {e}")
         # 释放麦位，取出下一句排队发言（按模型各自独立）
         try:
             model_key = action.get("model_key", "__current__")
@@ -499,6 +721,9 @@ class LiveEngine:
                 self._model_path = cfg.get("model_path", "")
                 self._render_mode = cfg.get("render_mode", "live2d")
                 self._tts_engine = cfg.get("tts_engine", "cosyvoice")
+                # 层3 真人语音闭环配置
+                self._asr_model = cfg.get("asr_model", "vosk-model-small-cn-0.22")
+                self._asr_device = cfg.get("asr_device", "")
                 self._bili_config_saved = bool(self._access_key_id and self._access_key_secret)
         except: pass
 
@@ -535,6 +760,9 @@ class LiveEngine:
                 "model_path": kwargs.get("model_path", base.get("model_path", self._model_path)),
                 "render_mode": kwargs.get("render_mode", base.get("render_mode", self._render_mode)),
                 "tts_engine": kwargs.get("tts_engine", base.get("tts_engine", self._tts_engine)),
+                # 层3 真人语音闭环配置
+                "asr_model": kwargs.get("asr_model", base.get("asr_model", self._asr_model)),
+                "asr_device": kwargs.get("asr_device", base.get("asr_device", self._asr_device)),
             }
             from desktop_core.storage import meta_set
             meta_set("live_config", json.dumps(cfg))
@@ -550,6 +778,9 @@ class LiveEngine:
             self._model_path = cfg["model_path"]
             self._render_mode = cfg["render_mode"]
             self._tts_engine = cfg["tts_engine"]
+            # 层3 真人语音闭环配置
+            self._asr_model = cfg["asr_model"]
+            self._asr_device = cfg["asr_device"]
             self._bili_config_saved = bool(self._access_key_id and self._access_key_secret)
             log.info("[直播] 配置已保存")
             return True
@@ -640,6 +871,14 @@ class LiveEngine:
         # 清空占麦仲裁状态，避免上一场残留 busy 卡住下一场
         try: self._arbiter.clear()
         except: pass
+        # 层3：停止真人语音闭环（取消麦克风采集协程）
+        if self._human_voice_task is not None and not self._human_voice_task.done():
+            self._human_voice_task.cancel()
+            try: await self._human_voice_task
+            except: pass
+            self._human_voice_task = None
+        self._asr_status = {"enabled": False, "state": "idle",
+                            "model": self._asr_model, "error": ""}
         for aid in list(self._agent_tasks.keys()):
             t = self._agent_tasks.pop(aid, None)
             if t and not t.done():
@@ -1599,6 +1838,59 @@ class LiveEngine:
             await self._vts_ws.send_str(req)
         except:
             pass
+
+    # ── 层2 肢体反馈：倾听/点头姿态（不抢麦、不 TTS，仅打 VTS 参数） ──────────
+
+    async def _vts_send_listen_pose(self, model_id: str):
+        """层2 肢体反馈：向某 VTS 模型注入"倾听"姿态（微抬头+侧倾），持续至该模型自己开口或说话结束。
+
+        使用 VTS 内置通用参数（所有模型都支持），避免依赖模型特定的表情/动作热键名。
+        """
+        if not model_id:
+            return
+        # BrowUpDown 上扬(专注/好奇) + FaceAngleX 微侧倾(偏头听)
+        await self._vts_send_parameters({"BrowUpDown": 0.55, "FaceAngleX": 6.0}, model_id)
+
+    async def _vts_send_react_pose(self, model_id: str):
+        """层2 肢体反馈：向某 VTS 模型注入"点头/鼓掌"反应姿态（微笑+眼弯），1.5s 后自动复位。"""
+        if not model_id:
+            return
+        # 复位倾听姿态，并打出微笑/眼弯反应
+        await self._vts_send_parameters(
+            {"MouthForm": 0.7, "EyeSmile": 0.7, "BrowUpDown": 0.0, "FaceAngleX": 0.0}, model_id)
+        async def _reset():
+            await asyncio.sleep(1.5)
+            try:
+                await self._vts_send_parameters({"MouthForm": 0.0, "EyeSmile": 0.0}, model_id)
+            except Exception:
+                pass
+        asyncio.create_task(_reset())
+
+    async def _vts_ambient_to_others(self, pose: str, exclude_agent_id: str):
+        """层2 肢体反馈：把"倾听/反应"姿态广播给台上其它已绑定 VTS 模型。
+
+        - 跳过说话者自身（exclude_agent_id）
+        - 跳过真人独占模型（human_controlled，由真人自己在真机操控，奶昔不写）
+        - 跳过未绑定模型的角色（无 modelID 无法精准投递，避免误伤当前激活模型）
+        VTS 未连接时整体静默跳过。
+        """
+        if not self._vts_ws or self._vts_ws.closed or not self._vts_authenticated:
+            return
+        for c in self._connectors.values():
+            if c.agent_id == exclude_agent_id:
+                continue
+            if getattr(c, "human_controlled", False):
+                continue
+            mid = getattr(c, "model_id", None)
+            if not mid:
+                continue
+            try:
+                if pose == "listen":
+                    await self._vts_send_listen_pose(mid)
+                elif pose == "react":
+                    await self._vts_send_react_pose(mid)
+            except Exception as e:
+                log.warning(f"[舞台] 向 {c.name} 发送{pose}姿态失败: {e}")
 
     def _audio_to_mouth_data(self, audio_bytes: bytes, frame_ms: int = 80) -> list[float]:
         """分析音频 bytes 生成 MouthOpen 值序列（0.0~1.0）。

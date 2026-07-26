@@ -131,7 +131,10 @@ def normalize_utterance(ret) -> Optional[dict]:
         text = (ret.get("text") or "").strip()
         if not text:
             return None
-        return {"text": text, "emotion": ret.get("emotion", "开心"), "action": ret.get("action", "")}
+        # 保留层1 语音对话指向增强所需的 target_id（被点名角色 agent_id）
+        return {"text": text, "emotion": ret.get("emotion", "开心"),
+                "action": ret.get("action", ""),
+                "target_id": (ret.get("target_id") or "").strip()}
     return None
 
 
@@ -415,7 +418,16 @@ class NaixiConnector(AgentConnector):
 
     async def handle_cue(self, cue: dict):
         # 主咖对别的角色的舞台提示也可能接话（是否反应由引擎已判定）
+        # 层1 指向增强：被其它角色点名搭话时，用轻量规则做"被搭话"反应，省去一次 LLM 调用
+        if cue.get("addressed"):
+            return self._addressed_reaction()
         return await self._decide(cue.get("text", ""), cue.get("name", "同台"))
+
+    def _addressed_reaction(self) -> dict:
+        """被其它角色点名搭话时的轻量反应（不调 LLM，低延迟）："欸，叫我？"之类的被搭话语。"""
+        import random
+        lines = ["欸，叫我？", "嗯？怎么啦", "我在听呢～", "啊，怎么了？", "嗯哼？", "叫我干嘛～"]
+        return {"text": random.choice(lines), "emotion": "开心", "action": "wave"}
 
 
 class HttpAgentConnector(AgentConnector):
@@ -436,7 +448,8 @@ class HttpAgentConnector(AgentConnector):
         self.timeout = timeout
         self.max_retries = max_retries
 
-    async def _ask(self, event: str, text: str, user: str):
+    async def _ask(self, event: str, text: str, user: str, *,
+                   addressed: bool = False, target_id: str = ""):
         if not self.endpoint or not text:
             return None
         try:
@@ -447,8 +460,10 @@ class HttpAgentConnector(AgentConnector):
         headers = {"Content-Type": "application/json"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
+        # 把层1 指向增强信息(被点名/目标)透传给远端 agent，便于其做"被搭话"反应
         payload = {"event": event, "text": text, "user": user,
-                   "agent_id": self.agent_id, "name": self.name}
+                   "agent_id": self.agent_id, "name": self.name,
+                   "addressed": addressed, "target_id": target_id}
         timeout = aiohttp.ClientTimeout(total=self.timeout)
         last_err = None
         for attempt in range(self.max_retries + 1):
@@ -487,7 +502,9 @@ class HttpAgentConnector(AgentConnector):
         return await self._ask("danmaku", danmaku.get("text", ""), danmaku.get("user", ""))
 
     async def handle_cue(self, cue: dict):
-        return await self._ask("cue", cue.get("text", ""), cue.get("name", "同台"))
+        return await self._ask("cue", cue.get("text", ""), cue.get("name", "同台"),
+                               addressed=cue.get("addressed", False),
+                               target_id=cue.get("target_id", ""))
 
 
 class HumanConnector(AgentConnector):
@@ -527,7 +544,8 @@ class WsAgentConnector(AgentConnector):
         self.timeout = timeout
         self.max_retries = max_retries
 
-    async def _ask(self, event: str, text: str, user: str):
+    async def _ask(self, event: str, text: str, user: str, *,
+                   addressed: bool = False, target_id: str = ""):
         if not self.ws_url or not text:
             return None
         try:
@@ -535,8 +553,10 @@ class WsAgentConnector(AgentConnector):
         except Exception as e:
             log.warning(f"[ws外部角色 {self.name}] aiohttp 不可用: {e}")
             return None
+        # 把层1 指向增强信息(被点名/目标)透传给远端 agent，便于其做"被搭话"反应
         payload = {"event": event, "text": text, "user": user,
-                   "agent_id": self.agent_id, "name": self.name}
+                   "agent_id": self.agent_id, "name": self.name,
+                   "addressed": addressed, "target_id": target_id}
         headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
         timeout = aiohttp.ClientTimeout(total=self.timeout)
         last_err = None
@@ -571,7 +591,9 @@ class WsAgentConnector(AgentConnector):
         return await self._ask("danmaku", danmaku.get("text", ""), danmaku.get("user", ""))
 
     async def handle_cue(self, cue: dict):
-        return await self._ask("cue", cue.get("text", ""), cue.get("name", "同台"))
+        return await self._ask("cue", cue.get("text", ""), cue.get("name", "同台"),
+                               addressed=cue.get("addressed", False),
+                               target_id=cue.get("target_id", ""))
 
 
 class WsServerConnector(AgentConnector):
@@ -660,10 +682,14 @@ class WsServerConnector(AgentConnector):
 
 
 def make_speech_request(connector: AgentConnector, utt: dict, *,
-                        source_id: str = "", cue_depth: int = 0) -> dict:
+                        source_id: str = "", cue_depth: int = 0,
+                        target_id: str = "") -> dict:
     """构造标准发言请求事件。utt 为 normalize_utterance 的结果。
 
     source_id 记录"这句话最初由谁触发"，用于回声过滤（不回应自己引发的链）。
+    cue_depth 记录互动链深度，用于概率衰减防对喷。
+    target_id 记录"这句话对着谁说"（被点名的角色 agent_id），用于层1 语音对话指向增强：
+    被点名的模型会做"被搭话"反应并接话，形成对话回合。
     """
     return {
         "agent_id": connector.agent_id,
@@ -678,4 +704,6 @@ def make_speech_request(connector: AgentConnector, utt: dict, *,
         # 多模型隔离：本句路由到哪个 VTS 模型（未绑定则用当前模型占位键）
         "model_key": getattr(connector, "model_id", None) or "__current__",
         "human_controlled": getattr(connector, "human_controlled", False),
+        # 层1：语音对话指向增强（被点名角色）
+        "target_id": target_id or "",
     }

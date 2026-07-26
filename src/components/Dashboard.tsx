@@ -22,6 +22,7 @@ import {
   Cpu as CpuIcon, Zap, Network, Lock,
   Plus, Check, Repeat, Play, Pause, ChevronDown, ChevronUp, ChevronLeft, Edit3, Trash2, CircleAlert,
   Search, X, Loader2, Copy, Download, RefreshCw, Upload,
+  Mic, MicOff,
 } from "lucide-react";
 
 const PAGE_TITLES: Record<string, string> = {
@@ -1927,6 +1928,25 @@ function LivePage() {
   const [showSample, setShowSample] = useState(false);
   const [vtsModels, setVtsModels] = useState<{ models: Record<string, string>; current: string }>({ models: {}, current: '' });
 
+  // 层3 真人语音闭环：开关状态 / 后端状态 / 可选麦克风设备
+  const [humanVoiceOn, setHumanVoiceOn] = useState(false);
+  const [humanVoiceStatus, setHumanVoiceStatus] = useState<any>({});
+  const [humanVoiceDevice, setHumanVoiceDevice] = useState('');
+
+  const loadHumanVoiceStatus = useCallback(async () => {
+    try { const r = await apiGet<any>('/api/live/human_voice/status'); setHumanVoiceStatus(r || {}); setHumanVoiceOn(!!r?.enabled); } catch {}
+  }, []);
+
+  const toggleHumanVoice = async () => {
+    const next = !humanVoiceOn;
+    try {
+      const r = await apiPost<any>('/api/live/human_voice/toggle', { enabled: next, device: humanVoiceDevice });
+      if (r?.ok) { setHumanVoiceOn(next); notify(next ? '真人语音已开启' : '真人语音已关闭', 'success'); }
+      else notify(r?.msg || '操作失败', 'error');
+    } catch { notify('请求失败', 'error'); }
+    loadHumanVoiceStatus();
+  };
+
   const loadVtsModels = useCallback(async () => {
     try { const r = await apiGet<any>('/api/live/vts-models'); setVtsModels({ models: r.models || {}, current: r.current || '' }); } catch {}
   }, []);
@@ -1946,6 +1966,7 @@ function LivePage() {
 
   useEffect(() => { loadConnectors(); const iv = setInterval(loadConnectors, 5000); return () => clearInterval(iv); }, [loadConnectors]);
   useEffect(() => { loadVtsModels(); const iv = setInterval(loadVtsModels, 8000); return () => clearInterval(iv); }, [loadVtsModels]);
+  useEffect(() => { loadHumanVoiceStatus(); const iv = setInterval(loadHumanVoiceStatus, 3000); return () => clearInterval(iv); }, [loadHumanVoiceStatus]);
 
   const humanSpeak = async () => {
     const t = humanText.trim(); if (!t) return;
@@ -2364,6 +2385,26 @@ function LivePage() {
                 ))}
               </div>
             )}
+          </div>
+
+          {/* 层3 真人语音闭环：麦克风采集 → VAD → ASR → 自动上麦 */}
+          <div className="rounded-lg border border-sakura-200 bg-sakura-50/40 p-2.5 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[10px] font-medium text-sakura-600 flex items-center gap-1"><Mic size={13} /> 真人语音（麦克风自动上麦）</p>
+              <button onClick={toggleHumanVoice} className={`shrink-0 px-2.5 py-1 rounded-lg text-[10px] font-medium transition-colors flex items-center gap-1 ${humanVoiceOn ? 'bg-rose-500 text-white hover:bg-rose-600' : 'bg-sakura-500 text-white hover:bg-sakura-600'}`}>
+                {humanVoiceOn ? <><MicOff size={12} /> 关闭</> : <><Mic size={12} /> 开启</>}
+              </button>
+            </div>
+            <p className="text-[9px] text-sakura-400 leading-relaxed">开启后对着麦克风说话，识别到的整句会自动当作人类副播发言上麦（其它 agent 会接话、被点名模型会做被搭话反应）。首次开启需联网下载中文语音模型（约 42MB，已获授权）。</p>
+            {/* 可选：指定麦克风设备，留空用系统默认 */}
+            <input value={humanVoiceDevice} onChange={e => setHumanVoiceDevice(e.target.value)} placeholder="麦克风设备（留空=系统默认，可填设备名/索引）" className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-white" />
+            {/* 状态行 */}
+            <div className="flex items-center gap-2 text-[9px]">
+              <span className={`inline-flex items-center gap-1 ${humanVoiceStatus?.model_ready ? 'text-emerald-500' : 'text-sakura-400'}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${humanVoiceStatus?.model_ready ? 'bg-emerald-500' : 'bg-sakura-300'}`} /> 模型{ humanVoiceStatus?.model_ready ? '已就绪' : (humanVoiceStatus?.state === 'downloading' ? '下载中…' : '未就绪') }</span>
+              <span className="text-sakura-300">·</span>
+              <span className="text-sakura-400">{ humanVoiceStatus?.state === 'listening' ? '监听中' : humanVoiceStatus?.state === 'error' ? ('异常：' + (humanVoiceStatus?.error || '')) : humanVoiceStatus?.state || '空闲' }</span>
+            </div>
           </div>
 
           {/* 人类副播上麦 */}

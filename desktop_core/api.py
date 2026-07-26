@@ -3226,6 +3226,9 @@ def setup_routes(app):
     app.router.add_get("/api/live/connect_credentials", api_live_connect_credentials)
     app.router.add_get("/api/live/vts-models", api_live_vts_models)
     app.router.add_post("/api/live/connectors/bind", api_live_connector_bind)
+    # 层3 真人语音闭环（麦克风 ASR → 自动上麦）
+    app.router.add_post("/api/live/human_voice/toggle", api_live_human_voice_toggle)
+    app.router.add_get("/api/live/human_voice/status", api_live_human_voice_status)
 
     # 启动时连接 MCP 服务器
     app.on_startup.append(_on_startup_mcp)
@@ -3451,6 +3454,31 @@ async def api_live_connector_bind(request):
     if not ok:
         return web.json_response({"ok": False, "error": "角色不存在"}, status=404)
     return web.json_response({"ok": True, "connectors": engine.list_connectors()})
+
+
+async def api_live_human_voice_toggle(request):
+    """层3 真人语音闭环开关：麦克风采集 → VAD → ASR 转文字 → 自动上麦。
+
+    body: {enabled: bool, device?: str}
+    enabled=true 开启（首次自动下载中文模型，需联网）；enabled=false 关闭。
+    """
+    from desktop_core.live_engine import engine
+    body = await request.json() if request.can_read_body else {}
+    enabled = bool(body.get("enabled", False))
+    device = (body.get("device") or "").strip()
+    if enabled:
+        result = await engine.start_human_voice(device)
+    else:
+        result = await engine.stop_human_voice()
+    return web.json_response({"ok": result.get("ok", False),
+                              "msg": result.get("msg", ""),
+                              "status": engine.human_voice_status()})
+
+
+async def api_live_human_voice_status(request):
+    """返回真人语音闭环当前状态（是否开启/模型是否就绪/报错），供前端轮询。"""
+    from desktop_core.live_engine import engine
+    return web.json_response(engine.human_voice_status())
 
 
 def _live_ws_secret() -> str:
