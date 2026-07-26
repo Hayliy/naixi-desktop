@@ -3224,6 +3224,8 @@ def setup_routes(app):
     app.router.add_post("/api/live/human_speak", api_live_human_speak)
     app.router.add_get("/api/live/ws_agent", api_live_ws_agent)
     app.router.add_get("/api/live/connect_credentials", api_live_connect_credentials)
+    app.router.add_get("/api/live/vts-models", api_live_vts_models)
+    app.router.add_post("/api/live/connectors/bind", api_live_connector_bind)
 
     # 启动时连接 MCP 服务器
     app.on_startup.append(_on_startup_mcp)
@@ -3391,10 +3393,11 @@ async def api_live_connector_register(request):
     ctype = (body.get("type") or "http").lower()
     priority = int(body.get("priority", 50))
     token = body.get("token", "")
+    model_id = (body.get("model_id") or "").strip() or None
     if ctype == "ws":
-        ok = engine.register_ws_connector(agent_id, name, endpoint, priority=priority, token=token)
+        ok = engine.register_ws_connector(agent_id, name, endpoint, priority=priority, token=token, model_id=model_id)
     else:
-        ok = engine.register_http_connector(agent_id, name, endpoint, priority=priority, token=token)
+        ok = engine.register_http_connector(agent_id, name, endpoint, priority=priority, token=token, model_id=model_id)
     if not ok:
         return web.json_response({"ok": False, "error": "注册被拒（远程连接器需配置 token，或参数非法）"}, status=400)
     return web.json_response({"ok": ok, "connectors": engine.list_connectors()})
@@ -3425,6 +3428,29 @@ async def api_live_connector_unregister(request):
     agent_id = (body.get("agent_id") or "").strip()
     ok = await engine.unregister_connector(agent_id)
     return web.json_response({"ok": ok, "connectors": engine.list_connectors()})
+
+
+async def api_live_vts_models(request):
+    """返回 VTS 已加载模型列表（modelID->name）与当前模型，供前端绑定下拉。"""
+    from desktop_core.live_engine import engine
+    return web.json_response(engine.list_vts_models())
+
+
+async def api_live_connector_bind(request):
+    """把某角色绑定到指定 VTS 模型（model_id 空串/None 表示用当前模型），持久化。
+
+    body: {agent_id, model_id?}
+    """
+    from desktop_core.live_engine import engine
+    body = await request.json() if request.can_read_body else {}
+    agent_id = (body.get("agent_id") or "").strip()
+    if not agent_id:
+        return web.json_response({"ok": False, "error": "缺少 agent_id"}, status=400)
+    model_id = (body.get("model_id") or "").strip() or None
+    ok = await engine.bind_connector_model(agent_id, model_id)
+    if not ok:
+        return web.json_response({"ok": False, "error": "角色不存在"}, status=404)
+    return web.json_response({"ok": True, "connectors": engine.list_connectors()})
 
 
 def _live_ws_secret() -> str:

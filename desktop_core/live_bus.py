@@ -96,10 +96,13 @@ class AgentConnector:
     每个连接器有独立 agent_id（用于占麦仲裁、回声过滤、记忆分区）。
     """
 
-    def __init__(self, agent_id: str, name: str, priority: int = PRIORITY_GUEST):
+    def __init__(self, agent_id: str, name: str, priority: int = PRIORITY_GUEST,
+                 model_id: Optional[str] = None, human_controlled: bool = False):
         self.agent_id = agent_id
         self.name = name
         self.priority = priority
+        self.model_id = model_id              # 绑定的 VTS 模型 GUID；None = 作用于 VTS 当前激活模型
+        self.human_controlled = human_controlled  # 真人独占：奶昔不对其写入任何 VTS 数据（口型/表情/动作）
 
     async def handle_danmaku(self, danmaku: dict):
         """收到一条弹幕，决定本角色要不要回应。返回 None / str / dict。"""
@@ -132,13 +135,11 @@ def normalize_utterance(ret) -> Optional[dict]:
     return None
 
 
-class SpeechArbiter:
-    """单麦位仲裁 —— 全场同一时刻只有一个角色在说话（D2：优先级分层占麦）。
+class _ModelArbiter:
+    """单模型内的麦位仲裁（原 SpeechArbiter 逻辑，作用于一个 VTS 模型 GUID）。
 
-    规则（用户已拍板，AI 判定实现）：
-    - 主咖高优发言 → 可打断（INTERRUPT）正在进行的低优发言
-    - 同级 / 低级 → 进 FIFO 队列排队（QUEUE），队列超上限丢弃最旧的低优（DROP）
-    - 抢到麦位后置 busy，说完释放
+    同一模型同一时刻只有一个角色在说话；不同模型之间互不阻塞、可并行说话
+    （多角色各控各的 VTS 模型，口型/表情/动作不会串模型）。
     """
 
     def __init__(self, queue_cap: int = 8):
@@ -153,10 +154,7 @@ class SpeechArbiter:
         return self._busy
 
     async def submit(self, req: dict) -> Optional[dict]:
-        """提交一个发言请求。返回"应立即播出的请求"或 None（进队列 / 被丢弃）。
-
-        req 形如: {agent_id, name, text, priority, source_id, cue_depth, emotion}
-        """
+        """提交一个发言请求。返回"应立即播出的请求"或 None（进队列 / 被丢弃）。"""
         async with self._lock:
             # 麦位空闲 → 直接占麦
             if not self._busy:
@@ -200,18 +198,8 @@ class SpeechArbiter:
             self._busy = False
             return None
 
-    def clear(self):
-        self._busy = False
-        self._current = None
-        self._pending.clear()
-
     async def evict(self, agent_id: str):
-        """某角色下台时清掉它的麦位占用：丢弃其排队请求；若正占用麦位则把麦位
-        顺手交给下一个等待者（或置空闲），避免孤儿发言与麦位卡死。
-
-        与 release 的区别：release 是"当前这句说完了"自然让位；evict 是"这个角色
-        被强制拔掉"时的紧急清理，二者都保证麦位最终能继续往前走。
-        """
+        """某角色下台时清掉它在本模型内的麦位占用。"""
         async with self._lock:
             self._pending = [r for r in self._pending if r.get("agent_id") != agent_id]
             if self._current and self._current.get("agent_id") == agent_id:
@@ -221,6 +209,50 @@ class SpeechArbiter:
                     self._busy = True
                 else:
                     self._busy = False
+
+    def clear(self):
+        self._busy = False
+        self._current = None
+        self._pending.clear()
+
+
+class SpeechArbiter:
+    """按 VTS 模型拆分的麦位仲裁：不同模型并行说话，同一模型内串行占麦。
+
+    model_key 是连接器绑定的 VTS 模型 GUID；未绑定(model_id=None)的角色统一用
+    "__current__" 占位键，共享 VTS 当前模型、串行占麦（与旧的单麦位行为一致）。
+    """
+
+    def __init__(self, queue_cap: int = 8):
+        self._queue_cap = queue_cap
+        self._arbiters: dict[str, _ModelArbiter] = {}
+
+    def _get(self, model_key: str) -> _ModelArbiter:
+        a = self._arbiters.get(model_key)
+        if a is None:
+            a = _ModelArbiter(self._queue_cap)
+            self._arbiters[model_key] = a
+        return a
+
+    @property
+    def busy(self) -> bool:
+        return any(a.busy for a in self._arbiters.values())
+
+    async def submit(self, model_key: str, req: dict) -> Optional[dict]:
+        return await self._get(model_key).submit(req)
+
+    async def release(self, model_key: str) -> Optional[dict]:
+        return await self._get(model_key).release()
+
+    async def evict(self, model_key: str, agent_id: str):
+        a = self._arbiters.get(model_key)
+        if a:
+            await a.evict(agent_id)
+
+    def clear(self):
+        for a in self._arbiters.values():
+            a.clear()
+        self._arbiters.clear()
 
 
 def should_react_to_cue(cue: dict) -> bool:
@@ -364,8 +396,8 @@ class NaixiConnector(AgentConnector):
     保证行为与原单主播时代完全一致。
     """
 
-    def __init__(self, decide_fn, name: str = "奶昔"):
-        super().__init__(agent_id="naixi", name=name, priority=PRIORITY_HOST)
+    def __init__(self, decide_fn, name: str = "奶昔", model_id: Optional[str] = None):
+        super().__init__(agent_id="naixi", name=name, priority=PRIORITY_HOST, model_id=model_id)
         self._decide_fn = decide_fn
 
     async def _decide(self, text: str, user: str):
@@ -397,8 +429,8 @@ class HttpAgentConnector(AgentConnector):
 
     def __init__(self, agent_id: str, name: str, endpoint: str, *,
                  priority: int = PRIORITY_GUEST, token: str = "", timeout: float = 12.0,
-                 max_retries: int = 2):
-        super().__init__(agent_id=agent_id, name=name, priority=priority)
+                 max_retries: int = 2, model_id: Optional[str] = None):
+        super().__init__(agent_id=agent_id, name=name, priority=priority, model_id=model_id)
         self.endpoint = endpoint
         self.token = token
         self.timeout = timeout
@@ -466,8 +498,9 @@ class HumanConnector(AgentConnector):
     """
 
     def __init__(self, agent_id: str = "human", name: str = "人类副播",
-                 priority: int = PRIORITY_GUEST):
-        super().__init__(agent_id=agent_id, name=name, priority=priority)
+                 priority: int = PRIORITY_GUEST, model_id: Optional[str] = None):
+        super().__init__(agent_id=agent_id, name=name, priority=priority,
+                         model_id=model_id, human_controlled=True)
 
     async def handle_danmaku(self, danmaku: dict):
         return None
@@ -486,8 +519,8 @@ class WsAgentConnector(AgentConnector):
 
     def __init__(self, agent_id: str, name: str, ws_url: str, *,
                  priority: int = PRIORITY_GUEST, token: str = "", timeout: float = 12.0,
-                 max_retries: int = 2):
-        super().__init__(agent_id=agent_id, name=name, priority=priority)
+                 max_retries: int = 2, model_id: Optional[str] = None):
+        super().__init__(agent_id=agent_id, name=name, priority=priority, model_id=model_id)
         self.endpoint = ws_url            # 复用 endpoint 字段供治理层判定"远程"
         self.ws_url = ws_url
         self.token = token
@@ -554,8 +587,9 @@ class WsServerConnector(AgentConnector):
     """
 
     def __init__(self, agent_id: str, name: str, ws, *,
-                 priority: int = PRIORITY_GUEST, token: str = "", timeout: float = 10.0):
-        super().__init__(agent_id=agent_id, name=name, priority=priority)
+                 priority: int = PRIORITY_GUEST, token: str = "", timeout: float = 10.0,
+                 model_id: Optional[str] = None):
+        super().__init__(agent_id=agent_id, name=name, priority=priority, model_id=model_id)
         self._ws = ws                          # aiohttp WebSocketResponse（服务端侧句柄）
         self.token = token
         self.endpoint = f"ws-in:{agent_id}"    # 复用 endpoint 字段供治理层判定"远程"（需 token）
@@ -641,4 +675,7 @@ def make_speech_request(connector: AgentConnector, utt: dict, *,
         "source_id": source_id or connector.agent_id,
         "cue_depth": cue_depth,
         "ts": time.time(),
+        # 多模型隔离：本句路由到哪个 VTS 模型（未绑定则用当前模型占位键）
+        "model_key": getattr(connector, "model_id", None) or "__current__",
+        "human_controlled": getattr(connector, "human_controlled", False),
     }

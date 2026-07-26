@@ -1925,12 +1925,27 @@ function LivePage() {
   const [regMsg, setRegMsg] = useState('');
   const [cred, setCred] = useState<any>(null);
   const [showSample, setShowSample] = useState(false);
+  const [vtsModels, setVtsModels] = useState<{ models: Record<string, string>; current: string }>({ models: {}, current: '' });
+
+  const loadVtsModels = useCallback(async () => {
+    try { const r = await apiGet<any>('/api/live/vts-models'); setVtsModels({ models: r.models || {}, current: r.current || '' }); } catch {}
+  }, []);
+
+  const bindModel = async (agent_id: string, model_id: string) => {
+    try {
+      const r = await apiPost<any>('/api/live/connectors/bind', { agent_id, model_id: model_id || null });
+      if (r?.ok) notify('已绑定模型', 'success');
+      else notify('绑定失败', 'error');
+    } catch { notify('请求失败', 'error'); }
+    loadConnectors();
+  };
 
   const loadConnectors = useCallback(async () => {
     try { const r = await apiGet<any>('/api/live/connectors'); setConnectors(r.connectors || []); } catch {}
   }, []);
 
   useEffect(() => { loadConnectors(); const iv = setInterval(loadConnectors, 5000); return () => clearInterval(iv); }, [loadConnectors]);
+  useEffect(() => { loadVtsModels(); const iv = setInterval(loadVtsModels, 8000); return () => clearInterval(iv); }, [loadVtsModels]);
 
   const humanSpeak = async () => {
     const t = humanText.trim(); if (!t) return;
@@ -2316,18 +2331,34 @@ function LivePage() {
             ) : (
               <div className="space-y-1.5">
                 {connectors.map((c: any) => (
-                  <div key={c.agent_id} className="flex items-center gap-2.5 py-1.5">
-                    <span className={"w-2 h-2 rounded-full shrink-0 " + (c.quarantined ? "bg-red-400" : "bg-green-400")} />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[11px] font-medium text-sakura-600 truncate">{c.name}</span>
-                        {c.builtin && <span className="text-[8px] text-sakura-300 shrink-0">内置</span>}
-                        {c.quarantined && <span className="text-[8px] text-red-400 shrink-0">限流隔离中</span>}
-                      </div>
+                  <div key={c.agent_id} className="rounded-lg border border-sakura-100 p-2 space-y-1.5">
+                    <div className="flex items-center gap-2.5">
+                      <span className={"w-2 h-2 rounded-full shrink-0 " + (c.quarantined ? "bg-red-400" : "bg-green-400")} />
+                      <span className="text-[11px] font-medium text-sakura-600 truncate flex-1">{c.name}</span>
+                      {c.builtin && <span className="text-[8px] text-sakura-300 shrink-0">内置</span>}
+                      {c.quarantined && <span className="text-[8px] text-red-400 shrink-0">限流隔离中</span>}
+                      <span className={"text-[8px] px-1.5 py-0.5 rounded shrink-0 " + liveTransportBadge(c.transport).cls}>{liveTransportBadge(c.transport).label}</span>
+                      {!c.builtin && (
+                        <button onClick={() => unregisterAgent(c.agent_id)} className="text-[9px] text-red-400 hover:text-red-500 shrink-0">下台</button>
+                      )}
                     </div>
-                    <span className={"text-[8px] px-1.5 py-0.5 rounded shrink-0 " + liveTransportBadge(c.transport).cls}>{liveTransportBadge(c.transport).label}</span>
-                    {!c.builtin && (
-                      <button onClick={() => unregisterAgent(c.agent_id)} className="text-[9px] text-red-400 hover:text-red-500 shrink-0">下台</button>
+                    {/* 模型绑定：每个角色绑定各自 VTS 模型，避免指令串模型冲突 */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] text-sakura-400 shrink-0 w-12">{c.human_controlled ? '真人模型' : '绑定模型'}</span>
+                      <select
+                        value={c.model_id || ''}
+                        disabled={c.human_controlled}
+                        onChange={e => bindModel(c.agent_id, e.target.value)}
+                        className="flex-1 px-2 py-1 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-white disabled:bg-sakura-50 disabled:text-sakura-300"
+                      >
+                        <option value="">（VTS 当前模型）</option>
+                        {Object.entries(vtsModels.models || {}).map(([gid, name]) => (
+                          <option key={gid} value={gid}>{name || gid}{gid === vtsModels.current ? '（当前）' : ''}</option>
+                        ))}
+                      </select>
+                    </div>
+                    {c.human_controlled && (
+                      <p className="text-[8px] text-sakura-300 leading-relaxed">真人模型由真人完全操控，奶昔不写入任何 VTS 数据（口型/表情/动作）</p>
                     )}
                   </div>
                 ))}

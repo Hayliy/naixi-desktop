@@ -116,6 +116,9 @@ class LiveEngine:
         self._vts_expressions: list = []   # VTS 自省到的表情文件名列表
         self._vts_motions: list = []       # VTS 自省到的动作热键名列表
         self._vts_req_seq: int = 0          # VTS 请求自增序号（requestID）
+        self._vts_models: dict = {}         # modelID -> modelName（VTS 已加载模型）
+        self._vts_current_model: str = ""   # 当前激活模型 GUID（用于 model_id 未绑定时回退）
+        self._model_bindings: dict = {}     # agent_id -> modelID（持久化，重启后恢复绑定）
         # 桌宠 WebSocket（前端 Live2D 窗口）
         self._live2d_ws: Optional[aiohttp.WebSocketResponse] = None
         # 桌宠子进程（PySide6 独立窗口）
@@ -153,6 +156,7 @@ class LiveEngine:
             mem_get=self._guard_mem_get, mem_set=self._guard_mem_set,
         )
         self._connectors: dict[str, AgentConnector] = {}
+        self._load_model_bindings()
         self._register_builtin_connectors()
 
     @staticmethod
@@ -177,8 +181,37 @@ class LiveEngine:
 
     def _register_builtin_connectors(self):
         """注册内置角色：奶昔本体（主咖）+ 人类副播（操作员手动上麦的槽位）。"""
-        self._connectors["naixi"] = NaixiConnector(self._decide_reply)
-        self._connectors["human"] = HumanConnector("human", "人类副播")
+        naixi = NaixiConnector(self._decide_reply)
+        human = HumanConnector("human", "人类副播")
+        self._apply_model_binding(naixi)
+        self._apply_model_binding(human)
+        self._connectors["naixi"] = naixi
+        self._connectors["human"] = human
+
+    # ── 模型绑定持久化（按 VTS 模型 GUID 隔离，重启后恢复）──
+    def _load_model_bindings(self):
+        """从 SQLite meta 读取角色→模型绑定（live_model_bindings）。"""
+        try:
+            from desktop_core.storage import meta_get
+            raw = meta_get("live_model_bindings", "")
+            if raw:
+                self._model_bindings = json.loads(raw) or {}
+        except Exception:
+            self._model_bindings = {}
+
+    def _save_model_bindings(self):
+        """把角色→模型绑定落库（live_model_bindings）。"""
+        try:
+            from desktop_core.storage import meta_set
+            meta_set("live_model_bindings", json.dumps(self._model_bindings or {}))
+        except Exception:
+            pass
+
+    def _apply_model_binding(self, connector: AgentConnector):
+        """把持久化绑定应用到连接器（若该 agent_id 已存绑定）。"""
+        mid = self._model_bindings.get(connector.agent_id)
+        if mid:
+            connector.model_id = mid
 
     def register_connector(self, connector: AgentConnector) -> bool:
         """注册一个外部角色连接器（其他人的 agent 上台）。同名 agent_id 覆盖。
@@ -191,8 +224,10 @@ class LiveEngine:
         if not ok_reg:
             log.warning(f"[舞台] 注册被拒 {connector.name}({connector.agent_id}): {reason}")
             return False
+        self._apply_model_binding(connector)
         self._connectors[connector.agent_id] = connector
-        log.info(f"[舞台] 角色已上台: {connector.name}({connector.agent_id}) 优先级={connector.priority}")
+        log.info(f"[舞台] 角色已上台: {connector.name}({connector.agent_id}) 优先级={connector.priority}"
+                 f" 模型={connector.model_id or '当前模型'}")
         return True
 
     async def unregister_connector(self, agent_id: str) -> bool:
@@ -205,7 +240,8 @@ class LiveEngine:
             except: pass
             # 干净释放该角色占用的麦位：丢弃其排队请求，若正占麦则把麦位顺给下一等待者
             try:
-                await self._arbiter.evict(agent_id)
+                model_key = getattr(c, "model_id", None) or "__current__"
+                await self._arbiter.evict(model_key, agent_id)
             except Exception as e:
                 log.warning(f"[舞台] 下台时清理麦位失败: {e}")
             log.info(f"[舞台] 角色已下台: {agent_id}")
@@ -213,19 +249,27 @@ class LiveEngine:
         return False
 
     def register_http_connector(self, agent_id: str, name: str, endpoint: str,
-                                priority: int = PRIORITY_GUEST, token: str = "") -> bool:
+                                priority: int = PRIORITY_GUEST, token: str = "",
+                                model_id: Optional[str] = None) -> bool:
         """便捷注册一个 HTTP 外部角色（QQ 机器人等）。供 API 调用。"""
         if not agent_id or not name or not endpoint:
             return False
-        conn = HttpAgentConnector(agent_id, name, endpoint, priority=priority, token=token)
+        conn = HttpAgentConnector(agent_id, name, endpoint, priority=priority, token=token, model_id=model_id)
+        if model_id:
+            self._model_bindings[agent_id] = model_id
+            self._save_model_bindings()
         return self.register_connector(conn)
 
     def register_ws_connector(self, agent_id: str, name: str, ws_url: str,
-                              priority: int = PRIORITY_GUEST, token: str = "") -> bool:
+                              priority: int = PRIORITY_GUEST, token: str = "",
+                              model_id: Optional[str] = None) -> bool:
         """便捷注册一个远程 ws 外部角色（常驻双向连接的远端 agent）。供 API 调用。"""
         if not agent_id or not name or not ws_url:
             return False
-        conn = WsAgentConnector(agent_id, name, ws_url, priority=priority, token=token)
+        conn = WsAgentConnector(agent_id, name, ws_url, priority=priority, token=token, model_id=model_id)
+        if model_id:
+            self._model_bindings[agent_id] = model_id
+            self._save_model_bindings()
         return self.register_connector(conn)
 
     async def inject_human_speech(self, agent_id: str, text: str,
@@ -253,7 +297,9 @@ class LiveEngine:
                     "transport": "ws-in" if isinstance(c, WsServerConnector)
                                  else "http" if isinstance(c, HttpAgentConnector)
                                  else "ws" if isinstance(c, WsAgentConnector)
-                                 else "local"}
+                                 else "local",
+                    "model_id": getattr(c, "model_id", None) or "",
+                    "human_controlled": getattr(c, "human_controlled", False)}
             if getattr(c, "endpoint", ""):
                 item["endpoint"] = c.endpoint
             g = self._guard.status(c.agent_id)
@@ -261,6 +307,28 @@ class LiveEngine:
             item["emits_in_window"] = g["emits_in_window"]
             out.append(item)
         return out
+
+    def list_vts_models(self) -> dict:
+        """返回 VTS 已加载模型（modelID->name）与当前模型，供前端绑定下拉。"""
+        return {"models": self._vts_models, "current": self._vts_current_model}
+
+    async def bind_connector_model(self, agent_id: str, model_id: Optional[str]) -> bool:
+        """把某角色绑定到指定 VTS 模型（model_id 为空串/None 表示用当前模型），持久化。
+
+        真人独占模型：仅记录绑定用于冲突提示，奶昔不会写入该模型。
+        """
+        connector = self._connectors.get(agent_id)
+        if not connector:
+            return False
+        mid = (model_id or "").strip() or None
+        connector.model_id = mid
+        if mid:
+            self._model_bindings[agent_id] = mid
+        else:
+            self._model_bindings.pop(agent_id, None)
+        self._save_model_bindings()
+        log.info(f"[舞台] 角色 {agent_id} 绑定模型: {mid or '（当前模型）'}")
+        return True
 
     async def _enqueue_speak(self, req: dict):
         """把仲裁通过的发言请求投入既有语音管道（_scene_queue），携带角色元数据。"""
@@ -273,14 +341,38 @@ class LiveEngine:
             "name": req.get("name", "奶昔"),
             "source_id": req.get("source_id", req.get("agent_id", "naixi")),
             "cue_depth": req.get("cue_depth", 0),
+            "model_key": req.get("model_key", "__current__"),
+            "human_controlled": req.get("human_controlled", False),
         })
 
     async def _emit(self, connector: AgentConnector, utt: dict, *, source_id: str = "", cue_depth: int = 0):
-        """一个角色产出一句发言 → 占麦仲裁 → 抢到则入语音管道，否则排队/丢弃。"""
+        """一个角色产出一句发言 → 占麦仲裁 → 抢到则入语音管道，否则排队/丢弃。
+
+        真人独占模型(human_controlled)：奶昔不合成/不写 VTS，仅把这句当作舞台提示
+        广播给其它角色，让其它 agent 能在各自的模型上接话（真人自己在真机/真模型上说话）。
+        """
         req = make_speech_request(connector, utt, source_id=source_id, cue_depth=cue_depth)
-        admitted = await self._arbiter.submit(req)
+        if getattr(connector, "human_controlled", False):
+            await self._broadcast_human_cue(req)
+            return
+        model_key = req.get("model_key", "__current__")
+        admitted = await self._arbiter.submit(model_key, req)
         if admitted:
             await self._enqueue_speak(admitted)
+
+    async def _broadcast_human_cue(self, req: dict):
+        """真人发言：仅广播舞台提示供其它角色接话，不占麦/不合成/不写 VTS。"""
+        cue = {
+            "name": req.get("name", "人类副播"),
+            "text": req.get("text", ""),
+            "source_id": req.get("source_id", req.get("agent_id", "human")),
+            "agent_id": req.get("agent_id", "human"),
+            "cue_depth": req.get("cue_depth", 0) + 1,
+        }
+        try:
+            await self._broadcast_cue(cue)
+        except Exception as e:
+            log.warning(f"[舞台] 广播真人提示失败: {e}")
 
     def _match_mention(self, text: str):
         """解析 @路由：弹幕含 @角色名/agent_id 时只投给该角色。返回 (目标连接器, 去掉@后的文本)。"""
@@ -346,9 +438,10 @@ class LiveEngine:
                 await self._broadcast_cue(cue)
             except Exception as e:
                 log.warning(f"[舞台] 广播舞台提示失败: {e}")
-        # 释放麦位，取出下一句排队发言
+        # 释放麦位，取出下一句排队发言（按模型各自独立）
         try:
-            nxt = await self._arbiter.release()
+            model_key = action.get("model_key", "__current__")
+            nxt = await self._arbiter.release(model_key)
             if nxt:
                 await self._enqueue_speak(nxt)
         except Exception as e:
@@ -374,6 +467,8 @@ class LiveEngine:
             "start_time": self._start_time,
             "last_error": self._last_error,
             "vts_connected": self._vts_ws is not None and not self._vts_ws.closed,
+            "vts_models": self._vts_models,
+            "vts_current_model": self._vts_current_model,
             "pet_running": self._pet_proc is not None and self._pet_proc.poll() is None,
             "errors": self._agent_errors[-10:],
         }
@@ -1332,6 +1427,8 @@ class LiveEngine:
                 log.info("[VTS] 已连接（未认证，需在 VTS 中点击确认授权）")
             # 自省可用表情/动作列表，供情绪/动作模糊匹配
             await self._vts_introspect()
+            # 枚举已加载模型（按 modelID 精准路由，避免串模型冲突）
+            await self._vts_enumerate_models()
             # 启动后台读取循环，消费 VTS 响应，避免未读消息堆积
             asyncio.create_task(self._vts_read_loop())
             return True
@@ -1392,6 +1489,27 @@ class LiveEngine:
         if self._vts_expressions or self._vts_motions:
             log.info(f"[VTS] 自省完成：表情 {len(self._vts_expressions)} 个，动作热键 {len(self._vts_motions)} 个")
 
+    async def _vts_enumerate_models(self):
+        """枚举 VTS 已加载模型（AvailableModelsRequest）+ 当前模型（CurrentModelRequest），
+        供多角色舞台按 modelID 精准路由，避免指令误打到其他模型造成冲突。"""
+        self._vts_models = {}
+        self._vts_current_model = ""
+        try:
+            await self._vts_request("AvailableModelsRequest", {})
+            resp = json.loads(await asyncio.wait_for(self._vts_ws.receive_str(), timeout=5))
+            models = (resp.get("data", {}) or {}).get("availableModels", []) or []
+            self._vts_models = {m.get("modelID"): m.get("modelName", "") for m in models if m.get("modelID")}
+        except Exception as e:
+            log.info(f"[VTS] 枚举模型失败: {e}")
+        try:
+            await self._vts_request("CurrentModelRequest", {})
+            resp = json.loads(await asyncio.wait_for(self._vts_ws.receive_str(), timeout=5))
+            self._vts_current_model = (resp.get("data", {}) or {}).get("modelID", "")
+        except Exception as e:
+            log.info(f"[VTS] 读取当前模型失败: {e}")
+        if self._vts_models:
+            log.info(f"[VTS] 已枚举模型 {len(self._vts_models)} 个，当前模型: {self._vts_current_model or '未识别'}")
+
     # 情绪/动作关键词 → VTS 表情/动作文件名子串（中英对照，覆盖常见命名）
     _VTS_EMOTION_MAP = {
         "开心": ["happy", "joy", "smile"],
@@ -1424,22 +1542,24 @@ class LiveEngine:
                     return c
         return ""
 
-    async def _vts_send_expression(self, emotion: str):
-        """按情绪触发 VTS 表情（ExpressionActivationRequest，active=true）"""
+    async def _vts_send_expression(self, emotion: str, model_id: Optional[str] = None):
+        """按情绪触发 VTS 表情（ExpressionActivationRequest，active=true）。model_id 指定目标模型。"""
         if not self._vts_ws or self._vts_ws.closed or not self._vts_authenticated:
             return
         name = self._vts_match(emotion, self._vts_expressions)
         if not name:
             return
+        data = {"expressionFile": name, "fadeTime": 0.5, "active": True}
+        if model_id:
+            data["modelID"] = model_id
         try:
-            await self._vts_request("ExpressionActivationRequest",
-                                    {"expressionFile": name, "fadeTime": 0.5, "active": True})
-            log.info(f"[VTS] 表情触发: {emotion} → {name}")
+            await self._vts_request("ExpressionActivationRequest", data)
+            log.info(f"[VTS] 表情触发: {emotion} → {name}" + (f" 模型={model_id}" if model_id else ""))
         except Exception as e:
             log.info(f"[VTS] 表情触发失败: {e}")
 
-    async def _vts_send_motion(self, action: str):
-        """按动作标签触发 VTS 动作（HotkeyTriggerRequest，匹配 TriggerAnimation 热键名）"""
+    async def _vts_send_motion(self, action: str, model_id: Optional[str] = None):
+        """按动作标签触发 VTS 动作（HotkeyTriggerRequest，匹配 TriggerAnimation 热键名）。model_id 指定目标模型。"""
         if not self._vts_ws or self._vts_ws.closed or not self._vts_authenticated:
             return
         name = self._vts_match(action, self._vts_motions)
@@ -1447,8 +1567,11 @@ class LiveEngine:
             return
         try:
             # VTS 允许直接用热键名称（不区分大小写）作为 hotkeyID 触发
-            await self._vts_request("HotkeyTriggerRequest", {"hotkeyID": name})
-            log.info(f"[VTS] 动作触发: {action} → 热键[{name}]")
+            data = {"hotkeyID": name}
+            if model_id:
+                data["modelID"] = model_id
+            await self._vts_request("HotkeyTriggerRequest", data)
+            log.info(f"[VTS] 动作触发: {action} → 热键[{name}]" + (f" 模型={model_id}" if model_id else ""))
         except Exception as e:
             log.info(f"[VTS] 动作触发失败: {e}")
 
@@ -1460,15 +1583,18 @@ class LiveEngine:
             self._vts_ws = None
             self._vts_authenticated = False
 
-    async def _vts_send_parameters(self, params: dict):
-        """发送参数到 VTube Studio（如 MouthOpen, FaceAngleX 等）"""
+    async def _vts_send_parameters(self, params: dict, model_id: Optional[str] = None):
+        """发送参数到 VTube Studio（如 MouthOpen, FaceAngleX 等）。model_id 指定目标模型。"""
         if not self._vts_ws or self._vts_ws.closed:
             return
         try:
+            data = {"parameterValues": [{"id": k, "value": v} for k, v in params.items()]}
+            if model_id:
+                data["modelID"] = model_id
             req = json.dumps({
                 "apiName": "VTubeStudioPublicAPI", "apiVersion": "1.0",
                 "messageType": "InjectParameterDataRequest",
-                "data": {"parameterValues": [{"id": k, "value": v} for k, v in params.items()]}
+                "data": data,
             })
             await self._vts_ws.send_str(req)
         except:
@@ -1534,8 +1660,17 @@ class LiveEngine:
             mouth_values.append(mouth)
         return mouth_values if mouth_values else [0.0]
 
-    async def _vts_speak(self, audio_bytes: bytes, text: str = "", emotion: str = "", action: str = ""):
-        """TTS 音频播放 + 口型同步（VTS + 桌宠双通道）"""
+    async def _vts_speak(self, audio_bytes: bytes, text: str = "", emotion: str = "",
+                         action: str = "", model_id: Optional[str] = None, human_controlled: bool = False):
+        """TTS 音频播放 + 口型同步（VTS + 桌宠双通道）。
+
+        model_id: 绑定的 VTS 模型 GUID；真人模型(human_controlled)完全由真人操控，
+        奶昔不写入任何 VTS 数据（口型/表情/动作），直接返回。
+        """
+        # 真人独占模型：奶昔不写入 VTS（真人自己在真机上操控），仅做桌宠内渲（若有）
+        if human_controlled:
+            log.info(f"[VTS] 真人模型({model_id or 'human'})由真人独占，奶昔跳过所有 VTS 写入")
+            return
         mouth_data = self._audio_to_mouth_data(audio_bytes)
         if not mouth_data:
             return
@@ -1545,20 +1680,21 @@ class LiveEngine:
                 await self._live2d_ws.send_json({
                     "type": "speak", "mouth": mouth_data,
                     "frame_ms": 80, "text": text, "emotion": emotion, "action": action,
+                    "model_id": model_id or "",
                 })
             except:
                 pass
         # VTS 表情/动作触发（与桌宠内渲共用同一份 emotion/action）
         if emotion:
-            await self._vts_send_expression(emotion)
+            await self._vts_send_expression(emotion, model_id)
         if action:
-            await self._vts_send_motion(action)
-        # 逐帧发送口型参数到 VTube Studio（80ms/帧）
+            await self._vts_send_motion(action, model_id)
+        # 逐帧发送口型参数到 VTube Studio（80ms/帧，按 model_id 精准投递）
         frame_interval = 0.08
         for mouth in mouth_data:
             if not self._running:
                 break
-            await self._vts_send_parameters({"MouthOpen": mouth})
+            await self._vts_send_parameters({"MouthOpen": mouth}, model_id)
             await asyncio.sleep(frame_interval)
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -1584,7 +1720,11 @@ class LiveEngine:
             try:
                 audio_bytes = await self._synthesize(text)
                 if audio_bytes:
-                    await self._vts_speak(audio_bytes, text, action.get("emotion", "开心"), action.get("action", ""))
+                    connector = self._connectors.get(action.get("agent_id", "naixi"))
+                    model_id = getattr(connector, "model_id", None) if connector else None
+                    human_controlled = getattr(connector, "human_controlled", False) if connector else False
+                    await self._vts_speak(audio_bytes, text, action.get("emotion", "开心"),
+                                          action.get("action", ""), model_id, human_controlled)
                     tmp = os.path.join(tempfile.gettempdir(), f"live_push_{int(time.time()*1000)}.wav")
                     try:
                         with open(tmp, "wb") as f:
