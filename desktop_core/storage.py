@@ -377,6 +377,15 @@ def init_tables():
                 model_used TEXT DEFAULT '',
                 duration_ms INTEGER DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS hotkeys (
+                id TEXT PRIMARY KEY,
+                combo TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'motion',
+                label TEXT NOT NULL DEFAULT '',
+                enabled INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_hotkey_combo ON hotkeys(combo);
         """)
         # 为现有表添加 duration_ms 列（如果不存在）
         try:
@@ -774,5 +783,95 @@ def automation_get_active() -> list[dict]:
                 continue
             result.append(a)
         return result
+    finally:
+        conn.close()
+
+
+# ── VTS 风格全局热键 ──
+
+# 默认种子：VTS 常见用法（语义标签对应 avatarDriver 的 ACTION/EMOTION 关键词）
+_HOTKEY_DEFAULTS = [
+    ("f1", "expression", "惊讶"),
+    ("f2", "expression", "害羞"),
+    ("f3", "expression", "生气"),
+    ("f4", "motion", "wave"),
+    ("f5", "motion", "nod"),
+    ("f6", "motion", "think"),
+    ("f7", "motion", "shake"),
+    ("ctrl+shift+h", "motion", "smile"),
+]
+
+
+def hotkey_seed_defaults():
+    """首次启动写入默认热键（幂等：已有数据则跳过）"""
+    conn = _get_conn()
+    try:
+        cnt = conn.execute("SELECT COUNT(*) AS c FROM hotkeys").fetchone()["c"]
+        if cnt > 0:
+            return
+        for combo, kind, label in _HOTKEY_DEFAULTS:
+            conn.execute(
+                "INSERT OR IGNORE INTO hotkeys (id, combo, kind, label, enabled, created_at) VALUES (?, ?, ?, ?, 1, datetime('now'))",
+                (_hotkey_id(combo), combo, kind, label)
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _hotkey_id(combo: str) -> str:
+    import hashlib
+    return "hk_" + hashlib.md5(combo.encode()).hexdigest()[:12]
+
+
+def hotkey_list() -> list[dict]:
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT id, combo, kind, label, enabled FROM hotkeys ORDER BY created_at"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def hotkey_save(combo: str, kind: str, label: str, enabled: int = 1) -> dict:
+    """新增或更新热键（combo 唯一）。返回最终记录。"""
+    combo = (combo or "").strip().lower()
+    kind = (kind or "motion").strip().lower()
+    label = (label or "").strip()
+    if not combo or not label:
+        raise ValueError("combo 与 label 不能为空")
+    if kind not in ("motion", "expression"):
+        kind = "motion"
+    hid = _hotkey_id(combo)
+    conn = _get_conn()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO hotkeys (id, combo, kind, label, enabled, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))",
+            (hid, combo, kind, label, enabled)
+        )
+        conn.commit()
+        row = conn.execute("SELECT id, combo, kind, label, enabled FROM hotkeys WHERE id=?", (hid,)).fetchone()
+        return dict(row)
+    finally:
+        conn.close()
+
+
+def hotkey_delete(hid: str):
+    conn = _get_conn()
+    try:
+        conn.execute("DELETE FROM hotkeys WHERE id=?", (hid,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def hotkey_get_active_map() -> dict:
+    """返回 combo(小写) -> {kind,label} 的活跃映射，供监听器快速查表。"""
+    conn = _get_conn()
+    try:
+        rows = conn.execute("SELECT combo, kind, label FROM hotkeys WHERE enabled=1").fetchall()
+        return {r["combo"].lower(): {"kind": r["kind"], "label": r["label"]} for r in rows}
     finally:
         conn.close()

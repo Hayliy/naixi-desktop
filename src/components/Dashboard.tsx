@@ -1926,7 +1926,7 @@ function LivePage() {
   const [regMsg, setRegMsg] = useState('');
   const [cred, setCred] = useState<any>(null);
   const [showSample, setShowSample] = useState(false);
-  const [vtsModels, setVtsModels] = useState<{ models: Record<string, string>; current: string }>({ models: {}, current: '' });
+  const [vtsModels, setVtsModels] = useState<{ models: Record<string, string>; current: any; instances: any; backends: Record<string, any> }>({ models: {}, current: {}, instances: {}, backends: {} });
 
   // 层3 真人语音闭环：开关状态 / 后端状态 / 可选麦克风设备
   const [humanVoiceOn, setHumanVoiceOn] = useState(false);
@@ -1948,7 +1948,7 @@ function LivePage() {
   };
 
   const loadVtsModels = useCallback(async () => {
-    try { const r = await apiGet<any>('/api/live/vts-models'); setVtsModels({ models: r.models || {}, current: r.current || '' }); } catch {}
+    try { const r = await apiGet<any>('/api/live/vts-models'); setVtsModels({ models: r.models || {}, current: r.current || {}, instances: r.instances || {}, backends: r.backends || {} }); } catch {}
   }, []);
 
   const bindModel = async (agent_id: string, model_id: string) => {
@@ -1958,6 +1958,16 @@ function LivePage() {
       else notify('绑定失败', 'error');
     } catch { notify('请求失败', 'error'); }
     loadConnectors();
+  };
+
+  // 渲染后端切换：vts=VTS实例池 / vmc=VMC协议(VSeeFace等) / self=自研Live2D渲染
+  const setAgentBackend = async (agent_id: string, kind: string) => {
+    try {
+      const r = await apiPost<any>('/api/live/backend', { agent_id, kind });
+      if (r?.ok) notify(`渲染后端已切换：${kind}`, 'success');
+      else notify(r?.error || '切换失败', 'error');
+    } catch { notify('请求失败', 'error'); }
+    loadVtsModels();
   };
 
   const loadConnectors = useCallback(async () => {
@@ -2072,6 +2082,29 @@ function LivePage() {
     pollStatus();
   };
 
+  // 打开多角色舞台渲染窗口（/stage）：Tauri 开独立 WebviewWindow，浏览器模式开新标签页
+  const openStageWindow = async () => {
+    const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+    if (isTauri) {
+      try {
+        const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+        const existing = await WebviewWindow.getByLabel("stage");
+        if (existing) { await existing.setFocus(); return; }
+        new WebviewWindow("stage", {
+          url: "/stage",
+          title: "奶昔 · 多角色舞台",
+          width: 1000,
+          height: 620,
+          transparent: true,
+          decorations: true,
+          center: true,
+        });
+      } catch { notify("舞台窗口打开失败", "error"); }
+    } else {
+      window.open("/stage", "_blank");
+    }
+  };
+
   const togglePet = async () => {
     if (s?.pet_running) {
       try {
@@ -2157,6 +2190,7 @@ function LivePage() {
           <span className="text-[10px] font-medium text-sakura-500">WebSocket 连接状态</span>
           <div className="flex items-center gap-2">
             <button onClick={togglePet} className={`text-[8px] px-2 py-1 rounded transition-colors ${s?.pet_running ? 'bg-purple-100 text-purple-600 hover:bg-purple-200' : 'bg-purple-500 text-white hover:bg-purple-600'}`}>{s?.pet_running ? '关闭桌宠' : '桌宠'}</button>
+            <button onClick={openStageWindow} className="text-[8px] px-2 py-1 rounded bg-indigo-500 text-white hover:bg-indigo-600 transition-colors">舞台窗口</button>
             <button onClick={()=>act("/api/live/connect",{app_id:appId,code:code,access_key_id:accessKeyId,access_key_secret:accessKeySecret,room_id:roomId},"连接成功")} disabled={!appId||!accessKeyId||!code} className="text-[8px] px-2 py-1 rounded bg-blue-500 text-white disabled:opacity-40 hover:bg-blue-600 transition-colors">测试连接</button>
             {s?.connected && <span className="text-[8px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded">已连接</span>}
             {!s?.connected && s?.running && <span className="text-[8px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded">等待连接</span>}
@@ -2351,7 +2385,19 @@ function LivePage() {
               <p className="text-[10px] text-sakura-300 py-1">暂无角色在台</p>
             ) : (
               <div className="space-y-1.5">
-                {connectors.map((c: any) => (
+                {/* 排序：真人(0) → 奶昔(1) → 外部角色(2)，同组内保持后端原始顺序 */}
+                {[...connectors].sort((a: any, b: any) => {
+                  const rank = (c: any) => c.human_controlled ? 0 : (c.agent_id === 'naixi' ? 1 : 2);
+                  return rank(a) - rank(b);
+                }).map((c: any) => {
+                  const vtsInst: any = !c.human_controlled
+                    ? Object.values(vtsModels.instances || {}).find((i: any) => i.agent_id === c.agent_id)
+                    : null;
+                  const vtsCur = vtsInst?.current_model ? (vtsModels.models[vtsInst.current_model] || vtsInst.current_model) : null;
+                  const isCurrentGid = (gid: string) => gid === vtsModels.current || Object.values(vtsModels.current || {}).includes(gid);
+                  const backend: any = vtsModels.backends?.[c.agent_id] || { kind: 'vts', connected: null };
+                  const backendKind: string = backend.kind || 'vts';
+                  return (
                   <div key={c.agent_id} className="rounded-lg border border-sakura-100 p-2 space-y-1.5">
                     <div className="flex items-center gap-2.5">
                       <span className={"w-2 h-2 rounded-full shrink-0 " + (c.quarantined ? "bg-red-400" : "bg-green-400")} />
@@ -2374,15 +2420,49 @@ function LivePage() {
                       >
                         <option value="">（VTS 当前模型）</option>
                         {Object.entries(vtsModels.models || {}).map(([gid, name]) => (
-                          <option key={gid} value={gid}>{name || gid}{gid === vtsModels.current ? '（当前）' : ''}</option>
+                          <option key={gid} value={gid}>{name || gid}{isCurrentGid(gid) ? '（当前）' : ''}</option>
                         ))}
                       </select>
                     </div>
+                    {/* 渲染后端切换：vts=VTS实例池 / vmc=VMC协议 / self=自研Live2D */}
+                    {!c.human_controlled && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-[9px] text-sakura-400 shrink-0 w-12">渲染后端</span>
+                        <select
+                          value={backendKind}
+                          onChange={e => setAgentBackend(c.agent_id, e.target.value)}
+                          className="px-2 py-1 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-white"
+                        >
+                          <option value="vts">VTube Studio</option>
+                          <option value="self">自研渲染（桌宠）</option>
+                          <option value="vmc">VMC 协议</option>
+                        </select>
+                        {backendKind !== 'vts' && (
+                          <span className={`text-[9px] ${backend.connected ? 'text-emerald-500' : 'text-sakura-300'}`}>
+                            {backend.connected ? '已连接' : '待连接'}{backend.port ? ` · 端口 ${backend.port}` : ''}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {/* VTS 实例状态：端口 + 当前模型（多实例按 8001+i 分配，仅 vts 后端显示） */}
+                    {!c.human_controlled && backendKind === 'vts' && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-[9px] text-sakura-400 shrink-0 w-12">VTS</span>
+                        {vtsInst ? (
+                          <span className={`text-[9px] ${vtsInst.authenticated ? 'text-emerald-500' : 'text-sakura-300'}`}>
+                            端口 {vtsInst.port} · {vtsInst.authenticated ? (vtsCur ? `当前：${vtsCur}` : '已连接') : '未授权（VTS 中点击确认）'}
+                          </span>
+                        ) : (
+                          <span className="text-[9px] text-sakura-300">实例未连接（在 VTS 中开启 API）</span>
+                        )}
+                      </div>
+                    )}
                     {c.human_controlled && (
                       <p className="text-[8px] text-sakura-300 leading-relaxed">真人模型由真人完全操控，奶昔不写入任何 VTS 数据（口型/表情/动作）</p>
                     )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

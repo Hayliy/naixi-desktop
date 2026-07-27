@@ -111,7 +111,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(BackendPid::default())
-        .invoke_handler(tauri::generate_handler![start_backend])
+        .invoke_handler(tauri::generate_handler![start_backend, restart_backend])
         .setup(|app| {
             // 启动 Python 桌面后端；失败（如未检测到 Python）时通知前端显示提示，而非静默退出
             if let Err(e) = spawn_backend(app.handle()) {
@@ -287,8 +287,39 @@ fn spawn_backend(app: &tauri::AppHandle) -> Result<(), String> {
     }
 }
 
-/// 供前端「重启后端」按钮调用
+/// 供前端「启动后端」按钮调用（仅在后端未运行时拉起，避免重复）
 #[tauri::command]
 fn start_backend(app: tauri::AppHandle) -> Result<(), String> {
+    spawn_backend(&app)
+}
+
+/// 供前端「重启后端」按钮调用：先彻底结束旧进程并确认端口释放，再重新拉起。
+/// 解决旧逻辑「后端卡死/死透时，仅 spawn 会因端口占用检查而跳过、导致重启无效」的问题。
+#[tauri::command]
+fn restart_backend(app: tauri::AppHandle) -> Result<(), String> {
+    // 1. 确定当前后端 PID（优先 state 中记录的子进程 PID，否则回退到监听 9845 的进程）
+    let pid = {
+        let g = app.state::<BackendPid>().0.lock().ok().and_then(|g| *g);
+        g.or_else(|| pid_listening_on(9845))
+    };
+    // 2. 强制结束整个进程树（同步等待 taskkill 完成，确保旧进程被清掉）
+    if let Some(pid) = pid {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &pid.to_string()])
+            .status();
+    } else if let Some(port_pid) = pid_listening_on(9845) {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &port_pid.to_string()])
+            .status();
+    }
+    // 3. 阻塞等待端口真正释放（最多约 5 秒），避免 spawn_backend 的端口占用检查误判而跳过拉起
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        if !port_in_use("127.0.0.1:9845") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    // 4. 重新拉起后端
     spawn_backend(&app)
 }

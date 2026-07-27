@@ -52,8 +52,11 @@ export default function BackendGuard({ children }: { children: ReactNode }) {
     setBannerDismissed(false);
     try {
       if (isTauri) {
-        await invoke("start_backend");
+        // Tauri 模式走真正的 restart_backend：kill 旧进程 + 重新拉起 sidecar，
+        // 即使后端卡死/死透也能可靠重启（不再依赖「端口占用则跳过」的 start_backend）。
+        await invoke("restart_backend");
       } else {
+        // 浏览器模式：后端是独立进程，死透时无法由前端拉起，仅存活时可自重启。
         await apiPost("/api/desktop/restart", {});
       }
     } catch (e) {

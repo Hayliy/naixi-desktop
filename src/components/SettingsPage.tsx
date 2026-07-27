@@ -1,16 +1,18 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   Cpu, Cat, Mic, Search, HardDrive, Server,
-  Palette, DatabaseBackup, ShieldCheck, Info, Check, X, Lock,
+  Palette, DatabaseBackup, ShieldCheck, Info, Check, X, Lock, Keyboard,
 } from "lucide-react";
 import ProviderSettings from "./ProviderSettings";
 import ThemeSettings from "./ThemeSettings";
+import HotkeySettings from "./HotkeySettings";
 import { apiGet, apiPost } from "@/lib/api";
 import { INPUT, BTN, BTN_GHOST, Section, SettingRow, InfoRow, SaveBar } from "./settings/primitives";
 
 const TABS = [
   { key: "model",     label: "模型",       icon: Cpu },
   { key: "pet",       label: "桌宠",       icon: Cat },
+  { key: "hotkeys",   label: "快捷键",     icon: Keyboard },
   { key: "voice",     label: "语音",       icon: Mic },
   { key: "search",    label: "搜索",       icon: Search },
   { key: "storage",   label: "文件与存储", icon: HardDrive },
@@ -70,6 +72,7 @@ export default function SettingsPage() {
         <div className="max-w-2xl">
           {tab === "model" && <SettingsModel />}
           {tab === "pet" && <SettingsPet show={show} />}
+          {tab === "hotkeys" && <HotkeySettings show={show} />}
           {tab === "voice" && <SettingsVoice show={show} />}
           {tab === "search" && <SettingsSearch show={show} />}
           {tab === "storage" && <SettingsStorage />}

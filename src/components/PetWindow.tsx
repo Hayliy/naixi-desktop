@@ -1,68 +1,13 @@
 import { useEffect, useRef, useState } from "react";
+import { Minus, X } from "lucide-react";
+import {
+  setMouth, applyEmotion, applyAction, applyParams, loadScript, sleep,
+} from "@/lib/avatarDriver";
 
 const MODEL_KEY = "naixi_pet_model";
 
-// 情绪(中文) → 英文关键词（用于模糊匹配模型的表情名）
-const EMOTION_KEYWORDS: Record<string, string[]> = {
-  "开心": ["happy", "smile", "joy"],
-  "欢迎": ["welcome", "greeting", "hello", "hi"],
-  "惊讶": ["surprise", "shock", "amaze"],
-  "悲伤": ["sad", "cry", "grief", "blue"],
-  "害羞": ["shy", "blush", "embarrass", "red"],
-  "生气": ["angry", "mad", "rage"],
-  "卖萌": ["love", "moe", "cute", "heart", "like"],
-  "无奈": ["hopeless", "sigh", "helpless", "tired"],
-};
-
-// 动作标签 → 英文关键词（用于模糊匹配模型的 motion 组/名）
-const ACTION_KEYWORDS: Record<string, string[]> = {
-  "wave": ["wave", "greet", "hello", "hi", "bye"],
-  "bye": ["bye", "wave", "greet"],
-  "nod": ["nod", "yes"],
-  "think": ["think", "ponder"],
-  "surprise": ["surprise", "shock"],
-  "shake": ["shake", "no"],
-  "kime": ["kime", "pose"],
-  "sing": ["sing", "song"],
-  "angry": ["angry", "mad"],
-  "cry": ["cry", "sad", "tear"],
-  "smile": ["smile", "happy", "joy"],
-  "sad": ["sad", "cry", "blue"],
-};
-
-// 口型参数名（兼容不同 Cubism 模型命名）
-const MOUTH_PARAMS = ["ParamMouthOpenY", "ParamMouthOpen"];
-
-function setMouth(sprite: any, v: number) {
-  const val = Math.max(0, Math.min(1, v));
-  for (const p of MOUTH_PARAMS) {
-    try { sprite.setParameterValueById(p, val, 1); } catch {}
-  }
-}
-
-function applyEmotion(sprite: any, expressions: any[], emotion?: string) {
-  if (!emotion || !expressions.length) return;
-  const kws = EMOTION_KEYWORDS[emotion.trim()] || [];
-  if (!kws.length) return;
-  const hit = expressions.find(x => kws.some(k => String(x.name).toLowerCase().includes(k)));
-  if (hit) {
-    try { sprite.setExpression({ expressionId: hit.name }); } catch {}
-  }
-}
-
-function applyAction(sprite: any, motions: any[], action?: string) {
-  if (!action || !motions.length) return;
-  const kws = ACTION_KEYWORDS[action.trim()] || [];
-  if (!kws.length) return;
-  const hit = motions.find(m => kws.some(k => (m.group + " " + m.name).toLowerCase().includes(k)));
-  if (hit) {
-    try { sprite.startMotion({ group: hit.group, no: hit.no, priority: 3 }); } catch {}
-  } else {
-    // 没有精确匹配时随机播一个动作，保证有表现力
-    const r = motions[Math.floor(Math.random() * motions.length)];
-    try { sprite.startMotion({ group: r.group, no: r.no, priority: 2 }); } catch {}
-  }
-}
+// 模型唯一标识：目录名/文件名（后端按此拼贴图相对路径，避免 404 白板）
+const modelKey = (m: { name: string; modelFile: string }) => `${m.name}/${m.modelFile}`;
 
 /**
  * 桌宠窗口 — 透明 Live2D 浮窗
@@ -72,8 +17,9 @@ export default function PetWindow() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [connected, setConnected] = useState(false);
   const [models, setModels] = useState<any[]>([]);
-  const [currentModel, setCurrentModel] = useState(() => localStorage.getItem(MODEL_KEY) || "绒E_正式版.model3.json");
+  const [currentModel, setCurrentModel] = useState<string>(() => localStorage.getItem(MODEL_KEY) || "");
   const [loading, setLoading] = useState(true);
+  const [appReady, setAppReady] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const appRef = useRef<any>(null);
   const live2dRef = useRef<any>(null);
@@ -90,64 +36,146 @@ export default function PetWindow() {
       .catch(() => {});
   }, []);
 
-  // 初始化 Live2D
+  // 模型列表加载后，若无有效选择则自动选第一个（避免硬编码默认导致 404 白板）
+  useEffect(() => {
+    if (!models.length) return;
+    if (!models.some(m => modelKey(m) === currentModel)) {
+      setCurrentModel(modelKey(models[0]));
+    }
+  }, [models]);
+
+  // 初始化 Pixi Application（仅一次，避免切换模型时复用已销毁 canvas 导致卡死）
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    if (appRef.current) {
-      appRef.current.destroy();
-      appRef.current = null;
-    }
-    live2dRef.current = null;
-    expressionsRef.current = [];
-    motionsRef.current = [];
-    if (idleTimerRef.current) { clearInterval(idleTimerRef.current); idleTimerRef.current = null; }
-
-    async function init() {
+    (async () => {
       await loadScript("/Core/live2dcubismcore.js");
       const { Application } = await import("pixi.js");
-      const { Live2DSprite, Config, Priority } = await import("easy-live2d");
       if (cancelled || !canvasRef.current) return;
-
-      Config.MotionGroupIdle = "Idle";
-      Config.MouseFollow = false;
-
       const app = new Application();
       await app.init({
         view: canvasRef.current,
         backgroundAlpha: 0,
         resizeTo: window,
         antialias: true,
+        // 强制 WebGL：easy-live2d 仅支持 WebGL 上下文，Pixi v8 默认会优先选 WebGPU，
+        // 导致 canvas 已被 webgpu 上下文占用后 easy-live2d 取不到 webgl 上下文（gl is null / 白板）
+        preference: "webgl",
       });
+      if (cancelled) { try { app.destroy(true); } catch {} return; }
       appRef.current = app;
+      setAppReady(true);
+    })();
+    return () => {
+      cancelled = true;
+      try { wsRef.current?.close(); } catch {}
+      wsRef.current = null;
+      try { appRef.current?.destroy(true); } catch {}
+      appRef.current = null;
+      setAppReady(false);
+    };
+  }, []);
 
-      // 加载选中的模型
-      const modelPath = `/api/live2d-model/${encodeURIComponent(currentModel)}`;
+  // 加载/切换模型（仅替换 Live2DSprite，Application 常驻，规避 canvas 复用卡死）
+  useEffect(() => {
+    if (!currentModel || !appReady || !appRef.current) return;
+    let cancelled = false;
+    setLoading(true);
+    const app = appRef.current;
+    // 清旧 sprite
+    if (live2dRef.current) {
+      try { app.stage.removeChild(live2dRef.current); } catch {}
+      try { live2dRef.current.destroy(); } catch {}
+      live2dRef.current = null;
+    }
+    expressionsRef.current = [];
+    motionsRef.current = [];
+    if (idleTimerRef.current) { clearInterval(idleTimerRef.current); idleTimerRef.current = null; }
+
+    (async () => {
+      const { Live2DSprite, Config, Priority } = await import("easy-live2d");
+      if (cancelled) return;
+      Config.MotionGroupIdle = "Idle";
+      Config.MouseFollow = false;
+      const modelPath = `/api/live2d-model/${currentModel.split("/").map(encodeURIComponent).join("/")}`;
       try {
         const sprite = new Live2DSprite();
         await sprite.init({ modelPath, ticker: app.ticker });
+        if (cancelled) { try { sprite.destroy(); } catch {} return; }
         sprite.width = window.innerWidth * window.devicePixelRatio;
         sprite.height = window.innerHeight * window.devicePixelRatio;
         app.stage.addChild(sprite);
         live2dRef.current = sprite;
-
-        // 自省模型：缓存表情与动作列表（供口型/动作映射使用）
         try { expressionsRef.current = await sprite.getExpressions(); } catch { expressionsRef.current = []; }
         try { motionsRef.current = await sprite.getMotions(); } catch { motionsRef.current = []; }
-
-        connectWs(sprite);
+        connectWs();
         startIdleLoop(Priority);
         setLoading(false);
       } catch (e) {
         console.error("模型加载失败:", e);
         setLoading(false);
       }
+    })();
+    return () => { cancelled = true; };
+  }, [currentModel, appReady]);
+
+  // VTS 风格全局热键：窗口聚焦时由浏览器 keydown 兜底（后端 pynput 全局监听不可用时）。
+  // 若后端全局监听已激活（global_active=true），则跳过，避免双触发。
+  const hotkeyCfgRef = useRef<{ global_active: boolean; hotkeys: any[] }>({ global_active: false, hotkeys: [] });
+  useEffect(() => {
+    fetch("/api/hotkeys/config")
+      .then(r => r.json())
+      .then(d => { hotkeyCfgRef.current = { global_active: !!d.global_active, hotkeys: d.hotkeys || [] }; })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!appReady) return;
+    function normalizeCombo(e: KeyboardEvent): string {
+      const mods: string[] = [];
+      if (e.ctrlKey) mods.push("ctrl");
+      if (e.altKey) mods.push("alt");
+      if (e.shiftKey) mods.push("shift");
+      if (e.metaKey) mods.push("meta");
+      let key = e.key.toLowerCase();
+      if (key === " ") key = "space";
+      if (key.startsWith("arrow")) key = key.slice(5);
+      return [...mods.sort(), key].join("+");
     }
-    init();
-    return () => {
-      cancelled = true;
-      if (idleTimerRef.current) { clearInterval(idleTimerRef.current); idleTimerRef.current = null; }
-    };
+    function onKeyDown(e: KeyboardEvent) {
+      if (hotkeyCfgRef.current.global_active) return; // 全局监听已接管
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA")) return;
+      const combo = normalizeCombo(e);
+      const hit = hotkeyCfgRef.current.hotkeys.find(
+        (h: any) => h.enabled !== 0 && h.combo.toLowerCase() === combo
+      );
+      if (!hit) return;
+      const sprite = live2dRef.current;
+      if (!sprite) return;
+      e.preventDefault();
+      if (hit.kind === "expression") {
+        applyEmotion(sprite, expressionsRef.current, hit.label);
+      } else {
+        applyAction(sprite, motionsRef.current, hit.label);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [appReady]);
+
+  // 模型加载后，默认导入该模型文件里原本写的快捷键动作（force：有内置热键则用模型真实动作
+  // 替换通用种子，实现「模型文件里原本写的快捷键默认支持」；无内置动作则保留种子）。
+  useEffect(() => {
+    if (!currentModel) return;
+    fetch("/api/hotkeys/import-model", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: currentModel, force: true }),
+    })
+      .then(() => fetch("/api/hotkeys/config"))
+      .then(r => r.json())
+      .then(d => { hotkeyCfgRef.current = { global_active: !!d.global_active, hotkeys: d.hotkeys || [] }; })
+      .catch(() => {});
   }, [currentModel]);
 
   function startIdleLoop(Priority: any) {
@@ -163,15 +191,22 @@ export default function PetWindow() {
     }, 8000);
   }
 
-  function connectWs(sprite: any) {
+  function connectWs() {
+    if (wsRef.current) return; // 仅连接一次
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const ws = new WebSocket(`${protocol}//${window.location.host}/api/live/live2d-stream`);
     wsRef.current = ws;
     ws.onopen = () => setConnected(true);
-    ws.onclose = () => { setConnected(false); setTimeout(() => connectWs(sprite), 3000); };
+    ws.onclose = () => {
+      setConnected(false);
+      wsRef.current = null;
+      setTimeout(() => connectWs(), 3000);
+    };
     ws.onmessage = async (e) => {
       try {
         const data = JSON.parse(e.data);
+        const sprite = live2dRef.current; // 始终驱动当前 sprite（切换模型后自动生效）
+        if (!sprite) return;
         if (data.type === "speak") {
           const { mouth, frame_ms, emotion, action } = data;
           speakingRef.current = true;
@@ -188,6 +223,15 @@ export default function PetWindow() {
           }
           setMouth(sprite, 0);
           speakingRef.current = false;
+        } else if (data.type === "avatar_expression") {
+          // 后端 SelfRenderBackend：情绪 → 表情模糊匹配
+          applyEmotion(sprite, expressionsRef.current, data.emotion);
+        } else if (data.type === "avatar_motion") {
+          // 后端 SelfRenderBackend：动作标签 → motion 组模糊匹配
+          applyAction(sprite, motionsRef.current, data.action);
+        } else if (data.type === "avatar_params") {
+          // 后端 SelfRenderBackend：参数字典 → 批量注入（如 MouthOpen/FaceAngleX）
+          applyParams(sprite, data.params);
         }
       } catch {}
     };
@@ -211,25 +255,55 @@ export default function PetWindow() {
     input.click();
   }
 
+  // 窗口控制（pet 窗口 decorations:false 无原生标题栏，需自绘最小/关闭）
+  const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  async function handleMinimize() {
+    if (isTauri) {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        await getCurrentWindow().minimize();
+      } catch {}
+    } else {
+      try { window.blur(); } catch {}
+    }
+  }
+  async function handleClose() {
+    if (isTauri) {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        await getCurrentWindow().close();
+      } catch {}
+    } else {
+      // 浏览器预览：返回仪表盘
+      window.location.href = "/";
+    }
+  }
+
   return (
     <div style={{ width: "100vw", height: "100vh", position: "relative", overflow: "hidden" }}>
-      {/* 顶部工具栏 */}
-      <div style={{
-        position: "absolute", top: 0, left: 0, right: 0,
-        display: "flex", alignItems: "center", gap: 6,
-        padding: "6px 10px", background: "rgba(0,0,0,0.35)",
-        zIndex: 10, fontSize: 12,
-      }}>
+      {/* 顶部工具栏（data-tauri-drag-region 让无边框窗体可拖动；交互控件 stopPropagation 避免误触拖动） */}
+      <div
+        data-tauri-drag-region
+        style={{
+          position: "absolute", top: 0, left: 0, right: 0,
+          display: "flex", alignItems: "center", gap: 6,
+          padding: "6px 10px", background: "rgba(0,0,0,0.45)",
+          zIndex: 10, fontSize: 12,
+        }}
+      >
         <select
+          data-tauri-drag-region
+          onMouseDown={(e) => e.stopPropagation()}
           value={currentModel}
-          onChange={e => handleModelChange(e.target.value)}
-          style={{ flex: 1, padding: "3px 6px", borderRadius: 4, border: "none", fontSize: 12, background: "rgba(255,255,255,0.15)", color: "#fff", outline: "none" }}
+          onChange={(e) => handleModelChange(e.target.value)}
+          style={{ flex: 1, padding: "3px 6px", borderRadius: 4, border: "none", fontSize: 12, background: "rgba(255,255,255,0.15)", color: "#fff", outline: "none", cursor: "default" }}
         >
-          {models.map(m => (
-            <option key={m.modelFile} value={m.modelFile} style={{ color: "#000" }}>{m.name}</option>
+          {models.map((m) => (
+            <option key={modelKey(m)} value={modelKey(m)} style={{ color: "#000" }}>{m.name}</option>
           ))}
         </select>
         <button
+          onMouseDown={(e) => e.stopPropagation()}
           onClick={handleFilePick}
           style={{ padding: "3px 8px", borderRadius: 4, border: "none", fontSize: 11, background: "rgba(255,255,255,0.15)", color: "#fff", cursor: "pointer", whiteSpace: "nowrap" }}
         >
@@ -238,6 +312,22 @@ export default function PetWindow() {
         <span style={{ fontSize: 10, opacity: 0.6, color: "#fff", whiteSpace: "nowrap" }}>
           {loading ? "加载中..." : connected ? "已连接" : "未连接"}
         </span>
+        <button
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={handleMinimize}
+          title="最小化"
+          style={{ marginLeft: "auto", width: 22, height: 20, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 4, border: "none", background: "rgba(255,255,255,0.12)", color: "#fff", cursor: "pointer" }}
+        >
+          <Minus size={13} />
+        </button>
+        <button
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={handleClose}
+          title="关闭"
+          style={{ width: 22, height: 20, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 4, border: "none", background: "rgba(255,90,90,0.55)", color: "#fff", cursor: "pointer" }}
+        >
+          <X size={13} />
+        </button>
       </div>
 
       <canvas ref={canvasRef} style={{ width: "100%", height: "100%" }} />
@@ -255,16 +345,3 @@ export default function PetWindow() {
   );
 }
 
-function loadScript(src: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = src;
-    s.onload = () => resolve();
-    s.onerror = reject;
-    document.head.appendChild(s);
-  });
-}
-
-function sleep(ms: number) {
-  return new Promise(r => setTimeout(r, ms));
-}

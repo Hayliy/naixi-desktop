@@ -1,5 +1,5 @@
 """桌面端 API 路由 — 脱敏版，不含任何 QQ 机器人相关功能"""
-import json, os, sys, time, logging, asyncio, hmac
+import json, os, sys, time, logging, asyncio, hmac, glob
 from aiohttp import web
 from datetime import datetime
 
@@ -3218,6 +3218,7 @@ def setup_routes(app):
     app.router.add_post("/api/live/models/import", api_live_models_import)
     app.router.add_get("/api/live2d-model/{path:.*}", api_live2d_model)
     app.router.add_get("/api/live2d-model-list", api_live2d_model_list)
+    app.router.add_get("/api/live2d-model-actions", api_live2d_model_actions)
     app.router.add_get("/api/live/connectors", api_live_connectors)
     app.router.add_post("/api/live/connectors/register", api_live_connector_register)
     app.router.add_post("/api/live/connectors/unregister", api_live_connector_unregister)
@@ -3225,13 +3226,23 @@ def setup_routes(app):
     app.router.add_get("/api/live/ws_agent", api_live_ws_agent)
     app.router.add_get("/api/live/connect_credentials", api_live_connect_credentials)
     app.router.add_get("/api/live/vts-models", api_live_vts_models)
+    # VTS 风格全局热键管理
+    app.router.add_get("/api/hotkeys", api_hotkeys_list)
+    app.router.add_post("/api/hotkeys", api_hotkeys_save)
+    app.router.add_post("/api/hotkeys/delete", api_hotkeys_delete)
+    app.router.add_get("/api/hotkeys/config", api_hotkeys_config)
+    app.router.add_post("/api/hotkeys/reload", api_hotkeys_reload)
+    app.router.add_post("/api/hotkeys/import-model", api_hotkeys_import_model)
     app.router.add_post("/api/live/connectors/bind", api_live_connector_bind)
+    app.router.add_post("/api/live/backend", api_live_backend_set)
     # 层3 真人语音闭环（麦克风 ASR → 自动上麦）
     app.router.add_post("/api/live/human_voice/toggle", api_live_human_voice_toggle)
     app.router.add_get("/api/live/human_voice/status", api_live_human_voice_status)
 
     # 启动时连接 MCP 服务器
     app.on_startup.append(_on_startup_mcp)
+    # 启动 VTS 风格全局热键监听
+    app.on_startup.append(_on_startup_hotkeys)
 
     # 工具权限确认
     app.router.add_get("/api/tools", api_tools_list)
@@ -3439,6 +3450,79 @@ async def api_live_vts_models(request):
     return web.json_response(engine.list_vts_models())
 
 
+# ── VTS 风格全局热键 ──
+
+async def api_hotkeys_list(request):
+    """列出所有热键"""
+    from desktop_core.storage import hotkey_list
+    return web.json_response({"hotkeys": hotkey_list()})
+
+
+async def api_hotkeys_config(request):
+    """返回热键配置 + 全局监听是否激活（前端据此决定是否挂载窗口内 keydown 兜底）"""
+    from desktop_core import hotkeys
+    from desktop_core.storage import hotkey_list
+    return web.json_response({
+        "global_active": hotkeys.GLOBAL_LISTENER_ACTIVE,
+        "hotkeys": hotkey_list(),
+    })
+
+
+async def api_hotkeys_save(request):
+    """新增/更新热键。body: {combo, kind, label}"""
+    from desktop_core.storage import hotkey_save
+    from desktop_core import hotkeys
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json"}, status=400)
+    combo = (body.get("combo") or "").strip().lower()
+    kind = (body.get("kind") or "motion").strip().lower()
+    label = (body.get("label") or "").strip()
+    if not combo or not label:
+        return web.json_response({"error": "combo 与 label 必填"}, status=400)
+    if kind not in ("motion", "expression"):
+        kind = "motion"
+    try:
+        rec = hotkey_save(combo, kind, label)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+    hotkeys.reload_hotkeys()
+    return web.json_response({"ok": True, "hotkey": rec})
+
+
+async def api_hotkeys_delete(request):
+    """删除热键。body: {id}"""
+    from desktop_core.storage import hotkey_delete
+    from desktop_core import hotkeys
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json"}, status=400)
+    hid = (body.get("id") or "").strip()
+    if not hid:
+        return web.json_response({"error": "id 必填"}, status=400)
+    hotkey_delete(hid)
+    hotkeys.reload_hotkeys()
+    return web.json_response({"ok": True})
+
+
+async def api_hotkeys_reload(request):
+    """重新加载热键配置（运行时修改 DB 后手动刷新）"""
+    from desktop_core import hotkeys
+    hotkeys.reload_hotkeys()
+    return web.json_response({"ok": True, "global_active": hotkeys.GLOBAL_LISTENER_ACTIVE})
+
+
+async def _on_startup_hotkeys(app):
+    """启动钩子：初始化全局热键监听"""
+    try:
+        from desktop_core import hotkeys
+        hotkeys.init_hotkeys()
+    except Exception as e:
+        log.warning(f"全局热键初始化失败: {e}")
+
+
 async def api_live_connector_bind(request):
     """把某角色绑定到指定 VTS 模型（model_id 空串/None 表示用当前模型），持久化。
 
@@ -3454,6 +3538,27 @@ async def api_live_connector_bind(request):
     if not ok:
         return web.json_response({"ok": False, "error": "角色不存在"}, status=404)
     return web.json_response({"ok": True, "connectors": engine.list_connectors()})
+
+
+async def api_live_backend_set(request):
+    """设置某角色的渲染后端类型（适配器层）并持久化。
+
+    body: {agent_id, kind}  kind: "vts"|"vmc"|"self"
+    - vts:  VTube Studio 实例池（端口 8001+i）
+    - vmc:  VMC 协议 OSC/UDP（端口 39539+i，VSeeFace/Warudo 等）
+    - self: 自研 Live2D 渲染（前端 PetWindow/舞台）
+    """
+    from desktop_core.live_engine import engine
+    body = await request.json() if request.can_read_body else {}
+    agent_id = (body.get("agent_id") or "").strip()
+    kind = (body.get("kind") or "").strip()
+    if not agent_id or not kind:
+        return web.json_response({"ok": False, "error": "缺少 agent_id 或 kind"}, status=400)
+    result = engine.set_agent_backend(agent_id, kind)
+    if not result.get("ok"):
+        return web.json_response(result, status=400)
+    result["backends"] = engine.backend_summary()
+    return web.json_response(result)
 
 
 async def api_live_human_voice_toggle(request):
@@ -3730,6 +3835,7 @@ async def api_live2d_stream(request):
     ws = web.WebSocketResponse()
     await ws.prepare(request)
     engine._live2d_ws = ws
+    engine._live2d_clients.add(ws)  # 多窗口并存（桌宠 + 舞台），广播集合
     try:
         async for msg in ws:
             if msg.type == web.WSMsgType.CLOSED:
@@ -3754,6 +3860,7 @@ async def api_live2d_stream(request):
                             "text": reply,
                             "emotion": emotion,
                             "action": action,
+                            "agent_id": "naixi",
                             "motion_group": mg,
                             "motion_index": mi,
                             "mouth": [0.5]*5,
@@ -3769,6 +3876,7 @@ async def api_live2d_stream(request):
                 except:
                     pass
     finally:
+        engine._live2d_clients.discard(ws)
         if engine._live2d_ws is ws:
             engine._live2d_ws = None
     return ws
@@ -3804,20 +3912,20 @@ async def api_live_chat_test(request):
         action = emo_to_action.get(emotion, "")
     mg, mi = engine._action_to_motion(action)
     result = {"reply": reply, "emotion": emotion, "action": action}
-    if engine._live2d_ws and not engine._live2d_ws.closed:
-        try:
-            await engine._live2d_ws.send_json({
-                "type": "speak",
-                "text": reply,
-                "emotion": emotion,
-                "action": action,
-                "motion_group": mg,
-                "motion_index": mi,
-                "mouth": [0.5, 0.8, 0.5, 0.3, 0.0],
-                "frame_ms": 80,
-            })
-        except:
-            pass
+    try:
+        await engine.live2d_broadcast({
+            "type": "speak",
+            "text": reply,
+            "emotion": emotion,
+            "action": action,
+            "agent_id": "naixi",
+            "motion_group": mg,
+            "motion_index": mi,
+            "mouth": [0.5, 0.8, 0.5, 0.3, 0.0],
+            "frame_ms": 80,
+        })
+    except:
+        pass
     # 触发 TTS 语音播放
     try:
         audio = await engine._synthesize(reply)
@@ -3895,30 +4003,302 @@ async def api_live_models_import(request):
         log.warning(f"模型导入失败: {e}")
         return web.json_response({"error": "导入失败"}, status=500)
 
+# 贴图降采样上限（像素）：超出则后端自动缩放，既加速加载又规避超大贴图（如 16384）WebGL 越界
+# 设为 8192：现代 GPU / swiftshader 均支持此尺寸；避免 39MB 纹理 LANCZOS 降采样阻塞 55s 导致前端超时白板
+_MAX_TEX_SIDE = 8192
+
+
+# ────────────────────────────────────────────────────────────
+# 模型文件里「原本写的快捷键动作」发现与注入
+# VTS 模型：model3.json 的 FileReferences 通常为空（动作/表情由 *.vtube.json 的
+# Hotkeys 数组 + 目录内 *.exp3.json / *.motion3.json 定义）。easy-live2d 只读
+# model3.json 的 FileReferences，导致模型的真实动作/表情无法被加载与触发。
+# 这里在代理 model3.json 时动态注入发现到的表情/动作，使模型文件里原本写的
+# 快捷键动作「默认支持」（可被前端按真实名精确触发）。
+# ────────────────────────────────────────────────────────────
+
+# VTS 模型搜索根（与 api_live2d_model / api_live2d_model_list 保持一致）
+_L2D_SEARCH_ROOTS = [
+    os.path.join(_DESKTOP_DIR, "data", "models"),
+    r"D:\Program Files\Steam\steamapps\common\VTube Studio\VTube Studio_Data\StreamingAssets\Live2DModels",
+]
+
+
+def _resolve_model3_path(model_key: str):
+    """把前端传入的「模型目录名/文件名」解析为本地绝对路径（复用模型代理的搜索逻辑）。"""
+    if not model_key:
+        return None
+    if any(part == ".." for part in model_key.replace("\\", "/").split("/")):
+        return None
+    for base in _L2D_SEARCH_ROOTS:
+        if not os.path.exists(base):
+            continue
+        cand = os.path.normpath(os.path.join(base, model_key))
+        abs_base = os.path.abspath(base)
+        abs_cand = os.path.abspath(cand)
+        if os.path.isfile(abs_cand) and abs_cand.startswith(abs_base + os.sep):
+            return abs_cand
+    name = model_key.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    for base in _L2D_SEARCH_ROOTS:
+        if not os.path.exists(base):
+            continue
+        for root, _, files in os.walk(base):
+            if name in files:
+                return os.path.join(root, name)
+    return None
+
+
+def _strip_ext(fn: str) -> str:
+    """去掉 Live2D 双层扩展名（.model3.json / .exp3.json / .motion3.json / .json）。"""
+    b = os.path.basename(fn)
+    for suf in (".model3.json", ".exp3.json", ".motion3.json", ".json"):
+        if b.lower().endswith(suf):
+            return b[: -len(suf)]
+    return os.path.splitext(b)[0]
+
+
+def _discover_model_actions(model3_path: str) -> dict:
+    """读取模型文件里原本写的快捷键动作。
+
+    来源：
+      1) 目录内（含子目录，递归）*.exp3.json / *.motion3.json —— 模型真实表情/动作文件；
+      2) 同目录 *.vtube.json 的 Hotkeys 数组 —— VTS「原本写的」快捷键动作（含
+         名称、类型 ToggleExpression/TriggerAnimation、文件名）。
+
+    返回 {expressions:[{name,file}...], motions:[{group,name,file}...], hotkeys:[{name,kind,file}...]}
+      file 为相对模型目录的路径（含子目录），供 model3 注入与前端精确加载。
+    """
+    model_dir = os.path.dirname(model3_path)
+    out = {"expressions": [], "motions": [], "hotkeys": []}
+    try:
+        for f in sorted(glob.glob(os.path.join(model_dir, "**", "*.exp3.json"), recursive=True)):
+            rel = os.path.relpath(f, model_dir).replace("\\", "/")
+            out["expressions"].append({"name": _strip_ext(f), "file": rel})
+    except Exception:
+        pass
+    try:
+        for i, f in enumerate(sorted(glob.glob(os.path.join(model_dir, "**", "*.motion3.json"), recursive=True))):
+            rel = os.path.relpath(f, model_dir).replace("\\", "/")
+            out["motions"].append({"group": "Action", "name": _strip_ext(f), "file": rel, "no": i})
+    except Exception:
+        pass
+    vtube = os.path.join(model_dir, _strip_ext(os.path.basename(model3_path)) + ".vtube.json")
+    if os.path.exists(vtube):
+        try:
+            d = json.load(open(vtube, encoding="utf-8"))
+            for h in d.get("Hotkeys", []) or []:
+                name = (h.get("Name") or "").strip()
+                action = (h.get("Action") or "").strip()
+                file = (h.get("File") or "").strip()
+                if not name and file:
+                    name = _strip_ext(file)
+                if not name:
+                    continue
+                kind = "expression"
+                if "motion" in action.lower() or file.lower().endswith(".motion3.json") or "animation" in action.lower():
+                    kind = "motion"
+                out["hotkeys"].append({"name": name, "kind": kind, "file": file})
+        except Exception:
+            pass
+    return out
+
+
+def _patch_model3_for_easy_live2d(model3_path: str) -> dict:
+    """返回注入过表情/动作的 model3.json 字典（不动磁盘文件）。"""
+    try:
+        with open(model3_path, encoding="utf-8") as fh:
+            d = json.load(fh)
+    except Exception:
+        return None
+    acts = _discover_model_actions(model3_path)
+    fr = d.setdefault("FileReferences", {})
+
+    existing_exp = set()
+    exp_list = list(fr.get("Expressions") or [])
+    for e in exp_list:
+        existing_exp.add(e.get("File") if isinstance(e, dict) else e)
+    for ex in acts["expressions"]:
+        fname = ex["file"]
+        if fname not in existing_exp:
+            exp_list.append({"Name": ex["name"], "File": fname})
+            existing_exp.add(fname)
+    fr["Expressions"] = exp_list
+
+    mots = fr.setdefault("Motions", {})
+    if not isinstance(mots, dict):
+        mots = {}
+        fr["Motions"] = mots
+    grp = mots.setdefault("Action", [])
+    if not isinstance(grp, list):
+        grp = []
+        mots["Action"] = grp
+    have = {m.get("File") for m in grp if isinstance(m, dict)}
+    for m in acts["motions"]:
+        if m["file"] not in have:
+            grp.append({"File": m["file"]})
+            have.add(m["file"])
+    fr["Motions"] = mots
+    return d
+
+
+async def api_live2d_model_actions(request):
+    """返回模型文件里原本写的快捷键动作（表情/动作名 + VTS Hotkeys）。"""
+    model = (request.query.get("model") or "").strip()
+    path = _resolve_model3_path(model)
+    if not path:
+        return web.json_response({"error": "model not found: " + model}, status=404)
+    acts = _discover_model_actions(path)
+    return web.json_response({
+        "model": model,
+        "expressions": [e["name"] for e in acts["expressions"]],
+        "motions": [m["name"] for m in acts["motions"]],
+        "hotkeys": acts["hotkeys"],
+    })
+
+
+async def api_hotkeys_import_model(request):
+    """按模型文件里原本写的快捷键动作，默认导入热键。
+
+    body: {model, force?}
+      - force=true（模型加载时自动调用 / 设置页「重置为模型默认」）：
+          模型有内置热键 → 清空现有并用模型真实动作名重新绑定（F1..F12），
+          实现「模型文件里原本写的快捷键默认支持」；
+          模型无任何内置动作 → 保留现有（通常是通用种子），不破坏。
+      - 非 force：已有配置则跳过（保持用户自定义）。
+    """
+    try:
+        body = await request.json() if request.can_read_body else {}
+    except Exception:
+        body = {}
+    model = (body.get("model") or "").strip()
+    force = bool(body.get("force"))
+    from desktop_core import hotkeys as _hk
+    from desktop_core.storage import hotkey_list, hotkey_save, hotkey_delete
+    path = _resolve_model3_path(model)
+    if not path:
+        return web.json_response({"error": "model not found: " + model}, status=404)
+    acts = _discover_model_actions(path)
+    has_actions = bool(acts["hotkeys"]) or bool(acts["motions"])
+    existing = hotkey_list()
+    if not force and existing:
+        return web.json_response({"ok": True, "skipped": True, "count": len(existing)})
+    if force and not has_actions:
+        return web.json_response({"ok": True, "skipped": True, "reason": "model has no built-in hotkeys", "count": len(existing)})
+    if force or not existing:
+        for h in existing:
+            try:
+                hotkey_delete(h["id"])
+            except Exception:
+                pass
+    def _combo(i: int) -> str:
+        f = i + 1
+        return f"f{f}" if f <= 12 else f"shift+f{f-12}"
+    recs = []
+    seen = set()
+    for i, hk in enumerate(acts["hotkeys"]):
+        name = (hk.get("name") or "").strip()
+        kind = hk.get("kind") or "motion"
+        if not name:
+            continue
+        combo = _combo(i)
+        while combo in seen:
+            i += 1
+            combo = _combo(i)
+        seen.add(combo)
+        try:
+            recs.append(hotkey_save(combo, kind, name))
+        except Exception as e:
+            log.warning(f"[HOTKEY-IMPORT] 跳过 {combo}/{name}: {e}")
+    _hk.reload_hotkeys()
+    return web.json_response({"ok": True, "imported": recs, "count": len(recs)})
+
+
 async def api_live2d_model(request):
-    """代理 Live2D 模型文件（递归搜索本地 VTube Studio / data/models 目录）"""
-    sub_path = request.match_info.get("path", "")
-    if not sub_path or ".." in sub_path:
+    """代理 Live2D 模型文件（递归搜索本地 VTube Studio / data/models 目录）
+
+    前端传入 path 形如「模型目录名/文件名」（如 绒E_正式版/绒E_正式版.model3.json
+    或贴图 绒E_正式版/绒E_正式版.4096/texture_00.png）。先按相对路径直接拼接定位，
+    再 fallback 到纯文件名递归查找（兼容旧前端直链 model3.json）。
+    """
+    from urllib.parse import unquote
+    import logging as _L
+    sub_path = unquote(request.match_info.get("path", ""))
+    _L.getLogger("桌面端").warning(f"[L2D-MODEL] req={request.path!r} sub={sub_path!r}")
+    # 仅拒绝真正的路径穿越（独立的 ".." 路径段），避免误杀文件名含 ".." 的模型（如 免费liove2d..model3.json）
+    if not sub_path or any(part == ".." for part in sub_path.split("/")):
         return web.json_response({"error": "invalid path"}, status=400)
     search_roots = [
         os.path.join(_DESKTOP_DIR, "data", "models"),
         r"D:\Program Files\Steam\steamapps\common\VTube Studio\VTube Studio_Data\StreamingAssets\Live2DModels",
     ]
-    # 递归查找文件（处理 model3.json / 纹理 / 物理 / moc3 等）
+    # 前置：按完整相对路径直接拼接（前端传入「模型目录名/文件名」结构）
+    for base in search_roots:
+        if not os.path.exists(base):
+            continue
+        cand = os.path.normpath(os.path.join(base, sub_path))
+        abs_base = os.path.abspath(base)
+        abs_cand = os.path.abspath(cand)
+        if os.path.isfile(abs_cand) and abs_cand.startswith(abs_base + os.sep):
+            _L.getLogger("桌面端").warning(f"[L2D-MODEL] HIT {abs_cand}")
+            if abs_cand.lower().endswith(".model3.json"):
+                patched = _patch_model3_for_easy_live2d(abs_cand)
+                if patched is not None:
+                    return web.json_response(patched)
+            return _model_response(abs_cand, request)
+    # 兼容：纯文件名递归查找（旧前端或直链 model3.json）
     for base in search_roots:
         if not os.path.exists(base):
             continue
         for root, _, files in os.walk(base):
             if sub_path in files:
-                return _model_response(os.path.join(root, sub_path))
+                cand = os.path.join(root, sub_path)
+                if cand.lower().endswith(".model3.json"):
+                    patched = _patch_model3_for_easy_live2d(cand)
+                    if patched is not None:
+                        return web.json_response(patched)
+                return _model_response(cand, request)
     return web.json_response({"error": "not found: " + sub_path}, status=404)
 
-def _model_response(fp: str):
-    ext = os.path.splitext(fp)[1].lower()
+def _cached_downscaled(fp: str, max_side: int):
+    """超阈值 PNG 贴图降采样并磁盘缓存（减少显存占用与解码耗时，修复超大贴图白板/加载慢）。
+    返回最终可服务的文件路径；未超限则返回原路径。
+    当前禁用降采样：8192 纹理 Pillow LANCZOS 阻塞 55s 导致前端超时白板，
+    现代 GPU / swiftshader 均支持 8192 纹理，直接返回原文件。"""
+    return fp  # 暂时禁用降采样，避免大纹理阻塞
+
+
+def _model_response(fp: str, request=None):
+    import email.utils as _eu
+    ext = os.path.splitext(fp)[1].lower().lstrip(".")
     mime = {"png": "image/png", "json": "application/json", "moc3": "application/octet-stream",
             "physics3": "application/json", "exp3": "application/json", "cdi3": "application/json"}.get(ext, "application/octet-stream")
     # CORS 头由中间件按来源信任度统一注入，此处不再硬编码通配符 *
-    return web.FileResponse(fp, headers={"Content-Type": mime})
+    # 超阈值贴图降采样（仅 PNG），其余原样返回
+    served_fp = fp
+    if ext == "png":
+        try:
+            served_fp = _cached_downscaled(fp, _MAX_TEX_SIDE)
+        except Exception:
+            served_fp = fp
+    try:
+        st = os.stat(fp)
+        last_mod = st.st_mtime
+    except OSError:
+        last_mod = 0
+    lm_str = _eu.formatdate(last_mod, usegmt=True)
+    cache_hdr = "public, max-age=86400, immutable"
+    headers = {"Content-Type": mime, "Cache-Control": cache_hdr, "Last-Modified": lm_str}
+    # 条件请求：资源未变更返回 304，避免重复下载大纹理（加速模型切换/回切）
+    if request is not None:
+        ims = request.headers.get("If-Modified-Since")
+        if ims:
+            try:
+                ims_dt = _eu.parsedate_to_datetime(ims)
+                if ims_dt is not None and ims_dt.timestamp() >= int(last_mod):
+                    return web.Response(status=304, headers={"Cache-Control": cache_hdr, "Last-Modified": lm_str})
+            except Exception:
+                pass
+    return web.FileResponse(served_fp, headers=headers)
 
 async def api_live2d_model_list(request):
     """列出可用的 Live2D 模型（扫描 VTube Studio 和本地目录）"""

@@ -108,16 +108,21 @@ class LiveEngine:
         self._current_text = ""
         self._current_emotion = "开心"
         self._audio_playlist: list[str] = []
-        # VTube Studio 连接
-        self._vts_ws: Optional[aiohttp.ClientWebSocketResponse] = None
-        self._vts_authenticated: bool = False
+        # VTube Studio 多实例连接池（每个角色 = 一个 VTS 实例，端口 8001 + index）
+        # 同框做法：VTS 单实例仅渲染一个模型，多模型同框须开多个 VTS 实例，
+        # 每个实例监听独立端口（参照 Lumi_Nox 的 VTS_BASE_PORT + i 契约）。
+        self._vts_instances: dict[int, "VtsInstance"] = {}
         self._vts_host: str = "127.0.0.1"
-        self._vts_port: int = 8001
-        self._vts_expressions: list = []   # VTS 自省到的表情文件名列表
-        self._vts_motions: list = []       # VTS 自省到的动作热键名列表
-        self._vts_req_seq: int = 0          # VTS 请求自增序号（requestID）
-        self._vts_models: dict = {}         # modelID -> modelName（VTS 已加载模型）
-        self._vts_current_model: str = ""   # 当前激活模型 GUID（用于 model_id 未绑定时回退）
+        self._vts_base_port: int = 8001     # 端口公式：实例 i 监听 8001 + i
+        self._vts_by_model: dict[str, int] = {}   # modelID(GUID) -> instance_index（枚举后反查路由）
+        self._vts_by_agent: dict[str, int] = {}   # agent_id -> instance_index（角色→实例）
+
+        # 渲染后端适配器层（AvatarBackend）：agent_id -> kind（"vts"|"vmc"|"self"）
+        # 默认 "vts"（存量 VTS 实例池即第1级后端，不平移不重写）；
+        # "vmc" = VMC 协议(OSC/UDP, 39539+i) 驱动 VSeeFace/Warudo 等；
+        # "self" = 自研 Live2D 渲染（前端 PetWindow/舞台，经桌宠 WebSocket）。
+        self._backend_kinds: dict[str, str] = {}          # agent_id -> kind（持久化）
+        self._backends: dict[str, object] = {}            # agent_id -> 非VTS后端实例
 
         # 层3 真人语音闭环（麦克风 ASR → 自动上麦）
         self._human_voice_task: Optional[asyncio.Task] = None   # 麦克风采集协程
@@ -126,8 +131,9 @@ class LiveEngine:
         self._asr_status: dict = {"enabled": False, "state": "idle",
                                  "model": "", "error": ""}     # 前端轮询的状态
         self._model_bindings: dict = {}     # agent_id -> modelID（持久化，重启后恢复绑定）
-        # 桌宠 WebSocket（前端 Live2D 窗口）
+        # 桌宠 WebSocket（前端 Live2D 窗口）；_live2d_clients 支持多窗口（桌宠+舞台）同时在线
         self._live2d_ws: Optional[aiohttp.WebSocketResponse] = None
+        self._live2d_clients: set = set()
         # 桌宠子进程（PySide6 独立窗口）
         self._pet_proc: Optional[subprocess.Popen] = None
         # 场景历史（全部保留，过长时压缩）
@@ -164,6 +170,7 @@ class LiveEngine:
         )
         self._connectors: dict[str, AgentConnector] = {}
         self._load_model_bindings()
+        self._load_backend_kinds()
         self._register_builtin_connectors()
 
     @staticmethod
@@ -194,6 +201,8 @@ class LiveEngine:
         self._apply_model_binding(human)
         self._connectors["naixi"] = naixi
         self._connectors["human"] = human
+        self._vts_by_agent["naixi"] = 0
+        self._vts_by_agent["human"] = 1
 
     # ── 模型绑定持久化（按 VTS 模型 GUID 隔离，重启后恢复）──
     def _load_model_bindings(self):
@@ -220,6 +229,83 @@ class LiveEngine:
         if mid:
             connector.model_id = mid
 
+    # ── 渲染后端适配器层（AvatarBackend）─────────────────────────────────────
+
+    def _load_backend_kinds(self):
+        """从 SQLite meta 读取角色→渲染后端类型（live_backend_kinds）。"""
+        try:
+            from desktop_core.storage import meta_get
+            raw = meta_get("live_backend_kinds", "")
+            if raw:
+                self._backend_kinds = json.loads(raw) or {}
+        except Exception:
+            self._backend_kinds = {}
+
+    def _save_backend_kinds(self):
+        try:
+            from desktop_core.storage import meta_set
+            meta_set("live_backend_kinds", json.dumps(self._backend_kinds or {}))
+        except Exception:
+            pass
+
+    def set_agent_backend(self, agent_id: str, kind: str) -> dict:
+        """设置某角色的渲染后端类型并持久化。kind: "vts"|"vmc"|"self"。
+
+        非 VTS 后端即时构建实例（VMC 端口公式 39539 + vts实例索引，与 8001+i 同构）。
+        """
+        from desktop_core.avatar_backends import (
+            ALL_KINDS, KIND_VTS, KIND_VMC, KIND_SELF, VmcBackend, SelfRenderBackend)
+        if kind not in ALL_KINDS:
+            return {"ok": False, "error": f"未知后端类型: {kind}（可选: {'/'.join(ALL_KINDS)}）"}
+        self._backend_kinds[agent_id] = kind
+        old = self._backends.pop(agent_id, None)
+        if old is not None:
+            try:
+                asyncio.create_task(old.disconnect())
+            except Exception:
+                pass
+        if kind == KIND_VMC:
+            idx = self._vts_by_agent.get(agent_id, len(self._backends))
+            be = VmcBackend(port=39539 + idx)
+            self._backends[agent_id] = be
+            asyncio.create_task(be.connect())
+        elif kind == KIND_SELF:
+            self._backends[agent_id] = SelfRenderBackend(lambda: self._live2d_ws, agent_id=agent_id,
+                                                         clients_getter=lambda: self._live2d_clients)
+        # KIND_VTS：走存量实例池，无需独立实例
+        self._save_backend_kinds()
+        log.info(f"[后端] {agent_id} 渲染后端 → {kind}")
+        return {"ok": True, "agent_id": agent_id, "kind": kind}
+
+    def _ensure_backend(self, agent_id: str):
+        """按持久化的 kind 惰性构建后端实例（重启后恢复）。返回非VTS后端或 None。"""
+        kind = self._backend_kinds.get(agent_id, "vts")
+        if kind == "vts":
+            return None
+        be = self._backends.get(agent_id)
+        if be is None:
+            self.set_agent_backend(agent_id, kind)
+            be = self._backends.get(agent_id)
+        return be
+
+    def _backend_for_model(self, model_id) -> object:
+        """按 model_id 反查绑定角色的非VTS后端；查不到或角色用 VTS 时返回 None（走存量路径）。"""
+        if not model_id:
+            return None
+        for aid, mid in self._model_bindings.items():
+            if mid == model_id:
+                return self._ensure_backend(aid)
+        return None
+
+    def backend_summary(self) -> dict:
+        """各角色渲染后端状态快照（前端角色卡片用）。"""
+        out = {}
+        for aid in self._connectors:
+            kind = self._backend_kinds.get(aid, "vts")
+            be = self._backends.get(aid)
+            out[aid] = be.describe() if be is not None else {"kind": kind, "connected": None}
+        return out
+
     def register_connector(self, connector: AgentConnector) -> bool:
         """注册一个外部角色连接器（其他人的 agent 上台）。同名 agent_id 覆盖。
 
@@ -232,7 +318,15 @@ class LiveEngine:
             log.warning(f"[舞台] 注册被拒 {connector.name}({connector.agent_id}): {reason}")
             return False
         self._apply_model_binding(connector)
+        if connector.agent_id not in self._vts_by_agent:
+            self._vts_by_agent[connector.agent_id] = len(self._connectors)
         self._connectors[connector.agent_id] = connector
+        # 角色上台即尝试连接其专属 VTS 实例（端口 8001 + index）
+        try:
+            asyncio.get_running_loop()
+            asyncio.create_task(self._vts_connect_instance(self._vts_by_agent[connector.agent_id]))
+        except RuntimeError:
+            pass
         log.info(f"[舞台] 角色已上台: {connector.name}({connector.agent_id}) 优先级={connector.priority}"
                  f" 模型={connector.model_id or '当前模型'}")
         return True
@@ -484,8 +578,28 @@ class LiveEngine:
         return out
 
     def list_vts_models(self) -> dict:
-        """返回 VTS 已加载模型（modelID->name）与当前模型，供前端绑定下拉。"""
-        return {"models": self._vts_models, "current": self._vts_current_model}
+        """返回所有 VTS 实例的模型清单与当前模型，供前端绑定下拉。
+        多实例下 merged.models 为全部实例模型并集（modelID->name）；
+        instances 给出每实例端口/当前模型/表情动作数量，并带 agent_id
+        （角色→实例映射反查），便于前端按角色展示其 VTS 端口与当前模型。"""
+        merged = {}
+        for inst in self._vts_instances.values():
+            merged.update(inst.models)
+        # 反查 实例 index -> agent_id（角色→实例映射）
+        agent_by_idx: dict[int, str] = {idx: aid for aid, idx in self._vts_by_agent.items()}
+        return {
+            "models": merged,
+            "current": {idx: inst.current_model for idx, inst in self._vts_instances.items()},
+            "instances": {
+                idx: {"agent_id": agent_by_idx.get(idx, ""), "port": inst.port,
+                      "authenticated": inst.authenticated,
+                      "current_model": inst.current_model, "models": inst.models,
+                      "expressions": len(inst.expressions), "motions": len(inst.motions)}
+                for idx, inst in self._vts_instances.items()
+            },
+            # 渲染后端适配器层：agent_id -> {kind, connected, ...}（"vts"|"vmc"|"self"）
+            "backends": self.backend_summary(),
+        }
 
     async def bind_connector_model(self, agent_id: str, model_id: Optional[str]) -> bool:
         """把某角色绑定到指定 VTS 模型（model_id 为空串/None 表示用当前模型），持久化。
@@ -503,6 +617,14 @@ class LiveEngine:
             self._model_bindings.pop(agent_id, None)
         self._save_model_bindings()
         log.info(f"[舞台] 角色 {agent_id} 绑定模型: {mid or '（当前模型）'}")
+        # 绑定后确保该角色对应的 VTS 实例已连接（端口 8001 + index）
+        idx = self._vts_by_agent.get(agent_id)
+        if idx is not None:
+            try:
+                asyncio.get_running_loop()
+                asyncio.create_task(self._vts_connect_instance(idx))
+            except RuntimeError:
+                pass
         return True
 
     async def _enqueue_speak(self, req: dict):
@@ -677,6 +799,8 @@ class LiveEngine:
     def status(self) -> dict:
         elapsed = time.time() - self._start_time if self._start_time else 0
         danmaku_rate = round(len(self._danmaku_cache) / max(elapsed, 1), 1) if elapsed > 0 else 0
+        # 实例 index -> agent_id 反查（角色→实例映射），供前端按角色展示 VTS 实例
+        agent_by_idx: dict[int, str] = {idx: aid for aid, idx in self._vts_by_agent.items()}
         return {
             "running": self._running,
             "connected": self._connected,
@@ -690,9 +814,15 @@ class LiveEngine:
             "uptime": round(elapsed),
             "start_time": self._start_time,
             "last_error": self._last_error,
-            "vts_connected": self._vts_ws is not None and not self._vts_ws.closed,
-            "vts_models": self._vts_models,
-            "vts_current_model": self._vts_current_model,
+            "vts_connected": any(i.authenticated for i in self._vts_instances.values()),
+            "vts_models": {mid: name for i in self._vts_instances.values() for mid, name in i.models.items()},
+            "vts_current_model": {idx: i.current_model for idx, i in self._vts_instances.items()},
+            # 实例 index -> agent_id 反查，便于前端按角色关联实例
+            "_vts_idx_to_agent": {idx: aid for aid, idx in self._vts_by_agent.items()},
+            "vts_instances": {idx: {"agent_id": agent_by_idx.get(idx, ""), "port": i.port, "authenticated": i.authenticated,
+                                    "current_model": i.current_model,
+                                    "expressions": len(i.expressions), "motions": len(i.motions)}
+                               for idx, i in self._vts_instances.items()},
             "pet_running": self._pet_proc is not None and self._pet_proc.poll() is None,
             "errors": self._agent_errors[-10:],
         }
@@ -844,7 +974,7 @@ class LiveEngine:
         await self._start_agent("stream", self._agent_stream)
 
         # 尝试连接 VTube Studio（非阻塞，失败不影响直播）
-        asyncio.create_task(self._vts_connect())
+        asyncio.create_task(self._vts_connect_all())
 
         # 先关闭上次残留的 session（防止"同一房间启动数量超过配置上限"）
         await self._close_old_session()
@@ -867,7 +997,7 @@ class LiveEngine:
         """停止所有 Agent 和连接，保存统计数据"""
         self._running = False
         await self.disconnect_bilibili()
-        await self._vts_disconnect()
+        await self._vts_disconnect_all()
         self._stop_pet()
         await self._stop_ffmpeg()
         # 清空占麦仲裁状态，避免上一场残留 busy 卡住下一场
@@ -1641,115 +1771,156 @@ class LiveEngine:
 
     # ── VTube Studio 控制（WebSocket API） ───────────────────────────────
 
-    async def _vts_connect(self):
-        """连接 VTube Studio WebSocket API（含认证 + 自省表情/动作列表）"""
+    class VtsInstance:
+        """单个 VTube Studio 实例的连接与自省数据（端口 = 8001 + index）。"""
+        def __init__(self, index: int, host: str, port: int):
+            self.index = index
+            self.host = host
+            self.port = port
+            self.ws = None
+            self.authenticated = False
+            self.expressions: list = []   # 表情文件名列表
+            self.motions: list = []       # 动作热键名列表
+            self.req_seq: int = 0         # 请求自增序号
+            self.models: dict = {}        # modelID -> modelName
+            self.current_model: str = ""  # 当前激活模型 GUID
+
+    def _vts_inst_for_model(self, model_id: Optional[str]) -> Optional["VtsInstance"]:
+        """按 modelID(GUID) 反查目标 VTS 实例；未命中则退回首个已认证实例（兼容未绑定/单实例）。"""
+        if model_id:
+            idx = self._vts_by_model.get(model_id)
+            if idx is not None and idx in self._vts_instances:
+                inst = self._vts_instances[idx]
+                if inst.ws and not inst.ws.closed:
+                    return inst
+        for inst in self._vts_instances.values():
+            if inst.authenticated and inst.ws and not inst.ws.closed:
+                return inst
+        return None
+
+    async def _vts_connect_all(self):
+        """连接所有已注册角色对应的 VTS 实例（端口 = 8001 + index）。逐实例并发、非阻塞。"""
+        for agent_id, idx in list(self._vts_by_agent.items()):
+            asyncio.create_task(self._vts_connect_instance(idx))
+
+    async def _vts_connect_instance(self, index: int):
+        """连接指定 index 的 VTS 实例（端口 8001 + index），含认证+自省+枚举模型。"""
         import aiohttp
-        if self._vts_ws and not self._vts_ws.closed:
+        inst = self._vts_instances.get(index)
+        if inst is None:
+            inst = VtsInstance(index, self._vts_host, self._vts_base_port + index)
+            self._vts_instances[index] = inst
+        if inst.ws and not inst.ws.closed:
             return True
         try:
-            ws = await aiohttp.ClientSession().ws_connect(f"ws://{self._vts_host}:{self._vts_port}", heartbeat=10)
-            self._vts_ws = ws
+            ws = await aiohttp.ClientSession().ws_connect(f"ws://{inst.host}:{inst.port}", heartbeat=10)
+            inst.ws = ws
             # 完整认证握手：先取临时 token，再带 token 认证（VTS 1.0 标准流程）
             token = ""
             try:
-                await self._vts_request("AuthenticationTokenRequest",
+                await self._vts_request(inst, "AuthenticationTokenRequest",
                                         {"pluginName": "奶昔直播", "pluginDeveloper": "Naixi"})
                 resp = json.loads(await asyncio.wait_for(ws.receive_str(), timeout=5))
                 token = resp.get("data", {}).get("authenticationToken", "")
             except Exception as e:
-                log.info(f"[VTS] 获取临时 token 失败（尝试无 token 认证）: {e}")
-            await self._vts_request("AuthenticationRequest",
+                log.info(f"[VTS#{index}] 获取临时 token 失败（尝试无 token 认证）: {e}")
+            await self._vts_request(inst, "AuthenticationRequest",
                                     {"pluginName": "奶昔直播", "pluginDeveloper": "Naixi", "authenticationToken": token})
             resp = json.loads(await asyncio.wait_for(ws.receive_str(), timeout=5))
             if resp.get("data", {}).get("authenticated"):
-                self._vts_authenticated = True
-                log.info("[VTS] 已连接并认证")
+                inst.authenticated = True
+                log.info(f"[VTS#{index}] 已连接并认证 (port={inst.port})")
             else:
-                log.info("[VTS] 已连接（未认证，需在 VTS 中点击确认授权）")
+                log.info(f"[VTS#{index}] 已连接（未认证，需在 VTS 中点击确认授权）(port={inst.port})")
             # 自省可用表情/动作列表，供情绪/动作模糊匹配
-            await self._vts_introspect()
-            # 枚举已加载模型（按 modelID 精准路由，避免串模型冲突）
-            await self._vts_enumerate_models()
+            await self._vts_introspect(inst)
+            # 枚举已加载模型（currentModel 即该实例渲染的模型，用于路由）
+            await self._vts_enumerate_models(inst)
             # 启动后台读取循环，消费 VTS 响应，避免未读消息堆积
-            asyncio.create_task(self._vts_read_loop())
+            asyncio.create_task(self._vts_read_loop(inst))
             return True
         except Exception as e:
-            log.warning(f"[VTS] 连接失败: {e}")
+            log.warning(f"[VTS#{index}] 连接失败 (port={inst.port}): {e}")
             return False
 
-    async def _vts_request(self, message_type: str, data: dict):
-        """向 VTS 发送一条请求（不等待响应，由后台读取循环消费）"""
-        if not self._vts_ws or self._vts_ws.closed:
+    async def _vts_request(self, inst: "VtsInstance", message_type: str, data: dict):
+        """向指定 VTS 实例发送一条请求（不等待响应，由后台读取循环消费）。"""
+        if not inst.ws or inst.ws.closed:
             return
         try:
-            self._vts_req_seq += 1
+            inst.req_seq += 1
             req = json.dumps({
                 "apiName": "VTubeStudioPublicAPI", "apiVersion": "1.0",
-                "requestID": f"naixi_{self._vts_req_seq}", "messageType": message_type, "data": data
+                "requestID": f"naixi_{inst.index}_{inst.req_seq}", "messageType": message_type, "data": data
             })
-            await self._vts_ws.send_str(req)
+            await inst.ws.send_str(req)
         except Exception as e:
-            log.info(f"[VTS] 发送 {message_type} 失败: {e}")
+            log.info(f"[VTS#{inst.index}] 发送 {message_type} 失败: {e}")
 
-    async def _vts_read_loop(self):
-        """后台消费 VTS 响应，避免未读消息堆积导致连接异常"""
+    async def _vts_read_loop(self, inst: "VtsInstance"):
+        """后台消费某 VTS 实例响应，避免未读消息堆积导致连接异常。"""
+        import aiohttp
         try:
-            while self._vts_ws and not self._vts_ws.closed:
-                msg = await self._vts_ws.receive()
+            while inst.ws and not inst.ws.closed:
+                msg = await inst.ws.receive()
                 if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                     break
         except Exception:
             pass
-        self._vts_authenticated = False
-        log.info("[VTS] 读取循环结束，连接已断开")
+        inst.authenticated = False
+        log.info(f"[VTS#{inst.index}] 读取循环结束，连接已断开")
 
-    async def _vts_introspect(self):
-        """自省 VTS 模型可用表情(ExpressionStateRequest)/动作热键(HotkeysInCurrentModelRequest)"""
-        self._vts_expressions = []
-        self._vts_motions = []
+    async def _vts_introspect(self, inst: "VtsInstance"):
+        """自省某 VTS 实例模型可用表情(ExpressionStateRequest)/动作热键(HotkeysInCurrentModelRequest)。"""
+        inst.expressions = []
+        inst.motions = []
         # 1) 表情列表
         try:
-            await self._vts_request("ExpressionStateRequest", {})
-            resp = json.loads(await asyncio.wait_for(self._vts_ws.receive_str(), timeout=5))
+            await self._vts_request(inst, "ExpressionStateRequest", {})
+            resp = json.loads(await asyncio.wait_for(inst.ws.receive_str(), timeout=5))
             exprs = resp.get("data", {}).get("expressions", []) or []
             # 每个表情含 file（完整文件名，如 xxx.exp3.json）与 name
-            self._vts_expressions = [e.get("file", e.get("name", "")) for e in exprs if isinstance(e, dict)]
+            inst.expressions = [e.get("file", e.get("name", "")) for e in exprs if isinstance(e, dict)]
         except Exception as e:
-            log.info(f"[VTS] 读取表情列表失败: {e}")
+            log.info(f"[VTS#{inst.index}] 读取表情列表失败: {e}")
         # 2) 动作热键（type=TriggerAnimation 的热键即为可触发的动作）
         try:
-            await self._vts_request("HotkeysInCurrentModelRequest", {})
-            resp = json.loads(await asyncio.wait_for(self._vts_ws.receive_str(), timeout=5))
+            await self._vts_request(inst, "HotkeysInCurrentModelRequest", {})
+            resp = json.loads(await asyncio.wait_for(inst.ws.receive_str(), timeout=5))
             hotkeys = resp.get("data", {}).get("availableHotkeys", []) or []
-            self._vts_motions = [
+            inst.motions = [
                 h.get("name", "") for h in hotkeys
                 if isinstance(h, dict) and h.get("type") == "TriggerAnimation" and h.get("name")
             ]
         except Exception as e:
-            log.info(f"[VTS] 读取动作热键失败: {e}")
-        if self._vts_expressions or self._vts_motions:
-            log.info(f"[VTS] 自省完成：表情 {len(self._vts_expressions)} 个，动作热键 {len(self._vts_motions)} 个")
+            log.info(f"[VTS#{inst.index}] 读取动作热键失败: {e}")
+        if inst.expressions or inst.motions:
+            log.info(f"[VTS#{inst.index}] 自省完成：表情 {len(inst.expressions)} 个，动作热键 {len(inst.motions)} 个")
 
-    async def _vts_enumerate_models(self):
-        """枚举 VTS 已加载模型（AvailableModelsRequest）+ 当前模型（CurrentModelRequest），
-        供多角色舞台按 modelID 精准路由，避免指令误打到其他模型造成冲突。"""
-        self._vts_models = {}
-        self._vts_current_model = ""
+    async def _vts_enumerate_models(self, inst: "VtsInstance"):
+        """枚举某 VTS 实例模型，登记 modelID->实例 路由映射（currentModel 为主渲染模型）。"""
+        inst.models = {}
+        inst.current_model = ""
         try:
-            await self._vts_request("AvailableModelsRequest", {})
-            resp = json.loads(await asyncio.wait_for(self._vts_ws.receive_str(), timeout=5))
+            await self._vts_request(inst, "AvailableModelsRequest", {})
+            resp = json.loads(await asyncio.wait_for(inst.ws.receive_str(), timeout=5))
             models = (resp.get("data", {}) or {}).get("availableModels", []) or []
-            self._vts_models = {m.get("modelID"): m.get("modelName", "") for m in models if m.get("modelID")}
+            inst.models = {m.get("modelID"): m.get("modelName", "") for m in models if m.get("modelID")}
         except Exception as e:
-            log.info(f"[VTS] 枚举模型失败: {e}")
+            log.info(f"[VTS#{inst.index}] 枚举模型失败: {e}")
         try:
-            await self._vts_request("CurrentModelRequest", {})
-            resp = json.loads(await asyncio.wait_for(self._vts_ws.receive_str(), timeout=5))
-            self._vts_current_model = (resp.get("data", {}) or {}).get("modelID", "")
+            await self._vts_request(inst, "CurrentModelRequest", {})
+            resp = json.loads(await asyncio.wait_for(inst.ws.receive_str(), timeout=5))
+            inst.current_model = (resp.get("data", {}) or {}).get("modelID", "")
         except Exception as e:
-            log.info(f"[VTS] 读取当前模型失败: {e}")
-        if self._vts_models:
-            log.info(f"[VTS] 已枚举模型 {len(self._vts_models)} 个，当前模型: {self._vts_current_model or '未识别'}")
+            log.info(f"[VTS#{inst.index}] 读取当前模型失败: {e}")
+        # 登记路由：该实例渲染的所有模型(尤其 current)都指向本实例
+        if inst.current_model:
+            self._vts_by_model[inst.current_model] = inst.index
+        for mid in inst.models:
+            self._vts_by_model.setdefault(mid, inst.index)
+        if inst.models:
+            log.info(f"[VTS#{inst.index}] 已枚举模型 {len(inst.models)} 个，当前: {inst.current_model or '未识别'}")
 
     # 情绪/动作关键词 → VTS 表情/动作文件名子串（中英对照，覆盖常见命名）
     _VTS_EMOTION_MAP = {
@@ -1784,26 +1955,44 @@ class LiveEngine:
         return ""
 
     async def _vts_send_expression(self, emotion: str, model_id: Optional[str] = None):
-        """按情绪触发 VTS 表情（ExpressionActivationRequest，active=true）。model_id 指定目标模型。"""
-        if not self._vts_ws or self._vts_ws.closed or not self._vts_authenticated:
+        """按情绪触发某 VTS 实例的表情（ExpressionActivationRequest，active=true）。model_id 指定目标模型/实例。
+
+        适配器层分发：角色绑定了非VTS后端（vmc/self）时改道该后端，capabilities 不支持则静默跳过。
+        """
+        be = self._backend_for_model(model_id)
+        if be is not None:
+            if "expression" in be.capabilities:
+                await be.send_expression(emotion, model_id)
             return
-        name = self._vts_match(emotion, self._vts_expressions)
+        inst = self._vts_inst_for_model(model_id)
+        if inst is None or not inst.authenticated:
+            return
+        name = self._vts_match(emotion, inst.expressions)
         if not name:
             return
         data = {"expressionFile": name, "fadeTime": 0.5, "active": True}
         if model_id:
             data["modelID"] = model_id
         try:
-            await self._vts_request("ExpressionActivationRequest", data)
-            log.info(f"[VTS] 表情触发: {emotion} → {name}" + (f" 模型={model_id}" if model_id else ""))
+            await self._vts_request(inst, "ExpressionActivationRequest", data)
+            log.info(f"[VTS#{inst.index}] 表情触发: {emotion} → {name}" + (f" 模型={model_id}" if model_id else ""))
         except Exception as e:
-            log.info(f"[VTS] 表情触发失败: {e}")
+            log.info(f"[VTS#{inst.index}] 表情触发失败: {e}")
 
     async def _vts_send_motion(self, action: str, model_id: Optional[str] = None):
-        """按动作标签触发 VTS 动作（HotkeyTriggerRequest，匹配 TriggerAnimation 热键名）。model_id 指定目标模型。"""
-        if not self._vts_ws or self._vts_ws.closed or not self._vts_authenticated:
+        """按动作标签触发某 VTS 实例的动作（HotkeyTriggerRequest，匹配 TriggerAnimation 热键名）。
+
+        适配器层分发：非VTS后端改道，capabilities 不支持 motion 则静默跳过。
+        """
+        be = self._backend_for_model(model_id)
+        if be is not None:
+            if "motion" in be.capabilities:
+                await be.send_motion(action, model_id)
             return
-        name = self._vts_match(action, self._vts_motions)
+        inst = self._vts_inst_for_model(model_id)
+        if inst is None or not inst.authenticated:
+            return
+        name = self._vts_match(action, inst.motions)
         if not name:
             return
         try:
@@ -1811,22 +2000,41 @@ class LiveEngine:
             data = {"hotkeyID": name}
             if model_id:
                 data["modelID"] = model_id
-            await self._vts_request("HotkeyTriggerRequest", data)
-            log.info(f"[VTS] 动作触发: {action} → 热键[{name}]" + (f" 模型={model_id}" if model_id else ""))
+            await self._vts_request(inst, "HotkeyTriggerRequest", data)
+            log.info(f"[VTS#{inst.index}] 动作触发: {action} → 热键[{name}]" + (f" 模型={model_id}" if model_id else ""))
         except Exception as e:
-            log.info(f"[VTS] 动作触发失败: {e}")
+            log.info(f"[VTS#{inst.index}] 动作触发失败: {e}")
 
-    async def _vts_disconnect(self):
-        """断开 VTube Studio 连接"""
-        if self._vts_ws:
-            try: await self._vts_ws.close()
-            except: pass
-            self._vts_ws = None
-            self._vts_authenticated = False
+    async def _vts_disconnect_instance(self, index: int):
+        """断开指定 VTS 实例连接，干净释放该角色占用的实例与麦位资源。"""
+        inst = self._vts_instances.get(index)
+        if inst and inst.ws:
+            try:
+                await inst.ws.close()
+            except Exception:
+                pass
+            inst.ws = None
+            inst.authenticated = False
+
+    async def _vts_disconnect_all(self):
+        """断开所有 VTS 实例连接（引擎停止时调用）。"""
+        for idx in list(self._vts_instances.keys()):
+            await self._vts_disconnect_instance(idx)
+        self._vts_instances.clear()
+        self._vts_by_model.clear()
 
     async def _vts_send_parameters(self, params: dict, model_id: Optional[str] = None):
-        """发送参数到 VTube Studio（如 MouthOpen, FaceAngleX 等）。model_id 指定目标模型。"""
-        if not self._vts_ws or self._vts_ws.closed:
+        """发送参数到指定 VTS 实例（如 MouthOpen, FaceAngleX 等）。model_id 指定目标模型/实例。
+
+        适配器层分发：非VTS后端改道（VMC 映射为 BlendShape，自研直发前端）。
+        """
+        be = self._backend_for_model(model_id)
+        if be is not None:
+            if "parameters" in be.capabilities:
+                await be.send_parameters(params, model_id)
+            return
+        inst = self._vts_inst_for_model(model_id)
+        if inst is None or inst.ws is None or inst.ws.closed:
             return
         try:
             data = {"parameterValues": [{"id": k, "value": v} for k, v in params.items()]}
@@ -1837,8 +2045,8 @@ class LiveEngine:
                 "messageType": "InjectParameterDataRequest",
                 "data": data,
             })
-            await self._vts_ws.send_str(req)
-        except:
+            await inst.ws.send_str(req)
+        except Exception:
             pass
 
     # ── 层2 肢体反馈：倾听/点头姿态（不抢麦、不 TTS，仅打 VTS 参数） ──────────
@@ -1876,7 +2084,9 @@ class LiveEngine:
         - 跳过未绑定模型的角色（无 modelID 无法精准投递，避免误伤当前激活模型）
         VTS 未连接时整体静默跳过。
         """
-        if not self._vts_ws or self._vts_ws.closed or not self._vts_authenticated:
+        # 有任一 VTS 实例认证、或有角色绑定了非VTS后端（vmc/self）时才广播；否则整体静默
+        has_alt_backend = any(k != "vts" for k in self._backend_kinds.values())
+        if not any(i.authenticated for i in self._vts_instances.values()) and not has_alt_backend:
             return
         for c in self._connectors.values():
             if c.agent_id == exclude_agent_id:
@@ -1954,8 +2164,23 @@ class LiveEngine:
             mouth_values.append(mouth)
         return mouth_values if mouth_values else [0.0]
 
+    async def live2d_broadcast(self, payload: dict):
+        """向所有前端 Live2D 客户端（桌宠 + 舞台等多窗口）广播消息，静默清理死连接。"""
+        dead = []
+        for ws in list(self._live2d_clients):
+            if ws.closed:
+                dead.append(ws)
+                continue
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self._live2d_clients.discard(ws)
+
     async def _vts_speak(self, audio_bytes: bytes, text: str = "", emotion: str = "",
-                         action: str = "", model_id: Optional[str] = None, human_controlled: bool = False):
+                         action: str = "", model_id: Optional[str] = None, human_controlled: bool = False,
+                         agent_id: str = ""):
         """TTS 音频播放 + 口型同步（VTS + 桌宠双通道）。
 
         model_id: 绑定的 VTS 模型 GUID；真人模型(human_controlled)完全由真人操控，
@@ -1969,15 +2194,11 @@ class LiveEngine:
         if not mouth_data:
             return
         self.play_audio(audio_bytes)
-        if self._live2d_ws and not self._live2d_ws.closed:
-            try:
-                await self._live2d_ws.send_json({
-                    "type": "speak", "mouth": mouth_data,
-                    "frame_ms": 80, "text": text, "emotion": emotion, "action": action,
-                    "model_id": model_id or "",
-                })
-            except:
-                pass
+        await self.live2d_broadcast({
+            "type": "speak", "mouth": mouth_data,
+            "frame_ms": 80, "text": text, "emotion": emotion, "action": action,
+            "model_id": model_id or "", "agent_id": agent_id or "",
+        })
         # VTS 表情/动作触发（与桌宠内渲共用同一份 emotion/action）
         if emotion:
             await self._vts_send_expression(emotion, model_id)
@@ -2018,7 +2239,8 @@ class LiveEngine:
                     model_id = getattr(connector, "model_id", None) if connector else None
                     human_controlled = getattr(connector, "human_controlled", False) if connector else False
                     await self._vts_speak(audio_bytes, text, action.get("emotion", "开心"),
-                                          action.get("action", ""), model_id, human_controlled)
+                                          action.get("action", ""), model_id, human_controlled,
+                                          agent_id=action.get("agent_id", ""))
                     tmp = os.path.join(tempfile.gettempdir(), f"live_push_{int(time.time()*1000)}.wav")
                     try:
                         with open(tmp, "wb") as f:

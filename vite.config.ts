@@ -24,6 +24,7 @@ export default defineConfig(async () => ({
       "/api": {
         target: "http://127.0.0.1:9845",
         changeOrigin: true,
+        ws: true, // live2d-stream 等 WebSocket 端点需要代理升级（桌宠/舞台窗口浏览器模式）
       },
     },
   },
