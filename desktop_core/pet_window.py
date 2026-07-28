@@ -197,21 +197,21 @@ class PetWindow(QOpenGLWidget):
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
         self.setMouseTracking(True)
-        self.resize(400, 500)
+        self.resize(640, 800)
 
         # 右下角定位
         screen = QGuiApplication.primaryScreen().availableGeometry()
-        self.move(screen.width() - 420, screen.height() - 520)
+        self.move(max(0, screen.width() - 660), max(0, screen.height() - 820))
 
         # 滚轮缩放：当前缩放 / 目标缩放（timerEvent 每帧平滑 lerp）。
         # —— 架构（固定窗口 + 模型 transform SetScale + WM_NCHITTEST 像素穿透，根治三大老问题）——
-        # · 窗口几何【固定】400×500，滚轮缩放只改模型的 SetScale（transform），绝不 setGeometry → 透明窗口 DWM 不再每帧重绘 → 零闪烁/零撕裂；
+        # · 窗口几何【固定】640×800，滚轮缩放只改模型的 SetScale（transform），绝不 setGeometry → 透明窗口 DWM 不再每帧重绘 → 零闪烁/零撕裂；
         # · 模型只在加载时 Resize 到 BASE/ZOOM_PAD（留白），SetScale 在 [ZOOM_MIN, ZOOM_MAX] 内模型始终不裁边、且可放大到铺满窗口；
         # · 鼠标穿透用 Win32 WM_NCHITTEST（nativeEvent）：仅「模型不透明像素」命中窗口（可拖拽/右键），
         #   透明像素返回 HTTRANSPARENT 让点击穿透到桌面 —— 比 setMask 更优：setMask 会裁掉气泡/聊天等子控件，WM_NCHITTEST 只影响命中不影响绘制。
         self._zoom = 1.4
         self._target_zoom = 1.4
-        self.BASE_W, self.BASE_H = 400, 500            # 固定窗口尺寸（滚轮缩放=模型 transform，不缩放窗口几何）
+        self.BASE_W, self.BASE_H = 640, 800            # 固定窗口尺寸（滚轮缩放=模型 transform，不缩放窗口几何）
         self.ZOOM_MIN, self.ZOOM_MAX = 0.5, 2.0
         # 模型缩放留白：model.Resize 用 BASE/ZOOM_PAD，使 SetScale 在 [ZOOM_MIN, ZOOM_MAX] 内模型始终不裁边。
         # 须与 idle_engine.SCALE_MAX 相等（=2.2），否则放大裁边或留白浪费——改这里务必同步 idle_engine。
