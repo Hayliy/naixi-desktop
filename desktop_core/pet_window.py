@@ -206,14 +206,19 @@ class PetWindow(QOpenGLWidget):
         # 滚轮缩放：当前缩放 / 目标缩放（timerEvent 每帧平滑 lerp）。
         # —— 架构（固定窗口 + 模型 transform SetScale + WM_NCHITTEST 像素穿透，根治三大老问题）——
         # · 窗口几何【固定】640×800，滚轮缩放只改模型的 SetScale（transform），绝不 setGeometry → 透明窗口 DWM 不再每帧重绘 → 零闪烁/零撕裂；
-        # · 模型只在加载时 Resize 到 BASE/ZOOM_PAD（留白），SetScale 在 [ZOOM_MIN, ZOOM_MAX] 内模型始终不裁边、且可放大到铺满窗口；
+        # · 模型只在加载时 Resize 到 CANVAS/ZOOM_PAD（固定 400×500 离屏画布，留白），再整体贴到 640×800 窗口；SetScale 在 [ZOOM_MIN, ZOOM_MAX] 内模型始终不裁边、且可放大到铺满画布；
         # · 鼠标穿透用 Win32 WM_NCHITTEST（nativeEvent）：仅「模型不透明像素」命中窗口（可拖拽/右键），
         #   透明像素返回 HTTRANSPARENT 让点击穿透到桌面 —— 比 setMask 更优：setMask 会裁掉气泡/聊天等子控件，WM_NCHITTEST 只影响命中不影响绘制。
         self._zoom = 1.4
         self._target_zoom = 1.4
-        self.BASE_W, self.BASE_H = 640, 800            # 固定窗口尺寸（滚轮缩放=模型 transform，不缩放窗口几何）
+        self.BASE_W, self.BASE_H = 640, 800            # 窗口尺寸（滚轮缩放=模型 transform，不缩放窗口几何）；放大只为测试右击穿透
+        # 模型画布固定 400×500，与窗口解耦：模型只在离屏画布里渲染，再整体贴到 640×800 窗口。
+        # 窗口放大只增加透明边距，模型像素尺寸恒定（不再「窗口变大模型也变大」）。
+        self.CANVAS_W, self.CANVAS_H = 400, 500
+        self._draw_dx = (self.BASE_W - self.CANVAS_W) // 2
+        self._draw_dy = (self.BASE_H - self.CANVAS_H) // 2
         self.ZOOM_MIN, self.ZOOM_MAX = 0.5, 2.0
-        # 模型缩放留白：model.Resize 用 BASE/ZOOM_PAD，使 SetScale 在 [ZOOM_MIN, ZOOM_MAX] 内模型始终不裁边。
+        # 模型缩放留白：model.Resize 用 CANVAS/ZOOM_PAD，使 SetScale 在 [ZOOM_MIN, ZOOM_MAX] 内模型始终不裁边。
         # 须与 idle_engine.SCALE_MAX 相等（=2.2），否则放大裁边或留白浪费——改这里务必同步 idle_engine。
         self.ZOOM_PAD = 2.2
         # 透明窗口重绘时尽量保留旧内容（无害保留）
@@ -242,7 +247,7 @@ class PetWindow(QOpenGLWidget):
                 self._active_manual_exprs = set()
                 self._emotion_expr = None
                 self.model.LoadModelJson(self._model_path)
-                self.model.Resize(int(self.BASE_W / self.ZOOM_PAD), int(self.BASE_H / self.ZOOM_PAD))
+                self.model.Resize(int(self.CANVAS_W / self.ZOOM_PAD), int(self.CANVAS_H / self.ZOOM_PAD))
                 self.model.SetAutoBreathEnable(True)
                 self.model.SetAutoBlinkEnable(True)
                 self.model.StartRandomMotion("Idle", 3)
@@ -478,12 +483,13 @@ class PetWindow(QOpenGLWidget):
         # 先清空屏幕
         live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
         # 离屏画布 = 当前窗口尺寸（窗口固定，故仅分配一次，不需要随缩放重建 → 无错帧撕裂）
-        if getattr(self, '_fbo', None) is None or self._fbo.size().width() != self.BASE_W or self._fbo.size().height() != self.BASE_H:
+        if getattr(self, '_fbo', None) is None or self._fbo.size().width() != self.CANVAS_W or self._fbo.size().height() != self.CANVAS_H:
             from PySide6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat
             fmt = QOpenGLFramebufferObjectFormat()
             fmt.setSamples(0)
             fmt.setAttachment(QOpenGLFramebufferObject.CombinedDepthStencil)
-            self._fbo = QOpenGLFramebufferObject(self.BASE_W, self.BASE_H, fmt)
+            fmt.setAlpha(True)   # 关键：FBO 带 alpha 通道，透明边距 alpha=0，供 WM_NCHITTEST 像素穿透采样
+            self._fbo = QOpenGLFramebufferObject(self.CANVAS_W, self.CANVAS_H, fmt)
         self._fbo.bind()
         live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
         self.model.Draw()
@@ -491,8 +497,9 @@ class PetWindow(QOpenGLWidget):
         img = self._fbo.toImage()
         # 缓存最近一帧用于 WM_NCHITTEST 像素级鼠标穿透（采样 alpha 判断是否点到模型）
         self._last_img = img
-        # 窗口几何固定，FBO 即窗口尺寸，1:1 贴图（无 scaled，保持清晰）
-        w, h = self.width(), self.height()
+        # 窗口几何固定，离屏画布(400×500)整体贴到 640×800 窗口中央（先按骨骼偏移合成，再平移到窗口锚点）
+        cw, ch = self.CANVAS_W, self.CANVAS_H
+        dx, dy = self._draw_dx, self._draw_dy
         # 骨骼偏移
         root_t = self._skeleton_root.get(Transform) if hasattr(self, '_skeleton_root') and self._skeleton_root else None
         ox = root_t.world_x if root_t else 0
@@ -503,16 +510,16 @@ class PetWindow(QOpenGLWidget):
         # 行走方向——水平翻转
         wc = self._skeleton_root.get(WalkCycle) if hasattr(self, '_skeleton_root') and self._skeleton_root else None
         facing_left = (wc and wc.direction < 0)
-        # 设置行走边界（窗口边缘留 50px 内边距）
+        # 设置行走边界（画布边缘留 50px 内边距）
         if wc:
             wc.bound_left = -50
-            wc.bound_right = w - 50
+            wc.bound_right = cw - 50
         # 用 QPainter 绘制：身体 + 左臂（旋转）+ 右臂（旋转）
-        arm_w = int(w * 0.20)
-        pivot_y = int(h * 0.35)
+        arm_w = int(cw * 0.20)
+        pivot_y = int(ch * 0.35)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
-        painter.translate(ox + (w if facing_left else 0), oy)
+        painter.translate(dx + ox + (cw if facing_left else 0), dy + oy)
         if facing_left:
             painter.scale(-1, 1)  # 水平翻转
         # 左臂
@@ -520,16 +527,16 @@ class PetWindow(QOpenGLWidget):
         painter.translate(arm_w, pivot_y)
         painter.rotate(arm_l)
         painter.translate(-arm_w, -pivot_y)
-        painter.drawImage(0, 0, img.copy(0, 0, arm_w, h))
+        painter.drawImage(0, 0, img.copy(0, 0, arm_w, ch))
         painter.restore()
         # 身体
-        painter.drawImage(arm_w, 0, img.copy(arm_w, 0, w - 2 * arm_w, h))
+        painter.drawImage(arm_w, 0, img.copy(arm_w, 0, cw - 2 * arm_w, ch))
         # 右臂
         painter.save()
-        painter.translate(w - arm_w, pivot_y)
+        painter.translate(cw - arm_w, pivot_y)
         painter.rotate(arm_r)
-        painter.translate(-(w - arm_w), -pivot_y)
-        painter.drawImage(w - arm_w, 0, img.copy(w - arm_w, 0, arm_w, h))
+        painter.translate(-(cw - arm_w), -pivot_y)
+        painter.drawImage(cw - arm_w, 0, img.copy(cw - arm_w, 0, arm_w, ch))
         painter.restore()
         painter.end()
 
@@ -643,6 +650,15 @@ class PetWindow(QOpenGLWidget):
             log.warning(f"[桌宠] 动作播放失败 {group}: {e}")
 
     def contextMenuEvent(self, event):
+        # 诊断：若右击落在透明边距却仍弹出本菜单，说明 WM_NCHITTEST 穿透未生效，记到 pet_debug.log 便于排查
+        _lx, _ly = event.x(), event.y()
+        if self._alpha_at(_lx, _ly) < 24:
+            try:
+                import time as _t
+                with open(type(self).DEBUG_LOG, "a") as f:
+                    f.write(f"{_t.time():.0f} PENETRATION_FAIL: 透明边距右击却弹出宠物菜单 (lx={_lx}, ly={_ly})\n")
+            except Exception:
+                pass
         menu = QMenu(self)
         menu.addAction("测试对话", lambda: self._chat_input.show() or self._chat_input.setFocus())
         menu.addSeparator()
@@ -709,7 +725,7 @@ class PetWindow(QOpenGLWidget):
 
         缩放 = 模型 transform(SetScale)，窗口几何固定不动（见 timerEvent / paintGL→idle 合成），
         故不触发透明窗口 DWM 重绘 → 零闪烁/零撕裂/完全跟手；模型随 SetScale 放大且始终不裁边
-        （model.Resize 用 BASE/ZOOM_PAD 留白）。鼠标穿透由 WM_NCHITTEST 实现，透明处穿透桌面。
+        （model.Resize 用 CANVAS/ZOOM_PAD 留白）。鼠标穿透由 WM_NCHITTEST 实现，透明处穿透桌面。
         会话内生效（关窗即重置），不做持久化存储。
         """
         d = event.angleDelta().y()
@@ -724,13 +740,18 @@ class PetWindow(QOpenGLWidget):
 
     # ── 鼠标穿透（Win32 WM_NCHITTEST，像素级）──
     def _alpha_at(self, x: int, y: int) -> int:
-        """采样最近一帧 FBO 图像在 (x,y) 的 alpha（0=全透明,255=不透明），用于命中测试判断是否点到模型。"""
+        """采样最近一帧画布图像在窗口坐标 (x,y) 的 alpha（0=全透明,255=不透明），用于命中测试判断是否点到模型。
+
+        (x,y) 是相对窗口左上角的坐标；先减去绘制偏移得到画布内坐标，超出画布范围(即窗口透明边距)直接视为透明。
+        """
+        dx, dy = getattr(self, '_draw_dx', 0), getattr(self, '_draw_dy', 0)
+        cx, cy = x - dx, y - dy
         img = getattr(self, '_last_img', None)
         if img is None or img.isNull():
             return 255
-        if 0 <= x < img.width() and 0 <= y < img.height():
-            return (img.pixel(x, y) >> 24) & 0xFF
-        return 255
+        if 0 <= cx < img.width() and 0 <= cy < img.height():
+            return img.pixelColor(cx, cy).alpha()  # 用 pixelColor 取 alpha，避免不同 QImage 格式下位运算错读
+        return 0  # 窗口边距（画布之外）= 透明 → 穿透
 
     def nativeEvent(self, eventType, message):
         """Win32 原生消息：WM_NCHITTEST 时，若光标落在模型透明像素上则返回 HTTRANSPARENT，
@@ -854,7 +875,7 @@ class PetWindow(QOpenGLWidget):
             self._active_manual_exprs = set()
             self._emotion_expr = None
             self.model.LoadModelJson(self._model_path)
-            self.model.Resize(int(self.BASE_W / self.ZOOM_PAD), int(self.BASE_H / self.ZOOM_PAD))
+            self.model.Resize(int(self.CANVAS_W / self.ZOOM_PAD), int(self.CANVAS_H / self.ZOOM_PAD))
             self.model.SetAutoBreathEnable(True)
             self.model.SetAutoBlinkEnable(True)
             self.model.StartRandomMotion("Idle", 3)
