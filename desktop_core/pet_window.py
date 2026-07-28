@@ -8,15 +8,17 @@ import os, sys, json, logging, threading, time, queue
 from typing import Optional
 
 os.environ.setdefault("QT_QPA_PLATFORM", "windows")
-os.environ.setdefault("QT_OPENGL", "angle")
+# 注意：QT_OPENGL=angle 是 Qt5 的值，Qt6 已移除会报 Invalid value 警告；
+# Qt6 下留空走默认 desktop OpenGL 即可，软渲染兜底用 QT_OPENGL=software。
 
 from OpenGL.GL import glViewport
 from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer, QPropertyAnimation
-from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont, QPainterPath, QImage
+from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont, QPainterPath, QImage, QCursor
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QApplication, QMenu, QFileDialog, QWidget, QLineEdit, QLabel
 
 from desktop_core.motion_engine import PoseEngine
+from desktop_core.idle_engine import IdleEngine
 from desktop_core.engine.ecs import World
 from desktop_core.engine.transform import Transform
 from desktop_core.engine.skeleton import build_skeleton, set_pose, get_bone_angles, SkeletalAnimator, WalkCycle, WalkSystem, _collect_all
@@ -157,7 +159,12 @@ class PetWindow(QOpenGLWidget):
         # 表情/动作映射
         self._expression_map: dict[str, str] = {}
         self._motion_groups: dict[str, int] = {}
+        # 注入时直接记录的表情/动作（不依赖 GetExpressionIds 回读，避免绑定不回显导致菜单空白）
+        self._injected_expressions: list[tuple[str, str]] = []  # (eid, 中文名)
+        self._injected_motion_groups: dict[str, int] = {}        # group -> 条数
         self._idle_motion_groups: list[str] = []
+        self._active_manual_exprs: set[str] = set()  # 菜单勾选、常驻在场的表情（支持多表情并存）
+        self._emotion_expr: str | None = None        # WS 自动触发的情绪表情（单槽，可替换，不碰常驻项）
         self._idle_interval = 15.0
         self._last_idle_ts = 0.0
         self._pose = PoseEngine(None)
@@ -196,6 +203,23 @@ class PetWindow(QOpenGLWidget):
         screen = QGuiApplication.primaryScreen().availableGeometry()
         self.move(screen.width() - 420, screen.height() - 520)
 
+        # 滚轮缩放：分层架构（根治「透明无边框窗口每帧 resize 被 DWM 重绘 → 持续闪烁/撕裂」）
+        # · 容器层【窗口几何】：仅在「量化档位」跨越时 setGeometry（极少次，不再每帧 resize）。
+        # · 内容层【模型 transform SetScale】：滚轮微调走连续 relative zoom，完全不碰窗口几何
+        #   → 日常缩放零 resize、零闪烁、零撕裂、完全跟手；窗口随档位「变大」满足需求。
+        # · 留白 FIT_K：model.Resize 用 档位窗口×FIT_K，使 SetScale 在档位内相对放大(≤1.25×呼吸×突脸)不裁边，模型始终完整显示。
+        # · 鼠标穿透 MASK_FRAC：窗口仅中心矩形可命中（拖拽/右键），四周透明边距 setMask 后点击穿透到桌面，
+        #   放大后也不再挡其他应用（解决「透明部分前置占位点不了别的应用」）。
+        self._zoom = 1.0
+        self._target_zoom = 1.0
+        self.BASE_W, self.BASE_H = 400, 500            # zoom=1.0 时的窗口基准尺寸
+        self.ZOOM_MIN, self.ZOOM_MAX = 0.5, 3.0
+        self.ZOOM_STEPS = 4.0                          # 档位精度：每 1/ZOOM_STEPS=0.25 一档，resize 仅跨档触发（极低频）
+        self.FIT_K = 1.5                               # 留白倍数：须 >= idle_engine.SCALE_MAX(1.5)，保证 relative(≤1.25)×呼吸×突脸不裁边
+        self.MASK_FRAC = 0.70                          # 可命中矩形占窗口比例（中心），含猫娘+肢体旋转余量；四周透明穿透
+        # 透明窗口重绘时尽量保留旧内容（无害保留）
+        self.setAttribute(Qt.WA_StaticContents, True)
+
         # 如果没有指定模型，自动找第一个
         if not self._model_path or not os.path.exists(self._model_path):
             models = find_model3()
@@ -208,6 +232,28 @@ class PetWindow(QOpenGLWidget):
 
     # ── OpenGL ──
 
+    # ── 缩放分层辅助 ──
+    def _current_qzoom(self) -> float:
+        """量化档位 zoom：把连续 _zoom 离散到每 1/ZOOM_STEPS 一档，resize 仅跨档触发（极低频）。"""
+        q = round(self._zoom * self.ZOOM_STEPS) / self.ZOOM_STEPS
+        return max(self.ZOOM_MIN, min(self.ZOOM_MAX, q))
+
+    def _model_fit_size(self):
+        """模型 fit 目标尺寸：档位窗口 × 留白 FIT_K，保证 SetScale 相对放大不裁边。"""
+        q = self._current_qzoom()
+        return (int(self.BASE_W * q * self.FIT_K), int(self.BASE_H * q * self.FIT_K))
+
+    def _update_mask(self):
+        """鼠标穿透：仅中心 MASK_FRAC 矩形可命中（拖拽/右键），四周透明边距点击穿透桌面，放大后也不挡其他应用。"""
+        w, h = self.width(), self.height()
+        if w <= 0 or h <= 0:
+            return
+        from PySide6.QtCore import QRect
+        from PySide6.QtGui import QRegion
+        pad_x = int(w * (1 - self.MASK_FRAC) / 2)
+        pad_y = int(h * (1 - self.MASK_FRAC) / 2)
+        self.setMask(QRegion(QRect(pad_x, pad_y, w - 2 * pad_x, h - 2 * pad_y)))
+
     def initializeGL(self):
         live2d.glInit()
         live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
@@ -216,12 +262,22 @@ class PetWindow(QOpenGLWidget):
         if self._model_path and os.path.exists(self._model_path):
             try:
                 self.model = live2d.LAppModel()
+                self._active_manual_exprs = set()
+                self._emotion_expr = None
                 self.model.LoadModelJson(self._model_path)
-                self.model.Resize(self.width(), self.height())
+                self.model.Resize(*self._model_fit_size())
                 self.model.SetAutoBreathEnable(True)
                 self.model.SetAutoBlinkEnable(True)
                 self.model.StartRandomMotion("Idle", 3)
+                # VTS 模型的表情/动作普遍不写在 model3.json 里（散落 exp/ 子目录 + vtube.json），
+                # LoadModelJson 只认 FileReferences → 表情恒空。与 web 宠物（api.py 注入）
+                # 同源：复用 l2d_discovery 共享发现，把磁盘真实表情/动作注入模型。
+                self._inject_discovered_actions()
                 self._init_expression_map()
+                self._apply_default_expressions()
+                # 程序化 idle 动作引擎（下意识动作，不依赖模型 motion 文件）
+                self._idle = IdleEngine()
+                self._idle.reset(self.model)
                 if self._pose is None or self._pose.model is None:
                     self._pose = PoseEngine(self.model)
                 else:
@@ -247,7 +303,8 @@ class PetWindow(QOpenGLWidget):
                             group = "Idle"
                         else:
                             group = "Pose"
-                        self.model.LoadExtraMotion(group, 0, fpath)
+                        # live2d 0.7.x 起签名为 (group, motionJsonPath)，不再带序号参数
+                        self.model.LoadExtraMotion(group, fpath)
                     # 更新 _motion_groups
                     real_motions = self.model.GetMotionGroups()
                     self._motion_groups = real_motions if real_motions else {}
@@ -261,12 +318,91 @@ class PetWindow(QOpenGLWidget):
                 if hasattr(self._pose, '_available'):
                     log.info(f"可用参数数: {len(self._pose._available)} 参数={list(self._pose._available)[:15]}")
                 log.info(f"模型加载成功: {self._model_path}")
-                # 动作→骨骼动画
-                from desktop_core.bone_rig import create_default_animator
-                self._animator = create_default_animator(self._skeleton)
+                # 动作→骨骼动画（bone_rig 自带 Skeleton，与 engine.skeleton 的 _skeleton_root 是两套体系）
+                from desktop_core.bone_rig import create_default_animator, create_default_skeleton
+                self._animator = create_default_animator(create_default_skeleton())
             except Exception as e:
                 log.warning(f"模型加载失败: {e}")
         self.startTimer(16)
+
+    def _inject_discovered_actions(self):
+        """把磁盘发现的表情/动作注入 live2d 模型（与 web 宠物后端注入同一套发现逻辑）。
+
+        - 表情：LoadExtraExpression(表情名, exp3绝对路径)。表情名取 exp3 的 Name 字段
+          （缺失回退文件名），与 _resolve_expression 的匹配口径一致。
+        - 动作：LoadExtraMotion("Action", motion3绝对路径)。畸形 motion 已被共享发现剔除。
+        """
+        if not self.model or not self._model_path:
+            return
+        # 切换模型时重新注入前先清空上一份模型的记录，避免新旧表情/动作累积导致菜单死绑旧模型
+        self._injected_expressions = []
+        self._injected_motion_groups = {}
+        try:
+            from desktop_core.l2d_discovery import discover_model_actions
+            acts = discover_model_actions(self._model_path)
+        except Exception as e:
+            log.warning(f"[桌宠] 表情/动作发现失败: {e}")
+            return
+        model_dir = os.path.dirname(self._model_path)
+        n_exp = n_mot = 0
+        already = set()
+        try:
+            already = set(self.model.GetExpressionIds() or [])
+        except Exception:
+            pass
+        for ex in acts.get("expressions", []):
+            name, rel = ex.get("name", ""), ex.get("file", "")
+            fpath = os.path.join(model_dir, rel)
+            if not name or name in already or not os.path.isfile(fpath):
+                continue
+            try:
+                self.model.LoadExtraExpression(name, fpath)
+                n_exp += 1
+                # 直接记录注入项（与 _init_expression_map 的展示口径一致），菜单以此为主源
+                _disp = name.replace(".exp3.json", "").lstrip("0123456789")
+                self._injected_expressions.append((name, _disp))
+            except Exception as e:
+                log.warning(f"[桌宠] 表情注入失败 {name}: {e}")
+        for m in acts.get("motions", []):
+            grp, rel = m.get("group", "Action") or "Action", m.get("file", "")
+            fpath = os.path.join(model_dir, rel)
+            if not os.path.isfile(fpath):
+                continue
+            try:
+                self.model.LoadExtraMotion(grp, fpath)
+                n_mot += 1
+                self._injected_motion_groups[grp] = self._injected_motion_groups.get(grp, 0) + 1
+            except Exception as e:
+                log.warning(f"[桌宠] 动作注入失败 {rel}: {e}")
+        log.warning(f"[桌宠] 发现注入: 表情+{n_exp} 动作+{n_mot}")
+        # 模型作者约定：水印(Watermark)表情默认就展示，靠按键/菜单才去掉 → 加载后默认开启
+        self._apply_default_expressions()
+
+    def _apply_default_expressions(self):
+        """按模型作者约定，加载后自动叠加「水印」表情并设为常驻勾选。
+
+        水印是演示水印，作者设计为默认展示、只有去掉操作才隐藏。因此宠物启动/
+        切换模型后自动 AddExpression + 记入常驻集合（菜单里默认打勾）；用户仍可在
+        右击「表情」子菜单取消（_toggle_expression 会 RemoveExpression 并移出集合）。
+        幂等：已开启的不再重复 AddExpression（避免重复叠加异常）。
+        """
+        if not self.model:
+            return
+        # 同时查注入项与模型内置项，覆盖「水印」写在任一处的情况
+        candidates = list(getattr(self, "_injected_expressions", []))
+        candidates += list(getattr(self, "_expression_map", {}).items())
+        for eid, disp in candidates:
+            hay = f"{eid} {disp}".lower()
+            if "水印" in eid or "水印" in disp or "watermark" in hay:
+                if eid in getattr(self, "_active_manual_exprs", set()):
+                    break  # 已默认开启，跳过
+                try:
+                    self.model.AddExpression(eid)
+                    self._active_manual_exprs.add(eid)
+                    log.warning(f"[桌宠] 默认开启水印表情: {eid}")
+                except Exception as e:
+                    log.warning(f"[桌宠] 默认开启水印表情失败 {eid}: {e}")
+                break
 
     def _init_expression_map(self):
         """初始化表情映射：读取模型所有表情，自动匹配情绪"""
@@ -304,8 +440,10 @@ class PetWindow(QOpenGLWidget):
         return ""
 
     def resizeGL(self, w: int, h: int):
+        # 窗口尺寸变化（仅档位跨变触发，极低频）时，让模型 fit 跟随档位窗口×留白 FIT_K 同步；
+        # 因 resize 极低频，此处重建模型 fit 不会造成每帧闪烁/撕裂。
         if self.model:
-            self.model.Resize(w, h)
+            self.model.Resize(int(w * self.FIT_K), int(h * self.FIT_K))
 
     def _toggle_capture(self):
         """切换直播捕获模式：透明 ↔ 可捕获（去掉 Qt.Tool 标志）"""
@@ -336,10 +474,32 @@ class PetWindow(QOpenGLWidget):
         if abs(self._mouth_current) > 0.01:
             self.model.SetParameterValue("ParamMouthOpenY", self._mouth_current, 1.0)
             self.model.SetParameterValue("ParamMouthForm", self._mouth_current, 1.0)
-        # ── FBO 离屏渲染 → QPainter 合成 ──
-        # 先清空屏幕
-        live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
+        # 程序化 idle 动作（下意识动作：看鼠标/摇头/浮动/风吹/突脸），在 Update 后、Draw 前设置
+        # 滚轮缩放已改为【窗口几何】(见 timerEvent 的 _zoom→setGeometry)，此处不再用 SetScale 缩放模型。
+        if getattr(self, "_idle", None) is not None:
+            try:
+                gp = QCursor.pos()
+                tl = self.mapToGlobal(QPoint(0, 0))
+                cx = tl.x() + self.width() / 2
+                cy = tl.y() + self.height() / 2
+                self._idle.update(self.model, {
+                    "dt": dt,
+                    "cursor": (gp.x(), gp.y()),
+                    "pet_center": (cx, cy),
+                    "pet_size": (self.width(), self.height()),
+                    "zoom": self._zoom / max(1e-3, self._current_qzoom()),
+                })
+            except Exception as e:
+                log.warning(f"[桌宠] idle 更新失败: {e}")
+        else:
+            # 防御：无 idle 引擎时把模型缩放复位为 1.0（缩放=窗口几何，不由 SetScale 承担）
+            try:
+                self.model.SetScale(1.0)
+            except Exception:
+                pass
+        # ── 离屏画布渲染 → 贴到当前窗口 ──
         w, h = self.width(), self.height()
+        # FBO 尺寸 = 当前窗口尺寸：窗口仅在档位跨变时 resize（极低频），故 FBO 重建极低频 → 不闪不撕裂。
         if getattr(self, '_fbo', None) is None or self._fbo.size().width() != w or self._fbo.size().height() != h:
             from PySide6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat
             fmt = QOpenGLFramebufferObjectFormat()
@@ -351,6 +511,8 @@ class PetWindow(QOpenGLWidget):
         self.model.Draw()
         self._fbo.release()
         img = self._fbo.toImage()
+        # 窗口与 FBO 同尺寸，1:1 贴图无缩放模糊；窗口随档位变大使模型在桌面上占据更大区域。
+        img = img.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         # 骨骼偏移
         root_t = self._skeleton_root.get(Transform) if hasattr(self, '_skeleton_root') and self._skeleton_root else None
         ox = root_t.world_x if root_t else 0
@@ -393,6 +555,26 @@ class PetWindow(QOpenGLWidget):
 
     def timerEvent(self, event: QTimerEvent):
         self.update()
+        # 滚轮缩放：_zoom 平滑趋近 _target_zoom，并据此平滑改变【窗口几何】（模型 fit 固定，缩放=窗口尺寸）。
+        # 锚定右下角：窗口放大时向左上生长，保持桌面右下角位置不变（与 __init__ 的 move 一致）。
+        if abs(self._target_zoom - self._zoom) > 1e-3:
+            self._zoom += (self._target_zoom - self._zoom) * 0.35
+            if abs(self._target_zoom - self._zoom) < 1e-3:
+                self._zoom = self._target_zoom
+        # 容器层：窗口尺寸用【量化档位】qzoom，而非连续 _zoom → 档位内微调不触发 resize（零闪烁），仅跨档才 setGeometry
+        tw = int(self.BASE_W * self._current_qzoom())
+        th = int(self.BASE_H * self._current_qzoom())
+        if tw != self.width() or th != self.height():
+            br = self.geometry().bottomRight()
+            x = br.x() - tw
+            y = br.y() - th
+            # 夹到所在屏幕可视区内：放大到接近屏幕顶部/左侧时，不允许超出导致模型头部看不见
+            screen = QGuiApplication.screenAt(br) or QGuiApplication.primaryScreen()
+            if screen:
+                ag = screen.availableGeometry()
+                x = max(ag.left(), min(x, ag.right() - tw))
+                y = max(ag.top(), min(y, ag.bottom() - th))
+            self.setGeometry(x, y, tw, th)
         if not self.model:
             return
         now = time.time()
@@ -443,6 +625,19 @@ class PetWindow(QOpenGLWidget):
         if hasattr(self, '_bubble'):
             self._bubble._reposition()
 
+    def resizeEvent(self, e):
+        """窗口几何随 zoom 变化（timerEvent 驱动）时，同步输入框与气泡位置。
+
+        注意：模型 fit 与 FBO 均为稳定 RENDER 画布，此处【不】重建模型 fit / FBO，
+        只调整 UI 子控件布局，避免任何 GL 资源重分配引入撕裂。
+        """
+        super().resizeEvent(e)
+        self._update_mask()  # 窗口尺寸变化后同步鼠标穿透矩形（四周透明边距点击穿透桌面）
+        if hasattr(self, '_chat_input'):
+            self._chat_input.setGeometry(4, max(4, self.height() - 28), max(40, self.width() - 8), 24)
+        if hasattr(self, '_bubble'):
+            self._bubble._reposition()
+
     def mouseReleaseEvent(self, e: QMouseEvent):
         if e.button() == Qt.LeftButton:
             self._dragging = False
@@ -450,12 +645,86 @@ class PetWindow(QOpenGLWidget):
 
     # ── 右键菜单 ──
 
+    def _toggle_expression(self, eid: str):
+        """右键菜单点表情：以勾选方式在「常驻表情集合」里增删（支持多表情并存）。
+
+        与 SetExpression(单槽替换，点第二个把第一个顶掉) 不同，这里用 live2d.v3 的
+        AddExpression / RemoveExpression 维护一个多表情列表，多个表情可同时生效
+        （如 水印 常驻 + 脸红 临时叠加）。再点一次相同项即移除。"""
+        if not self.model or not eid:
+            return
+        try:
+            if eid in self._active_manual_exprs:
+                self.model.RemoveExpression(eid)
+                self._active_manual_exprs.discard(eid)
+                log.warning(f"[桌宠] 取消常驻表情: {eid}")
+            else:
+                self.model.AddExpression(eid)
+                self._active_manual_exprs.add(eid)
+                log.warning(f"[桌宠] 添加常驻表情: {eid}")
+        except Exception as e:
+            log.warning(f"[桌宠] 表情切换失败 {eid}: {e}")
+
+    def _play_motion(self, group: str, count: int):
+        """右键菜单点动作：随机抽取该组一个动作播放（对齐 web 动作热键）。"""
+        if not self.model or not group:
+            return
+        try:
+            import random as _r
+            n = int(count) if count else 1
+            idx = _r.randint(0, max(0, n - 1))
+            self.model.StartMotion(group, idx, 3)
+        except Exception as e:
+            log.warning(f"[桌宠] 动作播放失败 {group}: {e}")
+
     def contextMenuEvent(self, event):
         menu = QMenu(self)
         menu.addAction("测试对话", lambda: self._chat_input.show() or self._chat_input.setFocus())
         menu.addSeparator()
         cap_label = "关闭捕获模式" if self._capture_mode else "直播捕获模式"
         menu.addAction(cap_label, self._toggle_capture)
+        menu.addSeparator()
+        # 表情 / 动作 手动触发（对齐 web 宠物 HotkeySettings 的手动触发入口）
+        # 以注入时记录的自有列表为主源（live2d.v3 的 GetExpressionIds 未必回显注入项），
+        # 再合并 _init_expression_map 读到的内置项；始终显示子菜单，空时给占位项避免误判"没生效"。
+        expr_items = list(getattr(self, "_expression_map", {}).items())
+        for _eid, _disp in getattr(self, "_injected_expressions", []):
+            if _eid not in self._expression_map:
+                expr_items.append((_eid, _disp))
+        if expr_items:
+            expr_sub = menu.addMenu("表情")
+            for _eid, _ename in expr_items:
+                _label = _ename or _eid
+                _a = expr_sub.addAction(_label)
+                _a.setCheckable(True)
+                _a.setChecked(_eid in getattr(self, "_active_manual_exprs", set()))
+                _a.triggered.connect(lambda _checked, e=_eid: self._toggle_expression(e))
+        else:
+            expr_sub = menu.addMenu("表情")
+            _d = expr_sub.addAction("（暂无表情）")
+            _d.setEnabled(False)
+        # 程序化下意识动作（不依赖模型 motion 文件）：勾选开关 + 突脸触发
+        idle = getattr(self, "_idle", None)
+        if idle is not None:
+            mot_sub = menu.addMenu("动作")
+            for _key, _zh in [
+                ("body_float", "身体浮动"),
+                ("look_cursor", "看鼠标"),
+                ("head_sway", "摇头歪头"),
+                ("wind", "被风吹"),
+                ("scale_breath", "缩放呼吸"),
+            ]:
+                _a = mot_sub.addAction(_zh)
+                _a.setCheckable(True)
+                _a.setChecked(idle.enabled.get(_key, False))
+                _a.triggered.connect(lambda _c, k=_key: idle.toggle(k))
+            mot_sub.addSeparator()
+            _poke_a = mot_sub.addAction("突脸一下")
+            _poke_a.triggered.connect(lambda _c: idle.trigger_poke())
+        else:
+            mot_sub = menu.addMenu("动作")
+            _d = mot_sub.addAction("（暂无动作）")
+            _d.setEnabled(False)
         menu.addSeparator()
         models = find_model3()
         if models:
@@ -469,6 +738,24 @@ class PetWindow(QOpenGLWidget):
         menu.addSeparator()
         menu.addAction("退出", QApplication.quit)
         menu.exec(event.globalPos())
+
+    def wheelEvent(self, event):
+        """鼠标滚轮缩放桌宠：仅更新目标缩放 _target_zoom，由 timerEvent 每帧平滑改变窗口几何。
+
+        缩放 = 窗口几何（setGeometry，锚定右下角），模型只在加载时 Resize 到稳定离屏画布 RENDER，
+        故缩放过程不重建 FBO / 不改模型 fit，根除 OS 异步 resize 与 FBO 错帧导致的撕裂/跳变/不跟手；
+        模型随窗口等比放大且始终完整不裁边（见 paintGL 把稳定 FBO 按比例贴到窗口）。
+        会话内生效（关窗即重置），不做持久化存储。
+        """
+        d = event.angleDelta().y()
+        if d == 0:
+            return
+        factor = 1.1 if d > 0 else 1.0 / 1.1
+        new_target = max(self.ZOOM_MIN, min(self.ZOOM_MAX, self._target_zoom * factor))
+        if abs(new_target - self._target_zoom) < 1e-6:
+            return
+        self._target_zoom = new_target
+        event.accept()
 
     def _on_chat_response(self, emotion: str, reply: str):
         self._bubble.show_text(f"[{emotion}] {reply}", 4000)
@@ -568,11 +855,19 @@ class PetWindow(QOpenGLWidget):
             return
         try:
             self.model = live2d.LAppModel()
+            self._active_manual_exprs = set()
+            self._emotion_expr = None
             self.model.LoadModelJson(self._model_path)
-            self.model.Resize(self.width(), self.height())
+            self.model.Resize(*self._model_fit_size())
             self.model.SetAutoBreathEnable(True)
             self.model.SetAutoBlinkEnable(True)
             self.model.StartRandomMotion("Idle", 3)
+            # 切换模型后必须重建表情/动作数据源，否则右击菜单会死绑上一份模型
+            self._inject_discovered_actions()
+            self._init_expression_map()
+            self._apply_default_expressions()
+            if getattr(self, "_idle", None) is not None:
+                self._idle.reset(self.model)
             log.info(f"模型切换: {self._model_path}")
             from desktop_core.motion_engine import PoseEngine
             from desktop_core.engine.ecs import World
@@ -649,7 +944,19 @@ class PetWindow(QOpenGLWidget):
                         self._bubble.show_text(txt)
                     expr = self._resolve_expression(msg.get("emotion", ""))
                     if expr and self.model:
-                        self.model.SetExpression(expr)
+                        # 情绪表情用单槽替换，但用 Add/Remove 增量管理：
+                        # 只替换上一句的情绪表情，绝不顶掉用户手动勾选的常驻表情（如 水印）
+                        if self._emotion_expr and self._emotion_expr != expr:
+                            try:
+                                self.model.RemoveExpression(self._emotion_expr)
+                            except Exception:
+                                pass
+                        if expr != self._emotion_expr:
+                            try:
+                                self.model.AddExpression(expr)
+                                self._emotion_expr = expr
+                            except Exception as e:
+                                log.warning(f"[桌宠] 情绪表情失败 {expr}: {e}")
                     mg = msg.get("motion_group", "")
                     mi = msg.get("motion_index", -1)
                     # 优先 Pose 引擎驱动
