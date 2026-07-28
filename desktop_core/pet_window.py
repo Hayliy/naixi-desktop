@@ -203,20 +203,22 @@ class PetWindow(QOpenGLWidget):
         screen = QGuiApplication.primaryScreen().availableGeometry()
         self.move(screen.width() - 420, screen.height() - 520)
 
-        # 滚轮缩放：分层架构（根治「透明无边框窗口每帧 resize 被 DWM 重绘 → 持续闪烁/撕裂」）
-        # · 容器层【窗口几何】：仅在「量化档位」跨越时 setGeometry（极少次，不再每帧 resize）。
-        # · 内容层【模型 transform SetScale】：滚轮微调走连续 relative zoom，完全不碰窗口几何
-        #   → 日常缩放零 resize、零闪烁、零撕裂、完全跟手；窗口随档位「变大」满足需求。
-        # · 留白 FIT_K：model.Resize 用 档位窗口×FIT_K，使 SetScale 在档位内相对放大(≤1.25×呼吸×突脸)不裁边，模型始终完整显示。
-        # · 鼠标穿透 MASK_FRAC：窗口仅中心矩形可命中（拖拽/右键），四周透明边距 setMask 后点击穿透到桌面，
-        #   放大后也不再挡其他应用（解决「透明部分前置占位点不了别的应用」）。
+        # 滚轮缩放：当前缩放 / 目标缩放（timerEvent 每帧平滑 lerp）。
+        # —— 架构（参考 Live2D 编辑器 AnimeEffects 的 FBO→屏幕 blit 范式，根治两个老问题）——
+        # · 模型只在加载时 Resize 到「稳定离屏画布 RENDER」(= BASE×ZOOM_MAX)，永不随窗口重建；
+        # · 滚轮缩放改为改变【窗口几何】(setGeometry，锚定右下角平滑生长)，模型随窗口等比放大且始终完整不裁边；
+        # · paintGL 每帧把稳定 FBO 按比例贴到当前窗口 —— 模型渲染与窗口尺寸彻底解耦，窗口 resize 不重建 FBO/不改模型 fit，
+        #   故无 OS 异步 resize 与 FBO 错帧导致的撕裂/跳变/不跟手。
+        # · 模型在 RENDER 画布内仅占 MODEL_FIT_FRAC（留 breath/poke 过扫描余量），SetScale 由 idle 引擎驱动(呼吸/突脸)。
         self._zoom = 1.0
         self._target_zoom = 1.0
-        self.BASE_W, self.BASE_H = 400, 500            # zoom=1.0 时的窗口基准尺寸
+        self.BASE_W, self.BASE_H = 400, 500            # zoom=1.0 时的窗口尺寸（与下方 self.resize 一致）
         self.ZOOM_MIN, self.ZOOM_MAX = 0.5, 3.0
-        self.ZOOM_STEPS = 4.0                          # 档位精度：每 1/ZOOM_STEPS=0.25 一档，resize 仅跨档触发（极低频）
-        self.FIT_K = 1.5                               # 留白倍数：须 >= idle_engine.SCALE_MAX(1.5)，保证 relative(≤1.25)×呼吸×突脸不裁边
-        self.MASK_FRAC = 0.70                          # 可命中矩形占窗口比例（中心），含猫娘+肢体旋转余量；四周透明穿透
+        # 稳定离屏画布：足够容纳最大窗口尺寸，保证最大 zoom 下模型清晰、且模型 fit 不随窗口重建（根除撕裂根因）
+        self.RENDER_W = int(self.BASE_W * self.ZOOM_MAX)
+        self.RENDER_H = int(self.BASE_H * self.ZOOM_MAX)
+        # 模型在 RENDER 画布内的占比：留出 breath/poke 过扫描余量（过扫描上限须 == idle_engine.SCALE_MAX = 1/FRAC），避免缩放动作裁边
+        self.MODEL_FIT_FRAC = 1.0 / 1.15
         # 透明窗口重绘时尽量保留旧内容（无害保留）
         self.setAttribute(Qt.WA_StaticContents, True)
 
@@ -232,28 +234,6 @@ class PetWindow(QOpenGLWidget):
 
     # ── OpenGL ──
 
-    # ── 缩放分层辅助 ──
-    def _current_qzoom(self) -> float:
-        """量化档位 zoom：把连续 _zoom 离散到每 1/ZOOM_STEPS 一档，resize 仅跨档触发（极低频）。"""
-        q = round(self._zoom * self.ZOOM_STEPS) / self.ZOOM_STEPS
-        return max(self.ZOOM_MIN, min(self.ZOOM_MAX, q))
-
-    def _model_fit_size(self):
-        """模型 fit 目标尺寸：档位窗口 × 留白 FIT_K，保证 SetScale 相对放大不裁边。"""
-        q = self._current_qzoom()
-        return (int(self.BASE_W * q * self.FIT_K), int(self.BASE_H * q * self.FIT_K))
-
-    def _update_mask(self):
-        """鼠标穿透：仅中心 MASK_FRAC 矩形可命中（拖拽/右键），四周透明边距点击穿透桌面，放大后也不挡其他应用。"""
-        w, h = self.width(), self.height()
-        if w <= 0 or h <= 0:
-            return
-        from PySide6.QtCore import QRect
-        from PySide6.QtGui import QRegion
-        pad_x = int(w * (1 - self.MASK_FRAC) / 2)
-        pad_y = int(h * (1 - self.MASK_FRAC) / 2)
-        self.setMask(QRegion(QRect(pad_x, pad_y, w - 2 * pad_x, h - 2 * pad_y)))
-
     def initializeGL(self):
         live2d.glInit()
         live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
@@ -265,7 +245,7 @@ class PetWindow(QOpenGLWidget):
                 self._active_manual_exprs = set()
                 self._emotion_expr = None
                 self.model.LoadModelJson(self._model_path)
-                self.model.Resize(*self._model_fit_size())
+                self.model.Resize(int(self.RENDER_W * self.MODEL_FIT_FRAC), int(self.RENDER_H * self.MODEL_FIT_FRAC))
                 self.model.SetAutoBreathEnable(True)
                 self.model.SetAutoBlinkEnable(True)
                 self.model.StartRandomMotion("Idle", 3)
@@ -440,10 +420,10 @@ class PetWindow(QOpenGLWidget):
         return ""
 
     def resizeGL(self, w: int, h: int):
-        # 窗口尺寸变化（仅档位跨变触发，极低频）时，让模型 fit 跟随档位窗口×留白 FIT_K 同步；
-        # 因 resize 极低频，此处重建模型 fit 不会造成每帧闪烁/撕裂。
-        if self.model:
-            self.model.Resize(int(w * self.FIT_K), int(h * self.FIT_K))
+        # 模型 fit 已固定在稳定 RENDER 画布（见 initializeGL / _init_model），窗口尺寸变化只影响
+        # FBO→窗口的合成贴图（在 paintGL 内按当前 self.width/height 处理），不重建模型 fit / FBO，
+        # 从而避免 OS 窗口异步 resize 与 FBO 错帧导致的撕裂/跳变。此处保持空实现。
+        pass
 
     def _toggle_capture(self):
         """切换直播捕获模式：透明 ↔ 可捕获（去掉 Qt.Tool 标志）"""
@@ -487,7 +467,7 @@ class PetWindow(QOpenGLWidget):
                     "cursor": (gp.x(), gp.y()),
                     "pet_center": (cx, cy),
                     "pet_size": (self.width(), self.height()),
-                    "zoom": self._zoom / max(1e-3, self._current_qzoom()),
+                    "zoom": self._zoom,
                 })
             except Exception as e:
                 log.warning(f"[桌宠] idle 更新失败: {e}")
@@ -497,21 +477,24 @@ class PetWindow(QOpenGLWidget):
                 self.model.SetScale(1.0)
             except Exception:
                 pass
-        # ── 离屏画布渲染 → 贴到当前窗口 ──
-        w, h = self.width(), self.height()
-        # FBO 尺寸 = 当前窗口尺寸：窗口仅在档位跨变时 resize（极低频），故 FBO 重建极低频 → 不闪不撕裂。
-        if getattr(self, '_fbo', None) is None or self._fbo.size().width() != w or self._fbo.size().height() != h:
+        # ── 稳定离屏画布渲染 → 按比例贴到当前窗口 ──
+        # 先清空屏幕
+        live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
+        # 稳定离屏画布（RENDER_W×RENDER_H，加载时一次性分配，不随窗口重建 → 根除错帧撕裂）
+        if getattr(self, '_fbo', None) is None:
             from PySide6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat
             fmt = QOpenGLFramebufferObjectFormat()
             fmt.setSamples(0)
             fmt.setAttachment(QOpenGLFramebufferObject.CombinedDepthStencil)
-            self._fbo = QOpenGLFramebufferObject(w, h, fmt)
+            self._fbo = QOpenGLFramebufferObject(self.RENDER_W, self.RENDER_H, fmt)
         self._fbo.bind()
         live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
         self.model.Draw()
         self._fbo.release()
         img = self._fbo.toImage()
-        # 窗口与 FBO 同尺寸，1:1 贴图无缩放模糊；窗口随档位变大使模型在桌面上占据更大区域。
+        # 把稳定 RENDER 画布按比例贴到当前窗口：窗口几何随 zoom 平滑变化，模型随之等比缩放且始终完整不裁边。
+        # RENDER 与窗口同为 4:5，KeepAspectRatio 精确填充、无黑边。
+        w, h = self.width(), self.height()
         img = img.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         # 骨骼偏移
         root_t = self._skeleton_root.get(Transform) if hasattr(self, '_skeleton_root') and self._skeleton_root else None
@@ -561,9 +544,8 @@ class PetWindow(QOpenGLWidget):
             self._zoom += (self._target_zoom - self._zoom) * 0.35
             if abs(self._target_zoom - self._zoom) < 1e-3:
                 self._zoom = self._target_zoom
-        # 容器层：窗口尺寸用【量化档位】qzoom，而非连续 _zoom → 档位内微调不触发 resize（零闪烁），仅跨档才 setGeometry
-        tw = int(self.BASE_W * self._current_qzoom())
-        th = int(self.BASE_H * self._current_qzoom())
+        tw = int(self.BASE_W * self._zoom)
+        th = int(self.BASE_H * self._zoom)
         if tw != self.width() or th != self.height():
             br = self.geometry().bottomRight()
             x = br.x() - tw
@@ -632,7 +614,6 @@ class PetWindow(QOpenGLWidget):
         只调整 UI 子控件布局，避免任何 GL 资源重分配引入撕裂。
         """
         super().resizeEvent(e)
-        self._update_mask()  # 窗口尺寸变化后同步鼠标穿透矩形（四周透明边距点击穿透桌面）
         if hasattr(self, '_chat_input'):
             self._chat_input.setGeometry(4, max(4, self.height() - 28), max(40, self.width() - 8), 24)
         if hasattr(self, '_bubble'):
@@ -858,7 +839,7 @@ class PetWindow(QOpenGLWidget):
             self._active_manual_exprs = set()
             self._emotion_expr = None
             self.model.LoadModelJson(self._model_path)
-            self.model.Resize(*self._model_fit_size())
+            self.model.Resize(int(self.RENDER_W * self.MODEL_FIT_FRAC), int(self.RENDER_H * self.MODEL_FIT_FRAC))
             self.model.SetAutoBreathEnable(True)
             self.model.SetAutoBlinkEnable(True)
             self.model.StartRandomMotion("Idle", 3)

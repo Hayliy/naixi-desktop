@@ -34,8 +34,10 @@ POKE_LEAN_DEG = 5.0
 # 故与参数冲突地图(_ACTION_PARAM_SPEC)无关，缩放在 update() 末尾统一合成。
 SCALE_BREATH_AMP = 0.03       # 缩放幅度（±3%，模型在窗口内轻微胀缩）
 SCALE_BREATH_FREQ = 1.2       # 脉动频率（rad/s），约 5.2s 一个呼吸周期
-SCALE_MAX = 1.5               # 合成缩放上限：须 == pet_window.FIT_K(1.5)。relative zoom(≤1.25)×呼吸(≤1.03)×突脸(≤1.10)≈1.42 < 1.5 → 不裁边。
-                                # pet_window 用 FIT_K 留白(model.Resize 用 档位窗口×FIT_K)，故 SetScale 在档位内相对放大安全。
+SCALE_MAX = 1.15              # 合成缩放上限：须 == 1 / pet_window.MODEL_FIT_FRAC（模型在 RENDER 画布内占比的倒数）。
+                                # 设 1.15 表示 SetScale 最多把模型放至 RENDER 画布边缘；配合 pet_window 的
+                                # MODEL_FIT_FRAC=1/1.15，呼吸(±3%)×突脸(1.10)叠加峰值≈1.133 < 1.15 → 不裁边。
+                                # 注意：滚轮缩放已改为【窗口几何】(pet_window 负责)，此处 SetScale 仅承载呼吸/突脸，不再乘 zoom。
 
 # ── 动作参数占用表（冲突标注）──
 # 每个程序化动作驱动的标准 Cubism 参数、写入权重、写入模式。
@@ -255,15 +257,14 @@ class IdleEngine:
         if self.enabled.get("wind"):
             self._update_wind(model, t, dt)
 
-        # 缩放合成（每帧仅一次 SetScale）：呼吸(±3%) × 突脸(瞬时回弹) × 滚轮相对缩放(relative zoom)。
-        # relative zoom 由 pet_window 预计算（连续 _zoom / 量化档位 qzoom），使滚轮微调走模型 transform
-        # 不碰窗口几何 → 日常缩放零 resize 零闪。FIT_K=1.5 留白保证 relative(≤1.25)×呼吸×突脸≈1.42 < SCALE_MAX 不裁边。
+        # 缩放合成（每帧仅一次 SetScale）：呼吸缩放(可选, ±3%) × 突脸缩放(瞬时回弹)。
+        # 二者走模型 transform 的 SetScale（非 Cubism 参数）。滚轮缩放(zoom)已改为【窗口几何】实现
+        # （见 pet_window：窗口随 zoom 等比放大、模型 fit 固定），故此处不再把 zoom 并进 SetScale，避免重复缩放。
         self._poke_scale = 1.0
         if self.enabled.get("poke") or now < self._poke_until:
             self._update_poke(model, now)
         breath_s = 1.0 + SCALE_BREATH_AMP * math.sin(t * SCALE_BREATH_FREQ) if self.enabled.get("scale_breath") else 1.0
-        zoom_s = ctx.get("zoom", 1.0)   # pet_window 传入的 relative zoom（档位内约 0.75~1.25）
-        final_s = breath_s * self._poke_scale * zoom_s
+        final_s = breath_s * self._poke_scale
         if final_s > SCALE_MAX:
             final_s = SCALE_MAX
         elif final_s < 0.3:
