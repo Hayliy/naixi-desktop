@@ -11,9 +11,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "windows")
 # 注意：QT_OPENGL=angle 是 Qt5 的值，Qt6 已移除会报 Invalid value 警告；
 # Qt6 下留空走默认 desktop OpenGL 即可，软渲染兜底用 QT_OPENGL=software。
 
-from OpenGL.GL import glViewport, GL_RGBA8
-from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer, QPropertyAnimation
-from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont, QPainterPath, QImage, QCursor
+from OpenGL.GL import glViewport, GL_RGBA8, glReadPixels, GL_ALPHA, GL_UNSIGNED_BYTE
+from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer, QPropertyAnimation, QSize, QRect
+from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont, QPainterPath, QImage, QCursor, QBitmap, QRegion
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QApplication, QMenu, QFileDialog, QWidget, QLineEdit, QLabel
 
@@ -207,13 +207,14 @@ class PetWindow(QOpenGLWidget):
         # —— 架构（固定窗口 + 模型 transform SetScale + setMask 穿透，根治三大老问题）——
         # · 窗口几何【固定】640×800，滚轮缩放只改模型的 SetScale（transform），绝不 setGeometry → 透明窗口 DWM 不再每帧重绘 → 零闪烁/零撕裂；
         # · 模型只加载时 Resize 到 CANVAS/ZOOM_PAD（留白），SetScale 在 [ZOOM_MIN, ZOOM_MAX] 内模型始终不裁边、且可放大到铺满画布；
-        # · 鼠标穿透用 Qt 官方推荐做法 setMask（Shaped Clock 示例）：把窗口裁剪为模型包围盒矩形，
+        # · 鼠标穿透用 Qt 官方推荐做法 setMask（Shaped Clock 示例）：把窗口裁剪为模型真实轮廓（glReadPixels 读 FBO 真实 alpha），
         #   矩形外(窗口透明边距)点击自动穿透到桌面 —— 比 WM_NCHITTEST 可靠（QOpenGLWidget 上 WM_NCHITTEST
         #   返回值系统不采纳，实测穿透失效，已踩坑多轮）。对话气泡是 Live2D/独立 overlay，右击菜单是独立
         #   QMenu 弹窗，均非 Qt 子控件，setMask 不会裁掉它们。
         self._zoom = 1.4
         self._target_zoom = 1.4
-        self._last_mask_scale = -1   # setMask 节流：仅在缩放变化超阈值(或首次)时重算穿透矩形
+        self._last_mask_scale = -1   # setMask 节流：仅在缩放变化超阈值(或首次)时重算穿透轮廓
+        self._last_mask_time = 0.0    # setMask 节流：每 0.4s 周期性重算（跟随 idle 旋转改动的模型轮廓）
         self.BASE_W, self.BASE_H = 640, 800            # 窗口尺寸（滚轮缩放=模型 transform，不缩放窗口几何）；放大只为测试右击穿透
         # 模型画布固定 400×500，与窗口解耦：模型只在离屏画布里渲染，再整体贴到 640×800 窗口。
         # 窗口放大只增加透明边距，模型像素尺寸恒定（不再「窗口变大模型也变大」）。
@@ -502,7 +503,7 @@ class PetWindow(QOpenGLWidget):
         self.model.Draw()
         self._fbo.release()
         img = self._fbo.toImage()
-        # 缓存最近一帧（保留供参考；穿透改由 setMask 几何包围盒，不依赖像素 alpha 采样）
+        # 缓存最近一帧（保留供参考；穿透改由 setMask + FBO 真实 alpha 轮廓，glReadPixels(GL_ALPHA) 绕开 toImage 丢 alpha 问题）
         self._last_img = img
         # 窗口几何固定，离屏画布(400×500)整体贴到 640×800 窗口中央（先按骨骼偏移合成，再平移到窗口锚点）
         cw, ch = self.CANVAS_W, self.CANVAS_H
@@ -555,8 +556,9 @@ class PetWindow(QOpenGLWidget):
             self._zoom += (self._target_zoom - self._zoom) * 0.35
             if abs(self._target_zoom - self._zoom) < 1e-3:
                 self._zoom = self._target_zoom
-        # 缩放变化超阈值(或首次)则重算 setMask 穿透矩形（_update_mask 内会夹到窗口范围）
-        if self._last_mask_scale < 0 or abs(self._zoom - self._last_mask_scale) > 0.02:
+        # 重算 setMask 轮廓：缩放变化超阈值、首次、或每 0.4s 周期（idle 旋转改变模型轮廓，须跟随以免裁切模型）
+        _now = time.time()
+        if self._last_mask_scale < 0 or abs(self._zoom - self._last_mask_scale) > 0.02 or (_now - self._last_mask_time) > 0.4:
             self._update_mask()
         if not self.model:
             return
@@ -741,28 +743,40 @@ class PetWindow(QOpenGLWidget):
         self._target_zoom = new_target
         event.accept()
 
-    # ── 鼠标穿透（Qt 官方 setMask 方案，可靠）──
+    # ── 鼠标穿透（Qt 官方 setMask 方案，按模型真实轮廓裁剪，可靠）──
     def _update_mask(self):
-        """用 setMask 把窗口裁剪为模型包围盒矩形：矩形内(模型)可点击(拖拽/右键)，
-        矩形外(窗口透明边距)点击自动穿透到桌面。Qt Shaped Clock 示例推荐做法；
+        """用 setMask 把窗口裁剪为【模型真实轮廓】：轮廓内(模型)可点击(拖拽/右键)，
+        轮廓外(透明处)点击自动穿透到桌面。Qt Shaped Clock 示例推荐做法；
         WM_NCHITTEST 在 QOpenGLWidget 上返回值系统不采纳，穿透实测失效，故弃用。
-        矩形按当前缩放自底向上算，并夹到窗口范围内避免放大到接近铺满时裁掉模型。
+
+        关键：setMask 会同时裁剪【渲染+命中】，若 mask 小于模型实际绘制像素，模型会被切边。
+        早期用固定矩形公式，但 idle 引擎对模型施加大幅旋转（阵风 angle_z 峰≈±36°、angle_x≈±18°），
+        旋转后模型真实包围盒远大于公式矩形 → 模型被裁（无论怎么缩放都切边）。
+        故改用 glReadPixels(GL_ALPHA) 从 FBO 直接读真实 alpha（Qt6 的
+        QOpenGLFramebufferObject.toImage() 会丢 alpha 返回 Format_RGB32，故不能用 toImage 取 alpha），
+        构造精确轮廓 mask：模型永不被裁、透明处永穿透，且自动跟随 idle 旋转更新。
         """
-        if self.model is None:
+        if self.model is None or getattr(self, '_fbo', None) is None:
             return
-        PAD = 1.12  # 包容呼吸/突脸微扰，避免动画时实体超出矩形被裁
-        s = self._zoom * PAD
-        mw = (self.CANVAS_W / self.ZOOM_PAD) * s
-        mh = (self.CANVAS_H / self.ZOOM_PAD) * s
-        mx = (self.BASE_W - mw) / 2.0
-        my = (self.BASE_H - mh) / 2.0
-        from PySide6.QtCore import QRect
-        from PySide6.QtGui import QRegion
-        rect = QRect(int(round(mx)), int(round(my)), int(round(mw)), int(round(mh)))
-        # 夹到窗口范围：放大到接近铺满时不再向外扩展，避免裁掉模型（此时穿透边距自然变窄）
-        rect = rect.intersected(QRect(0, 0, self.width(), self.height()))
-        self.setMask(QRegion(rect))
-        self._last_mask_scale = self._zoom
+        try:
+            w, h = self.CANVAS_W, self.CANVAS_H
+            buf = (ctypes.c_ubyte * (w * h))()
+            self.makeCurrent()
+            self._fbo.bind()
+            glReadPixels(0, 0, w, h, GL_ALPHA, GL_UNSIGNED_BYTE, buf)
+            self._fbo.release()
+            self.doneCurrent()
+            # GL 自下而上 → 翻转成 Qt 自上而下（C++ 操作，无 Python 逐像素循环）
+            img = QImage(bytes(buf), w, h, QImage.Format_Grayscale8)
+            img = img.mirrored(False, True)
+            # 透明像素(alpha=0)→mask 透明(0)穿透；模型像素(>阈值)→mask 不透明(1)可点
+            mask = img.createMaskFromColor(0)
+            bm = QBitmap.fromImage(mask)
+            self.setMask(QRegion(bm))
+            self._last_mask_scale = self._zoom
+            self._last_mask_time = time.time()
+        except Exception as e:
+            log.warning(f"[桌宠] setMask 轮廓更新失败(退回无穿透全窗口): {e}")
 
     def _on_chat_response(self, emotion: str, reply: str):
         self._bubble.show_text(f"[{emotion}] {reply}", 4000)
