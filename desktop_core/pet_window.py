@@ -214,7 +214,7 @@ class PetWindow(QOpenGLWidget):
         self.BASE_W, self.BASE_H = 640, 800            # 窗口尺寸（滚轮缩放=模型 transform，不缩放窗口几何）；放大只为测试右击穿透
         # 模型画布固定 400×500，与窗口解耦：模型只在离屏画布里渲染，再整体贴到 640×800 窗口。
         # 窗口放大只增加透明边距，模型像素尺寸恒定（不再「窗口变大模型也变大」）。
-        self.CANVAS_W, self.CANVAS_H = 400, 500
+        self.CANVAS_W, self.CANVAS_H = self.BASE_W, self.BASE_H  # 撤消解耦：画布=窗口尺寸，模型在窗口内正常大显示（7dbbd81 的 400x500 画布会让显示区域变小）
         self._draw_dx = (self.BASE_W - self.CANVAS_W) // 2
         self._draw_dy = (self.BASE_H - self.CANVAS_H) // 2
         self.ZOOM_MIN, self.ZOOM_MAX = 0.5, 2.0
@@ -773,7 +773,7 @@ class PetWindow(QOpenGLWidget):
                     if 0 <= lx < self.width() and 0 <= ly < self.height():
                         if self._alpha_at(lx, ly) < 24:
                             # HTTRANSPARENT = -1：穿透到下层窗口
-                            return ((-1).to_bytes(ctypes.sizeof(ctypes.c_void_p), "little", signed=True), 1)
+                            return ctypes.c_void_p(-1), True  # HTTRANSPARENT=-1：穿透到下层窗口。PySide6 nativeEvent 须返回 (c_void_p/int, bool)；返回 bytes 系统不采纳 → 点击不穿透（穿透失效根因）
             except Exception:
                 pass
         return super().nativeEvent(eventType, message)
