@@ -145,8 +145,38 @@ def find_model3() -> list[dict]:
     return models
 
 
-class PetWindow(QOpenGLWidget):
-    """桌宠窗口 — QOpenGLWidget 本身就是窗口"""
+class PetGL(QOpenGLWidget):
+    """Live2D 渲染子控件。
+
+    父 PetWindow 是普通 QWidget 顶层窗口（不再是 QOpenGLWidget）。原因：在「顶层
+    QOpenGLWidget」上调用 setMask 时，Qt 只会裁剪【绘制】而不会裁剪【命中区域】
+    （GL 原生窗口独占命中测试，SetWindowRgn 不作用于它），导致透明边距点击无法穿透
+    到桌面——已用矩形 mask 实测验证（模型被切但不穿透，见 e5583b0）。改成
+    『普通 QWidget 顶层 + 子 QOpenGLWidget 渲染』后，setMask 作用在普通 QWidget 上能
+    正确设置 OS 窗口命中区域，透明边距点击才真正穿透（Qt Shaped Clock 示例同款架构）。
+    本类只负责 GL 生命周期，所有模型/动画/绘制数据都取 self._host（PetWindow）。
+    """
+
+    def __init__(self, host):
+        super().__init__(host)
+        self._host = host
+
+    def initializeGL(self):
+        self._host.initializeGL()
+
+    def resizeGL(self, w: int, h: int):
+        self._host.resizeGL(w, h)
+
+    def paintGL(self):
+        self._host.paintGL()
+
+    def wheelEvent(self, event):
+        # WA_TransparentForMouseEvents 对滚轮事件覆盖不确定，显式转发父窗口保证缩放可用
+        self._host.wheelEvent(event)
+
+
+class PetWindow(QWidget):
+    """桌宠窗口 — 顶层普通 QWidget（GL 渲染交给子 PetGL）"""
 
     def __init__(self, model_path: str = ""):
         super().__init__()
@@ -204,13 +234,14 @@ class PetWindow(QOpenGLWidget):
         self.move(max(0, screen.width() - 660), max(0, screen.height() - 820))
 
         # 滚轮缩放：当前缩放 / 目标缩放（timerEvent 每帧平滑 lerp）。
-        # —— 架构（固定窗口 + 模型 transform SetScale + setMask 穿透，根治三大老问题）——
+        # —— 架构（固定窗口 + 模型 transform SetScale + 普通 QWidget 顶层 setMask 穿透）——
         # · 窗口几何【固定】640×800，滚轮缩放只改模型的 SetScale（transform），绝不 setGeometry → 透明窗口 DWM 不再每帧重绘 → 零闪烁/零撕裂；
         # · 模型只加载时 Resize 到 CANVAS/ZOOM_PAD（留白），SetScale 在 [ZOOM_MIN, ZOOM_MAX] 内模型始终不裁边、且可放大到铺满画布；
-        # · 鼠标穿透用 Qt 官方推荐做法 setMask（Shaped Clock 示例）：把窗口裁剪为模型真实轮廓（glReadPixels 读 FBO 真实 alpha），
-        #   矩形外(窗口透明边距)点击自动穿透到桌面 —— 比 WM_NCHITTEST 可靠（QOpenGLWidget 上 WM_NCHITTEST
-        #   返回值系统不采纳，实测穿透失效，已踩坑多轮）。对话气泡是 Live2D/独立 overlay，右击菜单是独立
-        #   QMenu 弹窗，均非 Qt 子控件，setMask 不会裁掉它们。
+        # · 鼠标穿透用 Qt 官方推荐做法 setMask（Shaped Clock 示例）：把【普通 QWidget 顶层】窗口裁剪为
+        #   模型真实轮廓（glReadPixels 读 FBO 真实 alpha），矩形外(窗口透明边距)点击自动穿透到桌面。
+        #   关键架构点：PetWindow 必须是普通 QWidget 顶层、GL 渲染下沉到子 PetGL —— 在「顶层 QOpenGLWidget」
+        #   上 setMask 只裁绘制不裁命中（GL 原生窗口独占命中测试），穿透必失效（e5583b0 实证）。对话气泡
+        #   是 Live2D/独立 overlay，右击菜单是独立 QMenu 弹窗，均非 Qt 子控件，setMask 不会裁掉它们。
         self._zoom = 1.4
         self._target_zoom = 1.4
         self._last_mask_scale = -1   # setMask 节流：仅在缩放变化超阈值(或首次)时重算穿透轮廓
@@ -221,6 +252,18 @@ class PetWindow(QOpenGLWidget):
         self.CANVAS_W, self.CANVAS_H = self.BASE_W, self.BASE_H  # 撤消解耦：画布=窗口尺寸，模型在窗口内正常大显示（7dbbd81 的 400x500 画布会让显示区域变小）
         self._draw_dx = (self.BASE_W - self.CANVAS_W) // 2
         self._draw_dy = (self.BASE_H - self.CANVAS_H) // 2
+        # GL 渲染子控件：PetWindow 作为普通 QWidget 顶层（setMask 才能让透明边距真正穿透，
+        # 见下方架构注释）。Live2D 渲染放到子 QOpenGLWidget，避免「顶层 QOpenGLWidget 上 setMask
+        # 只裁绘制不裁命中」的 Qt 已知坑（e5583b0 已验证：矩形 mask 会切模型但不穿透）。
+        self._gl = PetGL(self)
+        self._gl.setGeometry(0, 0, self.BASE_W, self.BASE_H)
+        self._gl.setAutoFillBackground(False)
+        self._gl.setAttribute(Qt.WA_TranslucentBackground, True)
+        # 子 GL 控件对鼠标透明：点击落到父 PetWindow（由 setMask 决定命中/穿透），
+        # 否则 GL 原生窗口会吞掉所有点击导致穿透失效。
+        self._gl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._gl.show()
+        self._gl.lower()  # 确保在气泡/输入框之下
         self.ZOOM_MIN, self.ZOOM_MAX = 0.5, 2.0
         # 模型缩放留白：model.Resize 用 CANVAS/ZOOM_PAD，使 SetScale 在 [ZOOM_MIN, ZOOM_MAX] 内模型始终不裁边。
         # 须与 idle_engine.SCALE_MAX 相等（=2.2），否则放大裁边或留白浪费——改这里务必同步 idle_engine。
@@ -525,7 +568,7 @@ class PetWindow(QOpenGLWidget):
         # 用 QPainter 绘制：身体 + 左臂（旋转）+ 右臂（旋转）
         arm_w = int(cw * 0.20)
         pivot_y = int(ch * 0.35)
-        painter = QPainter(self)
+        painter = QPainter(self._gl)
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
         painter.translate(dx + ox + (cw if facing_left else 0), dy + oy)
         if facing_left:
@@ -549,7 +592,7 @@ class PetWindow(QOpenGLWidget):
         painter.end()
 
     def timerEvent(self, event: QTimerEvent):
-        self.update()
+        self._gl.update()  # 触发子 GL 控件重绘（PetWindow 不再是 QOpenGLWidget，自身 update 无效）
         # 滚轮缩放：_zoom 平滑趋近 _target_zoom；缩放 = 模型 transform(SetScale，由 paintGL→idle 应用)，
         # 不碰窗口几何 → 透明窗口 DWM 不重绘 → 零闪烁/零撕裂/完全跟手。
         if abs(self._target_zoom - self._zoom) > 1e-3:
@@ -746,8 +789,7 @@ class PetWindow(QOpenGLWidget):
     # ── 鼠标穿透（Qt 官方 setMask 方案，按模型真实轮廓裁剪，可靠）──
     def _update_mask(self):
         """用 setMask 把窗口裁剪为【模型真实轮廓】：轮廓内(模型)可点击(拖拽/右键)，
-        轮廓外(透明处)点击自动穿透到桌面。Qt Shaped Clock 示例推荐做法；
-        WM_NCHITTEST 在 QOpenGLWidget 上返回值系统不采纳，穿透实测失效，故弃用。
+        轮廓外(透明处)点击自动穿透到桌面。Qt Shaped Clock 示例推荐做法。
 
         关键：setMask 会同时裁剪【渲染+命中】，若 mask 小于模型实际绘制像素，模型会被切边。
         早期用固定矩形公式，但 idle 引擎对模型施加大幅旋转（阵风 angle_z 峰≈±36°、angle_x≈±18°），
@@ -755,24 +797,40 @@ class PetWindow(QOpenGLWidget):
         故改用 glReadPixels(GL_ALPHA) 从 FBO 直接读真实 alpha（Qt6 的
         QOpenGLFramebufferObject.toImage() 会丢 alpha 返回 Format_RGB32，故不能用 toImage 取 alpha），
         构造精确轮廓 mask：模型永不被裁、透明处永穿透，且自动跟随 idle 旋转更新。
+
+        注意：本方法现在运行在【普通 QWidget 顶层】PetWindow 上（GL 渲染已下沉到子 PetGL）。
+        这是穿透能生效的前提——若 PetWindow 直接是 QOpenGLWidget 顶层，setMask 只裁绘制不裁命中，
+        透明边距点击永远不穿透（e5583b0 实证）。makeCurrent/doneCurrent 必须在子 GL 控件上调用。
         """
-        if self.model is None or getattr(self, '_fbo', None) is None:
+        if self.model is None or getattr(self, '_fbo', None) is None or not hasattr(self, '_gl'):
             return
         try:
             w, h = self.CANVAS_W, self.CANVAS_H
             buf = (ctypes.c_ubyte * (w * h))()
-            self.makeCurrent()
+            self._gl.makeCurrent()
             self._fbo.bind()
             glReadPixels(0, 0, w, h, GL_ALPHA, GL_UNSIGNED_BYTE, buf)
             self._fbo.release()
-            self.doneCurrent()
+            self._gl.doneCurrent()
             # GL 自下而上 → 翻转成 Qt 自上而下（C++ 操作，无 Python 逐像素循环）
             img = QImage(bytes(buf), w, h, QImage.Format_Grayscale8)
             img = img.mirrored(False, True)
             # 透明像素(alpha=0)→mask 透明(0)穿透；模型像素(>阈值)→mask 不透明(1)可点
             mask = img.createMaskFromColor(0)
             bm = QBitmap.fromImage(mask)
-            self.setMask(QRegion(bm))
+            region = QRegion(bm)
+            # 安全兜底：若 FBO alpha 读取异常（透明边距被读成不透明，mask≈整窗），
+            # 退回居中矩形，保证透明边距一定存在 → 点击穿透必定生效
+            # （极端旋转时模型边缘可能轻微被裁，可接受）。正常情况轮廓仅占窗口约一半，不触发。
+            bbox = region.boundingRect()
+            win_area = max(1, self.width() * self.height())
+            if bbox.width() * bbox.height() >= 0.95 * win_area:
+                m = int(min(self.width(), self.height()) * 0.11)
+                region = QRegion(m, m, self.width() - 2 * m, self.height() - 2 * m)
+            # 测试输入框显示时（位于窗口底部、常在模型轮廓之外）需纳入命中区，避免被 mask 裁掉
+            if getattr(self, '_chat_input', None) and self._chat_input.isVisible():
+                region += QRegion(self._chat_input.geometry())
+            self.setMask(region)
             self._last_mask_scale = self._zoom
             self._last_mask_time = time.time()
         except Exception as e:
