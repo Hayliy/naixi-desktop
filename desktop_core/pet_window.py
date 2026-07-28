@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "windows")
 # 注意：QT_OPENGL=angle 是 Qt5 的值，Qt6 已移除会报 Invalid value 警告；
 # Qt6 下留空走默认 desktop OpenGL 即可，软渲染兜底用 QT_OPENGL=software。
 
-from OpenGL.GL import glViewport
+from OpenGL.GL import glViewport, GL_RGBA8
 from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer, QPropertyAnimation
 from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont, QPainterPath, QImage, QCursor
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
@@ -488,7 +488,11 @@ class PetWindow(QOpenGLWidget):
             fmt = QOpenGLFramebufferObjectFormat()
             fmt.setSamples(0)
             fmt.setAttachment(QOpenGLFramebufferObject.CombinedDepthStencil)
-            fmt.setAlpha(True)   # 关键：FBO 带 alpha 通道，透明边距 alpha=0，供 WM_NCHITTEST 像素穿透采样
+            # QOpenGLFramebufferObjectFormat 默认 internal format 即 GL_RGBA8（自带 8 位 alpha）；
+            # Qt6 该格式类【没有】setAlpha/setAlphaBufferSize（那是 QSurfaceFormat 的方法），
+            # 故用 setInternalTextureFormat 显式确保 alpha 通道 —— clearBuffer(0,0,0,0) 后透明边距
+            # alpha=0，模型绘制处 alpha=255 → 供 WM_NCHITTEST 像素级穿透采样。
+            fmt.setInternalTextureFormat(GL_RGBA8)
             self._fbo = QOpenGLFramebufferObject(self.CANVAS_W, self.CANVAS_H, fmt)
         self._fbo.bind()
         live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
