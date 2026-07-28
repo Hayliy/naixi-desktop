@@ -4,7 +4,7 @@
 - QOpenGLWidget 直接当窗口，无外层包裹
 - initializeGL 同步构造模型，paintGL 全权渲染
 """
-import os, sys, json, logging, threading, time, queue
+import os, sys, json, logging, threading, time, queue, ctypes
 from typing import Optional
 
 os.environ.setdefault("QT_QPA_PLATFORM", "windows")
@@ -204,21 +204,18 @@ class PetWindow(QOpenGLWidget):
         self.move(screen.width() - 420, screen.height() - 520)
 
         # 滚轮缩放：当前缩放 / 目标缩放（timerEvent 每帧平滑 lerp）。
-        # —— 架构（参考 Live2D 编辑器 AnimeEffects 的 FBO→屏幕 blit 范式，根治两个老问题）——
-        # · 模型只在加载时 Resize 到「稳定离屏画布 RENDER」(= BASE×ZOOM_MAX)，永不随窗口重建；
-        # · 滚轮缩放改为改变【窗口几何】(setGeometry，锚定右下角平滑生长)，模型随窗口等比放大且始终完整不裁边；
-        # · paintGL 每帧把稳定 FBO 按比例贴到当前窗口 —— 模型渲染与窗口尺寸彻底解耦，窗口 resize 不重建 FBO/不改模型 fit，
-        #   故无 OS 异步 resize 与 FBO 错帧导致的撕裂/跳变/不跟手。
-        # · 模型在 RENDER 画布内仅占 MODEL_FIT_FRAC（留 breath/poke 过扫描余量），SetScale 由 idle 引擎驱动(呼吸/突脸)。
-        self._zoom = 1.0
-        self._target_zoom = 1.0
-        self.BASE_W, self.BASE_H = 400, 500            # zoom=1.0 时的窗口尺寸（与下方 self.resize 一致）
-        self.ZOOM_MIN, self.ZOOM_MAX = 0.5, 3.0
-        # 稳定离屏画布：足够容纳最大窗口尺寸，保证最大 zoom 下模型清晰、且模型 fit 不随窗口重建（根除撕裂根因）
-        self.RENDER_W = int(self.BASE_W * self.ZOOM_MAX)
-        self.RENDER_H = int(self.BASE_H * self.ZOOM_MAX)
-        # 模型在 RENDER 画布内的占比：留出 breath/poke 过扫描余量（过扫描上限须 == idle_engine.SCALE_MAX = 1/FRAC），避免缩放动作裁边
-        self.MODEL_FIT_FRAC = 1.0 / 1.15
+        # —— 架构（固定窗口 + 模型 transform SetScale + WM_NCHITTEST 像素穿透，根治三大老问题）——
+        # · 窗口几何【固定】400×500，滚轮缩放只改模型的 SetScale（transform），绝不 setGeometry → 透明窗口 DWM 不再每帧重绘 → 零闪烁/零撕裂；
+        # · 模型只在加载时 Resize 到 BASE/ZOOM_PAD（留白），SetScale 在 [ZOOM_MIN, ZOOM_MAX] 内模型始终不裁边、且可放大到铺满窗口；
+        # · 鼠标穿透用 Win32 WM_NCHITTEST（nativeEvent）：仅「模型不透明像素」命中窗口（可拖拽/右键），
+        #   透明像素返回 HTTRANSPARENT 让点击穿透到桌面 —— 比 setMask 更优：setMask 会裁掉气泡/聊天等子控件，WM_NCHITTEST 只影响命中不影响绘制。
+        self._zoom = 1.4
+        self._target_zoom = 1.4
+        self.BASE_W, self.BASE_H = 400, 500            # 固定窗口尺寸（滚轮缩放=模型 transform，不缩放窗口几何）
+        self.ZOOM_MIN, self.ZOOM_MAX = 0.5, 2.0
+        # 模型缩放留白：model.Resize 用 BASE/ZOOM_PAD，使 SetScale 在 [ZOOM_MIN, ZOOM_MAX] 内模型始终不裁边。
+        # 须与 idle_engine.SCALE_MAX 相等（=2.2），否则放大裁边或留白浪费——改这里务必同步 idle_engine。
+        self.ZOOM_PAD = 2.2
         # 透明窗口重绘时尽量保留旧内容（无害保留）
         self.setAttribute(Qt.WA_StaticContents, True)
 
@@ -245,7 +242,7 @@ class PetWindow(QOpenGLWidget):
                 self._active_manual_exprs = set()
                 self._emotion_expr = None
                 self.model.LoadModelJson(self._model_path)
-                self.model.Resize(int(self.RENDER_W * self.MODEL_FIT_FRAC), int(self.RENDER_H * self.MODEL_FIT_FRAC))
+                self.model.Resize(int(self.BASE_W / self.ZOOM_PAD), int(self.BASE_H / self.ZOOM_PAD))
                 self.model.SetAutoBreathEnable(True)
                 self.model.SetAutoBlinkEnable(True)
                 self.model.StartRandomMotion("Idle", 3)
@@ -455,7 +452,7 @@ class PetWindow(QOpenGLWidget):
             self.model.SetParameterValue("ParamMouthOpenY", self._mouth_current, 1.0)
             self.model.SetParameterValue("ParamMouthForm", self._mouth_current, 1.0)
         # 程序化 idle 动作（下意识动作：看鼠标/摇头/浮动/风吹/突脸），在 Update 后、Draw 前设置
-        # 滚轮缩放已改为【窗口几何】(见 timerEvent 的 _zoom→setGeometry)，此处不再用 SetScale 缩放模型。
+        # 滚轮缩放 = 模型 transform(SetScale)：idle.update 内部把 self._zoom 并进 SetScale 合成（见 idle_engine），窗口几何固定不动。
         if getattr(self, "_idle", None) is not None:
             try:
                 gp = QCursor.pos()
@@ -472,30 +469,30 @@ class PetWindow(QOpenGLWidget):
             except Exception as e:
                 log.warning(f"[桌宠] idle 更新失败: {e}")
         else:
-            # 防御：无 idle 引擎时把模型缩放复位为 1.0（缩放=窗口几何，不由 SetScale 承担）
+            # 防御：无 idle 引擎时直接施加缩放（缩放=模型 transform，与 idle 路径一致）
             try:
-                self.model.SetScale(1.0)
+                self.model.SetScale(self._zoom)
             except Exception:
                 pass
         # ── 稳定离屏画布渲染 → 按比例贴到当前窗口 ──
         # 先清空屏幕
         live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
-        # 稳定离屏画布（RENDER_W×RENDER_H，加载时一次性分配，不随窗口重建 → 根除错帧撕裂）
-        if getattr(self, '_fbo', None) is None:
+        # 离屏画布 = 当前窗口尺寸（窗口固定，故仅分配一次，不需要随缩放重建 → 无错帧撕裂）
+        if getattr(self, '_fbo', None) is None or self._fbo.size().width() != self.BASE_W or self._fbo.size().height() != self.BASE_H:
             from PySide6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat
             fmt = QOpenGLFramebufferObjectFormat()
             fmt.setSamples(0)
             fmt.setAttachment(QOpenGLFramebufferObject.CombinedDepthStencil)
-            self._fbo = QOpenGLFramebufferObject(self.RENDER_W, self.RENDER_H, fmt)
+            self._fbo = QOpenGLFramebufferObject(self.BASE_W, self.BASE_H, fmt)
         self._fbo.bind()
         live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
         self.model.Draw()
         self._fbo.release()
         img = self._fbo.toImage()
-        # 把稳定 RENDER 画布按比例贴到当前窗口：窗口几何随 zoom 平滑变化，模型随之等比缩放且始终完整不裁边。
-        # RENDER 与窗口同为 4:5，KeepAspectRatio 精确填充、无黑边。
+        # 缓存最近一帧用于 WM_NCHITTEST 像素级鼠标穿透（采样 alpha 判断是否点到模型）
+        self._last_img = img
+        # 窗口几何固定，FBO 即窗口尺寸，1:1 贴图（无 scaled，保持清晰）
         w, h = self.width(), self.height()
-        img = img.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         # 骨骼偏移
         root_t = self._skeleton_root.get(Transform) if hasattr(self, '_skeleton_root') and self._skeleton_root else None
         ox = root_t.world_x if root_t else 0
@@ -538,25 +535,12 @@ class PetWindow(QOpenGLWidget):
 
     def timerEvent(self, event: QTimerEvent):
         self.update()
-        # 滚轮缩放：_zoom 平滑趋近 _target_zoom，并据此平滑改变【窗口几何】（模型 fit 固定，缩放=窗口尺寸）。
-        # 锚定右下角：窗口放大时向左上生长，保持桌面右下角位置不变（与 __init__ 的 move 一致）。
+        # 滚轮缩放：_zoom 平滑趋近 _target_zoom；缩放 = 模型 transform(SetScale，由 paintGL→idle 应用)，
+        # 不碰窗口几何 → 透明窗口 DWM 不重绘 → 零闪烁/零撕裂/完全跟手。
         if abs(self._target_zoom - self._zoom) > 1e-3:
             self._zoom += (self._target_zoom - self._zoom) * 0.35
             if abs(self._target_zoom - self._zoom) < 1e-3:
                 self._zoom = self._target_zoom
-        tw = int(self.BASE_W * self._zoom)
-        th = int(self.BASE_H * self._zoom)
-        if tw != self.width() or th != self.height():
-            br = self.geometry().bottomRight()
-            x = br.x() - tw
-            y = br.y() - th
-            # 夹到所在屏幕可视区内：放大到接近屏幕顶部/左侧时，不允许超出导致模型头部看不见
-            screen = QGuiApplication.screenAt(br) or QGuiApplication.primaryScreen()
-            if screen:
-                ag = screen.availableGeometry()
-                x = max(ag.left(), min(x, ag.right() - tw))
-                y = max(ag.top(), min(y, ag.bottom() - th))
-            self.setGeometry(x, y, tw, th)
         if not self.model:
             return
         now = time.time()
@@ -721,11 +705,11 @@ class PetWindow(QOpenGLWidget):
         menu.exec(event.globalPos())
 
     def wheelEvent(self, event):
-        """鼠标滚轮缩放桌宠：仅更新目标缩放 _target_zoom，由 timerEvent 每帧平滑改变窗口几何。
+        """鼠标滚轮缩放桌宠：仅更新目标缩放 _target_zoom，由 timerEvent 每帧平滑 lerp。
 
-        缩放 = 窗口几何（setGeometry，锚定右下角），模型只在加载时 Resize 到稳定离屏画布 RENDER，
-        故缩放过程不重建 FBO / 不改模型 fit，根除 OS 异步 resize 与 FBO 错帧导致的撕裂/跳变/不跟手；
-        模型随窗口等比放大且始终完整不裁边（见 paintGL 把稳定 FBO 按比例贴到窗口）。
+        缩放 = 模型 transform(SetScale)，窗口几何固定不动（见 timerEvent / paintGL→idle 合成），
+        故不触发透明窗口 DWM 重绘 → 零闪烁/零撕裂/完全跟手；模型随 SetScale 放大且始终不裁边
+        （model.Resize 用 BASE/ZOOM_PAD 留白）。鼠标穿透由 WM_NCHITTEST 实现，透明处穿透桌面。
         会话内生效（关窗即重置），不做持久化存储。
         """
         d = event.angleDelta().y()
@@ -737,6 +721,37 @@ class PetWindow(QOpenGLWidget):
             return
         self._target_zoom = new_target
         event.accept()
+
+    # ── 鼠标穿透（Win32 WM_NCHITTEST，像素级）──
+    def _alpha_at(self, x: int, y: int) -> int:
+        """采样最近一帧 FBO 图像在 (x,y) 的 alpha（0=全透明,255=不透明），用于命中测试判断是否点到模型。"""
+        img = getattr(self, '_last_img', None)
+        if img is None or img.isNull():
+            return 255
+        if 0 <= x < img.width() and 0 <= y < img.height():
+            return (img.pixel(x, y) >> 24) & 0xFF
+        return 255
+
+    def nativeEvent(self, eventType, message):
+        """Win32 原生消息：WM_NCHITTEST 时，若光标落在模型透明像素上则返回 HTTRANSPARENT，
+        让点击穿透到桌面（不挡其他应用）；落在模型不透明像素上则正常命中（可拖拽/右键）。
+        仅影响命中测试、不改变任何绘制 —— 气泡/聊天等子控件照常显示与交互。
+        """
+        if eventType == b"windows_generic_MSG":
+            try:
+                msg = ctypes.wintypes.MSG.from_address(int(message))
+                if msg.message == 0x84:  # WM_NCHITTEST
+                    gp = QCursor.pos()
+                    tl = self.mapToGlobal(QPoint(0, 0))
+                    lx = gp.x() - tl.x()
+                    ly = gp.y() - tl.y()
+                    if 0 <= lx < self.width() and 0 <= ly < self.height():
+                        if self._alpha_at(lx, ly) < 24:
+                            # HTTRANSPARENT = -1：穿透到下层窗口
+                            return ((-1).to_bytes(ctypes.sizeof(ctypes.c_void_p), "little", signed=True), 1)
+            except Exception:
+                pass
+        return super().nativeEvent(eventType, message)
 
     def _on_chat_response(self, emotion: str, reply: str):
         self._bubble.show_text(f"[{emotion}] {reply}", 4000)
@@ -839,7 +854,7 @@ class PetWindow(QOpenGLWidget):
             self._active_manual_exprs = set()
             self._emotion_expr = None
             self.model.LoadModelJson(self._model_path)
-            self.model.Resize(int(self.RENDER_W * self.MODEL_FIT_FRAC), int(self.RENDER_H * self.MODEL_FIT_FRAC))
+            self.model.Resize(int(self.BASE_W / self.ZOOM_PAD), int(self.BASE_H / self.ZOOM_PAD))
             self.model.SetAutoBreathEnable(True)
             self.model.SetAutoBlinkEnable(True)
             self.model.StartRandomMotion("Idle", 3)

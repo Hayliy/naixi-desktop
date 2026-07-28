@@ -34,10 +34,9 @@ POKE_LEAN_DEG = 5.0
 # 故与参数冲突地图(_ACTION_PARAM_SPEC)无关，缩放在 update() 末尾统一合成。
 SCALE_BREATH_AMP = 0.03       # 缩放幅度（±3%，模型在窗口内轻微胀缩）
 SCALE_BREATH_FREQ = 1.2       # 脉动频率（rad/s），约 5.2s 一个呼吸周期
-SCALE_MAX = 1.15              # 合成缩放上限：须 == 1 / pet_window.MODEL_FIT_FRAC（模型在 RENDER 画布内占比的倒数）。
-                                # 设 1.15 表示 SetScale 最多把模型放至 RENDER 画布边缘；配合 pet_window 的
-                                # MODEL_FIT_FRAC=1/1.15，呼吸(±3%)×突脸(1.10)叠加峰值≈1.133 < 1.15 → 不裁边。
-                                # 注意：滚轮缩放已改为【窗口几何】(pet_window 负责)，此处 SetScale 仅承载呼吸/突脸，不再乘 zoom。
+SCALE_MAX = 2.2               # 合成缩放上限：须 == pet_window.ZOOM_PAD（2.2）。模型 Resize 用 BASE/ZOOM_PAD，
+                               # SetScale 最大 2.2 时模型恰好铺满窗口；配合滚轮 zoom[0.5,2.0]×呼吸(1.03)×突脸(1.10)峰值≈2.27>2.2 会被夹断
+                               # （仅满档微抑呼吸，无裁边）。改这里务必同步 pet_window.ZOOM_PAD。
 
 # ── 动作参数占用表（冲突标注）──
 # 每个程序化动作驱动的标准 Cubism 参数、写入权重、写入模式。
@@ -257,14 +256,14 @@ class IdleEngine:
         if self.enabled.get("wind"):
             self._update_wind(model, t, dt)
 
-        # 缩放合成（每帧仅一次 SetScale）：呼吸缩放(可选, ±3%) × 突脸缩放(瞬时回弹)。
-        # 二者走模型 transform 的 SetScale（非 Cubism 参数）。滚轮缩放(zoom)已改为【窗口几何】实现
-        # （见 pet_window：窗口随 zoom 等比放大、模型 fit 固定），故此处不再把 zoom 并进 SetScale，避免重复缩放。
+        # 缩放合成（每帧仅一次 SetScale）：呼吸缩放(±3%) × 突脸缩放(瞬时回弹) × 滚轮缩放(zoom，来自 pet_window ctx)。
+        # 三者都走模型 transform 的 SetScale（非 Cubism 参数）。窗口几何固定，zoom 仅放大模型本身，零 resize 零闪烁。
         self._poke_scale = 1.0
         if self.enabled.get("poke") or now < self._poke_until:
             self._update_poke(model, now)
         breath_s = 1.0 + SCALE_BREATH_AMP * math.sin(t * SCALE_BREATH_FREQ) if self.enabled.get("scale_breath") else 1.0
-        final_s = breath_s * self._poke_scale
+        zoom_s = ctx.get("zoom", 1.0)
+        final_s = breath_s * self._poke_scale * zoom_s
         if final_s > SCALE_MAX:
             final_s = SCALE_MAX
         elif final_s < 0.3:
