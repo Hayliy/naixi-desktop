@@ -656,7 +656,7 @@ class PetWindow(QOpenGLWidget):
     def contextMenuEvent(self, event):
         # 诊断：若右击落在透明边距却仍弹出本菜单，说明 WM_NCHITTEST 穿透未生效，记到 pet_debug.log 便于排查
         _lx, _ly = event.x(), event.y()
-        if self._alpha_at(_lx, _ly) < 24:
+        if not self._hit_model(_lx, _ly):
             try:
                 import time as _t
                 with open(type(self).DEBUG_LOG, "a") as f:
@@ -743,19 +743,24 @@ class PetWindow(QOpenGLWidget):
         event.accept()
 
     # ── 鼠标穿透（Win32 WM_NCHITTEST，像素级）──
-    def _alpha_at(self, x: int, y: int) -> int:
-        """采样最近一帧画布图像在窗口坐标 (x,y) 的 alpha（0=全透明,255=不透明），用于命中测试判断是否点到模型。
+    def _hit_model(self, lx: int, ly: int) -> bool:
+        """几何判断：窗口坐标 (lx,ly) 是否落在模型绘制区域内。
 
-        (x,y) 是相对窗口左上角的坐标；先减去绘制偏移得到画布内坐标，超出画布范围(即窗口透明边距)直接视为透明。
+        命中=模型可点击（拖拽/右键）；矩形外（窗口透明边距）=穿透到桌面。
+        不依赖 FBO 像素 alpha 采样：Qt6 的 QOpenGLFramebufferObject.toImage() 对部分
+        internal format 会返回无 alpha 的 QImage(如 Format_RGB32)，导致 pixelColor().alpha()
+        恒为 255 → 透明边距被判为命中 → 穿透永远不触发（已多次踩坑，日志从无 PENETRATION_FAIL
+        即印证 alpha 采样恒>=24）。几何法 100% 可靠、零 GPU 依赖。
+        模型先 fit 到 CANVAS/ZOOM_PAD，再被 idle 的 SetScale(=self._zoom×breath×poke) 缩放。
+        这里用 self._zoom×PAD 近似包围盒（PAD 包容 breath/poke 微扰，避免呼吸/突脸时实体超出矩形漏穿透）。
         """
-        dx, dy = getattr(self, '_draw_dx', 0), getattr(self, '_draw_dy', 0)
-        cx, cy = x - dx, y - dy
-        img = getattr(self, '_last_img', None)
-        if img is None or img.isNull():
-            return 255
-        if 0 <= cx < img.width() and 0 <= cy < img.height():
-            return img.pixelColor(cx, cy).alpha()  # 用 pixelColor 取 alpha，避免不同 QImage 格式下位运算错读
-        return 0  # 窗口边距（画布之外）= 透明 → 穿透
+        PAD = 1.15
+        s = self._zoom * PAD
+        mw = (self.CANVAS_W / self.ZOOM_PAD) * s
+        mh = (self.CANVAS_H / self.ZOOM_PAD) * s
+        mx = (self.BASE_W - mw) / 2.0
+        my = (self.BASE_H - mh) / 2.0
+        return (mx - 1) <= lx <= (mx + mw + 1) and (my - 1) <= ly <= (my + mh + 1)
 
     def nativeEvent(self, eventType, message):
         """Win32 原生消息：WM_NCHITTEST 时，若光标落在模型透明像素上则返回 HTTRANSPARENT，
@@ -771,7 +776,7 @@ class PetWindow(QOpenGLWidget):
                     lx = gp.x() - tl.x()
                     ly = gp.y() - tl.y()
                     if 0 <= lx < self.width() and 0 <= ly < self.height():
-                        if self._alpha_at(lx, ly) < 24:
+                        if not self._hit_model(lx, ly):
                             # HTTRANSPARENT = -1：穿透到下层窗口
                             return ctypes.c_void_p(-1), True  # HTTRANSPARENT=-1：穿透到下层窗口。PySide6 nativeEvent 须返回 (c_void_p/int, bool)；返回 bytes 系统不采纳 → 点击不穿透（穿透失效根因）
             except Exception:
