@@ -204,13 +204,16 @@ class PetWindow(QOpenGLWidget):
         self.move(max(0, screen.width() - 660), max(0, screen.height() - 820))
 
         # 滚轮缩放：当前缩放 / 目标缩放（timerEvent 每帧平滑 lerp）。
-        # —— 架构（固定窗口 + 模型 transform SetScale + WM_NCHITTEST 像素穿透，根治三大老问题）——
+        # —— 架构（固定窗口 + 模型 transform SetScale + setMask 穿透，根治三大老问题）——
         # · 窗口几何【固定】640×800，滚轮缩放只改模型的 SetScale（transform），绝不 setGeometry → 透明窗口 DWM 不再每帧重绘 → 零闪烁/零撕裂；
-        # · 模型只在加载时 Resize 到 CANVAS/ZOOM_PAD（固定 400×500 离屏画布，留白），再整体贴到 640×800 窗口；SetScale 在 [ZOOM_MIN, ZOOM_MAX] 内模型始终不裁边、且可放大到铺满画布；
-        # · 鼠标穿透用 Win32 WM_NCHITTEST（nativeEvent）：仅「模型不透明像素」命中窗口（可拖拽/右键），
-        #   透明像素返回 HTTRANSPARENT 让点击穿透到桌面 —— 比 setMask 更优：setMask 会裁掉气泡/聊天等子控件，WM_NCHITTEST 只影响命中不影响绘制。
+        # · 模型只加载时 Resize 到 CANVAS/ZOOM_PAD（留白），SetScale 在 [ZOOM_MIN, ZOOM_MAX] 内模型始终不裁边、且可放大到铺满画布；
+        # · 鼠标穿透用 Qt 官方推荐做法 setMask（Shaped Clock 示例）：把窗口裁剪为模型包围盒矩形，
+        #   矩形外(窗口透明边距)点击自动穿透到桌面 —— 比 WM_NCHITTEST 可靠（QOpenGLWidget 上 WM_NCHITTEST
+        #   返回值系统不采纳，实测穿透失效，已踩坑多轮）。对话气泡是 Live2D/独立 overlay，右击菜单是独立
+        #   QMenu 弹窗，均非 Qt 子控件，setMask 不会裁掉它们。
         self._zoom = 1.4
         self._target_zoom = 1.4
+        self._last_mask_scale = -1   # setMask 节流：仅在缩放变化超阈值(或首次)时重算穿透矩形
         self.BASE_W, self.BASE_H = 640, 800            # 窗口尺寸（滚轮缩放=模型 transform，不缩放窗口几何）；放大只为测试右击穿透
         # 模型画布固定 400×500，与窗口解耦：模型只在离屏画布里渲染，再整体贴到 640×800 窗口。
         # 窗口放大只增加透明边距，模型像素尺寸恒定（不再「窗口变大模型也变大」）。
@@ -491,7 +494,7 @@ class PetWindow(QOpenGLWidget):
             # QOpenGLFramebufferObjectFormat 默认 internal format 即 GL_RGBA8（自带 8 位 alpha）；
             # Qt6 该格式类【没有】setAlpha/setAlphaBufferSize（那是 QSurfaceFormat 的方法），
             # 故用 setInternalTextureFormat 显式确保 alpha 通道 —— clearBuffer(0,0,0,0) 后透明边距
-            # alpha=0，模型绘制处 alpha=255 → 供 WM_NCHITTEST 像素级穿透采样。
+            # alpha=0，模型绘制处 alpha=255 → 离屏画布透明边距由 setMask 几何包围盒裁剪为穿透区。
             fmt.setInternalTextureFormat(GL_RGBA8)
             self._fbo = QOpenGLFramebufferObject(self.CANVAS_W, self.CANVAS_H, fmt)
         self._fbo.bind()
@@ -499,7 +502,7 @@ class PetWindow(QOpenGLWidget):
         self.model.Draw()
         self._fbo.release()
         img = self._fbo.toImage()
-        # 缓存最近一帧用于 WM_NCHITTEST 像素级鼠标穿透（采样 alpha 判断是否点到模型）
+        # 缓存最近一帧（保留供参考；穿透改由 setMask 几何包围盒，不依赖像素 alpha 采样）
         self._last_img = img
         # 窗口几何固定，离屏画布(400×500)整体贴到 640×800 窗口中央（先按骨骼偏移合成，再平移到窗口锚点）
         cw, ch = self.CANVAS_W, self.CANVAS_H
@@ -552,6 +555,9 @@ class PetWindow(QOpenGLWidget):
             self._zoom += (self._target_zoom - self._zoom) * 0.35
             if abs(self._target_zoom - self._zoom) < 1e-3:
                 self._zoom = self._target_zoom
+        # 缩放变化超阈值(或首次)则重算 setMask 穿透矩形（_update_mask 内会夹到窗口范围）
+        if self._last_mask_scale < 0 or abs(self._zoom - self._last_mask_scale) > 0.02:
+            self._update_mask()
         if not self.model:
             return
         now = time.time()
@@ -654,15 +660,8 @@ class PetWindow(QOpenGLWidget):
             log.warning(f"[桌宠] 动作播放失败 {group}: {e}")
 
     def contextMenuEvent(self, event):
-        # 诊断：若右击落在透明边距却仍弹出本菜单，说明 WM_NCHITTEST 穿透未生效，记到 pet_debug.log 便于排查
-        _lx, _ly = event.x(), event.y()
-        if not self._hit_model(_lx, _ly):
-            try:
-                import time as _t
-                with open(type(self).DEBUG_LOG, "a") as f:
-                    f.write(f"{_t.time():.0f} PENETRATION_FAIL: 透明边距右击却弹出宠物菜单 (lx={_lx}, ly={_ly})\n")
-            except Exception:
-                pass
+        # 穿透由 setMask 实现：右击若落在模型包围盒外，事件根本不会到达本窗口（已穿透到桌面），
+        # 故这里只在模型身上触发菜单，无需再判透明。
         menu = QMenu(self)
         menu.addAction("测试对话", lambda: self._chat_input.show() or self._chat_input.setFocus())
         menu.addSeparator()
@@ -729,7 +728,7 @@ class PetWindow(QOpenGLWidget):
 
         缩放 = 模型 transform(SetScale)，窗口几何固定不动（见 timerEvent / paintGL→idle 合成），
         故不触发透明窗口 DWM 重绘 → 零闪烁/零撕裂/完全跟手；模型随 SetScale 放大且始终不裁边
-        （model.Resize 用 CANVAS/ZOOM_PAD 留白）。鼠标穿透由 WM_NCHITTEST 实现，透明处穿透桌面。
+        （model.Resize 用 CANVAS/ZOOM_PAD 留白）。鼠标穿透由 setMask 实现，透明边距点击自动穿透桌面。
         会话内生效（关窗即重置），不做持久化存储。
         """
         d = event.angleDelta().y()
@@ -742,46 +741,28 @@ class PetWindow(QOpenGLWidget):
         self._target_zoom = new_target
         event.accept()
 
-    # ── 鼠标穿透（Win32 WM_NCHITTEST，像素级）──
-    def _hit_model(self, lx: int, ly: int) -> bool:
-        """几何判断：窗口坐标 (lx,ly) 是否落在模型绘制区域内。
-
-        命中=模型可点击（拖拽/右键）；矩形外（窗口透明边距）=穿透到桌面。
-        不依赖 FBO 像素 alpha 采样：Qt6 的 QOpenGLFramebufferObject.toImage() 对部分
-        internal format 会返回无 alpha 的 QImage(如 Format_RGB32)，导致 pixelColor().alpha()
-        恒为 255 → 透明边距被判为命中 → 穿透永远不触发（已多次踩坑，日志从无 PENETRATION_FAIL
-        即印证 alpha 采样恒>=24）。几何法 100% 可靠、零 GPU 依赖。
-        模型先 fit 到 CANVAS/ZOOM_PAD，再被 idle 的 SetScale(=self._zoom×breath×poke) 缩放。
-        这里用 self._zoom×PAD 近似包围盒（PAD 包容 breath/poke 微扰，避免呼吸/突脸时实体超出矩形漏穿透）。
+    # ── 鼠标穿透（Qt 官方 setMask 方案，可靠）──
+    def _update_mask(self):
+        """用 setMask 把窗口裁剪为模型包围盒矩形：矩形内(模型)可点击(拖拽/右键)，
+        矩形外(窗口透明边距)点击自动穿透到桌面。Qt Shaped Clock 示例推荐做法；
+        WM_NCHITTEST 在 QOpenGLWidget 上返回值系统不采纳，穿透实测失效，故弃用。
+        矩形按当前缩放自底向上算，并夹到窗口范围内避免放大到接近铺满时裁掉模型。
         """
-        PAD = 1.15
+        if self.model is None:
+            return
+        PAD = 1.12  # 包容呼吸/突脸微扰，避免动画时实体超出矩形被裁
         s = self._zoom * PAD
         mw = (self.CANVAS_W / self.ZOOM_PAD) * s
         mh = (self.CANVAS_H / self.ZOOM_PAD) * s
         mx = (self.BASE_W - mw) / 2.0
         my = (self.BASE_H - mh) / 2.0
-        return (mx - 1) <= lx <= (mx + mw + 1) and (my - 1) <= ly <= (my + mh + 1)
-
-    def nativeEvent(self, eventType, message):
-        """Win32 原生消息：WM_NCHITTEST 时，若光标落在模型透明像素上则返回 HTTRANSPARENT，
-        让点击穿透到桌面（不挡其他应用）；落在模型不透明像素上则正常命中（可拖拽/右键）。
-        仅影响命中测试、不改变任何绘制 —— 气泡/聊天等子控件照常显示与交互。
-        """
-        if eventType == b"windows_generic_MSG":
-            try:
-                msg = ctypes.wintypes.MSG.from_address(int(message))
-                if msg.message == 0x84:  # WM_NCHITTEST
-                    gp = QCursor.pos()
-                    tl = self.mapToGlobal(QPoint(0, 0))
-                    lx = gp.x() - tl.x()
-                    ly = gp.y() - tl.y()
-                    if 0 <= lx < self.width() and 0 <= ly < self.height():
-                        if not self._hit_model(lx, ly):
-                            # HTTRANSPARENT = -1：穿透到下层窗口
-                            return ctypes.c_void_p(-1), True  # HTTRANSPARENT=-1：穿透到下层窗口。PySide6 nativeEvent 须返回 (c_void_p/int, bool)；返回 bytes 系统不采纳 → 点击不穿透（穿透失效根因）
-            except Exception:
-                pass
-        return super().nativeEvent(eventType, message)
+        from PySide6.QtCore import QRect
+        from PySide6.QtGui import QRegion
+        rect = QRect(int(round(mx)), int(round(my)), int(round(mw)), int(round(mh)))
+        # 夹到窗口范围：放大到接近铺满时不再向外扩展，避免裁掉模型（此时穿透边距自然变窄）
+        rect = rect.intersected(QRect(0, 0, self.width(), self.height()))
+        self.setMask(QRegion(rect))
+        self._last_mask_scale = self._zoom
 
     def _on_chat_response(self, emotion: str, reply: str):
         self._bubble.show_text(f"[{emotion}] {reply}", 4000)
