@@ -497,11 +497,14 @@ class IdleEngine:
             if hbd:
                 self._set(model, "hair_body", math.sin(t * HAIR_SWAY_FREQ * 0.8 + 2.0) * HAIR_SWAY_AMP_BACK, 0.5)
         else:
-            # 回退飘动：用【身体】参数(body_angle_z 扭转微颤 + body_angle_y 前后浮)模拟发丝带动的整体轻飘感。
-            # 关键铁则：绝不动头部 angle_x/angle_z（那是摇头/歪头/看鼠标的专属视觉），否则回退飘动看着就跟"摇头歪头"一样。
-            # body_angle_z 多数免费 VTS 模型未必有，无则 add 静默跳过，仅 body_angle_y 生效（身体前后浮动，与头部动作零视觉重叠）。
-            self._add(model, "body_angle_z", math.sin(t * HAIR_SWAY_FREQ * 0.6 + 1.0) * 1.8)
-            self._add(model, "body_angle_y", math.sin(t * HAIR_SWAY_FREQ * 0.4 + 1.5) * 0.8)
+            # 回退飘动：圣鸢等无 hair 参数模型。合成"慢椭圆游动"飘——body_angle_x 与 body_angle_y 同频、相位差 90°，
+            # 幅度±3.0(明显大于默认 body_float 的±1.5)、频率~0.35rad/s(约为 body_float 的 1/3)，
+            # 叠加在身体浮动之上肉眼可辨为"多了一层慢悠悠的椭圆飘"，不被默认身体浮动淹没。
+            # 绝不动头部 angle_x/angle_z(摇头/歪头/看鼠标专属视觉)。若有 body_angle_z(高质量模型偶见) 加扭转微颤增强飘感；圣鸢无则静默跳过。
+            f = t * 0.35
+            self._add(model, "body_angle_x", math.sin(f) * 3.0)
+            self._add(model, "body_angle_y", math.cos(f) * 3.0)
+            self._add(model, "body_angle_z", math.sin(f * 1.3 + 1.0) * 1.8)
 
     def _update_brow_raise(self, model, now, dt):
         """眉毛挑动：周期性"嗯?"挑眉（ParamBrowY）。模型无 brow 参数自动跳过。"""
