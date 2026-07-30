@@ -261,7 +261,8 @@ class PetWindow(QWidget):
         self._perf = {'n': 0.0, 'total': 0.0, 'anim': 0.0, 'draw': 0.0,
                       'toimg': 0.0, 'compose': 0.0, 'last': 0.0}
         self._abuf = (ctypes.c_ubyte * (self.CANVAS_W * self.CANVAS_H))()  # alpha 扫描缓冲：复用避免每帧 726KB 分配+GC
-        self._last_mask_rect = None  # 上次 setMask 矩形（变化才重设，避免每帧 QRegion 构造 + DWM 重排拖帧率）
+        self._last_mask_rect = None  # 上次 setMask 矩形（debug 模式哨兵 "FULL"；变化才重设）
+        self._last_mask_key = None  # 非 debug 模式变化检测 key: (hit_rect, chat_visible)，避免聊天框显隐漏重设
         self._hit_rect = self._compute_hit_rect()  # 初始几何命中矩形（WM_NCHITTEST 穿透用）；缩放变化时在 timerEvent 重算
         # 窗口尺寸由上方屏幕尺寸动态赋值，此处跳过
         # GL 渲染子控件：PetWindow 作为普通 QWidget 顶层（setMask 曾用于清除穿透——已被几何 WM_NCHITTEST 替代）。
@@ -811,10 +812,17 @@ class PetWindow(QWidget):
             else:
                 self._hit_rect = self._compute_hit_rect()
                 hr = self._hit_rect
-                # 命中矩形变化才重设 setMask（避免每帧 QRegion 构造 + DWM 重排拖帧率；居中锁定后基本不触发）
-                if hr is not None and hr.width() > 10 and hr.height() > 10 and hr != getattr(self, '_last_mask_rect', None):
-                    self._last_mask_rect = hr
-                    self.setMask(QRegion(hr))
+                # 输入框可见时，把其几何并入遮罩 region → 底部输入框区域可见可点
+                # （chat_input 是 PetWindow 子控件，裸 setMask(hit_rect) 会把它裁掉；QRegion.united 豁免）
+                _ci = getattr(self, '_chat_input', None)
+                _ci_visible = bool(_ci is not None and _ci.isVisible())
+                _region = QRegion(hr).united(QRegion(_ci.geometry())) if _ci_visible else QRegion(hr)
+                # 变化检测：key 含 (hr, chat_visible)，避免 chat_input 显隐时漏重设 setMask
+                # （居中锁定后 hr 基本不变，但聊天框开关需立即重设遮罩，否则输入框仍被裁）
+                _key = (hr, _ci_visible)
+                if hr is not None and hr.width() > 10 and hr.height() > 10 and _key != getattr(self, '_last_mask_key', None):
+                    self._last_mask_key = _key
+                    self.setMask(_region)
         except Exception:
             pass
         if not self.model:
@@ -1059,6 +1067,11 @@ class PetWindow(QWidget):
         if hr is None:
             return 1  # HTCLIENT：首帧前也保证可交互
         if hr.contains(client_x, client_y):
+            return 1  # HTCLIENT
+        # chat_input 可见时，其区域强制 HTCLIENT（不被穿透裁掉，可点击/打字）；
+        # 与 timerEvent 里 setMask 并入 chat_input 几何配套 → 输入框既可见又可点
+        _ci = getattr(self, '_chat_input', None)
+        if _ci is not None and _ci.isVisible() and _ci.geometry().contains(client_x, client_y):
             return 1  # HTCLIENT
         return -1    # HTTRANSPARENT
 
