@@ -930,8 +930,6 @@ class PetWindow(QWidget):
         # 穿透由 setMask 实现：右击若落在模型包围盒外，事件根本不会到达本窗口（已穿透到桌面），
         # 故这里只在模型身上触发菜单，无需再判透明。
         menu = QMenu(self)
-        menu.addAction("测试对话", lambda: self._chat_input.show() or self._chat_input.setFocus())
-        menu.addSeparator()
         cap_label = "关闭捕获模式" if self._capture_mode else "直播捕获模式"
         menu.addAction(cap_label, self._toggle_capture)
         menu.addSeparator()
@@ -987,7 +985,11 @@ class PetWindow(QWidget):
         menu.addSeparator()
         menu.addAction("管理模型", self._show_models)
         menu.addSeparator()
-        dbg_a = menu.addAction("调试叠加层")
+        # 开发者模式二级菜单：收纳测试对话 + 调试叠加层（普通用户右键菜单不暴露这些开发/调试工具）
+        dev_sub = menu.addMenu("开发者模式")
+        dev_sub.addAction("测试对话", lambda: self._chat_input.show() or self._chat_input.setFocus())
+        dev_sub.addSeparator()
+        dbg_a = dev_sub.addAction("调试叠加层")
         dbg_a.setCheckable(True)
         dbg_a.setChecked(self._debug_overlay)
         dbg_a.triggered.connect(lambda _c: self._toggle_debug_overlay())
