@@ -77,7 +77,7 @@ _ACTION_PARAM_SPEC = {
     # —— 以下为 2026-07-31 新增的"鲜活动作"（默认关闭，菜单勾选启用）——
     "mouth_hum":   [("mouth_open", 1.0, "set")],          # 张嘴哼歌：嘴部一张一合；仅本动作写 mouth_open，无冲突
     "bounce":      [],                                     # 开心蹦跳：走 transform SetScale 微脉冲（非 Cubism 参数），与 breath/poke 同在 update() 末尾合成
-    "tilt":        [("angle_z", 0.55, "set")],             # 歪头杀：angle_z 单向定格（卖萌歪头）；与 head_sway(angle_z 0.6 振荡)抢，本动作权重略低→head_sway 启用时覆盖本动作
+    "tilt":        [("angle_z", 1.0, "set")],              # 歪头杀：angle_z 定格（卖萌歪头）；启用时 head_sway 让出 angle_z 写入权（见 _update_head_sway），本动作独占定格，互不打架
     "hair_sway":   [("hair_front", 0.6, "set"), ("hair_back", 0.5, "set"), ("hair_body", 0.5, "set")],  # 头发飘动：发丝自然微摆；仅本动作写 hair_*，无冲突
     "brow_raise":  [("brow_y", 1.0, "set")],               # 眉毛挑动：周期性"嗯?"挑眉；仅本动作写 brow_y，无冲突
     "wiggle":      [("body_angle_x", 0.6, "add")],         # 开心扭动：body_angle_x 快速叠加微抖（跳舞感）；add 模式不与 look_cursor/wind/body_float 的 set 打架，叠加共存
@@ -179,6 +179,7 @@ class IdleEngine:
         self._mouth_phrase = 0.0    # 当前哼歌短语总时长
         self._bounce_scale = 1.0    # 每帧由 _update_bounce 计算，update() 末尾合成
         self._bounce_phase = random.uniform(0, math.tau)
+        self._tilt_current = 0.0    # 歪头杀当前角度（平滑进入/退出定格）
         self._brow_next = 0.0       # 下次挑眉时刻
         self._brow_state = "down"
         self._brow_t = 0.0
@@ -212,6 +213,7 @@ class IdleEngine:
         self._mouth_phrase = 0.0
         self._bounce_scale = 1.0
         self._bounce_phase = random.uniform(0, math.tau)
+        self._tilt_current = 0.0
         self._brow_next = time.monotonic() + random.uniform(4.0, 9.0)
         self._brow_state = "down"
         self._brow_t = 0.0
@@ -233,6 +235,9 @@ class IdleEngine:
             # 真正会"打架"的是两个都用 set 的动作；add 仅叠加，不构成冲突。
             setters = [(a, mode) for (a, mode) in acts if mode == "set" and self.enabled.get(a)]
             if len(setters) <= 1:
+                continue
+            # tilt 与 head_sway 互斥(angle_z)：tilt 启用时 head_sway 运行时让出 angle_z，不算普通冲突
+            if use == "angle_z" and any(a == "tilt" for a, _ in setters):
                 continue
             # 按 update() 应用顺序排成链，末位写入者按权重混合占优（即"覆盖"前者）
             ordered = sorted(setters, key=lambda am: UPDATE_ORDER.index(am[0]))
@@ -400,8 +405,10 @@ class IdleEngine:
             self._head_target = random.choice([-1, 1]) * random.uniform(6.0, 16.0)
             self._head_next = now + random.uniform(5.0, 11.0)
         self._head_current += (self._head_target - self._head_current) * min(1.0, dt * 3.0)
-        # 冲突: angle_z 同时被 wind 写(权重 0.8 > 本 0.6)。启用 wind 时本摇头被覆盖；权重低故常态下本动作占优。
-        self._set(model, "angle_z", self._head_current, 0.6)
+        # tilt 启用时让出 angle_z 写入权，避免"摇头"淹没"歪头杀"定格；否则正常写 angle_z
+        # （与 wind 抢，权重 0.6<0.8 故 wind 启用时被覆盖，符合"被风吹"占优）
+        if not self.enabled.get("tilt"):
+            self._set(model, "angle_z", self._head_current, 0.6)
         # angle_x 增量(非抢占)，与 look_cursor/wind 共存时不打架（仅叠加微抖）
         self._add(model, "angle_x", math.sin(now * 2.0) * 0.5)
 
@@ -468,14 +475,32 @@ class IdleEngine:
         self._bounce_scale = 1.0 + BOUNCE_AMP * (0.5 + 0.5 * math.sin(t * BOUNCE_FREQ + self._bounce_phase))
 
     def _update_tilt(self, model, t):
-        """歪头杀：angle_z 单向定格偏移（卖萌歪头）。与 head_sway(angle_z 振荡)抢同参数，本动作权重略低→head_sway 启用时覆盖本动作。"""
-        self._set(model, "angle_z", TILT_ANGLE_Z, 0.55)
+        """歪头杀：angle_z 定格偏移（卖萌歪头）。与 head_sway 互斥——tilt 启用时 head_sway 让出 angle_z 写入权，
+        本动作独占 angle_z 做平滑定格（权重 1.0），互不打架，用户能清晰看到"定格歪头"而非被摇头淹没。"""
+        # 平滑进入/退出：从当前角度缓动到目标，避免勾选瞬间突兀跳变
+        self._tilt_current += (TILT_ANGLE_Z - self._tilt_current) * 0.08
+        self._set(model, "angle_z", self._tilt_current, 1.0)
 
     def _update_hair_sway(self, model, t):
-        """头发飘动：前发/后发/鬓发自然微摆（ParamHairFront/Back/Body）。模型无 hair 参数自动跳过。"""
-        self._set(model, "hair_front", math.sin(t * HAIR_SWAY_FREQ) * HAIR_SWAY_AMP, 0.6)
-        self._set(model, "hair_back", math.sin(t * HAIR_SWAY_FREQ * 0.7 + 1.0) * HAIR_SWAY_AMP_BACK, 0.5)
-        self._set(model, "hair_body", math.sin(t * HAIR_SWAY_FREQ * 0.8 + 2.0) * HAIR_SWAY_AMP_BACK, 0.5)
+        """头发飘动：优先驱动真实 hair 参数(ParamHairFront/Back/Body)；模型无 hair 参数时
+        （如免费/试用版 VTS 模型，实测圣鸢/绒E 等均无 hair 参数）自动降级为头/身极慢微摆，
+        模拟发丝飘动感——保证动作对所有模型都有可见效果、不空转。"""
+        hf = self._param_cache.get("hair_front")
+        hb = self._param_cache.get("hair_back")
+        hbd = self._param_cache.get("hair_body")
+        if hf or hb or hbd:
+            # 真·头发参数驱动（有 hair 参数的高质量模型走这里）
+            if hf:
+                self._set(model, "hair_front", math.sin(t * HAIR_SWAY_FREQ) * HAIR_SWAY_AMP, 0.6)
+            if hb:
+                self._set(model, "hair_back", math.sin(t * HAIR_SWAY_FREQ * 0.7 + 1.0) * HAIR_SWAY_AMP_BACK, 0.5)
+            if hbd:
+                self._set(model, "hair_body", math.sin(t * HAIR_SWAY_FREQ * 0.8 + 2.0) * HAIR_SWAY_AMP_BACK, 0.5)
+        else:
+            # 回退飘动：极慢、极小幅度，用 add 模式叠加，不抢任何 set 参数（angle_z 留给 tilt/head_sway/wind）。
+            # angle_x 极慢微摆(头轻晃带发丝飘) + body_angle_y 慢摆(身体轻晃)，频率约为 hair 基频的一半，柔和不抢戏。
+            self._add(model, "angle_x", math.sin(t * HAIR_SWAY_FREQ * 0.5) * 1.2)
+            self._add(model, "body_angle_y", math.sin(t * HAIR_SWAY_FREQ * 0.4 + 1.5) * 0.8)
 
     def _update_brow_raise(self, model, now, dt):
         """眉毛挑动：周期性"嗯?"挑眉（ParamBrowY）。模型无 brow 参数自动跳过。"""
