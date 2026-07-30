@@ -43,7 +43,7 @@ BOUNCE_AMP = 0.05             # 蹦跳缩放幅度（±5%）
 BOUNCE_FREQ = 6.0             # 蹦跳频率（rad/s），约 1.05s 一跳，俏皮不急促
 
 # 歪头杀（tilt）：angle_z 单向定格偏移（卖萌歪头）。正值=向右歪（不同模型朝向可能相反，容错即可）。
-TILT_ANGLE_Z = 12.0           # 歪头定格角度（度），约 ±12° 明显但不夸张
+TILT_ANGLE_Z = 25.0           # 歪头定格角度（度），±25° 明显卖萌；Cubism 标准 angle_z 上限约 ±30，留余量不夹断
 # 头发飘动（hair_sway）：发丝自然微摆幅度（度/无量纲，按模型 hair 参数尺度）。
 HAIR_SWAY_AMP = 6.0           # 前发摆幅
 HAIR_SWAY_AMP_BACK = 4.0      # 后发/鬓发摆幅（更慢更柔）
@@ -497,9 +497,10 @@ class IdleEngine:
             if hbd:
                 self._set(model, "hair_body", math.sin(t * HAIR_SWAY_FREQ * 0.8 + 2.0) * HAIR_SWAY_AMP_BACK, 0.5)
         else:
-            # 回退飘动：极慢、极小幅度，用 add 模式叠加，不抢任何 set 参数（angle_z 留给 tilt/head_sway/wind）。
-            # angle_x 极慢微摆(头轻晃带发丝飘) + body_angle_y 慢摆(身体轻晃)，频率约为 hair 基频的一半，柔和不抢戏。
-            self._add(model, "angle_x", math.sin(t * HAIR_SWAY_FREQ * 0.5) * 1.2)
+            # 回退飘动：用【身体】参数(body_angle_z 扭转微颤 + body_angle_y 前后浮)模拟发丝带动的整体轻飘感。
+            # 关键铁则：绝不动头部 angle_x/angle_z（那是摇头/歪头/看鼠标的专属视觉），否则回退飘动看着就跟"摇头歪头"一样。
+            # body_angle_z 多数免费 VTS 模型未必有，无则 add 静默跳过，仅 body_angle_y 生效（身体前后浮动，与头部动作零视觉重叠）。
+            self._add(model, "body_angle_z", math.sin(t * HAIR_SWAY_FREQ * 0.6 + 1.0) * 1.8)
             self._add(model, "body_angle_y", math.sin(t * HAIR_SWAY_FREQ * 0.4 + 1.5) * 0.8)
 
     def _update_brow_raise(self, model, now, dt):
