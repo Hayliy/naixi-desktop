@@ -35,8 +35,30 @@ POKE_LEAN_DEG = 5.0
 SCALE_BREATH_AMP = 0.03       # 缩放幅度（±3%，模型在窗口内轻微胀缩）
 SCALE_BREATH_FREQ = 1.2       # 脉动频率（rad/s），约 5.2s 一个呼吸周期
 SCALE_MAX = 2.2               # 合成缩放上限：须 == pet_window.ZOOM_PAD（2.2）。模型 Resize 用 BASE/ZOOM_PAD，
-                               # SetScale 最大 2.2 时模型恰好铺满窗口；配合滚轮 zoom[0.5,2.0]×呼吸(1.03)×突脸(1.10)峰值≈2.27>2.2 会被夹断
-                               # （仅满档微抑呼吸，无裁边）。改这里务必同步 pet_window.ZOOM_PAD。
+                               # SetScale 最大 2.2 时模型恰好铺满窗口；配合滚轮 zoom[0.5,2.0]×呼吸(1.03)×突脸(1.10)×蹦跳(1.05)峰值≈2.39>2.2 会被夹断
+                               # （仅满档微抑，无裁边）。改这里务必同步 pet_window.ZOOM_PAD。
+# 开心蹦跳（bounce 动作）：像小跳一样周期性轻微放大脉冲（走 SetScale，非 Cubism 参数）。
+# 幅度须小：峰值 POKE_PEAK_SCALE=1.10 已接近窗口边；bounce 峰值 1.05 叠加呼吸 1.03 ≈ 1.08，与 poke 同帧极端情况才触顶。
+BOUNCE_AMP = 0.05             # 蹦跳缩放幅度（±5%）
+BOUNCE_FREQ = 6.0             # 蹦跳频率（rad/s），约 1.05s 一跳，俏皮不急促
+
+# 歪头杀（tilt）：angle_z 单向定格偏移（卖萌歪头）。正值=向右歪（不同模型朝向可能相反，容错即可）。
+TILT_ANGLE_Z = 12.0           # 歪头定格角度（度），约 ±12° 明显但不夸张
+# 头发飘动（hair_sway）：发丝自然微摆幅度（度/无量纲，按模型 hair 参数尺度）。
+HAIR_SWAY_AMP = 6.0           # 前发摆幅
+HAIR_SWAY_AMP_BACK = 4.0      # 后发/鬓发摆幅（更慢更柔）
+HAIR_SWAY_FREQ = 1.3          # 飘动基频（rad/s）
+# 眉毛挑动（brow_raise）：周期性"嗯?"挑眉；幅度按 BrowY 参数尺度（多数模型 0..1，挑眉正向）。
+BROW_RAISE_AMP = 0.8
+BROW_RAISE_HOLD = 0.5         # 挑眉保持时长（s）
+BROW_RAISE_GAP = (4.0, 9.0)   # 两次挑眉间隔随机区间（s）
+# 开心扭动（wiggle）：body_angle_x 快速叠加微抖（跳舞感），add 模式不与 look_cursor/wind 打架。
+WIGGLE_AMP = 4.0              # 扭动角幅（度）
+WIGGLE_FREQ = 7.0             # 扭动频率（rad/s），较快显俏皮
+# 张嘴哼歌（mouth_hum）：周期性"哼"短语，嘴一张一合。
+MOUTH_HUM_OPEN = 0.7          # 张嘴峰值（MouthOpenY 0..1）
+MOUTH_HUM_GAP = (3.0, 8.0)    # 两次哼歌间隔随机区间（s）
+MOUTH_HUM_PHRASE = (0.6, 1.4) # 单次哼歌短语时长随机区间（s）
 
 # ── 动作参数占用表（冲突标注）──
 # 每个程序化动作驱动的标准 Cubism 参数、写入权重、写入模式。
@@ -52,6 +74,13 @@ _ACTION_PARAM_SPEC = {
     "head_sway":   [("angle_z", 0.6, "set"), ("angle_x", 0.5, "add")],
     "wind":        [("angle_z", 0.8, "set"), ("body_angle_x", 0.75, "set"), ("angle_x", 0.6, "set")],
     "poke":        [("angle_x", 0.9, "set")],  # 仅"突脸窗口"内写 angle_x(前倾)；窗口外不碰，交还 look_cursor。另用 SetScale 做整体放大(transform，非 Cubism 参数)
+    # —— 以下为 2026-07-31 新增的"鲜活动作"（默认关闭，菜单勾选启用）——
+    "mouth_hum":   [("mouth_open", 1.0, "set")],          # 张嘴哼歌：嘴部一张一合；仅本动作写 mouth_open，无冲突
+    "bounce":      [],                                     # 开心蹦跳：走 transform SetScale 微脉冲（非 Cubism 参数），与 breath/poke 同在 update() 末尾合成
+    "tilt":        [("angle_z", 0.55, "set")],             # 歪头杀：angle_z 单向定格（卖萌歪头）；与 head_sway(angle_z 0.6 振荡)抢，本动作权重略低→head_sway 启用时覆盖本动作
+    "hair_sway":   [("hair_front", 0.6, "set"), ("hair_back", 0.5, "set"), ("hair_body", 0.5, "set")],  # 头发飘动：发丝自然微摆；仅本动作写 hair_*，无冲突
+    "brow_raise":  [("brow_y", 1.0, "set")],               # 眉毛挑动：周期性"嗯?"挑眉；仅本动作写 brow_y，无冲突
+    "wiggle":      [("body_angle_x", 0.6, "add")],         # 开心扭动：body_angle_x 快速叠加微抖（跳舞感）；add 模式不与 look_cursor/wind/body_float 的 set 打架，叠加共存
 }
 
 
@@ -66,7 +95,8 @@ def _conflict_map():
 
 # update() 内各动作的应用顺序（后者在同一参数上按权重混合，故"末位写入者占优/覆盖前者"）。
 # 须与 IdleEngine.update() 中的 if 顺序保持一致；新增动作须同步追加到此处，否则覆盖判定失准。
-UPDATE_ORDER = ["breath", "body_float", "blink", "look_cursor", "head_sway", "wind", "poke"]
+UPDATE_ORDER = ["breath", "body_float", "blink", "look_cursor", "head_sway", "wind", "poke",
+                "mouth_hum", "bounce", "tilt", "hair_sway", "brow_raise", "wiggle"]
 
 
 def _weight_of(act, use):
@@ -90,6 +120,14 @@ PARAM_HINTS = {
     "body_angle_x": ["BodyAngleX", "BODYANGLEX", "身体X"],
     "body_angle_y": ["BodyAngleY", "BODYANGLEY"],
     "body_angle_z": ["BodyAngleZ", "BODYANGLEZ"],
+    "mouth_open":   ["MouthOpenY", "MOUTH_OPEN", "嘴型", "口"],
+    "mouth_form":   ["MouthForm", "MOUTH_FORM", "嘴形"],
+    "brow_y":       ["BrowY", "BROW_Y", "眉毛Y", "眉"],
+    "hair_front":   ["HairFront", "HAIRFRONT", "前发", "刘海"],
+    "hair_back":    ["HairBack", "HAIRBACK", "后发"],
+    "hair_body":    ["HairBody", "HAIRBODY", "鬓发", "侧发"],
+    "arm_l":        ["ArmL", "ARML", "手臂L", "左臂"],
+    "arm_r":        ["ArmR", "ARMR", "手臂R", "右臂"],
 }
 
 
@@ -116,6 +154,13 @@ class IdleEngine:
             "wind": False,
             "poke": False,
             "scale_breath": False,
+            # —— 2026-07-31 新增鲜活动作（默认关闭，菜单勾选启用）——
+            "mouth_hum": False,
+            "bounce": False,
+            "tilt": False,
+            "hair_sway": False,
+            "brow_raise": False,
+            "wiggle": False,
         }
         self._t0 = time.monotonic()
         self._next_blink = 0.0
@@ -127,6 +172,16 @@ class IdleEngine:
         self._head_next = 0.0
         self._head_target = 0.0
         self._head_current = 0.0
+        # —— 新增动作临时状态 ——
+        self._mouth_next = 0.0      # 下次哼歌起始时刻
+        self._mouth_t = 0.0         # 当前哼歌短语已进行时间
+        self._mouth_active = False  # 是否正在哼
+        self._mouth_phrase = 0.0    # 当前哼歌短语总时长
+        self._bounce_scale = 1.0    # 每帧由 _update_bounce 计算，update() 末尾合成
+        self._bounce_phase = random.uniform(0, math.tau)
+        self._brow_next = 0.0       # 下次挑眉时刻
+        self._brow_state = "down"
+        self._brow_t = 0.0
         self._param_cache = {}  # 用途 -> 实际参数名
 
     # ---- 配置 ----
@@ -151,6 +206,15 @@ class IdleEngine:
         self._head_next = time.monotonic() + random.uniform(4.0, 9.0)
         self._head_target = 0.0
         self._head_current = 0.0
+        self._mouth_next = time.monotonic() + random.uniform(3.0, 8.0)
+        self._mouth_t = 0.0
+        self._mouth_active = False
+        self._mouth_phrase = 0.0
+        self._bounce_scale = 1.0
+        self._bounce_phase = random.uniform(0, math.tau)
+        self._brow_next = time.monotonic() + random.uniform(4.0, 9.0)
+        self._brow_state = "down"
+        self._brow_t = 0.0
         self._param_cache = {}
         if model is not None:
             self._build_param_cache(model)
@@ -256,14 +320,28 @@ class IdleEngine:
         if self.enabled.get("wind"):
             self._update_wind(model, t, dt)
 
-        # 缩放合成（每帧仅一次 SetScale）：呼吸缩放(±3%) × 突脸缩放(瞬时回弹) × 滚轮缩放(zoom，来自 pet_window ctx)。
+        # —— 2026-07-31 新增鲜活动作（默认关，菜单勾选）——
+        if self.enabled.get("mouth_hum"):
+            self._update_mouth_hum(model, now, dt)
+        if self.enabled.get("bounce"):
+            self._update_bounce(model, t)
+        if self.enabled.get("tilt"):
+            self._update_tilt(model, t)
+        if self.enabled.get("hair_sway"):
+            self._update_hair_sway(model, t)
+        if self.enabled.get("brow_raise"):
+            self._update_brow_raise(model, now, dt)
+        if self.enabled.get("wiggle"):
+            self._update_wiggle(model, t)
+
+        # 缩放合成（每帧仅一次 SetScale）：呼吸缩放(±3%) × 突脸缩放(瞬时回弹) × 蹦跳缩放(周期微脉冲) × 滚轮缩放(zoom)。
         # 三者都走模型 transform 的 SetScale（非 Cubism 参数）。窗口几何固定，zoom 仅放大模型本身，零 resize 零闪烁。
         self._poke_scale = 1.0
         if self.enabled.get("poke") or now < self._poke_until:
             self._update_poke(model, now)
         breath_s = 1.0 + SCALE_BREATH_AMP * math.sin(t * SCALE_BREATH_FREQ) if self.enabled.get("scale_breath") else 1.0
         zoom_s = ctx.get("zoom", 1.0)
-        final_s = breath_s * self._poke_scale * zoom_s
+        final_s = breath_s * self._poke_scale * self._bounce_scale * zoom_s
         if final_s > SCALE_MAX:
             final_s = SCALE_MAX
         elif final_s < 0.3:
@@ -365,6 +443,63 @@ class IdleEngine:
             # 轻微前倾强化"脸凑近"观感（poke 是一次性意图动作，短暂覆盖 look_cursor/wind 的 angle_x 无妨）
             self._set(model, "angle_x", POKE_LEAN_DEG * (self._poke_scale - 1.0) / (POKE_PEAK_SCALE - 1.0), 0.9)
         # 非突脸时段：_poke_scale 保持 1.0，且绝不碰 angle_x，把头部交还给 look_cursor/wind。
+
+    # ---- 2026-07-31 新增鲜活动作 ----
+    def _update_mouth_hum(self, model, now, dt):
+        """张嘴哼歌：周期性"哼"短语，嘴一张一合（ParamMouthOpenY）。无嘴部模型自动跳过。"""
+        if not self._mouth_active:
+            if now >= self._mouth_next:
+                self._mouth_active = True
+                self._mouth_t = 0.0
+                self._mouth_phrase = random.uniform(*MOUTH_HUM_PHRASE)
+        else:
+            self._mouth_t += dt
+            # 短语内：2~3 个快速张合循环（哼哼~）
+            cyc = self._mouth_t / max(1e-3, self._mouth_phrase) * 2.5 * math.pi
+            v = max(0.0, math.sin(cyc)) * MOUTH_HUM_OPEN
+            self._set(model, "mouth_open", v, 1.0)
+            if self._mouth_t >= self._mouth_phrase:
+                self._mouth_active = False
+                self._set(model, "mouth_open", 0.0, 1.0)
+                self._mouth_next = now + random.uniform(*MOUTH_HUM_GAP)
+
+    def _update_bounce(self, model, t):
+        """开心蹦跳：周期性轻微放大脉冲（走 SetScale，非 Cubism 参数），与呼吸/突脸在 update() 末尾合成。"""
+        self._bounce_scale = 1.0 + BOUNCE_AMP * (0.5 + 0.5 * math.sin(t * BOUNCE_FREQ + self._bounce_phase))
+
+    def _update_tilt(self, model, t):
+        """歪头杀：angle_z 单向定格偏移（卖萌歪头）。与 head_sway(angle_z 振荡)抢同参数，本动作权重略低→head_sway 启用时覆盖本动作。"""
+        self._set(model, "angle_z", TILT_ANGLE_Z, 0.55)
+
+    def _update_hair_sway(self, model, t):
+        """头发飘动：前发/后发/鬓发自然微摆（ParamHairFront/Back/Body）。模型无 hair 参数自动跳过。"""
+        self._set(model, "hair_front", math.sin(t * HAIR_SWAY_FREQ) * HAIR_SWAY_AMP, 0.6)
+        self._set(model, "hair_back", math.sin(t * HAIR_SWAY_FREQ * 0.7 + 1.0) * HAIR_SWAY_AMP_BACK, 0.5)
+        self._set(model, "hair_body", math.sin(t * HAIR_SWAY_FREQ * 0.8 + 2.0) * HAIR_SWAY_AMP_BACK, 0.5)
+
+    def _update_brow_raise(self, model, now, dt):
+        """眉毛挑动：周期性"嗯?"挑眉（ParamBrowY）。模型无 brow 参数自动跳过。"""
+        if self._brow_state == "down":
+            if now >= self._brow_next:
+                self._brow_state = "up"
+                self._brow_t = 0.0
+        elif self._brow_state == "up":
+            self._brow_t += dt
+            if self._brow_t < 0.12:
+                k = self._brow_t / 0.12
+            elif self._brow_t < BROW_RAISE_HOLD:
+                k = 1.0
+            else:
+                k = max(0.0, 1.0 - (self._brow_t - BROW_RAISE_HOLD) / 0.25)
+            self._set(model, "brow_y", k * BROW_RAISE_AMP, 1.0)
+            if self._brow_t >= BROW_RAISE_HOLD + 0.25:
+                self._brow_state = "down"
+                self._set(model, "brow_y", 0.0, 1.0)
+                self._brow_next = now + random.uniform(*BROW_RAISE_GAP)
+
+    def _update_wiggle(self, model, t):
+        """开心扭动：body_angle_x 快速叠加微抖（跳舞感）。add 模式不与 look_cursor/wind/body_float 的 set 打架，叠加共存。"""
+        self._add(model, "body_angle_x", math.sin(t * WIGGLE_FREQ) * WIGGLE_AMP)
 
     def trigger_poke(self):
         """外部（如右键「突脸一下」）触发一次突脸放大回弹。"""

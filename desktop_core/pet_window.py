@@ -968,6 +968,20 @@ class PetWindow(QWidget):
                 _a.setChecked(idle.enabled.get(_key, False))
                 _a.triggered.connect(lambda _c, k=_key: idle.toggle(k))
             mot_sub.addSeparator()
+            mot_sub.addAction("— 鲜活动作 —").setEnabled(False)
+            for _key, _zh in [
+                ("mouth_hum", "张嘴哼歌"),
+                ("bounce", "开心蹦跳"),
+                ("tilt", "歪头杀"),
+                ("hair_sway", "头发飘动"),
+                ("brow_raise", "眉毛挑动"),
+                ("wiggle", "开心扭动"),
+            ]:
+                _a = mot_sub.addAction(_zh)
+                _a.setCheckable(True)
+                _a.setChecked(idle.enabled.get(_key, False))
+                _a.triggered.connect(lambda _c, k=_key: idle.toggle(k))
+            mot_sub.addSeparator()
             _poke_a = mot_sub.addAction("突脸一下")
             _poke_a.triggered.connect(lambda _c: idle.trigger_poke())
         else:
