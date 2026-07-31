@@ -1458,70 +1458,80 @@ async def api_config_tts_set(request):
 
 
 async def api_generate_voice(request):
-    """调用配置的语音模型合成语音（支持百炼 CosyVoice 和 OpenAI TTS）"""
+    """调用配置的语音模型合成语音（百炼 CosyVoice / OpenAI TTS），失败自动降级 Edge-TTS。
+
+    返回 {ok, audio(base64), format}；format 告知前端正确的 MIME，
+    避免前端硬编码 mp3 导致 wav 数据被错误解码而静默无声。"""
     try:
         body = await request.json()
         text = body.get("text", body.get("prompt", ""))
         if not text:
             return web.json_response({"error": "缺少文本"}, status=400)
 
-        provider = _find_provider_by_type("audio")
-        if not provider:
-            return web.json_response({"error": "未配置语音模型供应商"}, status=400)
+        audio_bytes = None
+        fmt = "wav"
 
-        import aiohttp, base64
-        api_key = provider.get("api_key", "")
-        model = provider.get("model", "cosyvoice-v3-flash")
+        # 1) 优先用配置的语音供应商
+        try:
+            provider = _find_provider_by_type("audio")
+            if provider:
+                import aiohttp
+                api_key = provider.get("api_key", "")
+                api_url = provider.get("api_url", "")
+                model = provider.get("model", "cosyvoice-v3-flash")
+                decrypt_key = decrypt_api_key(api_key)
+                if decrypt_key:
+                    api_key = decrypt_key
+                headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+                is_dashscope = "dashscope" in api_url or "aliyuncs" in api_url
+                if is_dashscope:
+                    tts_url = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"
+                    payload = {"model": model, "input": {"text": text, "voice": "longfeifei_v3", "format": "wav", "sample_rate": 24000}}
+                    async with aiohttp.ClientSession(headers=headers) as session:
+                        async with session.post(tts_url, json=payload, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                            if resp.status == 200:
+                                result = await resp.json()
+                                audio_url = result.get("output", {}).get("audio", {}).get("url", "")
+                                if audio_url:
+                                    async with aiohttp.ClientSession() as dl_session:
+                                        async with dl_session.get(audio_url, timeout=30) as ar:
+                                            if ar.status == 200:
+                                                audio_bytes = await ar.read()
+                                                fmt = "wav"
+                else:
+                    tts_url = api_url.rstrip("/") + "/audio/speech"
+                    payload = {"model": model, "input": text, "voice": "alloy", "response_format": "wav"}
+                    async with aiohttp.ClientSession(headers=headers) as session:
+                        async with session.post(tts_url, json=payload, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                            if resp.status == 200:
+                                audio_bytes = await resp.read()
+                                fmt = "wav"
+        except Exception as e:
+            log.warning(f"[语音] 配置供应商合成失败，准备降级 Edge-TTS: {e}")
 
-        decrypt_key = decrypt_api_key(api_key)
-        if decrypt_key:
-            api_key = decrypt_key
+        # 2) 降级 Edge-TTS（保证总有声音，不依赖用户是否配供应商 / 网络是否可达）
+        if not audio_bytes:
+            try:
+                import edge_tts, tempfile, os
+                tmp = os.path.join(tempfile.gettempdir(), f"gen_voice_{int(time.time() * 1000)}.mp3")
+                communicate = edge_tts.Communicate(text, "zh-CN-XiaoxiaoNeural")
+                await communicate.save(tmp)
+                with open(tmp, "rb") as f:
+                    audio_bytes = f.read()
+                try:
+                    os.remove(tmp)
+                except Exception:
+                    pass
+                fmt = "mp3"
+            except Exception as e2:
+                return web.json_response({"error": f"语音合成失败且 Edge-TTS 降级失败: {e2}"}, status=500)
 
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-
-        # 判断是否百炼 CosyVoice
-        is_dashscope = "dashscope" in provider.get("api_url", "") or "aliyuncs" in provider.get("api_url", "")
-
-        if is_dashscope:
-            # 百炼 CosyVoice 格式
-            tts_url = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"
-            payload = {
-                "model": model,
-                "input": {"text": text, "voice": "longfeifei_v3", "format": "wav", "sample_rate": 24000},
-            }
-            async with aiohttp.ClientSession(headers=headers) as session:
-                async with session.post(tts_url, json=payload, timeout=aiohttp.ClientTimeout(total=60)) as resp:
-                    if resp.status != 200:
-                        err = await resp.text()
-                        return web.json_response({"error": f"语音 API 返回 {resp.status}: {err[:200]}"}, status=502)
-                    result = await resp.json()
-                    audio_url = result.get("output", {}).get("audio", {}).get("url", "")
-                    if not audio_url:
-                        return web.json_response({"error": f"{model} 未返回音频 URL"}, status=502)
-                    # 下载音频并返回 base64（OSS URL 不支持 Bearer auth）
-                    async with aiohttp.ClientSession() as dl_session:
-                        async with dl_session.get(audio_url, timeout=30) as ar:
-                            if ar.status != 200:
-                                return web.json_response({"error": f"下载音频失败 {ar.status}"}, status=502)
-                            audio_data = await ar.read()
-                            return web.json_response({
-                                "ok": True, "audio": base64.b64encode(audio_data).decode(),
-                                "format": "wav"
-                            })
-        else:
-            # OpenAI TTS 格式
-            tts_url = api_url.rstrip("/") + "/audio/speech"
-            payload = {"model": model, "input": text, "voice": "alloy", "response_format": "wav"}
-            async with aiohttp.ClientSession(headers=headers) as session:
-                async with session.post(tts_url, json=payload, timeout=aiohttp.ClientTimeout(total=60)) as resp:
-                    if resp.status != 200:
-                        err = await resp.text()
-                        return web.json_response({"error": f"语音 API 返回 {resp.status}: {err[:200]}"}, status=502)
-                    audio_data = await resp.read()
-                    return web.json_response({
-                        "ok": True, "audio": base64.b64encode(audio_data).decode(),
-                        "format": "wav"
-                    })
+        import base64
+        return web.json_response({
+            "ok": True,
+            "audio": base64.b64encode(audio_bytes).decode(),
+            "format": fmt,
+        })
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
