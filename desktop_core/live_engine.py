@@ -1726,9 +1726,53 @@ class LiveEngine:
             pass
         return out_id, in_id
 
+    def _resolve_ffmpeg(self) -> Optional[str]:
+        """探测可用的 ffmpeg 可执行文件路径。
+
+        后端 sidecar 由 Tauri 启动，子进程继承的 PATH 往往不含系统 ffmpeg
+        （如 D:/软件/Ollama/ffmpeg），裸调用 "ffmpeg" 会 FileNotFoundError 被静默吞掉。
+        探测顺序：PATH -> 解释器(embed)同目录 -> 打包 resources/ffmpeg -> 已知兜底位置；
+        结果缓存到 self._ffmpeg_path，避免每句重复探测。
+        """
+        cached = getattr(self, "_ffmpeg_path", None)
+        if cached:
+            return cached
+        import shutil, sys, os
+        cands = []
+        # 1) 系统 PATH
+        p = shutil.which("ffmpeg")
+        if p:
+            cands.append(p)
+        # 2) 解释器（embed python）同目录：未来可把 ffmpeg 一并塞进自包含包
+        cands.append(os.path.join(os.path.dirname(sys.executable), "ffmpeg.exe"))
+        # 3) 打包资源目录 resources/ffmpeg
+        try:
+            res = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               "resources", "ffmpeg", "ffmpeg.exe")
+            cands.append(res)
+        except Exception:
+            pass
+        # 4) 用户机器已知 ffmpeg 位置（兜底）
+        cands.append("D:/软件/Ollama/ffmpeg/ffmpeg.exe")
+        cands.append("D:/软件/ffmpeg/bin/ffmpeg.exe")
+        for c in cands:
+            if c and os.path.exists(c):
+                self._ffmpeg_path = c
+                log.info(f"[语音] 使用 ffmpeg: {c}")
+                return c
+        self._ffmpeg_path = None
+        return None
+
     def play_audio(self, audio_bytes: bytes, sample_rate: int = 24000):
-        """播放音频 bytes 到输出设备（用 ffmpeg 统一转 WAV）"""
-        if not self._sd_available or not audio_bytes:
+        """播放音频 bytes 到输出设备（ffmpeg 转 WAV，路径自动探测）"""
+        if not self._sd_available:
+            log.warning("[语音] sounddevice 不可用，无法播放语音")
+            return
+        if not audio_bytes:
+            return
+        ffmpeg_path = self._resolve_ffmpeg()
+        if not ffmpeg_path:
+            log.warning("[语音] ffmpeg 不可用（PATH 未包含且候选目录未找到），无法播放语音")
             return
         try:
             import sounddevice as sd
@@ -1740,8 +1784,8 @@ class LiveEngine:
             tmp_out = os.path.join(tempfile.gettempdir(), f"play_out_{int(time.time()*1000)}.wav")
             with open(tmp_in, "wb") as f:
                 f.write(audio_bytes)
-            subprocess.run(
-                ["ffmpeg", "-y", "-i", tmp_in, "-ar", "24000", "-ac", "1",
+            r = subprocess.run(
+                [ffmpeg_path, "-y", "-i", tmp_in, "-ar", "24000", "-ac", "1",
                  "-sample_fmt", "s16", "-f", "wav", tmp_out],
                 capture_output=True, timeout=10
             )
@@ -1749,6 +1793,7 @@ class LiveEngine:
             except: pass
 
             if not os.path.exists(tmp_out):
+                log.warning(f"[语音] ffmpeg 转码失败（returncode={getattr(r, 'returncode', '?')}），无法播放语音")
                 return
 
             with wave.open(tmp_out, 'rb') as wf:
@@ -1766,8 +1811,8 @@ class LiveEngine:
                 daemon=True
             )
             self._play_thread.start()
-        except:
-            pass
+        except Exception as e:
+            log.warning(f"[语音播放失败] {e}")
 
     # ── VTube Studio 控制（WebSocket API） ───────────────────────────────
 
