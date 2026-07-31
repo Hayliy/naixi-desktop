@@ -129,12 +129,16 @@ export default function Dashboard() {
     return () => clearInterval(t);
   }, []);
 
-  // 首次启动检测（无 API Key 配置时弹出引导）
+  // 首次启动检测（未配置任何带 Key 的模型供应商时才弹出引导）
+  // 注意：后端 /api/desktop/config 从不返回 configured 字段（历史遗留），
+  // 原判断 `!d?.configured` 永远为 true → 只要没手动关过就永远弹。改为基于真实 api_providers 判断。
   useEffect(() => {
     const dismissed = localStorage.getItem("naixi_setup_dismissed");
     if (dismissed === "true") return;
     apiGet<DesktopConfig>("/api/desktop/config").then((d) => {
-      if (!d?.configured) setShowSetup(true);
+      const providers = (d?.api_providers || {}) as Record<string, any>;
+      const hasKey = Object.values(providers).some((p) => p && p.api_key);
+      if (!hasKey) setShowSetup(true);
     }).catch(() => {});
   }, []);
 
@@ -2115,17 +2119,14 @@ function LivePage() {
     } else {
       try {
         const cfg = await apiGet<any>("/api/live/config");
-        if (cfg?.model_path) {
-          const r = await apiPost("/api/live/pet-start", { model_path: cfg.model_path });
-          if (r?.ok) notify("桌宠已启动", "success");
-          else notify("桌宠启动失败", "error");
-        } else {
-          fileRef.current?.click();  // 没模型 → 弹出文件选择器
-          return;
-        }
+        const mp = cfg?.model_path || "";
+        // 优先用已配置/后端自动发现的模型地址；都没有则让 Qt 桌宠自身 find_model3 兜底发现
+        // （VTube Studio 目录等），真正没有任何模型时才回退文件选择器，避免「有模型却被迫手填地址」。
+        const r = await apiPost("/api/live/pet-start", { model_path: mp });
+        if (r?.ok) notify("桌宠已启动", "success");
+        else fileRef.current?.click();  // 启动失败（确实无模型）→ 选文件
       } catch {
         fileRef.current?.click();
-        return;
       }
       pollStatus();
     }

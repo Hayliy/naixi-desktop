@@ -321,10 +321,10 @@ export default function SetupGuide({ onClose, standalone }: { onClose: () => voi
     );
   }
 
-  /* ─── 弹窗模式（首次启动） ─── */
+  /* ─── 弹窗模式（首次启动，非阻塞：引导存在但不拦住整个应用） ─── */
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-[640px] max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 pointer-events-none flex items-end justify-end p-6">
+      <div className="pointer-events-auto bg-white rounded-2xl shadow-2xl w-[640px] max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="px-6 py-5 border-b border-sakura-100 flex items-center justify-between">
           <div>
             <h2 className="text-base font-bold text-sakura-600">欢迎使用奶昔</h2>
