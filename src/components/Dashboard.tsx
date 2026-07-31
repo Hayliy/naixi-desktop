@@ -30,6 +30,7 @@ const PAGE_TITLES: Record<string, string> = {
   tools: "工具", memory: "记忆", napcat: "NapCat",
   ops: "运维", live: "直播", scheduler: "自动化",
   logs: "日志", settings: "设置", workflow: "工作流",
+  petmemory: "桌宠记忆",
 };
 const PAGE_ICONS: Record<string, React.ReactNode> = {
   dashboard: <LayoutDashboard size={15} className="text-sakura-400" />,
@@ -37,6 +38,7 @@ const PAGE_ICONS: Record<string, React.ReactNode> = {
   knowledge: <BookOpen size={15} className="text-sakura-400" />,
   tools: <Wrench size={15} className="text-sakura-400" />,
   memory: <Brain size={15} className="text-sakura-400" />,
+  petmemory: <Users size={15} className="text-sakura-400" />,
   napcat: <Bot size={15} className="text-sakura-400" />,
   ops: <Server size={15} className="text-sakura-400" />,
   live: <Film size={15} className="text-sakura-400" />,
@@ -55,6 +57,7 @@ const NAV_ITEMS = [
   { key: "knowledge",  icon: <BookOpen size={16} />,       label: "知识库" },
   { key: "tools",      icon: <Wrench size={16} />,         label: "工具" },
   { key: "memory",     icon: <Brain size={16} />,          label: "记忆" },
+  { key: "petmemory",  icon: <Users size={16} />,          label: "桌宠记忆" },
   { key: "connection", icon: <Wifi size={16} />,         label: "连接" },
   { key: "ops",        icon: <Server size={16} />,         label: "运维" },
   { key: "live",       icon: <Film size={16} />,           label: "直播" },
@@ -218,6 +221,7 @@ export default function Dashboard() {
           <div style={{ display: activeNav === "knowledge" ? "block" : "none", height: "100%" }}><ErrorBoundary name="知识库"><KbPage kb={kb} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "tools" ? "block" : "none", height: "100%" }}><ErrorBoundary name="工具"><ToolsPage toolsData={toolsData} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "memory" ? "block" : "none", height: "100%" }}><ErrorBoundary name="记忆"><MemPage /></ErrorBoundary></div>
+          <div style={{ display: activeNav === "petmemory" ? "block" : "none", height: "100%" }}><ErrorBoundary name="桌宠记忆"><PetMemoryPage /></ErrorBoundary></div>
           <div style={{ display: activeNav === "connection" ? "block" : "none", height: "100%" }}><ErrorBoundary name="连接"><NapcatPage napcat={napcat} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "ops" ? "block" : "none", height: "100%" }}><ErrorBoundary name="运维"><OpsPage errors={globalErrors} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "live" ? "block" : "none", height: "100%" }}><ErrorBoundary name="直播"><LivePage /></ErrorBoundary></div>
@@ -1914,6 +1918,7 @@ function LivePage() {
   const [roomId, setRoomId] = useState('');
   const [rtmpUrl, setRtmpUrl] = useState('');
   const [dashscopeKey, setDashscopeKey] = useState('');
+  const [chatModel, setChatModel] = useState('');
   const [livePrompt, setLivePrompt] = useState('');
   const [danmaku, setDanmaku] = useState<any[]>([]);
   const [showConfig, setShowConfig] = useState(false);
@@ -2027,7 +2032,7 @@ function LivePage() {
   const loadConfig = useCallback(async () => {
     try { const cfg = await apiGet<any>('/api/live/config');
       setAccessKeyId(cfg.access_key_id||'');setAccessKeySecret(cfg.access_key_secret||'');
-      setAppId(cfg.app_id||'');setCode(cfg.code||'');setRoomId(cfg.room_id||'');setRtmpUrl(cfg.rtmp_url||'');setDashscopeKey(cfg.dashscope_api_key||'');setLivePrompt(cfg.live_prompt||'');
+      setAppId(cfg.app_id||'');setCode(cfg.code||'');setRoomId(cfg.room_id||'');setRtmpUrl(cfg.rtmp_url||'');setDashscopeKey(cfg.dashscope_api_key||'');setChatModel(cfg.chat_model||'');setLivePrompt(cfg.live_prompt||'');
     } catch {}
   }, []);
 
@@ -2046,7 +2051,7 @@ function LivePage() {
   }, [status?.connected]);
 
   const saveCfg = async () => {
-    try { const r = await apiPost('/api/live/save-config', {access_key_id:accessKeyId,access_key_secret:accessKeySecret,app_id:appId,code:code,room_id:roomId,dashscope_api_key:dashscopeKey,live_prompt:livePrompt}); if (r) notify('配置已保存', 'success'); else notify('保存失败', 'error'); } catch { notify('保存失败', 'error'); }
+    try { const r = await apiPost('/api/live/save-config', {access_key_id:accessKeyId,access_key_secret:accessKeySecret,app_id:appId,code:code,room_id:roomId,dashscope_api_key:dashscopeKey,chat_model:chatModel,live_prompt:livePrompt}); if (r) notify('配置已保存', 'success'); else notify('保存失败', 'error'); } catch { notify('保存失败', 'error'); }
   };
 
   const act = async (url: string, body?: any, okMsg?: string) => {
@@ -2264,6 +2269,10 @@ function LivePage() {
                   <input value={dashscopeKey} onChange={e=>setDashscopeKey(e.target.value)} type="password" className="flex-1 px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="留空则用对话页面的音频供应商或 Edge-TTS" />
                   <button onClick={async ()=>{ try { const r = await apiPost('/api/live/test-tts',{}); notify(r.ok?'TTS 连接成功':'TTS 失败: '+r.error, r.ok?'success':'error'); } catch { notify('请求失败','error'); }}} disabled={!dashscopeKey} className="px-3 py-2 rounded-lg text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-40 transition-colors shrink-0">测试</button>
                 </div>
+              </div>
+              <div>
+                <label className="block text-[10px] text-sakura-500 font-medium mb-1">桌宠对话模型（填了即生效，写入模型供应商设置）</label>
+                <input value={chatModel} onChange={e=>setChatModel(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="如 qwen-plus / deepseek-chat，覆盖当前对话供应商的模型" />
               </div>
               <div>
                 <label className="block text-[10px] text-sakura-500 font-medium mb-1">直播间 ID（可选）</label>
@@ -3029,6 +3038,120 @@ function LogsPage() {
     <div className="space-y-4">
       <p className="text-sm font-semibold text-sakura-500">日志（1 秒自动刷新）</p>
       <pre className="bg-[#1a1a2e] text-green-400 text-[11px] p-4 rounded-xl overflow-auto max-h-[70vh] font-mono leading-relaxed">{logs || "加载中..."}</pre>
+    </div>
+  );
+}
+
+// ── 桌宠长期记忆查看器（agent_memory）：肉眼确认「它记住了谁、记住了什么」 ──
+function PetMemoryPage() {
+  const [agentId, setAgentId] = useState("naixi");
+  const [objects, setObjects] = useState<any[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [detail, setDetail] = useState<{ profile: string; episodes: any[] } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [lastLoad, setLastLoad] = useState<string>("");
+
+  const loadList = useCallback(async () => {
+    setLoading(true);
+    try {
+      const d = await apiGet<any>(`/api/live/memory?agent_id=${encodeURIComponent(agentId)}`);
+      if (d?.ok) {
+        setObjects(d.objects || []);
+        setLastLoad(new Date().toLocaleTimeString("zh-CN"));
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [agentId]);
+
+  const loadDetail = useCallback(async (vid: string) => {
+    setSelected(vid);
+    setLoading(true);
+    try {
+      const d = await apiGet<any>(`/api/live/memory?agent_id=${encodeURIComponent(agentId)}&viewer_id=${encodeURIComponent(vid)}`);
+      if (d?.ok) setDetail({ profile: d.profile || "", episodes: d.episodes || [] });
+    } finally {
+      setLoading(false);
+    }
+  }, [agentId]);
+
+  useEffect(() => { loadList(); }, [loadList]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 flex-wrap">
+        <p className="text-sm font-semibold text-sakura-500">桌宠长期记忆（不随重启丢失）</p>
+        <input
+          value={agentId}
+          onChange={(e) => setAgentId(e.target.value)}
+          className="bg-[#1a1a2e] border border-sakura-200/30 rounded px-2 py-1 text-xs text-sakura-100 w-32"
+          placeholder="角色ID"
+        />
+        <button
+          onClick={loadList}
+          className="flex items-center gap-1 bg-sakura-500 hover:bg-sakura-600 text-white text-xs px-3 py-1.5 rounded-lg"
+        >
+          <RefreshCw size={13} className={loading ? "animate-spin" : ""} /> 刷新
+        </button>
+        {lastLoad && <span className="text-[11px] text-sakura-300">最后更新 {lastLoad}</span>}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* 左：记住的对象清单 */}
+        <div className="bg-white/60 dark:bg-[#232338] rounded-xl p-4">
+          <p className="text-xs font-semibold text-sakura-500 mb-2">记住了谁（{objects.length}）</p>
+          {objects.length === 0 && <p className="text-xs text-sakura-300">还没有记住任何人。让桌宠聊几句/接几发弹幕后回来刷新。</p>}
+          <div className="space-y-2 max-h-[60vh] overflow-auto">
+            {objects.map((o, i) => (
+              <div
+                key={i}
+                onClick={() => loadDetail(o.viewer_id)}
+                className={`cursor-pointer rounded-lg p-2.5 border text-xs ${selected === o.viewer_id ? "border-sakura-400 bg-sakura-50 dark:bg-sakura-500/10" : "border-sakura-200/30 hover:border-sakura-300"}`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-sakura-600 dark:text-sakura-300">
+                    {o.viewer_id === "" ? "（主人/通用）" : o.viewer_id}
+                  </span>
+                  <span className="text-[10px] text-sakura-300">
+                    画像 {o.profile} · 事件 {o.episodes}
+                  </span>
+                </div>
+                {o.last_ts > 0 && (
+                  <div className="text-[10px] text-sakura-300 mt-0.5">
+                    最近活跃 {new Date(o.last_ts * 1000).toLocaleString("zh-CN")}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 右：选中对象的明细 */}
+        <div className="bg-white/60 dark:bg-[#232338] rounded-xl p-4">
+          <p className="text-xs font-semibold text-sakura-500 mb-2">明细</p>
+          {!selected && <p className="text-xs text-sakura-300">点左侧某人查看它记住的画像与近期对话。</p>}
+          {detail && (
+            <div className="space-y-3 max-h-[60vh] overflow-auto">
+              <div>
+                <p className="text-[11px] font-medium text-sakura-400 mb-1">关于对方的画像（注入每次对话）</p>
+                <pre className="bg-[#1a1a2e] text-sakura-100 text-[11px] p-3 rounded-lg whitespace-pre-wrap">{detail.profile || "（暂无画像，多聊几次后会由 LLM 抽取）"}</pre>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium text-sakura-400 mb-1">近期事件流（旧→新，最多 50）</p>
+                <div className="space-y-1">
+                  {detail.episodes.map((e, i) => (
+                    <div key={i} className="text-[11px] text-sakura-200 bg-[#1a1a2e] rounded p-2">
+                      <span className="text-sakura-400 mr-2">{new Date((e.ts || 0) * 1000).toLocaleTimeString("zh-CN")}</span>
+                      {e.content}
+                    </div>
+                  ))}
+                  {detail.episodes.length === 0 && <p className="text-sakura-300 text-[11px]">暂无事件流。</p>}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

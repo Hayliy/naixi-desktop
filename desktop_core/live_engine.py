@@ -136,9 +136,12 @@ class LiveEngine:
         self._live2d_clients: set = set()
         # 桌宠子进程（PySide6 独立窗口）
         self._pet_proc: Optional[subprocess.Popen] = None
-        # 场景历史（全部保留，过长时压缩）
+        # 场景历史（本次会话工作缓冲，过长时压缩）
         self._scene_history: list[dict] = []
         self._live_prompt: str = DEFAULT_LIVE_PROMPT
+        # 长期记忆维护状态（agent_memory 持久化，替代"重启即失忆"）
+        self._memory_loaded: bool = False     # 预留：长期记忆开关
+        self._mem_call_count: int = 0         # 记忆维护计数（衰减/画像抽取）
         # 高并发防护
         self._last_process_time: float = 0.0      # 上次处理弹幕时间
         self._process_interval: float = 2.0        # 最小处理间隔（秒）
@@ -898,6 +901,35 @@ class LiveEngine:
             }
             from desktop_core.storage import meta_set
             meta_set("live_config", json.dumps(cfg))
+            # B站页「对话模型名称」：直接写回数据库里现有的聊天供应商（desktop_config.api_providers），
+            # 与「模型供应商设置」页共用同一份存储，不另存冗余字段；填了桌宠立即生效。
+            chat_model = kwargs.get("chat_model")
+            if isinstance(chat_model, str) and chat_model.strip():
+                try:
+                    from desktop_core.storage import meta_get as _mg, meta_set as _ms, encrypt_config as _enc
+                    raw_dc = _mg("desktop_config") or "{}"
+                    dc = json.loads(raw_dc) if raw_dc else {}
+                    provs = dc.setdefault("api_providers", {})
+                    target = None
+                    for pid, pcfg in provs.items():
+                        if pcfg.get("type", "chat") in ("chat", "default"):
+                            target = pid
+                            break
+                    if target:
+                        provs[target]["model"] = chat_model.strip()
+                    else:
+                        provs["bailian"] = {
+                            "type": "chat",
+                            "model": chat_model.strip(),
+                            "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+                            "api_key": self._dashscope_api_key or "",
+                        }
+                    _enc(dc)
+                    _ms("desktop_config", json.dumps(dc, ensure_ascii=False))
+                    log.info(f"[直播] 对话模型已写入供应商: {target or 'bailian'} -> {chat_model.strip()}")
+                    self._chat_cfg = None  # 立即使 _resolve_chat_config 缓存失效，改完立即生效
+                except Exception as e:
+                    log.warning(f"[直播] 对话模型写入失败: {e}")
             self._access_key_id = cfg["access_key_id"]
             self._access_key_secret = cfg["access_key_secret"]
             self._app_id = cfg["app_id"]
@@ -1480,8 +1512,8 @@ class LiveEngine:
         self._chat_cfg_ts = now
         return cfg
 
-    async def _call_llm(self, prompt: str) -> Optional[str]:
-        """调用配置的聊天 LLM，返回回复文本"""
+    async def _call_llm(self, prompt: str, viewer_id: str = "") -> Optional[str]:
+        """调用配置的聊天 LLM，返回回复文本。viewer_id 用于长期记忆按观众隔离。"""
         cfg = self._resolve_chat_config()
         if not cfg["api_key"] or not cfg["api_url"]:
             return None
@@ -1490,6 +1522,14 @@ class LiveEngine:
             import json as _json
             is_dashscope = "dashscope" in cfg["api_url"] or ("aliyuncs" in cfg["api_url"] and "compatible-mode" not in cfg["api_url"])
             messages = [{"role": "system", "content": self._live_prompt}]
+            # 长期记忆摘要（画像 + 近期事件），注入系统上下文——这是"它记得你/老粉"的来源
+            try:
+                from desktop_core.storage import mem_build_context
+                long_term = mem_build_context("naixi", viewer_id)
+                if long_term:
+                    messages.append({"role": "system", "content": "[长期记忆]\n" + long_term})
+            except:
+                pass
             # 构造上下文：全部历史，超长时压缩
             ctx = list(self._scene_history)
             total_chars = sum(len(h.get("content","")) for h in ctx)
@@ -1531,6 +1571,56 @@ class LiveEngine:
             pass
         return None
 
+    async def _raw_llm_call(self, messages: list) -> Optional[str]:
+        """单纯发一次聊天请求（不做记忆/上下文逻辑），供画像抽取等复用。"""
+        cfg = self._resolve_chat_config()
+        if not cfg["api_key"] or not cfg["api_url"]:
+            return None
+        try:
+            from aiohttp import ClientSession
+            is_dashscope = "dashscope" in cfg["api_url"] or ("aliyuncs" in cfg["api_url"] and "compatible-mode" not in cfg["api_url"])
+            if is_dashscope:
+                url = cfg["api_url"].rstrip("chat/completions").rstrip("/") + "/chat/completions"
+            else:
+                url = cfg["api_url"].rstrip("/") + ("/chat/completions" if "/chat/completions" not in cfg["api_url"] else "")
+            headers = {"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"}
+            payload = {"model": cfg["model"] or "qwen-plus", "messages": messages,
+                       "max_tokens": 300, "temperature": 0.4}
+            async with ClientSession() as s:
+                async with s.post(url, json=payload, headers=headers, timeout=15) as r:
+                    if r.status != 200:
+                        return None
+                    data = await r.json()
+                    return data.get("choices", [{}])[0].get("message", {}).get("content", "").strip() or None
+        except:
+            return None
+
+    async def _extract_profile(self, viewer_id: str):
+        """从与该观众的近期对话抽取稳定事实，写入 profile（轻量，依赖 LLM，带去重）。"""
+        from desktop_core.storage import mem_recent, mem_profile_set
+        recent = mem_recent("naixi", viewer_id, limit=30)
+        if not recent:
+            return
+        transcript = "\n".join((r.get("content") or "") for r in reversed(recent) if (r.get("content") or "").strip())
+        if len(transcript) < 80:
+            return
+        prompt = (
+            "以下是虚拟主播与观众【%s】的近期对话片段。请抽取关于这位观众的、"
+            "稳定且有用的特征（如：常聊的话题、性格倾向、与主播的关系、特殊梗/称呼、偏好）。"
+            "每条一行，格式：'事实描述'。不要编造；若无明显事实只回 NONE。\n\n%s"
+            % (viewer_id, transcript[:2000])
+        )
+        facts = await self._raw_llm_call([
+            {"role": "system", "content": "你是记忆整理助手，只输出事实列表，不要解释。"},
+            {"role": "user", "content": prompt},
+        ])
+        if not facts or facts.strip().upper() == "NONE":
+            return
+        for line in facts.splitlines():
+            line = line.strip().lstrip("-").strip()
+            if line and len(line) <= 200:
+                mem_profile_set("naixi", viewer_id, line, importance=1.0)
+
     # 动作标签 → Live2D motion 映射（通用）
     _ACTION_MOTION_MAP = {
         "wave": ("TapBody", 0), "bye": ("TapBody", 0),
@@ -1543,28 +1633,46 @@ class LiveEngine:
     _ACTION_NAMES = list(_ACTION_MOTION_MAP.keys())
 
     async def _decide_reply(self, text: str, user: str) -> tuple:
-        """弹幕回复：LLM → 规则降级。返回 (回复文本, 情绪, 动作标签)"""
+        """弹幕回复：LLM → 规则降级。返回 (回复文本, 情绪, 动作标签)。
+        每次互动都按观众(viewer_id=user)持久化到 agent_memory，重启/下次开播仍能回忆。"""
         llm_reply = await self._call_llm(
             f"[弹幕] {user}: {text[:100]}\n"
             "请用以下格式回复:\n"
             "[情绪] 回复内容 [动作标签]\n"
             "可用情绪: 开心、欢迎、惊讶、悲伤、害羞、生气、卖萌\n"
-            f"可用动作标签: {' '.join(f'[{a}]' for a in self._ACTION_NAMES)}\n"
-        )
+            f"可用动作标签: {' '.join(f'[{a}]' for a in self._ACTION_NAMES)}\n",
+            viewer_id=user)
+        reply_text, emotion, action = (None, "开心", "")
         if llm_reply:
-            return self._parse_reply(llm_reply)
-        t = text.lower().strip()
-        # (条件, 回复模板, 情绪, 动作)
-        rules = [
-            (lambda t: any(k in t for k in ["你好","hi","hello","在吗"]), f"欢迎{user}来到直播间～", "欢迎", "wave"),
-            (lambda t: any(k in t for k in ["谢谢","感谢","thx"]), f"谢谢{user}的支持！", "开心", "smile"),
-            (lambda t: any(k in t for k in ["666","哈哈","笑死","好活"]), f"嘻嘻～{user}开心就好！", "开心", "smile"),
-            (lambda t: any(k in t for k in ["主播","奶昔","老婆","可爱"]), f"被{user}夸了，好害羞", "害羞", "wave"),
-        ]
-        for cond, reply, emotion, action in rules:
-            if cond(t):
-                return (reply, emotion, action)
-        return (None, "开心", "")
+            reply_text, emotion, action = self._parse_reply(llm_reply)
+        else:
+            t = text.lower().strip()
+            # (条件, 回复模板, 情绪, 动作)
+            rules = [
+                (lambda t: any(k in t for k in ["你好","hi","hello","在吗"]), f"欢迎{user}来到直播间～", "欢迎", "wave"),
+                (lambda t: any(k in t for k in ["谢谢","感谢","thx"]), f"谢谢{user}的支持！", "开心", "smile"),
+                (lambda t: any(k in t for k in ["666","哈哈","笑死","好活"]), f"嘻嘻～{user}开心就好！", "开心", "smile"),
+                (lambda t: any(k in t for k in ["主播","奶昔","老婆","可爱"]), f"被{user}夸了，好害羞", "害羞", "wave"),
+            ]
+            for cond, r, emo, act in rules:
+                if cond(t):
+                    reply_text, emotion, action = (r, emo, act)
+                    break
+        # 持久化本次互动（按观众隔离）——即使规则回复也记，避免"连弹幕都会忘记"
+        if reply_text:
+            try:
+                from desktop_core.storage import mem_add
+                mem_add("naixi", user, "episodic", f"user: {text[:200]}")
+                mem_add("naixi", user, "episodic", f"assistant: {reply_text[:200]}")
+                self._mem_call_count += 1
+                if self._mem_call_count % 20 == 0:
+                    try:
+                        await self._extract_profile(user)
+                    except:
+                        pass
+            except:
+                pass
+        return (reply_text, emotion, action)
 
     def _parse_reply(self, raw: str) -> tuple:
         """解析 LLM 回复中的情绪标记和动作标签。返回 (文本, 情绪, 动作)"""

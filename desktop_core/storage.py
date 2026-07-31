@@ -386,6 +386,19 @@ def init_tables():
                 created_at TEXT DEFAULT (datetime('now'))
             );
             CREATE UNIQUE INDEX IF NOT EXISTS idx_hotkey_combo ON hotkeys(combo);
+
+            CREATE TABLE IF NOT EXISTS agent_memory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_id TEXT NOT NULL DEFAULT 'naixi',
+                viewer_id TEXT NOT NULL DEFAULT '',
+                type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                importance REAL DEFAULT 1.0,
+                ts REAL DEFAULT 0,
+                decay REAL DEFAULT 1.0,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_agent_memory_av ON agent_memory(agent_id, viewer_id, type, ts);
         """)
         # 为现有表添加 duration_ms 列（如果不存在）
         try:
@@ -472,6 +485,135 @@ def meta_set(key: str, value: str):
     conn = _get_conn()
     try:
         conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
+        conn.commit()
+    finally:
+        conn.close()
+
+# ── 长期记忆层（agent_memory）：替代全局 _scene_history，持久化 + 按观众维度 ──
+# 设计：episodic=原始对话/弹幕事件流（可回溯）；profile=从该观众对话中抽取的稳定事实（带重要度/衰减）。
+# 按 viewer_id 隔离：空串=通用/主人，否则=某观众 uid —— 直接对症"连弹幕都会忘记"。
+def mem_add(agent_id: str, viewer_id: str, mtype: str, content: str,
+            importance: float = 1.0, ts: float = None) -> int:
+    """写入一条记忆。mtype: 'episodic' | 'profile'"""
+    import time as _t
+    if ts is None:
+        ts = _t.time()
+    conn = _get_conn()
+    try:
+        cur = conn.execute(
+            "INSERT INTO agent_memory (agent_id, viewer_id, type, content, importance, ts) "
+            "VALUES (?,?,?,?,?,?)",
+            (agent_id, viewer_id or "", mtype, content, importance, ts))
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+def mem_recent(agent_id: str, viewer_id: str = "", limit: int = 30) -> list:
+    """取最近事件流（episodic），含通用(空viewer)与该观众，新→旧。"""
+    conn = _get_conn()
+    try:
+        if viewer_id:
+            rows = conn.execute(
+                "SELECT content, ts FROM agent_memory "
+                "WHERE agent_id=? AND type='episodic' AND (viewer_id=? OR viewer_id='') "
+                "ORDER BY ts DESC, id DESC LIMIT ?",
+                (agent_id, viewer_id, limit)).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT content, ts FROM agent_memory "
+                "WHERE agent_id=? AND type='episodic' ORDER BY ts DESC, id DESC LIMIT ?",
+                (agent_id, limit)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+def mem_profile_get(agent_id: str, viewer_id: str = "") -> str:
+    """聚合该对象(主人/观众)的画像事实，返回可注入 prompt 的文本；无则空串。"""
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT content, importance FROM agent_memory "
+            "WHERE agent_id=? AND type='profile' AND viewer_id=? "
+            "ORDER BY importance DESC, ts DESC",
+            (agent_id, viewer_id or "")).fetchall()
+        if not rows:
+            return ""
+        facts = [r["content"] for r in rows if (r["content"] or "").strip()]
+        return "\n".join("- " + f for f in facts)
+    finally:
+        conn.close()
+
+def mem_profile_set(agent_id: str, viewer_id: str, content: str, importance: float = 1.0):
+    """写入/刷新一条画像事实（按 content 去重：同内容刷新重要度/ts，否则新增）。"""
+    import time as _t
+    conn = _get_conn()
+    try:
+        existing = conn.execute(
+            "SELECT id FROM agent_memory WHERE agent_id=? AND type='profile' "
+            "AND viewer_id=? AND content=?",
+            (agent_id, viewer_id or "", content)).fetchone()
+        if existing:
+            conn.execute("UPDATE agent_memory SET importance=?, ts=? WHERE id=?",
+                         (importance, _t.time(), existing["id"]))
+        else:
+            conn.execute(
+                "INSERT INTO agent_memory (agent_id, viewer_id, type, content, importance, ts) "
+                "VALUES (?,?,?,?,?,?)",
+                (agent_id, viewer_id or "", "profile", content, importance, _t.time()))
+        conn.commit()
+    finally:
+        conn.close()
+
+def mem_build_context(agent_id: str, viewer_id: str = "", max_chars: int = 1500) -> str:
+    """构建注入 prompt 的长期记忆摘要：画像 + 近期事件流（旧→新）。空则空串。"""
+    profile = mem_profile_get(agent_id, viewer_id)
+    recent = mem_recent(agent_id, viewer_id, limit=20)
+    parts = []
+    if profile:
+        parts.append("【关于对方，你记得的】\n" + profile)
+    if recent:
+        lines = [(r.get("content") or "").strip() for r in reversed(recent) if (r.get("content") or "").strip()]
+        joined = "\n".join(lines)
+        if len(joined) > max_chars:
+            joined = joined[-max_chars:]
+        parts.append("【近期你们聊过】\n" + joined)
+    return "\n\n".join(parts) if parts else ""
+
+def mem_list_objects(agent_id: str) -> list:
+    """列出某角色记住的所有对象（主人/观众）：viewer_id、画像条数、事件条数、最近活跃时间。
+    用于调试接口，方便肉眼确认「它记住了谁」。空串 viewer 表示主人/通用。"""
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT viewer_id, type, COUNT(*) AS n, MAX(ts) AS last_ts "
+            "FROM agent_memory WHERE agent_id=? GROUP BY viewer_id, type",
+            (agent_id,)).fetchall()
+        agg = {}
+        for r in rows:
+            vid = r["viewer_id"] or "(主人/通用)"
+            a = agg.setdefault(vid, {"viewer_id": r["viewer_id"] or "", "profile": 0, "episodes": 0, "last_ts": 0})
+            if r["type"] == "profile":
+                a["profile"] = r["n"]
+            else:
+                a["episodes"] = r["n"]
+            a["last_ts"] = max(a["last_ts"], r["last_ts"] or 0)
+        return sorted(agg.values(), key=lambda x: x["last_ts"], reverse=True)
+    finally:
+        conn.close()
+
+
+def mem_decay():
+    """轻量衰减：episodic 超 7 天且重要度<0.5 的降低 decay；decay 过低则删除，避免无限膨胀。"""
+    import time as _t
+    conn = _get_conn()
+    try:
+        old_ts = _t.time() - 7 * 24 * 3600
+        conn.execute(
+            "UPDATE agent_memory SET decay = decay*0.9 "
+            "WHERE type='episodic' AND ts<? AND importance<0.5 AND decay>0.2",
+            (old_ts,))
+        conn.execute("DELETE FROM agent_memory WHERE type='episodic' AND decay<=0.2")
         conn.commit()
     finally:
         conn.close()

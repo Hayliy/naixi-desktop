@@ -3207,6 +3207,7 @@ def setup_routes(app):
 
     # 直播管理
     app.router.add_get("/api/live/status", api_live_status)
+    app.router.add_get("/api/live/memory", api_live_memory)
     app.router.add_post("/api/live/start", api_live_start)
     app.router.add_post("/api/live/stop", api_live_stop)
     app.router.add_get("/api/live/danmaku", api_live_danmaku)
@@ -3331,6 +3332,31 @@ async def api_live_status(request):
         # 而非在后端 9845 进程内 play_audio。旧后端无此字段，可用于确认真机后端是否已加载最新代码。
         st["voice_audio_push"] = True
     return web.json_response(st)
+
+
+async def api_live_memory(request):
+    """调试接口：查看角色记住了谁、记住了什么（长期记忆层 agent_memory）。
+    查询参数：agent_id（默认 naixi）、viewer_id（可选，指定某对象看明细）。
+    不传 viewer_id 返回「记住的对象清单」；传了返回该对象的画像 + 近期事件流。"""
+    from desktop_core import storage
+    try:
+        q = request.query
+        agent_id = q.get("agent_id", "naixi")
+        viewer_id = q.get("viewer_id", "")
+        if viewer_id:
+            profile = storage.mem_profile_get(agent_id, viewer_id)
+            episodes = storage.mem_recent(agent_id, viewer_id, limit=50)
+            return web.json_response({
+                "ok": True,
+                "agent_id": agent_id,
+                "viewer_id": viewer_id,
+                "profile": profile,
+                "episodes": episodes,
+            })
+        objects = storage.mem_list_objects(agent_id)
+        return web.json_response({"ok": True, "agent_id": agent_id, "objects": objects})
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 async def api_live_connect(request):
     """连接 B站"""
@@ -3808,6 +3834,7 @@ async def api_live_config(request):
             "room_id": engine._room_id,
             "rtmp_url": engine._rtmp_url,
             "dashscope_api_key": engine._dashscope_api_key[:4]+"****" if engine._dashscope_api_key else "",
+            "chat_model": (engine._resolve_chat_config() or {}).get("model", ""),
             "live_prompt": engine._live_prompt,
             "audio_out_device": engine._audio_out_device,
             "audio_in_device": engine._audio_in_device,
