@@ -1763,6 +1763,44 @@ class LiveEngine:
         self._ffmpeg_path = None
         return None
 
+    def _to_wav_base64(self, audio_bytes: bytes, sample_rate: int = 24000) -> str:
+        """把任意合成音频 bytes 统一转成标准 WAV（24000/1ch/s16）并返回 base64。
+
+        用于推给客户端（Qt 桌宠 / 浏览器舞台）自行播放，避免在后端进程出声
+        （后端由 Tauri 拉起，音频会话/设备易出问题导致听不到）。ffmpeg 路径复用
+        _resolve_ffmpeg 探测；转码失败返回空串，由调用方记录日志。
+        """
+        if not audio_bytes:
+            return ""
+        ffmpeg_path = self._resolve_ffmpeg()
+        if not ffmpeg_path:
+            log.warning("[语音] ffmpeg 不可用，无法转 wav 推给客户端")
+            return ""
+        try:
+            import io, os, base64, subprocess, tempfile
+            tmp_in = os.path.join(tempfile.gettempdir(), f"tts_in_{int(time.time()*1000)}")
+            tmp_out = os.path.join(tempfile.gettempdir(), f"tts_out_{int(time.time()*1000)}.wav")
+            with open(tmp_in, "wb") as f:
+                f.write(audio_bytes)
+            r = subprocess.run(
+                [ffmpeg_path, "-y", "-i", tmp_in, "-ar", str(sample_rate), "-ac", "1",
+                 "-sample_fmt", "s16", "-f", "wav", tmp_out],
+                capture_output=True, timeout=15
+            )
+            try: os.remove(tmp_in)
+            except: pass
+            if r.returncode != 0 or not os.path.exists(tmp_out):
+                log.warning(f"[语音] ffmpeg 转 wav 失败（rc={getattr(r,'returncode','?')}），未推送音频")
+                return ""
+            with open(tmp_out, "rb") as f:
+                wav = f.read()
+            try: os.remove(tmp_out)
+            except: pass
+            return base64.b64encode(wav).decode()
+        except Exception as e:
+            log.warning(f"[语音] 转 wav 异常: {e}")
+            return ""
+
     def play_audio(self, audio_bytes: bytes, sample_rate: int = 24000):
         """播放音频 bytes 到输出设备（ffmpeg 转 WAV，路径自动探测）"""
         if not self._sd_available:

@@ -1302,6 +1302,8 @@ class PetWindow(QWidget):
                         ms = d.get("frame_ms", 80)
                         action = d.get("action", "")
                         self._ws_queue.put({"type":"speak","text":txt,"emotion":d.get("emotion",""),"motion_group":mg,"motion_index":mi,"action":action,"mouth":mouth,"frame_ms":ms})
+                    elif d.get("type") == "audio":
+                        self._ws_queue.put({"type": "audio", "audio": d.get("audio", "")})
             except:
                 self._ws = None
                 if self._running:
@@ -1316,6 +1318,9 @@ class PetWindow(QWidget):
         while not self._ws_queue.empty():
             try:
                 msg = self._ws_queue.get_nowait()
+                if msg.get("type") == "audio":
+                    self._play_audio_b64(msg.get("audio", ""))
+                    continue
                 if msg.get("type") == "speak":
                     txt = msg.get("text", "")
                     if txt:
@@ -1363,6 +1368,27 @@ class PetWindow(QWidget):
                                 self.model.StartMotion(fb, 0, 1)
             except:
                 pass
+
+    def _play_audio_b64(self, b64: str):
+        """在 Qt 桌宠自身进程播放 base64 WAV（语音从桌宠本体发出，不依赖后端进程音频输出）。"""
+        if not b64:
+            return
+        try:
+            import base64 as _b64, io, wave, numpy as np, sounddevice as sd, threading
+            raw = _b64.b64decode(b64)
+            wf = wave.open(io.BytesIO(raw), 'rb')
+            rate = wf.getframerate()
+            pcm = wf.readframes(wf.getnframes())
+            arr = np.frombuffer(pcm, dtype=np.int16)
+            def _t():
+                try:
+                    sd.play(arr, rate)
+                    sd.wait()
+                except Exception as e:
+                    log.warning(f"[桌宠语音] 播放异常: {e}")
+            threading.Thread(target=_t, daemon=True).start()
+        except Exception as e:
+            log.warning(f"[桌宠语音] 解码/播放失败: {e}")
 
     def closeEvent(self, event):
         self._running = False

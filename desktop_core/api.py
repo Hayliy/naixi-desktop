@@ -3876,15 +3876,20 @@ async def api_live2d_stream(request):
                             "mouth": [0.5]*5,
                             "frame_ms": 80,
                         })
-                        # 同时触发 TTS 语音播放
+                        # 合成语音并推给客户端自行播放（Qt 桌宠 / 舞台 / 浏览器宠物各自出声，
+                        # 不再依赖后端进程输出，避免后端音频会话/设备导致听不到）。
                         try:
                             audio = await engine._synthesize(reply)
                             if audio:
-                                engine.play_audio(audio)
+                                audio_b64 = engine._to_wav_base64(audio) or ""
+                                if audio_b64:
+                                    await ws.send_json({"type": "audio", "audio": audio_b64, "agent_id": "naixi"})
+                                else:
+                                    log.warning("[语音] 转 wav 失败，未推送音频")
                             else:
-                                log.warning("[语音] _synthesize 返回空，未触发播放")
+                                log.warning("[语音] _synthesize 返回空，未推送音频")
                         except Exception as e:
-                            log.warning(f"[语音] 播放触发异常: {e}")
+                            log.warning(f"[语音] 合成触发异常: {e}")
                 except:
                     pass
     finally:

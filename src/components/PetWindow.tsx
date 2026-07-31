@@ -223,6 +223,11 @@ export default function PetWindow() {
           }
           setMouth(sprite, 0);
           speakingRef.current = false;
+        } else if (data.type === "audio") {
+          if (data.audio) {
+            const a = new Audio(`data:audio/wav;base64,${data.audio}`);
+            a.play().catch((e) => console.error("[语音] 播放失败", e));
+          }
         } else if (data.type === "avatar_expression") {
           // 后端 SelfRenderBackend：情绪 → 表情模糊匹配
           applyEmotion(sprite, expressionsRef.current, data.emotion);

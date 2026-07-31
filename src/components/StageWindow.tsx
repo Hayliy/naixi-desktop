@@ -192,6 +192,11 @@ export default function StageWindow() {
           }
           setMouth(actor.sprite, 0);
           actor.speaking = false;
+        } else if (data.type === "audio") {
+          if (data.audio) {
+            const a = new Audio(`data:audio/wav;base64,${data.audio}`);
+            a.play().catch((e) => console.error("[语音] 播放失败", e));
+          }
         } else if (data.type === "avatar_expression") {
           applyEmotion(actor.sprite, actor.expressions, data.emotion);
         } else if (data.type === "avatar_motion") {
