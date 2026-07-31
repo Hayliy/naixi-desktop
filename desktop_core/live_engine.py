@@ -2683,22 +2683,84 @@ class LiveEngine:
             self._ffmpeg_proc = None
             log.info("[直播] 推流已停止")
 
+    @staticmethod
+    def _resolve_pet_python():
+        """桌宠子进程必须用 embed python（含 PySide6/live2d）。
+
+        后端 sys.executable 在 dev 态常是受管 python（缺 PySide6），直接用它启动子进程会
+        import 即秒退，且 run_pet 的 try/except 包不住模块级 import，无任何日志可查。
+        故显式探测 embed python（兼容 活目录 与 resources 副本 两种布局）：
+          - 活目录: desktop_core/ -> ../../src-tauri/resources/python-embed/python.exe
+          - resources 副本: resources/desktop_core/ -> ../python-embed/python.exe
+        命中即用，回退 sys.executable。
+        """
+        import os as _os
+        here = _os.path.dirname(_os.path.abspath(__file__))
+        candidates = [
+            _os.path.abspath(_os.path.join(here, "..", "src-tauri", "resources", "python-embed", "python.exe")),
+            _os.path.abspath(_os.path.join(here, "..", "python-embed", "python.exe")),
+            _os.path.abspath(_os.path.join(here, "resources", "python-embed", "python.exe")),
+        ]
+        for c in candidates:
+            if _os.path.exists(c):
+                return c
+        # 兜底：向上逐级搜索 python-embed/python.exe
+        d = here
+        for _ in range(8):
+            cand = _os.path.join(d, "python-embed", "python.exe")
+            if _os.path.exists(cand):
+                return _os.path.abspath(cand)
+            parent = _os.path.dirname(d)
+            if parent == d:
+                break
+            d = parent
+        return __import__("sys").executable
+
     def _start_pet(self, model_path: str = ""):
-        """启动桌宠子进程（PySide6 独立窗口）"""
+        """启动桌宠子进程（PySide6 独立窗口）
+
+        兼容两种布局：
+          - 活目录: desktop_core/live_engine.py -> ../../src-tauri/sidecar/pet_window.py
+          - 打包/resources 副本: resources/desktop_core/live_engine.py -> ../../src-tauri/sidecar/pet_window.py
+        无论哪种，向上退三层都是项目根，故统一拼 项目根/src-tauri/sidecar/pet_window.py
+        （该入口内部 _find_core_root 会把 desktop_core 加进 sys.path，import 安全）。
+        另强制注入 PYTHONPATH 到 desktop_core 的父目录，双保险：即便直接跑模块作脚本，
+        `from desktop_core.xxx import` 也不会 ModuleNotFoundError。
+        """
         if self._pet_proc and self._pet_proc.poll() is None:
             log.info("[桌宠] 已在运行")
             return True
         try:
-            sidecar = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src-tauri", "sidecar")
-            pet_script = os.path.join(sidecar, "pet_window.py")
-            if not os.path.exists(pet_script):
-                # 也可能是和桌面端代码放在一起
-                pet_script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "desktop_core", "pet_window.py")
-            args = [sys.executable, "-B", pet_script]
+            here = os.path.dirname(os.path.abspath(__file__))
+            # 向上逐级查找 src-tauri/sidecar/pet_window.py 入口（兼容 活目录 与 resources 副本 两种布局，
+            # 不再手算相对层数，避免 resources 布局下少退一层导致拼错路径）。入口内部 _find_core_root
+            # 会把 desktop_core 加进 sys.path，import 安全。
+            pet_script = None
+            d = here
+            for _ in range(8):
+                cand = os.path.join(d, "src-tauri", "sidecar", "pet_window.py")
+                if os.path.exists(cand):
+                    pet_script = os.path.abspath(cand)
+                    break
+                parent = os.path.dirname(d)
+                if parent == d:
+                    break
+                d = parent
+            if pet_script is None:
+                # 兜底：直接跑本目录的 pet_window.py（需 PYTHONPATH 保证 desktop_core 可 import）
+                pet_script = os.path.abspath(os.path.join(here, "pet_window.py"))
+            py = self._resolve_pet_python()
+            args = [py, "-B", pet_script]
             if model_path:
                 args.append(model_path)
-            self._pet_proc = subprocess.Popen(args)
-            log.info(f"[桌宠] 已启动: {' '.join(args[-2:])}")
+            # 关键：注入 PYTHONPATH，保证 desktop_core 包可被 import
+            env = dict(os.environ)
+            core_parent = os.path.dirname(here)  # desktop_core 的父目录（含 desktop_core 包）
+            pp = env.get("PYTHONPATH", "")
+            if core_parent and core_parent not in pp.split(os.pathsep):
+                env["PYTHONPATH"] = core_parent + (os.pathsep + pp if pp else "")
+            self._pet_proc = subprocess.Popen(args, env=env)
+            log.info(f"[桌宠] 已启动: {py} {pet_script} (PYTHONPATH={core_parent})")
             return True
         except Exception as e:
             log.warning(f"[桌宠] 启动失败: {e}")
