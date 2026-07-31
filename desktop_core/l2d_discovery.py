@@ -18,6 +18,7 @@ __all__ = [
     "is_valid_motion3",
     "exp3_display_name",
     "discover_model_actions",
+    "discover_models",
 ]
 
 
@@ -156,3 +157,45 @@ def discover_model_actions(model3_path: str) -> dict:
         except Exception:
             pass
     return out
+
+
+# VTube Studio 商店模型目录（用户实际模型常驻于此；桌面端 data/models 往往为空）。
+# 与 pet_window.py 原本写死的 VTS_MODELS 保持一致，集中在此避免两处再次漂移。
+VTS_MODELS = r"D:\Program Files\Steam\steamapps\common\VTube Studio\VTube Studio_Data\StreamingAssets\Live2DModels"
+
+
+def discover_models() -> list:
+    """自动发现本地 Live2D 模型（与 pet_window.find_model3 同源，供后端 / 前端共用）。
+
+    搜索根（按优先级）：
+      1) 桌面 data/models        —— 用户通过「导入模型」落盘目录；
+      2) godot_renderer/models   —— VRM/Godot 渲染兜底目录；
+      3) VTube Studio 商店目录   —— 用户真实模型常驻处（桌面端 data/models 常为空）。
+
+    返回 [{"name","modelFile","path"}...]，按目录名稳定排序；未发现返回 []，
+    调用方据此决定是否回退到文件选择器。
+
+    注意：本函数仅依赖标准库，不引入 PySide/live2d，可在后端 aiohttp 进程与
+    Qt 桌宠子进程中安全共用，是「自动发现模型地址」的唯一权威实现。
+    """
+    desktop_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    roots = [
+        os.path.join(desktop_root, "data", "models"),
+        os.path.join(desktop_root, "godot_renderer", "models"),
+        VTS_MODELS,
+    ]
+    models = []
+    seen = set()
+    for base in roots:
+        if not os.path.exists(base):
+            continue
+        for entry in sorted(os.listdir(base)):
+            d = os.path.join(base, entry)
+            if not os.path.isdir(d):
+                continue
+            for f in sorted(os.listdir(d)):
+                if f.endswith(".model3.json") and f not in seen:
+                    seen.add(f)
+                    models.append({"name": entry, "modelFile": f, "path": os.path.join(d, f)})
+                    break
+    return models

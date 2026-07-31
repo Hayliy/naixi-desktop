@@ -28,15 +28,8 @@ from live2d import v3 as live2d
 
 log = logging.getLogger("pet_window")
 
-# 模型目录：桌面端 data/models/ 为主，VTube Studio 为可选来源
-_DESKTOP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_MODELS = os.path.join(_DESKTOP_ROOT, "data", "models")
-VTS_MODELS = r"D:\Program Files\Steam\steamapps\common\VTube Studio\VTube Studio_Data\StreamingAssets\Live2DModels"
-
-SEARCH_ROOTS = [DATA_MODELS]
-# VTube Studio 存在时才加入扫描
-if os.path.exists(VTS_MODELS):
-    SEARCH_ROOTS.append(VTS_MODELS)
+# 模型目录：自动发现逻辑集中到 desktop_core/l2d_discovery.discover_models
+# （含 data/models + godot_renderer/models + VTube Studio 目录），禁止在此重复写搜索根。
 
 
 class BubbleWindow(QWidget):
@@ -129,21 +122,9 @@ class BubbleWindow(QWidget):
 
 
 def find_model3() -> list[dict]:
-    models = []
-    seen = set()
-    for base in SEARCH_ROOTS:
-        if not os.path.exists(base):
-            continue
-        for entry in os.listdir(base):
-            d = os.path.join(base, entry)
-            if not os.path.isdir(d):
-                continue
-            for f in os.listdir(d):
-                if f.endswith(".model3.json") and f not in seen:
-                    seen.add(f)
-                    models.append({"name": entry, "modelFile": f, "path": os.path.join(d, f)})
-                    break
-    return models
+    # 与后端 api_live_config 共用同一套自动发现逻辑（含 VTube Studio 目录）
+    from desktop_core.l2d_discovery import discover_models
+    return discover_models()
 
 
 class PetGL(QOpenGLWidget):

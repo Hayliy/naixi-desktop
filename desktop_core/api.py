@@ -3324,7 +3324,13 @@ async def _on_startup_mcp(app):
 async def api_live_status(request):
     """直播引擎状态"""
     from desktop_core.live_engine import engine
-    return web.json_response(engine.status)
+    st = engine.status
+    if isinstance(st, dict):
+        st = dict(st)
+        # 治本标记：当前后端已改为向客户端推 audio（由桌宠/舞台/浏览器本体播放），
+        # 而非在后端 9845 进程内 play_audio。旧后端无此字段，可用于确认真机后端是否已加载最新代码。
+        st["voice_audio_push"] = True
+    return web.json_response(st)
 
 async def api_live_connect(request):
     """连接 B站"""
@@ -3785,28 +3791,14 @@ async def api_live_config(request):
     engine._load_config()
     if request.method == "GET":
         mp = engine._model_path
-        # 未手动设置时自动发现第一个模型
+        # 未手动设置时自动发现第一个模型（含 VTube Studio 目录，与 Qt 桌宠 find_model3 同源）
         if not mp:
             try:
-                for base_dir in (
-                    os.path.join(_DESKTOP_DIR, "data", "models"),
-                    os.path.join(_DESKTOP_DIR, "godot_renderer", "models"),
-                ):
-                    if not os.path.exists(base_dir):
-                        continue
-                    for entry in sorted(os.listdir(base_dir)):
-                        d = os.path.join(base_dir, entry)
-                        if not os.path.isdir(d):
-                            continue
-                        for f in os.listdir(d):
-                            if f.endswith(".model3.json"):
-                                mp = os.path.join(d, f)
-                                break
-                        if mp:
-                            break
-                    if mp:
-                        break
-            except:
+                from desktop_core.l2d_discovery import discover_models
+                found = discover_models()
+                if found:
+                    mp = found[0]["path"]
+            except Exception:
                 pass
         return web.json_response({
             "access_key_id": engine._access_key_id,
