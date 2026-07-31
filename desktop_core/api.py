@@ -1471,41 +1471,12 @@ async def api_generate_voice(request):
         audio_bytes = None
         fmt = "wav"
 
-        # 1) 优先用配置的语音供应商
+        # 1) 优先用配置的语音供应商（与 Qt 桌宠共用 engine._cosyvoice_request，避免两条 TTS 路径分叉）
         try:
-            provider = _find_provider_by_type("audio")
-            if provider:
-                import aiohttp
-                api_key = provider.get("api_key", "")
-                api_url = provider.get("api_url", "")
-                model = provider.get("model", "cosyvoice-v3-flash")
-                decrypt_key = decrypt_api_key(api_key)
-                if decrypt_key:
-                    api_key = decrypt_key
-                headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-                is_dashscope = "dashscope" in api_url or "aliyuncs" in api_url
-                if is_dashscope:
-                    tts_url = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"
-                    payload = {"model": model, "input": {"text": text, "voice": "longfeifei_v3", "format": "wav", "sample_rate": 24000}}
-                    async with aiohttp.ClientSession(headers=headers) as session:
-                        async with session.post(tts_url, json=payload, timeout=aiohttp.ClientTimeout(total=60)) as resp:
-                            if resp.status == 200:
-                                result = await resp.json()
-                                audio_url = result.get("output", {}).get("audio", {}).get("url", "")
-                                if audio_url:
-                                    async with aiohttp.ClientSession() as dl_session:
-                                        async with dl_session.get(audio_url, timeout=30) as ar:
-                                            if ar.status == 200:
-                                                audio_bytes = await ar.read()
-                                                fmt = "wav"
-                else:
-                    tts_url = api_url.rstrip("/") + "/audio/speech"
-                    payload = {"model": model, "input": text, "voice": "alloy", "response_format": "wav"}
-                    async with aiohttp.ClientSession(headers=headers) as session:
-                        async with session.post(tts_url, json=payload, timeout=aiohttp.ClientTimeout(total=60)) as resp:
-                            if resp.status == 200:
-                                audio_bytes = await resp.read()
-                                fmt = "wav"
+            from desktop_core.live_engine import engine
+            audio_bytes = await engine._cosyvoice_request(text)
+            if audio_bytes:
+                fmt = "wav"
         except Exception as e:
             log.warning(f"[语音] 配置供应商合成失败，准备降级 Edge-TTS: {e}")
 

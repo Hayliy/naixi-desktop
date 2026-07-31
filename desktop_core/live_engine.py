@@ -2598,38 +2598,59 @@ class LiveEngine:
             cfg["api_key"] = os.environ.get("DASHSCOPE_API_KEY", "")
         return cfg
 
-    async def _cosyvoice_request(self, text: str, timeout: int = 30) -> Optional[bytes]:
-        """调用 TTS，返回音频 bytes（内存流式，不存文件）"""
+    async def _cosyvoice_request(self, text: str, timeout: int = 60) -> Optional[bytes]:
+        """调用用户的语音模型（bailian_audio / 任意 type=audio 供应商）合成语音，返回音频 bytes。
+
+        统一走 dashscope aigc/text2audio 兼容 HTTP 端点（与 api_generate_voice 的语音供应商分支
+        【完全一致】），不再用 tts_v2 的 SpeechSynthesizer SDK —— 该 SDK 不支持 cosyvoice-v3-flash
+        这类模型，会静默抛错被 except 吞掉 → _synthesize 误降级到 Edge-TTS（Xiaoxiao 嗓音），
+        表现为“Qt 语音不走我的语音模型”。改用 HTTP 端点后，桌宠与聊天朗读共用同一套合成逻辑。
+        返回 wav bytes（payload 指定 format=wav）；失败/未配置返回 None（交由 _synthesize 降级）。
+        """
         tts = self._resolve_tts_config()
         if not tts["api_key"]:
             return None
-        is_dashscope = "dashscope" in tts["api_url"] or "aliyuncs" in tts["api_url"]
+        api_key = tts["api_key"]
+        api_url = tts["api_url"]
+        model = tts["model"]
+        is_dashscope = "dashscope" in api_url or "aliyuncs" in api_url
         try:
+            import aiohttp
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
             if is_dashscope:
-                # 百炼 WebSocket 流式合成（返回完整音频字节，无临时文件）
-                import dashscope
-                from dashscope.audio.tts_v2 import SpeechSynthesizer
-                dashscope.api_key = tts["api_key"]
-                voice = os.environ.get("COSYVOICE_VOICE", "longfeifei_v3")
-                # SpeechSynthesizer 是同步的，放线程池跑
-                def _sync_synth():
-                    synth = SpeechSynthesizer(model=tts["model"], voice=voice)
-                    return synth.call(text)
-                loop = asyncio.get_event_loop()
-                audio = await loop.run_in_executor(None, _sync_synth)
-                return audio if audio else None
+                # 百炼 TTS 端点（cosyvoice-v3-flash 等模型经此服务），与聊天朗读接口同构
+                tts_url = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"
+                payload = {"model": model, "input": {"text": text, "voice": "longfeifei_v3",
+                                                      "format": "wav", "sample_rate": 24000}}
+                async with aiohttp.ClientSession(headers=headers) as session:
+                    async with session.post(tts_url, json=payload,
+                                            timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+                        if resp.status == 200:
+                            result = await resp.json()
+                            output = result.get("output", {})
+                            audio_url = output.get("audio", {}).get("url", "")
+                            if audio_url:
+                                # 部分端点返回临时下载 URL，拉取后返回原始 bytes
+                                async with aiohttp.ClientSession() as dl:
+                                    async with dl.get(audio_url, timeout=aiohttp.ClientTimeout(total=30)) as ar:
+                                        if ar.status == 200:
+                                            return await ar.read()
+                            else:
+                                # 部分端点直接内联 base64
+                                data = output.get("audio", {}).get("data") or output.get("data")
+                                if data:
+                                    import base64
+                                    return base64.b64decode(data)
             else:
-                # OpenAI 兼容模式：HTTP 直接返回音频字节
-                from aiohttp import ClientSession
-                headers = {"Authorization": f"Bearer {tts['api_key']}", "Content-Type": "application/json"}
-                url = tts["api_url"].rstrip("/") + "/audio/speech"
-                payload = {"model": tts["model"], "input": text, "voice": "alloy", "response_format": "wav"}
-                async with ClientSession() as s:
-                    async with s.post(url, json=payload, headers=headers, timeout=timeout) as r:
+                # OpenAI 兼容 TTS：HTTP 直接返回音频字节
+                tts_url = api_url.rstrip("/") + "/audio/speech"
+                payload = {"model": model, "input": text, "voice": "alloy", "response_format": "wav"}
+                async with aiohttp.ClientSession(headers=headers) as s:
+                    async with s.post(tts_url, json=payload, timeout=aiohttp.ClientTimeout(total=timeout)) as r:
                         if r.status == 200:
                             return await r.read()
-        except:
-            pass
+        except Exception as e:
+            log.warning(f"[语音合成] 配置供应商合成失败: {e}")
         return None
 
     async def test_tts(self) -> str:

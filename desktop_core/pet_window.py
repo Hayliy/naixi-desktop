@@ -84,14 +84,42 @@ class BubbleWindow(QWidget):
         self._hide_timer.start(duration)
 
     def _reposition(self):
-        if self._pet is None:
+        """气泡定位：悬在【模型当前包围盒】头顶正上方，随模型缩放/移动实时跟随。
+
+        旧实现锚定到窗口左上角（固定几何），模型缩放时窗口不动 → 气泡永远按
+        “最大模型”位置布局，缩放后偏离模型。现改用 PetWindow 的 _hit_rect
+        （_compute_hit_rect 已随 zoom 缩放，命中矩形即模型真实轮廓），把气泡
+        放到模型头顶；头顶空间不足则落到模型脚下。
+        """
+        pet = self._pet
+        if pet is None:
             return
-        pp = self._pet.pos()
-        x = pp.x() + 20
-        y = pp.y() - self.height() + 30
-        if y < 0:
-            y = pp.y() + 20
-        self.move(x, y)
+        pp = pet.pos()
+        bw, bh = self.width(), self.height()
+        hr = getattr(pet, '_hit_rect', None)
+        if hr is None or hr.width() < 10:
+            # 回退：模型包围盒未就绪时，沿用窗口相对定位（旧行为）
+            x = pp.x() + 20
+            y = pp.y() - bh + 30
+            if y < 0:
+                y = pp.y() + 20
+            self.move(int(x), int(y))
+            return
+        # 模型包围盒（PetWindow 局部坐标）→ 转全局；气泡居中于模型头顶上方 8px
+        model_cx = hr.x() + hr.width() / 2.0
+        model_top = hr.y()
+        x = pp.x() + model_cx - bw / 2.0
+        y = pp.y() + model_top - bh - 8
+        sc = QGuiApplication.primaryScreen()
+        if sc is not None:
+            avail = sc.availableGeometry()
+            x = max(avail.x(), min(x, avail.x() + avail.width() - bw))
+            if y < avail.y():
+                # 头顶空间不足（模型贴屏幕顶）→ 改放模型脚下
+                y = pp.y() + (hr.y() + hr.height()) + 8
+                if y + bh > avail.y() + avail.height():
+                    y = pp.y() + 20
+        self.move(int(x), int(y))
 
     def _fade_out(self):
         self._fade_anim = QPropertyAnimation(self, b"windowOpacity")
@@ -804,6 +832,11 @@ class PetWindow(QWidget):
                 if hr is not None and hr.width() > 10 and hr.height() > 10 and _key != getattr(self, '_last_mask_key', None):
                     self._last_mask_key = _key
                     self.setMask(_region)
+                    # 缩放/输入框显隐导致模型包围盒或输入区变化 → 同步气泡与输入框布局，
+                    # 使其始终“长”在模型上（不再按固定窗口几何布局）。
+                    self._layout_chat_input()
+                    if hasattr(self, '_bubble'):
+                        self._bubble._reposition()
         except Exception:
             pass
         if not self.model:
@@ -856,6 +889,26 @@ class PetWindow(QWidget):
         if hasattr(self, '_bubble'):
             self._bubble._reposition()
 
+    def _layout_chat_input(self):
+        """测试对话输入框定位：贴【模型脚下】（模型包围盒底部），随缩放跟随；不超出窗口底边。
+
+        旧实现固定在窗口底部 (self.height()-28)，模型缩小时输入框远离模型、放大时
+        压到模型身上。现锚到 _hit_rect 底部，与气泡一起“长”在模型上。
+        """
+        ci = getattr(self, '_chat_input', None)
+        if ci is None or not ci.isVisible():
+            return
+        hr = getattr(self, '_hit_rect', None)
+        if hr is None or hr.width() < 10:
+            ci.setGeometry(4, max(4, self.height() - 28), max(40, self.width() - 8), 24)
+            return
+        w = max(60, hr.width())
+        x = hr.x() + (hr.width() - w) / 2.0
+        # 输入框贴模型脚下，但始终留在窗口内（不超出底边/顶边）
+        y = min(self.height() - 28, hr.y() + hr.height() - 26)
+        y = max(4.0, y)
+        ci.setGeometry(int(x), int(y), int(w), 24)
+
     def resizeEvent(self, e):
         """窗口几何随 zoom 变化（timerEvent 驱动）时，同步输入框与气泡位置。
 
@@ -864,7 +917,7 @@ class PetWindow(QWidget):
         """
         super().resizeEvent(e)
         if hasattr(self, '_chat_input'):
-            self._chat_input.setGeometry(4, max(4, self.height() - 28), max(40, self.width() - 8), 24)
+            self._layout_chat_input()
         if hasattr(self, '_bubble'):
             self._bubble._reposition()
 
@@ -982,7 +1035,10 @@ class PetWindow(QWidget):
         menu.addSeparator()
         # 开发者模式二级菜单：收纳测试对话 + 调试叠加层（普通用户右键菜单不暴露这些开发/调试工具）
         dev_sub = menu.addMenu("开发者模式")
-        dev_sub.addAction("测试对话", lambda: self._chat_input.show() or self._chat_input.setFocus())
+        chat_a = dev_sub.addAction("测试对话")
+        chat_a.setCheckable(True)
+        chat_a.setChecked(self._chat_input.isVisible())
+        chat_a.triggered.connect(self._toggle_test_chat)
         dev_sub.addSeparator()
         dbg_a = dev_sub.addAction("调试叠加层")
         dbg_a.setCheckable(True)
@@ -1121,12 +1177,28 @@ class PetWindow(QWidget):
         except:
             pass
 
+    def _toggle_test_chat(self, checked: bool):
+        """右键「开发者模式 → 测试对话」勾选切换：勾上=显示输入框并聚焦，取消勾选=关闭。
+
+        之前该入口只能 show 不能关（发完消息才隐藏），用户无法主动关闭。改成
+        可勾选开关后，关闭完全由用户控制；发送后不再自动隐藏，保持常驻便于连续对话。
+        """
+        ci = getattr(self, '_chat_input', None)
+        if ci is None:
+            return
+        if checked:
+            ci.clear()
+            self._layout_chat_input()
+            ci.show()
+            ci.setFocus()
+        else:
+            ci.hide()
+
     def _send_chat(self):
         text = self._chat_input.text().strip()
         if not text:
             return
         self._chat_input.clear()
-        self._chat_input.hide()
         ws = getattr(self, "_ws", None)
         import time as _t
         try:
