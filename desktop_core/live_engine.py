@@ -1674,6 +1674,118 @@ class LiveEngine:
                 pass
         return (reply_text, emotion, action)
 
+    async def react_to_scene(self, description: str) -> tuple:
+        """场景感知反应（C 反应陪伴）：把一段场景描述（屏幕文字/OCR/手动注入）喂给桌宠，
+        让它以桌宠身份自然吐槽/感慨/闲聊。复用大脑（记忆+LLM）与统一输出（speak字幕+audio语音）。
+        viewer_id="主人"：场景是主人在经历，桌宠对主人反应，并可读主人长期记忆。"""
+        if not description or not description.strip():
+            return (None, "开心", "")
+        desc = description.strip()[:300]
+        prompt = (
+            f"[场景观察] 你（桌宠）注意到主人当前的环境/画面里是这样的：{desc}\n"
+            "请以桌宠身份对此自然反应——可以吐槽、感慨、好奇、起哄或顺势闲聊，像真人在旁边看一样。"
+            "用以下格式回复:\n"
+            "[情绪] 回复内容 [动作标签]\n"
+            "可用情绪: 开心、欢迎、惊讶、悲伤、害羞、生气、卖萌\n"
+            f"可用动作标签: {' '.join(f'[{a}]' for a in self._ACTION_NAMES)}\n"
+        )
+        llm_reply = await self._call_llm(prompt, viewer_id="主人")
+        if not llm_reply:
+            return (None, "开心", "")
+        return self._parse_reply(llm_reply)
+
+    # ── 场景自动感知（C 反应陪伴·自动截屏+OCR） ──
+    def _capture_screen(self, out_path: str) -> bool:
+        """ffmpeg gdigrab 截全屏到 out_path。成功返回 True。"""
+        try:
+            import subprocess, shutil
+            ff = shutil.which("ffmpeg") or "ffmpeg"
+            cmd = [ff, "-y", "-f", "gdigrab", "-framerate", "1", "-i", "desktop",
+                   "-frames:v", "1", "-loglevel", "error", out_path]
+            subprocess.run(cmd, timeout=15, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return os.path.exists(out_path) and os.path.getsize(out_path) > 1000
+        except Exception as e:
+            log.warning(f"[场景感知] 截屏失败: {e}")
+            return False
+
+    def _ocr_image(self, path: str) -> str:
+        """用 paddleocr 识别图片文字（中文）。未安装/失败返回空串（自动降级，不崩）。"""
+        try:
+            from paddleocr import PaddleOCR
+            eng = getattr(self, "_ocr_engine", None)
+            if eng is None:
+                eng = PaddleOCR(use_angle_cls=True, lang="ch", show_log=False)
+                self._ocr_engine = eng
+            res = eng.ocr(path, cls=True)
+            lines = []
+            if res and isinstance(res, list):
+                for block in res:
+                    if not block:
+                        continue
+                    for line in block:
+                        if isinstance(line, (list, tuple)) and len(line) >= 2:
+                            txt = line[1][0] if isinstance(line[1], (list, tuple)) else line[1]
+                            if txt:
+                                lines.append(str(txt))
+            return "\n".join(lines).strip()
+        except Exception as e:
+            log.warning(f"[场景感知] OCR 失败(可能未安装paddleocr): {e}")
+            return ""
+
+    async def start_scene_watchdog(self, interval: int = 30) -> bool:
+        """启动自动场景感知：定时截屏→OCR→桌宠反应。interval 秒。"""
+        task = getattr(self, "_scene_watchdog_task", None)
+        if task and not task.done():
+            return True
+        self._scene_watchdog_task = asyncio.create_task(self._scene_watchdog_loop(interval))
+        return True
+
+    async def stop_scene_watchdog(self) -> bool:
+        task = getattr(self, "_scene_watchdog_task", None)
+        if task:
+            task.cancel()
+            self._scene_watchdog_task = None
+        return True
+
+    async def _scene_watchdog_loop(self, interval: int):
+        tmp = os.path.join(_DESKTOP_DIR, "data", "_scene_cap.png")
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                if not self._capture_screen(tmp):
+                    continue
+                text = (self._ocr_image(tmp) or "").strip()
+                if len(text) < 4:
+                    continue  # 屏上没啥文字，跳过（避免噪音触发）
+                # 防抖：与上次场景描述几乎相同则跳过，避免刷屏
+                if getattr(self, "_last_scene_desc", "") and text == self._last_scene_desc:
+                    continue
+                self._last_scene_desc = text
+                desc = f"屏幕上的文字内容大致是：{text[:200]}"
+                reply, emotion, action = await self.react_to_scene(desc)
+                if reply:
+                    mg, mi = self._action_to_motion(action)
+                    try:
+                        await self.live2d_broadcast({
+                            "type": "speak", "text": reply, "emotion": emotion, "action": action,
+                            "agent_id": "naixi", "motion_group": mg, "motion_index": mi,
+                            "mouth": [0.5] * 5, "frame_ms": 80,
+                        })
+                    except:
+                        pass
+                    try:
+                        audio = await self._synthesize(reply)
+                        if audio:
+                            audio_b64 = self._to_wav_base64(audio) or ""
+                            if audio_b64:
+                                await self.live2d_broadcast({"type": "audio", "audio": audio_b64, "agent_id": "naixi"})
+                    except:
+                        pass
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                log.warning(f"[场景感知] watchdog 异常: {e}")
+
     def _parse_reply(self, raw: str) -> tuple:
         """解析 LLM 回复中的情绪标记和动作标签。返回 (文本, 情绪, 动作)"""
         emotion = "开心"

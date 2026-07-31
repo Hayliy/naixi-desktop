@@ -3224,6 +3224,8 @@ def setup_routes(app):
     app.router.add_post("/api/live/pet-start", api_live_pet_start)
     app.router.add_post("/api/live/pet-stop", api_live_pet_stop)
     app.router.add_post("/api/live/chat-test", api_live_chat_test)
+    app.router.add_post("/api/live/scene", api_live_scene)
+    app.router.add_post("/api/live/scene-auto", api_live_scene_auto)
     app.router.add_get("/api/live/models", api_live_models)
     app.router.add_post("/api/live/models/delete", api_live_models_delete)
     app.router.add_post("/api/live/models/import", api_live_models_import)
@@ -3874,7 +3876,9 @@ async def api_live2d_stream(request):
                     data = json.loads(msg.data)
                     if data.get("type") == "chat":
                         text = data.get("text", "")
-                        reply, emotion, action = await engine._decide_reply(text, "测试")
+                        # viewer_id="主人"：桌面对话按主人为维度持久化记忆（区别于弹幕按观众 uname），
+                        # 让桌宠通过桌面对话也能记住你（之前写死"测试"导致不存档，漏接记忆层）。
+                        reply, emotion, action = await engine._decide_reply(text, "主人")
                         if not reply:
                             reply = "嗯嗯～"
                             emotion = "开心"
@@ -3970,6 +3974,57 @@ async def api_live_chat_test(request):
     except:
         pass
     return web.json_response(result)
+
+async def api_live_scene(request):
+    """场景感知入口（C 反应陪伴）：接收一段场景描述（手动注入或 OCR）→ 桌宠自然反应（字幕+语音）。"""
+    from desktop_core.live_engine import engine
+    body = await request.json()
+    desc = body.get("description", "")
+    if not desc:
+        return web.json_response({"error": "no description"}, status=400)
+    try:
+        reply, emotion, action = await engine.react_to_scene(desc)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+    if not reply:
+        return web.json_response({"reply": "（桌宠没啥反应）", "emotion": "开心", "action": ""}, status=200)
+    if not action:
+        emo_to_action = {"开心": "smile", "欢迎": "wave", "惊讶": "surprised",
+                         "害羞": "shy", "悲伤": "sad", "生气": "angry", "卖萌": "tilt"}
+        action = emo_to_action.get(emotion, "")
+    mg, mi = engine._action_to_motion(action)
+    # 推 speak（字幕+表情）到所有客户端（Qt 桌宠/舞台）
+    try:
+        await engine.live2d_broadcast({
+            "type": "speak", "text": reply, "emotion": emotion, "action": action,
+            "agent_id": "naixi", "motion_group": mg, "motion_index": mi,
+            "mouth": [0.5] * 5, "frame_ms": 80,
+        })
+    except:
+        pass
+    # 推 audio（语音）到客户端自行播放
+    try:
+        audio = await engine._synthesize(reply)
+        if audio:
+            audio_b64 = engine._to_wav_base64(audio) or ""
+            if audio_b64:
+                await engine.live2d_broadcast({"type": "audio", "audio": audio_b64, "agent_id": "naixi"})
+    except:
+        pass
+    return web.json_response({"reply": reply, "emotion": emotion, "action": action})
+
+async def api_live_scene_auto(request):
+    """场景自动感知开关：开启后定时截屏OCR → 桌宠反应（C 反应陪伴·上限高）。"""
+    from desktop_core.live_engine import engine
+    body = await request.json()
+    enabled = bool(body.get("enabled", False))
+    interval = int(body.get("interval", 30))
+    interval = max(10, min(120, interval))
+    if enabled:
+        ok = await engine.start_scene_watchdog(interval)
+        return web.json_response({"ok": ok, "running": True, "interval": interval})
+    await engine.stop_scene_watchdog()
+    return web.json_response({"ok": True, "running": False})
 
 async def api_live_models(request):
     """列出 data/models/ 目录中的模型"""

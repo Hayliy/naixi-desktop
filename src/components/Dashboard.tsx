@@ -21,7 +21,7 @@ import {
   HardDrive, Shield, Film, Layers, GitBranch,
   Cpu as CpuIcon, Zap, Network, Lock,
   Plus, Check, Repeat, Play, Pause, ChevronDown, ChevronUp, ChevronLeft, Edit3, Trash2, CircleAlert,
-  Search, X, Loader2, Copy, Download, RefreshCw, Upload,
+  Search, X, Loader2, Copy, Download, RefreshCw, Upload, Eye,
   Mic, MicOff,
 } from "lucide-react";
 
@@ -31,6 +31,8 @@ const PAGE_TITLES: Record<string, string> = {
   ops: "运维", live: "直播", scheduler: "自动化",
   logs: "日志", settings: "设置", workflow: "工作流",
   petmemory: "桌宠记忆",
+  scene: "场景感知",
+  cohost: "直播搭档",
 };
 const PAGE_ICONS: Record<string, React.ReactNode> = {
   dashboard: <LayoutDashboard size={15} className="text-sakura-400" />,
@@ -39,6 +41,8 @@ const PAGE_ICONS: Record<string, React.ReactNode> = {
   tools: <Wrench size={15} className="text-sakura-400" />,
   memory: <Brain size={15} className="text-sakura-400" />,
   petmemory: <Users size={15} className="text-sakura-400" />,
+  scene: <Eye size={15} className="text-sakura-400" />,
+  cohost: <MessageCircle size={15} className="text-sakura-400" />,
   napcat: <Bot size={15} className="text-sakura-400" />,
   ops: <Server size={15} className="text-sakura-400" />,
   live: <Film size={15} className="text-sakura-400" />,
@@ -58,6 +62,8 @@ const NAV_ITEMS = [
   { key: "tools",      icon: <Wrench size={16} />,         label: "工具" },
   { key: "memory",     icon: <Brain size={16} />,          label: "记忆" },
   { key: "petmemory",  icon: <Users size={16} />,          label: "桌宠记忆" },
+  { key: "scene",      icon: <Eye size={16} />,            label: "场景感知" },
+  { key: "cohost",     icon: <MessageCircle size={16} />,  label: "直播搭档" },
   { key: "connection", icon: <Wifi size={16} />,         label: "连接" },
   { key: "ops",        icon: <Server size={16} />,         label: "运维" },
   { key: "live",       icon: <Film size={16} />,           label: "直播" },
@@ -222,6 +228,8 @@ export default function Dashboard() {
           <div style={{ display: activeNav === "tools" ? "block" : "none", height: "100%" }}><ErrorBoundary name="工具"><ToolsPage toolsData={toolsData} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "memory" ? "block" : "none", height: "100%" }}><ErrorBoundary name="记忆"><MemPage /></ErrorBoundary></div>
           <div style={{ display: activeNav === "petmemory" ? "block" : "none", height: "100%" }}><ErrorBoundary name="桌宠记忆"><PetMemoryPage /></ErrorBoundary></div>
+          <div style={{ display: activeNav === "scene" ? "block" : "none", height: "100%" }}><ErrorBoundary name="场景感知"><ScenePage /></ErrorBoundary></div>
+          <div style={{ display: activeNav === "cohost" ? "block" : "none", height: "100%" }}><ErrorBoundary name="直播搭档"><CohostPage /></ErrorBoundary></div>
           <div style={{ display: activeNav === "connection" ? "block" : "none", height: "100%" }}><ErrorBoundary name="连接"><NapcatPage napcat={napcat} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "ops" ? "block" : "none", height: "100%" }}><ErrorBoundary name="运维"><OpsPage errors={globalErrors} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "live" ? "block" : "none", height: "100%" }}><ErrorBoundary name="直播"><LivePage /></ErrorBoundary></div>
@@ -3050,15 +3058,21 @@ function PetMemoryPage() {
   const [detail, setDetail] = useState<{ profile: string; episodes: any[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [lastLoad, setLastLoad] = useState<string>("");
+  const [err, setErr] = useState<string>("");
 
   const loadList = useCallback(async () => {
     setLoading(true);
+    setErr("");
     try {
       const d = await apiGet<any>(`/api/live/memory?agent_id=${encodeURIComponent(agentId)}`);
       if (d?.ok) {
         setObjects(d.objects || []);
         setLastLoad(new Date().toLocaleTimeString("zh-CN"));
+      } else {
+        setErr("后端返回异常：" + (d?.error || "未知"));
       }
+    } catch (e: any) {
+      setErr("加载失败：" + (e?.message || e) + "（若刚改过后端代码，请完全退出 Tauri（托盘右键「奶昔」→退出）再重开，让 9845 后端重载）");
     } finally {
       setLoading(false);
     }
@@ -3067,9 +3081,13 @@ function PetMemoryPage() {
   const loadDetail = useCallback(async (vid: string) => {
     setSelected(vid);
     setLoading(true);
+    setErr("");
     try {
       const d = await apiGet<any>(`/api/live/memory?agent_id=${encodeURIComponent(agentId)}&viewer_id=${encodeURIComponent(vid)}`);
       if (d?.ok) setDetail({ profile: d.profile || "", episodes: d.episodes || [] });
+      else setErr("后端返回异常：" + (d?.error || "未知"));
+    } catch (e: any) {
+      setErr("加载失败：" + (e?.message || e) + "（若刚改过后端代码，请完全退出 Tauri 再重开）");
     } finally {
       setLoading(false);
     }
@@ -3079,6 +3097,9 @@ function PetMemoryPage() {
 
   return (
     <div className="space-y-4">
+      {err && (
+        <div className="text-xs text-red-400 bg-red-500/10 border border-red-400/30 rounded-lg p-2">{err}</div>
+      )}
       <div className="flex items-center gap-2 flex-wrap">
         <p className="text-sm font-semibold text-sakura-500">桌宠长期记忆（不随重启丢失）</p>
         <input
@@ -3150,6 +3171,182 @@ function PetMemoryPage() {
               </div>
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── 场景感知面板（C 反应陪伴）：手动注入场景 → 桌宠自然反应（字幕+语音） ──
+function ScenePage() {
+  const [desc, setDesc] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [last, setLast] = useState<{ reply: string; emotion: string; action: string } | null>(null);
+  const [auto, setAuto] = useState(false);
+  const [err, setErr] = useState("");
+  const toggleAuto = async (v: boolean) => {
+    setAuto(v);
+    try { await apiPost<any>("/api/live/scene-auto", { enabled: v }); } catch {}
+  };
+
+  const preset = (text: string) => setDesc(text);
+
+  const send = useCallback(async () => {
+    const d = desc.trim();
+    if (!d || busy) return;
+    setBusy(true);
+    try {
+      const r = await apiPost<any>("/api/live/scene", { description: d });
+      if (r) setLast({ reply: r.reply || "", emotion: r.emotion || "", action: r.action || "" });
+    } catch (e: any) {
+      setErr("调用失败：" + (e?.message || e) + "（后端可能未重载，请完全退出 Tauri（托盘右键「奶昔」→退出）再重开）");
+    } finally {
+      setBusy(false);
+    }
+  }, [desc, busy]);
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm font-semibold text-sakura-500">场景感知（桌宠观察你在干嘛，自然吐槽/互动）</p>
+
+      <div className="flex flex-wrap gap-2">
+        {[
+          ["打游戏", "主人正在打游戏，画面里是游戏战斗/操作场景，很紧张。"],
+          ["看视频", "主人正在看视频或电影，屏幕上在播放内容。"],
+          ["听歌", "主人在听歌，旁边放着音乐播放器，节奏轻快。"],
+          ["工作", "主人在用电脑干活或写东西，很认真专注。"],
+        ].map(([label, text]) => (
+          <button
+            key={label}
+            onClick={() => preset(text)}
+            className="bg-sakura-500/80 hover:bg-sakura-600 text-white text-xs px-3 py-1.5 rounded-lg"
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div className="bg-white/60 dark:bg-[#232338] rounded-xl p-4 space-y-3">
+        <textarea
+          value={desc}
+          onChange={(e) => setDesc(e.target.value)}
+          placeholder="粘贴屏幕上的文字 / 描述你正在干嘛（自动截屏OCR也会填到这里）"
+          className="w-full h-24 bg-[#1a1a2e] text-sakura-100 text-xs p-3 rounded-lg resize-none"
+        />
+        <div className="flex items-center gap-3">
+          <button
+            onClick={send}
+            disabled={busy}
+            className="bg-sakura-500 hover:bg-sakura-600 text-white text-xs px-4 py-2 rounded-lg disabled:opacity-50"
+          >
+            {busy ? "桌宠思考中…" : "让桌宠反应"}
+          </button>
+          <label className="flex items-center gap-1 text-xs text-sakura-300 cursor-pointer select-none">
+            <input type="checkbox" checked={auto} onChange={(e) => toggleAuto(e.target.checked)} />
+            自动感知（截屏OCR，{auto ? "运行中" : "已停止"}）
+          </label>
+          {err && <span className="text-[11px] text-red-400">{err}</span>}
+        </div>
+      </div>
+
+      {last && (
+        <div className="bg-white/60 dark:bg-[#232338] rounded-xl p-4">
+          <p className="text-[11px] font-medium text-sakura-400 mb-1">桌宠反应</p>
+          <div className="text-sm text-sakura-100 bg-[#1a1a2e] rounded-lg p-3">
+            {last.reply || "（桌宠没啥反应）"}
+          </div>
+          <div className="text-[10px] text-sakura-300 mt-1">
+            情绪 {last.emotion} · 动作 {last.action || "—"}（同步在桌宠窗口显示字幕+语音）
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── 直播搭档面板（B 直播搭档）：连接B站 + 弹幕流显示，桌宠本地语音+字幕回应 ──
+function CohostPage() {
+  const [status, setStatus] = useState<any>(null);
+  const [roomId, setRoomId] = useState("");
+  const [danmaku, setDanmaku] = useState<any[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const s = await apiGet<any>("/api/live/status");
+      setStatus(s);
+    } catch {}
+    try {
+      const d = await apiGet<any>("/api/live/danmaku");
+      if (Array.isArray(d?.danmaku)) setDanmaku(d.danmaku.slice(-40).reverse());
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 3000);
+    return () => clearInterval(t);
+  }, [refresh]);
+
+  const connect = async () => {
+    setBusy(true);
+    try {
+      const r = await apiPost<any>("/api/live/connect", { room_id: roomId });
+      setStatus(r);
+    } catch {} finally {
+      setBusy(false);
+    }
+  };
+  const disconnect = async () => {
+    try { await apiPost<any>("/api/live/disconnect", {}); } catch {}
+    refresh();
+  };
+
+  const connected = status?.connected || status?.bili_connected || false;
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm font-semibold text-sakura-500">直播搭档（B站弹幕 → 桌宠本地语音+字幕回应，不发回直播间）</p>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <input
+          value={roomId}
+          onChange={(e) => setRoomId(e.target.value)}
+          placeholder="直播间ID（需先在设置配好B站开放平台密钥）"
+          className="bg-[#1a1a2e] border border-sakura-200/30 rounded px-2 py-1 text-xs text-sakura-100 w-80"
+        />
+        <button
+          onClick={connect}
+          disabled={busy}
+          className="bg-sakura-500 hover:bg-sakura-600 text-white text-xs px-3 py-1.5 rounded-lg disabled:opacity-50"
+        >
+          {busy ? "连接中…" : "连接B站"}
+        </button>
+        <button
+          onClick={disconnect}
+          className="bg-sakura-200/20 hover:bg-sakura-200/30 text-sakura-100 text-xs px-3 py-1.5 rounded-lg"
+        >
+          断开
+        </button>
+        <span className={`text-[11px] px-2 py-1 rounded ${connected ? "bg-green-500/20 text-green-300" : "bg-gray-500/20 text-gray-300"}`}>
+          {connected ? "已连接" : "未连接"}
+        </span>
+        {status?.last_error && <span className="text-[11px] text-red-300">{status.last_error}</span>}
+      </div>
+
+      <div className="bg-white/60 dark:bg-[#232338] rounded-xl p-4">
+        <p className="text-xs font-semibold text-sakura-500 mb-2">弹幕流（最近 {danmaku.length}）</p>
+        <div className="space-y-1 max-h-[60vh] overflow-auto">
+          {danmaku.length === 0 && (
+            <p className="text-xs text-sakura-300">连接后，观众弹幕会在这里实时显示，桌宠会自然接话并用语音+字幕回应。</p>
+          )}
+          {danmaku.map((d, i) => (
+            <div key={i} className="text-[11px] text-sakura-200 bg-[#1a1a2e] rounded p-2">
+              <span className="text-sakura-400 mr-2">{d.user}</span>
+              {d.text}
+              {d.time_str && <span className="text-sakura-300 ml-2">{d.time_str}</span>}
+            </div>
+          ))}
         </div>
       </div>
     </div>
