@@ -3881,8 +3881,10 @@ async def api_live2d_stream(request):
                             audio = await engine._synthesize(reply)
                             if audio:
                                 engine.play_audio(audio)
-                        except:
-                            pass
+                            else:
+                                log.warning("[语音] _synthesize 返回空，未触发播放")
+                        except Exception as e:
+                            log.warning(f"[语音] 播放触发异常: {e}")
                 except:
                     pass
     finally:

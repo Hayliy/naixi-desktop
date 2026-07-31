@@ -1806,10 +1806,18 @@ class LiveEngine:
             out_id, _ = self._get_audio_devices()
             if hasattr(self, '_play_thread') and self._play_thread and self._play_thread.is_alive():
                 self._play_thread.join(timeout=3)
-            self._play_thread = threading.Thread(
-                target=lambda: (sd.wait(), sd.play(data, rate, device=out_id), sd.wait()),
-                daemon=True
-            )
+
+            def _play_target():
+                # 单独捕获线程内异常：外层 try 包不到 daemon 线程里的 sd.play，
+                # 否则 sd.play 失败会静默丢失、永远无日志。
+                try:
+                    sd.wait()
+                    sd.play(data, rate, device=out_id)
+                    sd.wait()
+                except Exception as e:
+                    log.warning(f"[语音播放失败] sd.play 异常(device={out_id}): {e}")
+
+            self._play_thread = threading.Thread(target=_play_target, daemon=True)
             self._play_thread.start()
         except Exception as e:
             log.warning(f"[语音播放失败] {e}")
