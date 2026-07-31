@@ -2407,7 +2407,8 @@ class LiveEngine:
             try: os.remove(tmp)
             except: pass
             return data
-        except Exception:
+        except Exception as e:
+            log.warning(f"[语音合成失败] Edge-TTS 不可用：{e}")
             return None
 
     # ═══════════════════════════════════════════════════════════════════════
