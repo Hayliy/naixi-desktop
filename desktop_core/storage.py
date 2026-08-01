@@ -206,7 +206,14 @@ def encrypt_config(config: dict) -> dict:
     providers = config.get("api_providers", {})
     for k, v in providers.items():
         if isinstance(v, dict) and v.get("api_key"):
-            v["api_key"] = encrypt_api_key(v["api_key"])
+            ak = v["api_key"]
+            # 掩码占位符 "********" 不是真实密钥——若被当密钥加密落库，会伪造"已配置"假象，
+            # 且永远解不出真 Key。前端回传掩码时本应由 merge_preserve_keys 保留旧值，
+            # 但为兜底任何路径漏网，这里直接置空，绝不加密掩码。
+            if ak == _KEY_MASK:
+                v["api_key"] = ""
+            else:
+                v["api_key"] = encrypt_api_key(ak)
     return config
 
 

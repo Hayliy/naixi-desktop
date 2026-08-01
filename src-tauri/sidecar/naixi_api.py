@@ -43,7 +43,22 @@ os.environ["DESKTOP_DIR"] = DESKTOP_DIR
 sys._naixi_entry = __file__
 
 # 数据库路径
-DESKTOP_DATA_DIR = os.path.join(DESKTOP_DIR, "data")
+# 开发态修正：_find_core_root 在开发态会先行命中 src-tauri/resources/desktop_core（stage_core
+# 同步的代码副本），使 DESKTOP_DIR=src-tauri/resources，从而数据目录变成 resources/data——
+# 那是一个全新、几乎为空的库（只有自动创建的裸 bailian/chat，无 Key、无 audio 供应商）。
+# 但用户在设置页填的真实配置/密钥实际都落在项目根 data/naixi_desktop.db（含对应的加解密主密钥）。
+# 密钥按「每个库各自的主密钥(DPAPI)」加密，跨库拷贝密文无法解密，故必须让后端直接读项目根库。
+# 做法：当 DESKTOP_DIR 处于某 resources/ 下时，向上寻找真正含 desktop_core 源码的项目根，
+# 把数据目录改为项目根的 data/；打包态（resources 是真实部署目录、上层无 desktop_core）则保持原样。
+def _resolve_data_dir(desktop_dir):
+    d = desktop_dir
+    while d and d != os.path.dirname(d):
+        if os.path.isdir(os.path.join(d, "desktop_core")) and os.path.basename(d) != "resources":
+            return os.path.join(d, "data")
+        d = os.path.dirname(d)
+    return os.path.join(desktop_dir, "data")
+
+DESKTOP_DATA_DIR = _resolve_data_dir(DESKTOP_DIR)
 os.makedirs(DESKTOP_DATA_DIR, exist_ok=True)
 DESKTOP_DB = os.path.join(DESKTOP_DATA_DIR, "naixi_desktop.db")
 

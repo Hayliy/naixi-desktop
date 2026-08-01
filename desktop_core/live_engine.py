@@ -2568,28 +2568,31 @@ class LiveEngine:
                 await self._after_speak(action, spoken)
 
     def _resolve_tts_config(self) -> dict:
-        """解析 TTS 配置（api_key/api_url/model），优先对话页audio供应商"""
+        """解析 TTS 配置（api_key/api_url/model），优先对话页 audio 供应商里的【真密钥】。
+
+        关键：api_providers 里的 audio 供应商若其密钥是掩码/空（常见——用户没在「模型供应商」
+        页单独配语音，只在 B站页填了 dashscope_api_key），绝不能让它把 self._dashscope_api_key
+        （B站页填的、用户真正用于 TTS 的 Key）盖掉，否则永远拿掩码去请求必败、降级 Edge-TTS。
+        故：audio 供应商密钥为空或掩码时跳过，回退到 self._dashscope_api_key / 环境变量。
+        """
         cfg = {"api_key": "", "api_url": "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2audio/cosyvoice", "model": "cosyvoice-v3-flash"}
         try:
-            from desktop_core.storage import meta_get, decrypt_api_key
+            from desktop_core.storage import meta_get, decrypt_api_key, _KEY_MASK
             raw = meta_get("desktop_config")
             if raw:
                 dc = json.loads(raw)
                 for pid, pcfg in dc.get("api_providers", {}).items():
                     if pcfg.get("type", "chat") == "audio":
                         raw_key = pcfg.get("api_key", "")
-                        if raw_key.startswith("enc:"):
-                            try:
-                                cfg["api_key"] = decrypt_api_key(raw_key)
-                            except:
-                                cfg["api_key"] = raw_key
-                        else:
-                            cfg["api_key"] = raw_key
-                        if pcfg.get("api_url"):
-                            cfg["api_url"] = pcfg["api_url"]
-                        if pcfg.get("model"):
-                            cfg["model"] = pcfg["model"]
-                        return cfg
+                        key = decrypt_api_key(raw_key) if isinstance(raw_key, str) and raw_key.startswith("enc:") else raw_key
+                        # 密钥为空或掩码（用户实际没在供应商页配语音，Key 在 B站页）→ 跳过，走下方回退
+                        if key and key != _KEY_MASK:
+                            cfg["api_key"] = key
+                            if pcfg.get("api_url"):
+                                cfg["api_url"] = pcfg["api_url"]
+                            if pcfg.get("model"):
+                                cfg["model"] = pcfg["model"]
+                            return cfg
         except:
             pass
         if not cfg["api_key"]:
