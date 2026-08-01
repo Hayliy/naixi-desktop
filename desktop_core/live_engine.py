@@ -2528,6 +2528,13 @@ class LiveEngine:
         mouth_data = self._audio_to_mouth_data(audio_bytes)
         if not mouth_data:
             return
+        # ── 治本：音频同时推给桌宠本体播放，不再依赖后端 sounddevice ──
+        # 桌宠 embed python 自带 sounddevice 能自播；后端进程(managed python)缺
+        # sounddevice 时仍走 play_audio 兜底（成功则双端都出声也无妨）。
+        audio_b64 = self._to_wav_base64(audio_bytes) or ""
+        if audio_b64:
+            await self.live2d_broadcast({"type": "audio", "audio": audio_b64,
+                                          "agent_id": agent_id or ""})
         self.play_audio(audio_bytes)
         await self.live2d_broadcast({
             "type": "speak", "mouth": mouth_data,
