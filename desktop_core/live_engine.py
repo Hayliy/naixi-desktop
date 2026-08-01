@@ -1491,7 +1491,14 @@ class LiveEngine:
     # ── LLM 直播互动 ──────────────────────────────────────────────────────
 
     def _resolve_chat_config(self) -> dict:
-        """获取聊天LLM配置（对话页的 chat 供应商）"""
+        """获取聊天LLM配置（对话页的 chat 供应商）。
+
+        关键：与 _resolve_tts_config 同理——api_providers 里的 chat 供应商若其密钥是
+        掩码/空（用户没在「模型供应商」页单独配对话 Key，只在 B站页填了 dashscope_api_key），
+        绝不能拿掩码去请求。必须回退到 self._dashscope_api_key（B站页真实 Key）/ 环境变量。
+        同一把 DashScope Key 既管 LLM 也管 TTS。
+        """
+        _MASK = "********"
         now = time.time()
         if self._chat_cfg and now - self._chat_cfg_ts < 60:
             return self._chat_cfg
@@ -1504,10 +1511,27 @@ class LiveEngine:
                 decrypt_config(dc)
                 for pid, pcfg in dc.get("api_providers", {}).items():
                     if pcfg.get("type", "chat") in ("chat", "default"):
-                        cfg = {"api_key": pcfg.get("api_key", ""), "api_url": pcfg.get("api_url", ""), "model": pcfg.get("model", "")}
+                        key = pcfg.get("api_key", "")
+                        api_url = pcfg.get("api_url", "")
+                        model = pcfg.get("model", "")
+                        # 掩码/空 -> 回退到 B站页真实 Key（同一把 DashScope Key 既管 LLM 也管 TTS）
+                        if not key or key == _MASK:
+                            key = self._dashscope_api_key
+                            if not api_url:
+                                api_url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+                        cfg = {"api_key": key, "api_url": api_url, "model": model}
                         break
         except:
             pass
+        # 双层兜底：仍无 key 则直接用 B站页真实 Key + 默认 DashScope 兼容端点
+        if not cfg["api_key"] or cfg["api_key"] == _MASK:
+            cfg["api_key"] = self._dashscope_api_key
+            if not cfg["api_url"]:
+                cfg["api_url"] = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+        if not cfg["api_key"]:
+            cfg["api_key"] = os.environ.get("DASHSCOPE_API_KEY", "")
+            if not cfg["api_url"]:
+                cfg["api_url"] = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
         self._chat_cfg = cfg
         self._chat_cfg_ts = now
         return cfg
