@@ -1452,7 +1452,7 @@ def run_pet(model_path: str = ""):
     live2d.init()
     fmt = QSurfaceFormat()
     fmt.setAlphaBufferSize(8)
-    fmt.setSamples(4)
+    fmt.setSamples(0)
     QSurfaceFormat.setDefaultFormat(fmt)
     app = QApplication.instance() or QApplication(sys.argv)
     try:
