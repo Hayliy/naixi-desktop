@@ -414,6 +414,11 @@ class PetWindow(QWidget):
         try:
             self.start_voice_input()
         except Exception as _e:
+            try:
+                from desktop_core import voice_input as _vi
+                _vi.log.error(f"[桌宠语音] 初始化启动失败: {_e}")
+            except Exception:
+                pass
             log.warning(f"[桌宠语音] 初始化启动失败: {_e}")
 
     def _inject_discovered_actions(self):
@@ -1475,6 +1480,11 @@ class PetWindow(QWidget):
     # ───────────────────────── 桌宠独立语音输入（不连后端） ─────────────────────────
     def start_voice_input(self):
         """启动桌宠自带语音输入（设备可选；空=自动选物理麦，或 VoiceMeeter 虚拟麦）。"""
+        try:
+            from desktop_core import voice_input as _vi
+            _vi.log.info(f"[桌宠语音] 请求启动 voice_enabled={self._voice_enabled} voice_already={self._voice is not None}")
+        except Exception:
+            pass
         if self._voice is not None:
             return
         if not self._voice_enabled:
@@ -1490,6 +1500,11 @@ class PetWindow(QWidget):
             self._voice = v
             log.info("[桌宠语音] 已启动独立语音输入")
         except Exception as e:
+            try:
+                from desktop_core import voice_input as _vi
+                _vi.log.error(f"[桌宠语音] 启动失败: {e}")
+            except Exception:
+                pass
             log.error(f"[桌宠语音] 启动失败: {e}")
             self._voice = None
             self._bubble.show_text("语音输入启动失败", 3000)

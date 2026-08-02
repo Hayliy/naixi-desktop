@@ -401,6 +401,7 @@ class PetVoiceInput:
 
     # ───────────────────────── 主循环：采集 + ASR ─────────────────────────
     def _run(self):
+        import time
         import sounddevice as sd
         import dashscope
         from dashscope.audio.asr import Recognition, RecognitionCallback
@@ -434,6 +435,8 @@ class PetVoiceInput:
             outer._reco = reco
             log.info("[桌宠语音] ASR 已连接百炼云端")
             q: "queue.Queue" = queue.Queue()
+            _rms_last = [0.0]
+            _rms_acc = [0.0, 0]
 
             def _cb(indata, frames, t, status):
                 if status:
@@ -441,10 +444,23 @@ class PetVoiceInput:
                 # 播放 TTS 期间丢弃麦克风帧，避免扬声器声音被麦捕获形成回声回路
                 if outer._speaking.is_set():
                     return
+                import numpy as _np
+                a = _np.frombuffer(indata, dtype=_np.int16).astype(_np.float32)
+                # 电平 RMS 日志（每秒一行）：≈0=无声，>300=正常说话。
+                # 用于诊断“说话没反应”——有电平却无识别说明 ASR 端问题；恒≈0 说明采集设备没收到人声（选错设备）。
+                rms = float(_np.sqrt(_np.mean(a * a) + 1e-9))
+                _rms_acc[0] += rms
+                _rms_acc[1] += 1
+                now = time.time()
+                if now - _rms_last[0] >= 1.0:
+                    avg = _rms_acc[0] / max(1, _rms_acc[1])
+                    log.info(f"[桌宠语音] 采集电平 RMS={avg:.1f}（≈0=无声，>300=正常说话）dev={dev_idx}")
+                    _rms_last[0] = now
+                    _rms_acc[0] = 0.0
+                    _rms_acc[1] = 0
                 # 麦克风数字增益（音量滑块 0-100 映射到 0.0-2.0；1.0 即不变）
                 if outer.input_gain and outer.input_gain != 1.0:
-                    import numpy as _np
-                    a = _np.frombuffer(indata, dtype=_np.int16).astype(_np.float32) * outer.input_gain
+                    a = a * outer.input_gain
                     a = _np.clip(a, -32768, 32767).astype(_np.int16)
                     q.put(a.tobytes())
                 else:
