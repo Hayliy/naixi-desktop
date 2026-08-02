@@ -2029,7 +2029,8 @@ class LiveEngine:
             ff = shutil.which("ffmpeg") or "ffmpeg"
             cmd = [ff, "-y", "-f", "gdigrab", "-framerate", "1", "-i", "desktop",
                    "-frames:v", "1", "-loglevel", "error", out_path]
-            subprocess.run(cmd, timeout=15, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(cmd, timeout=15, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
             return os.path.exists(out_path) and os.path.getsize(out_path) > 1000
         except Exception as e:
             log.warning(f"[场景感知] 截屏失败: {e}")
@@ -2344,7 +2345,10 @@ class LiveEngine:
             r = subprocess.run(
                 [ffmpeg_path, "-y", "-i", tmp_in, "-ar", str(sample_rate), "-ac", "1",
                  "-sample_fmt", "s16", "-f", "wav", tmp_out],
-                capture_output=True, timeout=15
+                capture_output=True, timeout=15,
+                # ffmpeg 是控制台子系统程序；被 pythonw 父进程拉起时若无此标志会自弹
+                # 终端窗口（每次 TTS 转码闪一下）。CREATE_NO_WINDOW 彻底隐藏其控制台。
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
             try: os.remove(tmp_in)
             except: pass
@@ -2384,7 +2388,8 @@ class LiveEngine:
             r = subprocess.run(
                 [ffmpeg_path, "-y", "-i", tmp_in, "-ar", "24000", "-ac", "1",
                  "-sample_fmt", "s16", "-f", "wav", tmp_out],
-                capture_output=True, timeout=10
+                capture_output=True, timeout=10,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
             try: os.remove(tmp_in)
             except: pass
@@ -2786,6 +2791,7 @@ class LiveEngine:
                     ["ffmpeg", "-y", "-i", tmp_in, "-ar", "24000", "-ac", "1",
                      "-sample_fmt", "s16", "-f", "wav", tmp_out],
                     capture_output=True, timeout=10,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
                 )
                 if os.path.exists(tmp_out):
                     with open(tmp_out, "rb") as f:
@@ -3122,6 +3128,7 @@ class LiveEngine:
                 "ffmpeg", "-y", "-i", audio_path,
                 "-f", "s16le", "-ar", str(PCM_RATE), "-ac", str(PCM_CHANNELS), "pipe:1",
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
             pcm, _ = await proc.communicate()
             return pcm or b""
@@ -3225,6 +3232,8 @@ class LiveEngine:
                 "-f", "flv", self._rtmp_url,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.DEVNULL,
+                # 推流 ffmpeg 也是控制台程序，隐藏其窗口避免闪终端（尤其点桌宠/开推流时）
+                creationflags=subprocess.CREATE_NO_WINDOW,
                 stderr=asyncio.subprocess.DEVNULL,
             )
             self._stream_running = True
