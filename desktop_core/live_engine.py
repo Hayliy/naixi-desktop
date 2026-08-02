@@ -128,6 +128,7 @@ class LiveEngine:
         self._human_voice_task: Optional[asyncio.Task] = None   # 麦克风采集协程
         self._asr_model: str = "vosk-model-small-cn-0.22"    # 默认中文小模型（42MB，离线）
         self._asr_device: str = ""                            # 留空=系统默认输入设备
+        self._asr_provider: str = "cloud"                     # 识别引擎: cloud(百炼paraformer) | local(vosk离线)
         self._asr_status: dict = {"enabled": False, "state": "idle",
                                  "model": "", "error": ""}     # 前端轮询的状态
         self._model_bindings: dict = {}     # agent_id -> modelID（持久化，重启后恢复绑定）
@@ -401,9 +402,23 @@ class LiveEngine:
     def human_voice_status(self) -> dict:
         """返回真人语音识别状态，供前端轮询展示（是否开启/模型是否就绪/报错）。"""
         st = dict(self._asr_status)
-        st["model_ready"] = os.path.isdir(self._asr_model_dir())
-        st["model"] = self._asr_model
+        # 云端引擎无需本地模型；本地引擎需 vosk 模型目录就绪
+        st["model_ready"] = True if self._asr_provider == "cloud" else os.path.isdir(self._asr_model_dir())
+        # 模型标签：云端显示引擎名，本地显示 vosk 模型名
+        st["model"] = "cloud(百炼paraformer)" if self._asr_provider == "cloud" else self._asr_model
+        st["provider"] = self._asr_provider
         st["running"] = self._human_voice_task is not None and not self._human_voice_task.done()
+        # 暴露当前实际监听的设备（空=系统默认输入），便于前端/排查确认监听的是哪路麦
+        try:
+            _eff = self._resolve_asr_device_index(self._asr_device)
+            st["device"] = str(_eff) if _eff is not None else (self._asr_device or "")
+        except Exception:
+            st["device"] = self._asr_device or ""
+        try:
+            import sounddevice as sd
+            st["default_input_index"] = int(sd.default.device[0])
+        except Exception:
+            st["default_input_index"] = None
         return st
 
     def _ensure_human_connector(self) -> bool:
@@ -419,37 +434,52 @@ class LiveEngine:
             log.warning(f"[真人语音] 注册人类副播失败: {e}")
             return False
 
-    async def start_human_voice(self, device: str = "") -> dict:
-        """开启真人语音闭环：麦克风采集 → VAD → ASR 转文字 → 自动当 human_speak 上麦。
+    async def start_human_voice(self, device: str = "", provider: str = None) -> dict:
+        """开启真人语音闭环：麦克风采集 → ASR 转文字 → 自动当 human_speak 上麦。
 
-        依赖：vosk（已装）+ 中文模型（首次自动下载，需联网）。返回状态字典。
+        provider: 'cloud'(默认, 阿里百炼 paraformer 实时识别, 噪声鲁棒, 需联网+key)
+                  | 'local'(vosk 离线, 隐私/零网络, 首次需下载模型)。
         device 留空=系统默认输入设备；也可传设备名/索引。
         """
         if self._human_voice_task is not None and not self._human_voice_task.done():
             return {"ok": False, "msg": "真人语音已在运行"}
-        if device:
-            self._asr_device = device
+        # 无条件采用本次传入的设备：空串=系统默认输入（解决旧值缓存导致监听错麦的 bug）
+        self._asr_device = device
+        # 本次指定的引擎写回（并持久化到 live_config，跨重启保留）
+        if provider in ("cloud", "local"):
+            self._asr_provider = provider
+            try:
+                # 关键：必须显式把当前 asr_device 一并传入，否则 save_config 会从
+                # 数据库旧配置读取 asr_device(多为空串) 并在末尾写回 self._asr_device，
+                # 把上面 447 行刚设的用户选择冲掉 → 云端/本地路径拿到空 device → 听错麦 → 0 句
+                self.save_config(asr_provider=self._asr_provider,
+                                 asr_device=self._asr_device)
+            except Exception:
+                pass
         # 确保人类副播连接器存在
         if not self._ensure_human_connector():
             self._asr_status = {"enabled": False, "state": "error",
-                                "model": self._asr_model, "error": "人类副播注册失败"}
+                                "model": self._asr_provider, "error": "人类副播注册失败"}
             return {"ok": False, "msg": "人类副播注册失败"}
-        # 模型未就绪则先下载（用户已授权下载模型）
-        model_dir = self._asr_model_dir()
-        if not os.path.isdir(model_dir):
-            self._asr_status = {"enabled": True, "state": "downloading",
-                                "model": self._asr_model, "error": ""}
-            try:
-                await self._download_asr_model(self._asr_model)
-            except Exception as e:
-                self._asr_status = {"enabled": False, "state": "error",
-                                    "model": self._asr_model, "error": f"模型下载失败: {e}"}
-                return {"ok": False, "msg": f"模型下载失败: {e}"}
+        # 本地模式需要 vosk 模型；云端模式不需要
+        model_dir = None
+        if self._asr_provider == "local":
+            model_dir = self._asr_model_dir()
+            if not os.path.isdir(model_dir):
+                self._asr_status = {"enabled": True, "state": "downloading",
+                                    "model": self._asr_model, "error": ""}
+                try:
+                    await self._download_asr_model(self._asr_model)
+                except Exception as e:
+                    self._asr_status = {"enabled": False, "state": "error",
+                                        "model": self._asr_model, "error": f"模型下载失败: {e}"}
+                    return {"ok": False, "msg": f"模型下载失败: {e}"}
+                model_dir = self._asr_model_dir()
         self._asr_status = {"enabled": True, "state": "listening",
-                            "model": self._asr_model, "error": ""}
+                            "model": self._asr_provider, "error": ""}
         self._human_voice_task = asyncio.create_task(
-            self._agent_human_voice(model_dir, self._asr_device))
-        log.info("[真人语音] 已开启（模型=%s，设备=%s）" % (self._asr_model, self._asr_device or "默认"))
+            self._agent_human_voice(model_dir, self._asr_device, self._asr_provider))
+        log.info("[真人语音] 已开启（provider=%s，设备=%s）" % (self._asr_provider, self._asr_device or "默认"))
         return {"ok": True, "msg": "真人语音已开启"}
 
     async def stop_human_voice(self) -> dict:
@@ -486,16 +516,202 @@ class LiveEngine:
             pass
         log.info(f"[真人语音] 模型 {model_name} 已就绪")
 
-    async def _agent_human_voice(self, model_dir: str, device: str):
-        """麦克风采集 → VAD(端点检测) → vosk ASR → 转写文本自动上麦为人类副播发言。
+    def _resolve_asr_device_index(self, device):
+        """解析 ASR 监听设备索引。
+
+        device 非空 → 尊重用户显式选择（整数索引或设备名）。
+        device 为空（"默认"）→ 智能默认：跳过 Windows 映射器(Microsoft Sound
+        Mapper)、虚拟麦(Virtual/CABLE/AudioRelay/VB-Audio/VoiceMeeter 等)与伪设备，
+        优先选真正的物理硬件麦（Realtek/USB/麦克风），避免监听静音虚拟麦或
+        Sound Mapper（它映射到系统默认=常是虚拟麦）导致识别 0 句。
+        这是"开麦桌宠没反应"的高频根因（系统默认输入常是虚拟麦，而非物理麦）。
+        """
+        if device:
+            try:
+                return int(device)
+            except ValueError:
+                return device  # 传的是设备名
+        try:
+            import sounddevice as sd
+            devs = sd.query_devices()
+            # 必须排除的"非物理"关键词：虚拟麦 + Windows 映射器/伪设备
+            SKIP = ("virtual", "cable", "wo mic", "audiorelay", "vb-audio",
+                    "voicemeeter", "sound mapper", "mapper", "映射器",
+                    "wave", "directsound", "wdm", "wasapi")
+            # 物理硬件麦优先匹配关键词
+            HW = ("realtek", "conexant", "alc", "usb audio", "microphone",
+                  "麦克风", "webcam", "focusrite", "yeti", "snowball",
+                  "audio device")
+            phys = []
+            for i, d in enumerate(devs):
+                if d.get("max_input_channels", 0) <= 0:
+                    continue  # 非输入设备
+                name = (d.get("name") or "").lower()
+                if any(s in name for s in SKIP):
+                    continue  # 虚拟麦/映射器/伪设备一律跳过
+                phys.append((i, name))
+            if not phys:
+                return None  # 实在没有物理麦，fallback 到系统默认
+            # 优先：名字命中硬件关键词的物理麦（如 Realtek）
+            for i, name in phys:
+                if any(h in name for h in HW):
+                    return i
+            # 兜底：第一个物理输入设备
+            return phys[0][0]
+        except Exception:
+            return None
+
+    async def _agent_human_voice(self, model_dir: str, device: str, provider: str = "cloud"):
+        """真人语音识别分发：云端(百炼 paraformer) / 本地(vosk)。共享"采集+注入上麦"架构。"""
+        if provider == "cloud":
+            await self._agent_human_voice_cloud(device)
+            return
+        await self._agent_human_voice_local(model_dir, device)
+
+    async def _agent_human_voice_cloud(self, device: str):
+        """云端识别路径：麦克风采集 → 阿里百炼 paraformer 实时识别(自带VAD) → 注入上麦。
+
+        优于本地 vosk：云端大模型在噪声环境下识别率远超本地小模型，无需手搓VAD。
+        依赖：联网 + dashscope key（与 TTS 共用同一把百炼 key）。
+        """
+        try:
+            import sounddevice as sd
+            import numpy as np
+            import queue
+            import threading
+            import time
+            import os as _os
+            import json as _json
+            import dashscope
+            from dashscope.audio.asr import Recognition, RecognitionCallback
+        except Exception as e:
+            self._asr_status = {"enabled": False, "state": "error", "model": "cloud", "error": f"依赖缺失: {e}"}
+            log.warning(f"[真人语音·云端] 依赖缺失: {e}")
+            return
+        # 准备 key（与 TTS 共用）：dashscope import 时即缓存 key，仅设环境变量不生效，必须显式赋值
+        try:
+            from desktop_core.storage import meta_get
+            from desktop_core import storage as _storage
+            raw = meta_get("live_config")
+            cfg = _json.loads(raw) if raw else {}
+            k = cfg.get("dashscope_api_key", "")
+            if k.startswith("enc:"):
+                k = _storage.decrypt_api_key(k)
+            if not k:
+                raise ValueError("未配置 dashscope_api_key（云端识别需要，与 TTS 同款）")
+            _os.environ["DASHSCOPE_API_KEY"] = k
+            dashscope.api_key = k
+        except Exception as e:
+            self._asr_status = {"enabled": False, "state": "error", "model": "cloud", "error": f"密钥读取失败: {e}"}
+            log.warning(f"[真人语音·云端] 密钥读取失败: {e}")
+            return
+
+        dev_idx = self._resolve_asr_device_index(device)
+        try:
+            _devs = sd.query_devices()
+            _dn = _devs[dev_idx]["name"] if (dev_idx is not None and 0 <= dev_idx < len(_devs)) else "系统默认"
+            log.info(f"[真人语音·云端] 监听设备: device={device!r} → dev_idx={dev_idx} ({_dn})")
+        except Exception:
+            log.info(f"[真人语音·云端] 监听设备: device={device!r} → dev_idx={dev_idx}")
+
+        SR = 16000
+        loop = asyncio.get_running_loop()
+        _recognized = [0]
+        q = queue.Queue()
+
+        class CB(RecognitionCallback):
+            def on_event(self, result):
+                try:
+                    sentence = result.get_sentence()
+                except Exception:
+                    return
+                items = sentence if isinstance(sentence, list) else ([sentence] if sentence else [])
+                for s in items:
+                    if not isinstance(s, dict):
+                        continue
+                    try:
+                        ended = result.is_sentence_end(s)
+                    except Exception:
+                        ended = bool(s.get("sentence_end", False))
+                    if ended:
+                        text = (s.get("text") or "").strip()
+                        if text:  # 云端自带 VAD 已过滤噪音段，单字也允许（如"好""嗯"）
+                            _recognized[0] += 1
+                            log.info(f"[真人语音·云端] 识别到: {text}")
+                            asyncio.run_coroutine_threadsafe(
+                                self.inject_human_speech("human", text, emotion="开心", action="wave"), loop)
+
+        try:
+            rec = Recognition(model="paraformer-realtime-v2", format="pcm",
+                              sample_rate=SR, callback=CB())
+            rec.start()
+        except Exception as e:
+            self._asr_status = {"enabled": False, "state": "error", "model": "cloud", "error": f"云端识别启动失败: {e}"}
+            log.warning(f"[真人语音·云端] 启动失败: {e}")
+            return
+        time.sleep(0.5)  # 等 WebSocket 连上
+
+        def feeder():
+            while True:
+                d = q.get()
+                if d is None:
+                    break
+                try:
+                    rec.send_audio_frame(d)
+                except Exception as e:
+                    log.warning(f"[真人语音·云端] 发送音频失败: {e}")
+
+        th = threading.Thread(target=feeder, daemon=True)
+        th.start()
+
+        def callback(indata, frames, time_info, status):
+            if status:
+                log.debug(f"[真人语音·云端] 音频状态(非致命): {status}")
+            try:
+                q.put(bytes(indata))  # 仅入队，绝不在此调用识别/网络（避免阻塞采集）
+            except Exception as e:
+                log.warning(f"[真人语音·云端] 回调异常: {e}")
+
+        log.info(f"[真人语音·云端] 开始监听麦克风（阿里百炼 paraformer 实时识别）")
+        try:
+            with sd.RawInputStream(samplerate=SR, blocksize=4000, device=dev_idx,
+                                   dtype="int16", channels=1, latency="high", callback=callback):
+                while True:
+                    await asyncio.sleep(0.2)
+        except asyncio.CancelledError:
+            log.info("[真人语音·云端] 监听被取消")
+        except Exception as e:
+            self._asr_status = {"enabled": False, "state": "error", "model": "cloud", "error": f"麦克风打开失败: {e}"}
+            log.warning(f"[真人语音·云端] 麦克风打开失败: {e}")
+        finally:
+            q.put(None)
+            try:
+                rec.stop()
+            except Exception:
+                pass
+            th.join(timeout=2)
+            log.info(f"[真人语音·云端] 已停止，本次共识别 {_recognized[0]} 句")
+            self._human_voice_task = None
+
+    async def _agent_human_voice_local(self, model_dir: str, device: str):
+        """麦克风采集 → VAD(WebRTC语音特征+能量二次门限) → vosk ASR → 转写文本自动上麦。
 
         流式识别：vosk 的 KaldiRecognizer 自带端点检测，部分结果丢弃、最终结果才上麦，
         避免半句话打断。识别到的整句经 inject_human_speech 注入舞台，行为与手动输入一致
         （其它 agent 会接话、被点名模型会做被搭话反应）。
+
+        ★ 架构要点（2026-08-01 修复 input overflow 根因）：音频回调线程【只做轻量 VAD +
+        入队】，绝不调用 vosk；vosk 识别放到独立消费者线程从队列取音频。否则用户说话时每帧
+        在回调线程同步跑 vosk 推理 → 回调被阻塞 → 采集线程来不及处理 → input overflow 丢帧 →
+        vosk 拿到残缺音频 → 永远识别不出整句（直播间正常是因为直播姬的 ASR 不在音频回调里跑）。
         """
+
         try:
             import sounddevice as sd
+            import numpy as np
             from vosk import Model, KaldiRecognizer
+            import queue
+            import threading
         except Exception as e:
             self._asr_status = {"enabled": False, "state": "error",
                                 "model": self._asr_model, "error": f"依赖缺失: {e}"}
@@ -508,47 +724,124 @@ class LiveEngine:
                                 "model": self._asr_model, "error": f"模型加载失败: {e}"}
             log.warning(f"[真人语音] 模型加载失败: {e}")
             return
+        # WebRTC VAD: 基于语音特征(谐波/过零率 GMM)判断, 低信噪比下远优于纯能量VAD。
+        # 若不可用则降级纯能量VAD(函数内 import 失败自动 fallback)。
+        try:
+            import webrtcvad
+            _vad = webrtcvad.Vad(2)
+            _have_webrtc = True
+        except Exception as e:
+            _vad = None
+            _have_webrtc = False
+            log.warning(f"[真人语音] WebRTC VAD 不可用, 降级纯能量VAD: {e}")
 
-        # 解析输入设备（名称/索引），默认系统输入
-        dev_idx = None
-        if device:
-            try:
-                dev_idx = int(device)
-            except ValueError:
-                dev_idx = device  # 传名称
+        # 解析输入设备（名称/索引）；device 为空时智能默认到物理麦（避开虚拟麦静音）
+        dev_idx = self._resolve_asr_device_index(device)
 
         sample_rate = 16000
-        rec = KaldiRecognizer(model, sample_rate)
-        rec.SetWords(False)
-        # 捕获主线程事件循环，供 sounddevice 回调线程安全地把任务丢回
+        blocksize = 320  # 20ms，WebRTC VAD 要求精确帧长(10/20/30ms)
+
+        # ---- 自适应 VAD 校准 ----
+        # 纯能量VAD(1.5×)在低信噪比场景失效: 实测背景噪音中位数1477≈人声均值1800,
+        # 门限被顶太高→人声全丢(用户"两句你好呀"无反应的根因)。
+        # 改用 WebRTC VAD(语音特征) + 能量二次门限(双保险):
+        #   _vad_threshold = 噪音中位×1.5+80  (纯能量 fallback 门限)
+        #   _vad_low       = 噪音中位×1.05+80 (双保险能量门限, 拦掉纯噪音段高能量帧)
+        _vad_threshold = 1200   # 纯能量VAD fallback 门限
+        _vad_low = 1200         # 双保险能量门限
+        try:
+            cal_samples = int(sample_rate * 2)  # 2 秒校准
+            cal_data = sd.rec(cal_samples, samplerate=sample_rate,
+                              channels=1, dtype="int16", device=dev_idx, blocking=True)
+            cal_energies = np.abs(cal_data.flatten().astype(np.float64))
+            bg_median = float(np.median(cal_energies))
+            _vad_threshold = max(120, int(bg_median * 1.5 + 80))
+            _vad_low = max(120, int(bg_median * 1.05 + 80))
+            log.info(f"[真人语音] VAD 校准: 背景噪音中位数={bg_median:.0f}, 纯能量门限={_vad_threshold:.0f}, 双保险能量门限={_vad_low:.0f}, WebRTC={'开' if _have_webrtc else '关'}")
+        except Exception as e:
+            log.warning(f"[真人语音] VAD 校准失败，使用默认门限: {e}")
+
+        # 捕获主线程事件循环，供识别线程安全地把任务丢回
         loop = asyncio.get_running_loop()
+        # 音频帧队列：回调只入队（O(1)，绝不阻塞），识别线程独立消费
+        audio_q = queue.Queue(maxsize=240)
+        import collections
+        _prefx = collections.deque(maxlen=10)  # 前置缓冲：保留最近 ~2.5s 音频，过门限时一并入队避免丢句首
+        _stop = threading.Event()
+        _recognized = [0]   # 统计本次识别句数（调试用）
+
+        def _recognizer():
+            """独立识别线程：从队列取音频喂 vosk，完整句注入舞台。回调永不涉及 vosk。"""
+            rec = KaldiRecognizer(model, sample_rate)
+            rec.SetWords(False)
+            while not _stop.is_set():
+                try:
+                    data = audio_q.get(timeout=0.3)
+                except queue.Empty:
+                    continue
+                try:
+                    if rec.AcceptWaveform(data):
+                        res = json.loads(rec.Result())
+                        text = (res.get("text") or "").strip()
+                        # 最小有效句长≥2字: 过滤纯噪音段偶发的单字乱码, 抑制误触发
+                        if len(text) >= 2:
+                            _recognized[0] += 1
+                            log.info(f"[真人语音] 识别到: {text}")
+                            # 跨线程安全地把任务丢回事件循环
+                            asyncio.run_coroutine_threadsafe(
+                                self.inject_human_speech("human", text, emotion="开心", action="wave"),
+                                loop)
+                except Exception as e:
+                    log.warning(f"[真人语音] 识别线程异常: {e}")
+            # 线程退出前强制收尾，避免最后一句因未触发句末而丢失
+            try:
+                final = rec.FinalResult()
+                text = (json.loads(final).get("text") or "").strip()
+                if len(text) >= 2:
+                    _recognized[0] += 1
+                    log.info(f"[真人语音] 识别到(收尾): {text}")
+                    asyncio.run_coroutine_threadsafe(
+                        self.inject_human_speech("human", text, emotion="开心", action="wave"),
+                        loop)
+            except Exception as e:
+                log.warning(f"[真人语音] 收尾识别异常: {e}")
 
         def _callback(indata, frames, time_info, status):
+            # 回调只做轻量 VAD + 入队，绝不调用 vosk（否则阻塞采集 → overflow）
             if status:
-                log.warning(f"[真人语音] 音频状态: {status}")
+                log.debug(f"[真人语音] 音频状态(已解耦，非致命): {status}")
             try:
-                data = bytes(indata)
-                # 部分结果忽略；仅最终结果（句末）触发上麦
-                if rec.AcceptWaveform(data):
-                    res = json.loads(rec.Result())
-                    text = (res.get("text") or "").strip()
-                    if text:
-                        log.info(f"[真人语音] 识别到: {text}")
-                        # 跨线程安全地把任务丢回事件循环
-                        asyncio.run_coroutine_threadsafe(
-                            self.inject_human_speech("human", text, emotion="开心", action="wave"),
-                            loop)
+                data = bytes(indata)  # 复制独立 bytes，避免回调 buffer 被下一帧覆盖
+                audio = np.frombuffer(indata, dtype=np.int16).astype(np.float64)
+                energy = float(np.abs(audio).mean())
+                _prefx.append(data)  # 滑动前置缓冲（含最近若干帧）
+                _pass = False
+                if _have_webrtc:
+                    # WebRTC VAD(语音特征) + 能量二次门限: 低信噪比精准区分语音/噪音
+                    if _vad.is_speech(data, sample_rate) and energy >= _vad_low:
+                        _pass = True
                 else:
-                    # 部分结果（可选）：可用于实时字幕，这里不处理
-                    pass
+                    # 降级: 纯能量VAD
+                    if energy >= _vad_threshold:
+                        _pass = True
+                if _pass:
+                    # 过门限：把前置缓冲(句首若干帧)+当前帧一并入队，避免丢句首
+                    try:
+                        while _prefx:
+                            audio_q.put_nowait(_prefx.popleft())
+                        audio_q.put_nowait(data)
+                    except queue.Full:
+                        _prefx.clear()  # 识别线程跟不上：丢弃，不影响采集（不再 overflow）
             except Exception as e:
-                log.warning(f"[真人语音] 识别异常: {e}")
+                log.warning(f"[真人语音] 回调异常: {e}")
 
-        log.info("[真人语音] 开始监听麦克风（说话即可自动上麦）")
+        _th = threading.Thread(target=_recognizer, daemon=True)
+        _th.start()
+        log.info(f"[真人语音] 开始监听麦克风（VAD 门限={_vad_threshold:.0f}，识别线程已启动，采集与识别解耦）")
         try:
-            with sd.RawInputStream(samplerate=sample_rate, blocksize=4000,
+            with sd.RawInputStream(samplerate=sample_rate, blocksize=blocksize,
                                    device=dev_idx, dtype="int16",
-                                   channels=1, callback=_callback):
+                                   channels=1, latency="high", callback=_callback):
                 while True:
                     await asyncio.sleep(0.2)
         except asyncio.CancelledError:
@@ -558,6 +851,9 @@ class LiveEngine:
                                 "model": self._asr_model, "error": f"麦克风打开失败: {e}"}
             log.warning(f"[真人语音] 麦克风打开失败: {e}")
         finally:
+            _stop.set()
+            _th.join(timeout=2)
+            log.info(f"[真人语音] 已停止，本次共识别 {_recognized[0]} 句")
             self._human_voice_task = None
 
     def list_connectors(self) -> list:
@@ -671,15 +967,25 @@ class LiveEngine:
             await self._enqueue_speak(admitted)
 
     async def _broadcast_human_cue(self, req: dict):
-        """真人发言：仅广播舞台提示供其它角色接话，不占麦/不合成/不写 VTS。"""
+        """真人发言：仅广播舞台提示供其它角色接话，不占麦/不合成/不写 VTS。
+
+        关键修复：真人主动说话是明确的交互意图，必须保证至少有一个角色
+        (主咖 naixi/奶昔) 接话，否则桌宠(浏览器舞台 / Qt 桌宠) 不会有任何反应。
+        旧逻辑依赖 should_react_to_cue 的概率衰减(首句仅 40% 接话)，导致真人
+        说话有 60% 概率被静默 return，桌宠"没反应"且无任何日志，极难排查。
+        这里把 target_id 默认指向主咖，触发 _broadcast_cue 的"被点名强制接话"
+        分支，确保桌宠必然接话并推 speak 事件。若真人已显式 @某角色则尊重之。
+        """
+        target = req.get("target_id", "") or "naixi"  # 默认让主咖(奶昔)接话，确保必有回应
         cue = {
             "name": req.get("name", "人类副播"),
             "text": req.get("text", ""),
             "source_id": req.get("source_id", req.get("agent_id", "human")),
             "agent_id": req.get("agent_id", "human"),
             "cue_depth": req.get("cue_depth", 0) + 1,
-            "target_id": req.get("target_id", ""),  # 层1：真人这句话若点名某角色
+            "target_id": target,  # 层1：默认主咖接话；@某角色则尊重点名
         }
+        log.info(f"[真人语音] 已广播真人提示: text='{cue['text']}' → 主咖({target})接话")
         try:
             await self._broadcast_cue(cue)
         except Exception as e:
@@ -859,6 +1165,7 @@ class LiveEngine:
                 # 层3 真人语音闭环配置
                 self._asr_model = cfg.get("asr_model", "vosk-model-small-cn-0.22")
                 self._asr_device = cfg.get("asr_device", "")
+                self._asr_provider = cfg.get("asr_provider", "cloud")
                 self._bili_config_saved = bool(self._access_key_id and self._access_key_secret)
         except: pass
 
@@ -898,6 +1205,7 @@ class LiveEngine:
                 # 层3 真人语音闭环配置
                 "asr_model": kwargs.get("asr_model", base.get("asr_model", self._asr_model)),
                 "asr_device": kwargs.get("asr_device", base.get("asr_device", self._asr_device)),
+                "asr_provider": kwargs.get("asr_provider", base.get("asr_provider", self._asr_provider)),
             }
             from desktop_core.storage import meta_set
             meta_set("live_config", json.dumps(cfg))
@@ -945,6 +1253,7 @@ class LiveEngine:
             # 层3 真人语音闭环配置
             self._asr_model = cfg["asr_model"]
             self._asr_device = cfg["asr_device"]
+            self._asr_provider = cfg.get("asr_provider", "cloud")
             self._bili_config_saved = bool(self._access_key_id and self._access_key_secret)
             log.info("[直播] 配置已保存")
             return True
@@ -1546,28 +1855,22 @@ class LiveEngine:
             import json as _json
             is_dashscope = "dashscope" in cfg["api_url"] or ("aliyuncs" in cfg["api_url"] and "compatible-mode" not in cfg["api_url"])
             messages = [{"role": "system", "content": self._live_prompt}]
-            # 长期记忆摘要（画像 + 近期事件），注入系统上下文——这是"它记得你/老粉"的来源
+            # 长期记忆摘要：画像 + 当日直播优先 + 语义召回相关往事。
+            # 解决「一整天直播记忆断了」：重连/隔天开播不再只看到最近20条，
+            # 而是先注入今天的全部直播，再按当前话题召回任意历史相关记忆。
             try:
-                from desktop_core.storage import mem_build_context
-                long_term = mem_build_context("naixi", viewer_id)
+                from desktop_core.storage import mem_build_injection
+                # 长期记忆注入：token 预算内按优先级打包
+                # (画像 > 当日直播 > 语义召回)，解决「用字符数当预算」与「画像无上限」两坑。
+                long_term, _used, _info = mem_build_injection(
+                    "naixi", viewer_id, query=prompt, budget=1000)
                 if long_term:
                     messages.append({"role": "system", "content": "[长期记忆]\n" + long_term})
             except:
                 pass
-            # 构造上下文：全部历史，超长时压缩
-            ctx = list(self._scene_history)
-            total_chars = sum(len(h.get("content","")) for h in ctx)
-            if total_chars > 4000:
-                # 压缩旧消息：保留最近 20 条，前面的合并为一段摘要
-                recent = ctx[-20:]
-                old = ctx[:-20]
-                summary = "前面聊了: " + " | ".join(
-                    h["content"].replace("的弹幕","").strip()[:60]
-                    for h in old[-10:] if h["role"] == "user"
-                )
-                if len(summary) > 500:
-                    summary = summary[:500] + "..."
-                ctx = [{"role": "system", "content": f"[历史摘要] {summary}"}] + recent
+            # 构造上下文：全部历史，超 token 预算(1500)时压缩（优先保最近对话，旧段合并摘要）
+            from desktop_core.storage import truncate_history_tokens
+            ctx = truncate_history_tokens(list(self._scene_history), max_tokens=1500)
             for h in ctx:
                 messages.append({"role": h["role"], "content": h["content"]})
             messages.append({"role": "user", "content": prompt})
@@ -1924,22 +2227,34 @@ class LiveEngine:
     # ── 音频设备管理（sounddevice + VB-Cable） ──────────────────────────
 
     def list_audio_devices(self) -> dict:
-        """列出所有音频设备，标记输入/输出/VB-Cable"""
-        result = {"outputs": [], "inputs": [], "vb_cable": None, "available": self._sd_available}
-        if not self._sd_available:
-            return result
+        """列出所有音频设备，标记输入/输出/VB-Cable。
+
+        实时探测 sounddevice（不依赖 __init__ 阶段定死的 _sd_available）：
+        装好包后即便未重启后端也能立刻列出设备，避免开关页面下拉为空。
+        """
+        result = {"outputs": [], "inputs": [], "vb_cable": None, "available": False}
         try:
             import sounddevice as sd
+            result["available"] = True
+            default_input_idx = None
+            try:
+                default_input_idx = int(sd.default.device[0])
+            except Exception:
+                pass
+            result["default_index"] = default_input_idx
+            result["default_name"] = ""
             for i, d in enumerate(sd.query_devices()):
                 info = {"index": i, "name": d["name"], "channels": d["max_output_channels"] if d["max_output_channels"] > 0 else d["max_input_channels"]}
+                if d["max_input_channels"] > 0 and i == default_input_idx:
+                    result["default_name"] = d["name"]
                 if "VB" in d["name"] or "Cable" in d["name"]:
                     result["vb_cable"] = info
                 if d["max_output_channels"] > 0:
                     result["outputs"].append(info)
                 if d["max_input_channels"] > 0:
                     result["inputs"].append(info)
-        except:
-            pass
+        except Exception:
+            result["available"] = False
         return result
 
     def _get_audio_devices(self) -> tuple:
@@ -3052,6 +3367,79 @@ class LiveEngine:
                 except: pass
             self._pet_proc = None
             log.info("[桌宠] 已停止")
+
+
+def summarize_yesterday_live(max_viewers: int = 15):
+    """后端启动时后台调用（daemon 线程）：对昨天的直播互动做要点小结，存入长期记忆
+    (profile, 前缀『【YYYY-MM-DD直播小结】』, importance=0.9)，便于隔天/跨场回忆
+    『昨天直播聊过什么』。静默失败，不影响主流程；mem_profile_set 按 content 去重，
+    重复跑幂等无害。"""
+    try:
+        import time as _t, json as _json
+        from desktop_core.storage import (
+            _get_conn, mem_profile_set, mem_recent_day, meta_get, decrypt_api_key)
+        yesterday = _t.strftime("%Y-%m-%d", _t.localtime(_t.time() - 86400))
+        conn = _get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT viewer_id FROM agent_memory "
+                "WHERE agent_id='naixi' AND type='episodic' AND day_tag=?",
+                (yesterday,)).fetchall()
+        finally:
+            conn.close()
+        viewers = [r["viewer_id"] for r in rows if (r["viewer_id"] or "").strip()]
+        if not viewers:
+            return
+        viewers = sorted(viewers)[:max_viewers]
+        # 取百炼 Key（与 voice_input 同口径：live_config.dashscope_api_key）
+        key = ""
+        raw = meta_get("live_config")
+        if raw:
+            cfg = _json.loads(raw) if isinstance(raw, str) else (raw or {})
+            k = cfg.get("dashscope_api_key", "")
+            if isinstance(k, str) and k.startswith("enc:"):
+                k = decrypt_api_key(k)
+            key = k or ""
+        if not key:
+            return
+        import dashscope
+        from dashscope import Generation
+        dashscope.api_key = key
+        for v in viewers:
+            items = mem_recent_day("naixi", v, yesterday, limit=200)
+            if not items:
+                continue
+            transcript = "\n".join(
+                (r.get("content") or "").strip() for r in items
+                if (r.get("content") or "").strip())[:3500]
+            if not transcript.strip():
+                continue
+            try:
+                r = Generation.call(
+                    model="qwen-turbo",
+                    messages=[
+                        {"role": "system",
+                         "content": "你是直播助理。下面是一天直播里与某观众的对话记录，"
+                                    "请用 3-5 条简短中文要点总结『今天和这个观众聊了什么』"
+                                    "（只列事实，不要评论），每条一行。"},
+                        {"role": "user", "content": transcript},
+                    ],
+                    result_format="message",
+                    max_tokens=200,
+                )
+                if r.status_code == 200:
+                    brief = r.output.choices[0].message.content.strip()
+                    if brief:
+                        mem_profile_set("naixi", v, f"【{yesterday}直播小结】{brief}",
+                                        importance=0.9)
+            except Exception:
+                continue
+    except Exception as e:
+        try:
+            import logging
+            logging.getLogger("live").warning(f"[直播小结] 失败: {e}")
+        except Exception:
+            pass
 
 
 # 全局单例

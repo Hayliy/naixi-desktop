@@ -3577,17 +3577,19 @@ async def api_live_backend_set(request):
 
 
 async def api_live_human_voice_toggle(request):
-    """层3 真人语音闭环开关：麦克风采集 → VAD → ASR 转文字 → 自动上麦。
+    """层3 真人语音闭环开关：麦克风采集 → ASR 转文字 → 自动上麦。
 
-    body: {enabled: bool, device?: str}
-    enabled=true 开启（首次自动下载中文模型，需联网）；enabled=false 关闭。
+    body: {enabled: bool, device?: str, provider?: 'cloud'|'local'}
+    enabled=true 开启；provider 指定识别引擎（云端百炼/本地vosk），不传沿用当前配置。
     """
     from desktop_core.live_engine import engine
     body = await request.json() if request.can_read_body else {}
     enabled = bool(body.get("enabled", False))
     device = (body.get("device") or "").strip()
+    provider = body.get("provider") or None
+    log.info(f"[真人语音] toggle 请求: enabled={enabled}, device={device!r}, provider={provider!r}")
     if enabled:
-        result = await engine.start_human_voice(device)
+        result = await engine.start_human_voice(device, provider)
     else:
         result = await engine.stop_human_voice()
     return web.json_response({"ok": result.get("ok", False),

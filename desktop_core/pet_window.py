@@ -21,6 +21,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QFileDialog, QWidget, QLineEd
 from desktop_core.motion_engine import PoseEngine
 from desktop_core.idle_engine import IdleEngine
 from desktop_core.engine.ecs import World
+from desktop_core.voice_input import PetVoiceInput
 from desktop_core.engine.transform import Transform
 from desktop_core.engine.skeleton import build_skeleton, set_pose, get_bone_angles, SkeletalAnimator, WalkCycle, WalkSystem, _collect_all
 
@@ -231,6 +232,12 @@ class PetWindow(QWidget):
         self._chat_input.returnPressed.connect(self._send_chat)
         self._ws_lock = threading.Lock()
         self._ws_instance = None
+        # 桌宠独立语音输入（不依赖后端）：采集/ASR/回复/TTS 全在桌宠进程内闭环
+        self._voice = None
+        self._voice_enabled = True
+        self._voice_device = self._load_voice_device()   # 采集设备：空=自动物理麦；或 VoiceMeeter 虚拟麦名
+        self._voice_show_all = self._load_voice_show_all()  # 设备菜单是否展开全部 host（含重复项）
+        self._voice_queue: "queue.Queue" = queue.Queue()
 
         # 窗口属性：无边框 + 置顶 + 工具窗口 + 透明
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -398,6 +405,11 @@ class PetWindow(QWidget):
             except Exception as e:
                 log.warning(f"模型加载失败: {e}")
         self.startTimer(16)
+        # 桌宠独立语音输入：模型就绪后自动启动（不依赖后端，自闭环）
+        try:
+            self.start_voice_input()
+        except Exception as _e:
+            log.warning(f"[桌宠语音] 初始化启动失败: {_e}")
 
     def _inject_discovered_actions(self):
         """把磁盘发现的表情/动作注入 live2d 模型（与 web 宠物后端注入同一套发现逻辑）。
@@ -535,6 +547,7 @@ class PetWindow(QWidget):
         dt = now - getattr(self, '_last_frame_ts', now)
         self._last_frame_ts = now
         self._process_ws_queue()
+        self._process_voice_queue()
         if not self.model:
             live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
             return
@@ -966,6 +979,38 @@ class PetWindow(QWidget):
         menu = QMenu(self)
         cap_label = "关闭捕获模式" if self._capture_mode else "直播捕获模式"
         menu.addAction(cap_label, self._toggle_capture)
+        menu.addSeparator()
+        # 桌宠独立语音输入开关（默认开；关掉即不再监听麦克风）
+        v_a = menu.addAction("语音输入（听你说话）")
+        v_a.setCheckable(True)
+        v_a.setChecked(self._voice_enabled)
+        v_a.triggered.connect(self.toggle_voice_input)
+        # 语音采集设备子菜单：默认只列 WASAPI 端点（去重，剔除 MME/DirectSound/WDM-KS 复制品）；
+        # 装 VoiceMeeter 后可选其虚拟麦，路由级分开视频声。可勾选「显示全部」展开含重复项。
+        dev_sub = QMenu("语音输入设备", self)
+        cur_dev = (self._voice_device or "").strip()
+        auto_a = dev_sub.addAction("自动（物理麦）")
+        auto_a.setCheckable(True)
+        auto_a.setChecked(cur_dev == "")
+        auto_a.triggered.connect(lambda _=False: self._set_voice_device(""))
+        try:
+            for _idx, _name, _host in PetVoiceInput.list_input_devices(include_all=self._voice_show_all):
+                _a = dev_sub.addAction(f"{_idx}: {_name}")
+                _a.setCheckable(True)
+                # 存储值可能是 index（新）或旧版 name；两种都判定预勾选
+                _a.setChecked(cur_dev == str(_idx) or cur_dev == _name)
+                _a.triggered.connect(lambda _c=False, n=str(_idx): self._set_voice_device(n))
+        except Exception:
+            pass
+        dev_sub.addSeparator()
+        show_all_a = dev_sub.addAction("显示全部设备（含重复项）")
+        show_all_a.setCheckable(True)
+        show_all_a.setChecked(self._voice_show_all)
+        show_all_a.triggered.connect(self._toggle_voice_show_all)
+        dev_sub.addSeparator()
+        clear_a = dev_sub.addAction("清空桌宠记忆")
+        clear_a.triggered.connect(self._clear_voice_memory)
+        menu.addMenu(dev_sub)
         menu.addSeparator()
         # 表情 / 动作 手动触发（对齐 web 宠物 HotkeySettings 的手动触发入口）
         # 以注入时记录的自有列表为主源（live2d.v3 的 GetExpressionIds 未必回显注入项），
@@ -1422,29 +1467,193 @@ class PetWindow(QWidget):
             except:
                 pass
 
+    # ───────────────────────── 桌宠独立语音输入（不连后端） ─────────────────────────
+    def start_voice_input(self):
+        """启动桌宠自带语音输入（设备可选；空=自动选物理麦，或 VoiceMeeter 虚拟麦）。"""
+        if self._voice is not None:
+            return
+        if not self._voice_enabled:
+            return
+        try:
+            v = PetVoiceInput(self, device=self._voice_device or None)
+            ok = v.start()
+            if not ok:
+                self._voice = None
+                self._bubble.show_text("语音输入未就绪（缺百炼Key）", 4000)
+                return
+            self._voice = v
+            log.info("[桌宠语音] 已启动独立语音输入")
+        except Exception as e:
+            log.error(f"[桌宠语音] 启动失败: {e}")
+            self._voice = None
+            self._bubble.show_text("语音输入启动失败", 3000)
+
+    def toggle_voice_input(self, checked: bool):
+        self._voice_enabled = checked
+        if checked:
+            self.start_voice_input()
+        else:
+            if self._voice is not None:
+                self._voice.stop()
+                self._voice = None
+            log.info("[桌宠语音] 已关闭")
+
+    def _load_voice_device(self) -> str:
+        """从存储读取语音采集设备（空=自动物理麦）。桌宠独立进程需自行定位 DB。"""
+        try:
+            from desktop_core import storage
+            PetVoiceInput._ensure_db(storage)
+            return (storage.meta_get("pet_voice_device") or "").strip()
+        except Exception:
+            return ""
+
+    def _load_voice_show_all(self) -> bool:
+        """设备菜单是否展开全部 host（含 MME/DirectSound/WDM-KS 重复项）。默认关。"""
+        try:
+            from desktop_core import storage
+            PetVoiceInput._ensure_db(storage)
+            return (storage.meta_get("pet_voice_show_all") or "0") == "1"
+        except Exception:
+            return False
+
+    def _toggle_voice_show_all(self, checked):
+        """切换「显示全部设备」。菜单每次右击动态构建，下次打开即生效。"""
+        self._voice_show_all = bool(checked)
+        try:
+            from desktop_core import storage
+            PetVoiceInput._ensure_db(storage)
+            storage.meta_set("pet_voice_show_all", "1" if self._voice_show_all else "0")
+        except Exception as e:
+            log.warning(f"[桌宠语音] 保存显示全部设备失败: {e}")
+        self._bubble.show_text("已切换设备列表显示模式（重开右键菜单生效）", 2500)
+
+    def _clear_voice_memory(self):
+        """清空桌宠语音长期记忆与当前会话上下文（右键「清空桌宠记忆」）。"""
+        try:
+            if self._voice is not None:
+                self._voice.clear_memory()
+            else:
+                from desktop_core.voice_input import PetVoiceInput
+                PetVoiceInput(self).clear_memory()
+            self._bubble.show_text("已清空桌宠记忆", 2500)
+        except Exception as e:
+            log.warning(f"[桌宠语音] 清空记忆失败: {e}")
+            self._bubble.show_text(f"清空失败: {e}", 2500)
+
+    def _set_voice_device(self, dev: str):
+        """设置并持久化语音采集设备（存 index，全局唯一，不随 host 重复），随后重启语音监听生效。"""
+        self._voice_device = (dev or "").strip()
+        try:
+            from desktop_core import storage
+            PetVoiceInput._ensure_db(storage)
+            storage.meta_set("pet_voice_device", self._voice_device)
+        except Exception as e:
+            log.warning(f"[桌宠语音] 保存采集设备失败: {e}")
+        label = "自动（物理麦）"
+        if self._voice_device:
+            label = self._voice_device
+            try:
+                import sounddevice as sd
+                di = int(self._voice_device)
+                devs = sd.query_devices()
+                if 0 <= di < len(devs):
+                    label = devs[di].get("name", label)
+            except Exception:
+                pass
+        self._bubble.show_text(f"语音采集设备：{label}", 3000)
+        self.restart_voice_input()
+
+    def restart_voice_input(self):
+        """按当前 _voice_device 重启语音监听（切换设备/设置后调用）。"""
+        if self._voice is not None:
+            try:
+                self._voice.stop()
+            except Exception:
+                pass
+            self._voice = None
+        if self._voice_enabled:
+            self.start_voice_input()
+
+    # reactor 回调（由语音线程调用，仅往 GUI 线程队列投递，不在后台线程碰 Qt 控件）
+    def on_state(self, state, dev_idx):
+        if state == "listening":
+            log.info(f"[桌宠语音] 开始监听麦克风 dev_idx={dev_idx}")
+        elif state == "stopped":
+            log.info("[桌宠语音] 语音输入已停止")
+
+    def on_error(self, msg):
+        log.warning(f"[桌宠语音] {msg}")
+        self._voice_queue.put({"type": "error", "msg": msg})
+
+    def on_heard(self, text):
+        self._voice_queue.put({"type": "heard", "text": text})
+
+    def on_reply(self, reply, audio_b64):
+        self._voice_queue.put({"type": "reply", "reply": reply, "audio": audio_b64})
+
+    def _process_voice_queue(self):
+        """GUI 线程每帧调用（与 _process_ws_queue 同机制），安全处理语音反应。"""
+        while not self._voice_queue.empty():
+            try:
+                m = self._voice_queue.get_nowait()
+                if m.get("type") == "heard":
+                    txt = m.get("text", "")
+                    if txt:
+                        self._bubble.show_text(f"你说：{txt}", 3500)
+                elif m.get("type") == "reply":
+                    reply = m.get("reply", "")
+                    audio = m.get("audio", "")
+                    if reply:
+                        self._bubble.show_text(reply, 5000)
+                    if audio:
+                        self._play_audio_b64(audio)
+                elif m.get("type") == "error":
+                    # 仅在未启动时给一次提示，避免刷屏
+                    if self._voice is None and self._voice_enabled:
+                        self._bubble.show_text("语音输入未就绪（缺百炼Key）", 4000)
+            except Exception:
+                pass
+
     def _play_audio_b64(self, b64: str):
-        """在 Qt 桌宠自身进程播放 base64 WAV（语音从桌宠本体发出，不依赖后端进程音频输出）。"""
+        """在 Qt 桌宠自身进程播放 base64 WAV（语音从桌宠本体发出，不依赖后端进程音频输出）。
+
+        播放期间若语音输入处于活动状态，会挂起麦克风采集（PetVoiceInput._speaking 置位），
+        避免扬声器播出的 TTS 被麦克风回收形成回声回路；播完留 0.5s 余量吸收房间反射尾音。
+        """
         if not b64:
             return
         try:
-            import base64 as _b64, io, wave, numpy as np, sounddevice as sd, threading
+            import base64 as _b64, io, wave, numpy as np, sounddevice as sd, threading, time
             raw = _b64.b64decode(b64)
             wf = wave.open(io.BytesIO(raw), 'rb')
             rate = wf.getframerate()
             pcm = wf.readframes(wf.getnframes())
             arr = np.frombuffer(pcm, dtype=np.int16)
+            v = self._voice
             def _t():
                 try:
+                    if v is not None:
+                        v._speaking.set()   # 挂起麦：回声抑制
                     sd.play(arr, rate)
                     sd.wait()
                 except Exception as e:
                     log.warning(f"[桌宠语音] 播放异常: {e}")
+                finally:
+                    if v is not None:
+                        time.sleep(0.5)     # 余量：吞掉房间反射尾音，避免尾音被当人声
+                        v._speaking.clear()  # 恢复监听
             threading.Thread(target=_t, daemon=True).start()
         except Exception as e:
             log.warning(f"[桌宠语音] 解码/播放失败: {e}")
 
     def closeEvent(self, event):
         self._running = False
+        if self._voice is not None:
+            try:
+                self._voice.stop()
+            except Exception:
+                pass
+            self._voice = None
         super().closeEvent(event)
 
 

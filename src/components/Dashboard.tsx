@@ -1949,19 +1949,55 @@ function LivePage() {
   const [humanVoiceOn, setHumanVoiceOn] = useState(false);
   const [humanVoiceStatus, setHumanVoiceStatus] = useState<any>({});
   const [humanVoiceDevice, setHumanVoiceDevice] = useState('');
+  const [humanVoiceProvider, setHumanVoiceProvider] = useState<'cloud' | 'local'>('cloud');
+  const [audioDevices, setAudioDevices] = useState<{ inputs: any[]; default_index?: number|null; default_name?: string }>({ inputs: [] });
+  // 跟踪"用户是否手动改过麦克风"：未改过时自动默认选物理麦，避免系统默认=虚拟麦听不到
+  const humanVoiceDeviceRef = useRef('');
+  const deviceManuallyChangedRef = useRef(false);
 
   const loadHumanVoiceStatus = useCallback(async () => {
-    try { const r = await apiGet<any>('/api/live/human_voice/status'); setHumanVoiceStatus(r || {}); setHumanVoiceOn(!!r?.enabled); } catch {}
+    try { const r = await apiGet<any>('/api/live/human_voice/status'); setHumanVoiceStatus(r || {}); setHumanVoiceOn(!!r?.enabled); if (r?.provider) setHumanVoiceProvider(r.provider); } catch {}
+  }, []);
+
+  const loadAudioDevices = useCallback(async () => {
+    try {
+      const r = await apiGet<any>('/api/live/audio-devices');
+      const inputs: any[] = r?.inputs || [];
+      setAudioDevices({ inputs, default_index: r?.default_index, default_name: r?.default_name });
+      // 未手动改过时，自动默认选物理麦（Realtek/USB/麦克风），跳过虚拟麦与 Sound Mapper 伪设备
+      if (!deviceManuallyChangedRef.current && !humanVoiceDeviceRef.current) {
+        const isPhys = (n: string) => {
+          const s = n.toLowerCase();
+          return !/virtual|cable|wo mic|audiorelay|vb-audio|voicemeeter|sound mapper|mapper|映射器|wave|directsound|wdm|wasapi/i.test(s);
+        };
+        const isHw = (n: string) => /realtek|conexant|alc|usb audio|microphone|麦克风|webcam|focusrite|yeti|snowball|audio device/i.test(n.toLowerCase());
+        const phys = inputs.find((d: any) => d.max_input_channels > 0 && isPhys(d.name || '') && isHw(d.name || ''))
+          || inputs.find((d: any) => d.max_input_channels > 0 && isPhys(d.name || ''));
+        if (phys) { const v = String(phys.index); setHumanVoiceDevice(v); humanVoiceDeviceRef.current = v; }
+      }
+    } catch {}
   }, []);
 
   const toggleHumanVoice = async () => {
     const next = !humanVoiceOn;
     try {
-      const r = await apiPost<any>('/api/live/human_voice/toggle', { enabled: next, device: humanVoiceDevice });
+      const r = await apiPost<any>('/api/live/human_voice/toggle', { enabled: next, device: humanVoiceDevice, provider: humanVoiceProvider });
       if (r?.ok) { setHumanVoiceOn(next); notify(next ? '真人语音已开启' : '真人语音已关闭', 'success'); }
       else notify(r?.msg || '操作失败', 'error');
     } catch { notify('请求失败', 'error'); }
     loadHumanVoiceStatus();
+  };
+
+  // 切换识别引擎：运行中则重启以即时生效，未运行仅记录选择（开启时采用）
+  const changeHumanVoiceProvider = async (p: 'cloud' | 'local') => {
+    setHumanVoiceProvider(p);
+    if (humanVoiceOn) {
+      try {
+        await apiPost<any>('/api/live/human_voice/toggle', { enabled: false });
+        await apiPost<any>('/api/live/human_voice/toggle', { enabled: true, device: humanVoiceDevice, provider: p });
+      } catch { notify('切换引擎失败', 'error'); }
+      loadHumanVoiceStatus();
+    }
   };
 
   const loadVtsModels = useCallback(async () => {
@@ -1994,6 +2030,7 @@ function LivePage() {
   useEffect(() => { loadConnectors(); const iv = setInterval(loadConnectors, 5000); return () => clearInterval(iv); }, [loadConnectors]);
   useEffect(() => { loadVtsModels(); const iv = setInterval(loadVtsModels, 8000); return () => clearInterval(iv); }, [loadVtsModels]);
   useEffect(() => { loadHumanVoiceStatus(); const iv = setInterval(loadHumanVoiceStatus, 3000); return () => clearInterval(iv); }, [loadHumanVoiceStatus]);
+  useEffect(() => { loadAudioDevices(); const iv = setInterval(() => { if (!audioDevices.inputs?.length) loadAudioDevices(); }, 5000); return () => clearInterval(iv); }, [loadAudioDevices]);
 
   const humanSpeak = async () => {
     const t = humanText.trim(); if (!t) return;
@@ -2488,14 +2525,35 @@ function LivePage() {
           {/* 层3 真人语音闭环：麦克风采集 → VAD → ASR → 自动上麦 */}
           <div className="rounded-lg border border-sakura-200 bg-sakura-50/40 p-2.5 space-y-2">
             <div className="flex items-center justify-between gap-2">
-              <p className="text-[10px] font-medium text-sakura-600 flex items-center gap-1"><Mic size={13} /> 真人语音（麦克风自动上麦）</p>
+              <p className="text-[10px] font-medium text-sakura-600 flex items-center gap-1"><Mic size={13} /> 直播联动·麦克风（跟着直播姬的麦）</p>
               <button onClick={toggleHumanVoice} className={`shrink-0 px-2.5 py-1 rounded-lg text-[10px] font-medium transition-colors flex items-center gap-1 ${humanVoiceOn ? 'bg-rose-500 text-white hover:bg-rose-600' : 'bg-sakura-500 text-white hover:bg-sakura-600'}`}>
                 {humanVoiceOn ? <><MicOff size={12} /> 关闭</> : <><Mic size={12} /> 开启</>}
               </button>
             </div>
-            <p className="text-[9px] text-sakura-400 leading-relaxed">开启后对着麦克风说话，识别到的整句会自动当作人类副播发言上麦（其它 agent 会接话、被点名模型会做被搭话反应）。首次开启需联网下载中文语音模型（约 42MB，已获授权）。</p>
-            {/* 可选：指定麦克风设备，留空用系统默认 */}
-            <input value={humanVoiceDevice} onChange={e => setHumanVoiceDevice(e.target.value)} placeholder="麦克风设备（留空=系统默认，可填设备名/索引）" className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-white" />
+            <p className="text-[9px] text-sakura-400 leading-relaxed">正确路线：在直播姬里点开麦克风后，奶昔用共享模式读取<strong>同一路物理麦克风</strong>——你对着麦说话，桌宠就当作真人副播发言自动接话/做被搭话反应。如果直播姬绑的是系统默认输入，下方留空即可；若直播姬绑了独立声卡/虚拟麦，请在下方选它实际使用的那一路。</p>
+            {/* 识别引擎选择：云端百炼(噪声鲁棒) / 本地vosk(离线隐私) */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[9px] text-sakura-400">识别引擎：</span>
+              <div className="flex rounded-lg overflow-hidden border border-sakura-200 text-[10px]">
+                <button onClick={() => changeHumanVoiceProvider('cloud')} className={`px-2.5 py-1 transition-colors ${humanVoiceProvider === 'cloud' ? 'bg-sakura-500 text-white' : 'bg-white text-sakura-500 hover:bg-sakura-50'}`}>云端百炼</button>
+                <button onClick={() => changeHumanVoiceProvider('local')} className={`px-2.5 py-1 transition-colors ${humanVoiceProvider === 'local' ? 'bg-sakura-500 text-white' : 'bg-white text-sakura-500 hover:bg-sakura-50'}`}>本地vosk</button>
+              </div>
+              <span className="text-[9px] text-sakura-300">{humanVoiceProvider === 'cloud' ? '云端大模型·噪声下稳·需联网' : '离线隐私·断网可用·噪声下较弱'}</span>
+            </div>
+            {/* 麦克风设备选择：下拉列出真实可用输入设备，留空=系统默认（默认已自动选物理麦） */}
+            <select value={humanVoiceDevice} onChange={e => { const v = e.target.value; setHumanVoiceDevice(v); humanVoiceDeviceRef.current = v; deviceManuallyChangedRef.current = true; }} className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-white">
+              <option value="">{`系统默认输入（当前：${audioDevices.default_name || '—'}）`}</option>
+              {(audioDevices.inputs || []).map((d: any) => {
+                // 系统设备名可能含换行/回车（部分驱动），清理成单行；超出长度截断避免下拉过宽
+                const clean = String(d.name).replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+                const disp = clean.length > 38 ? clean.slice(0, 37) + '…' : clean;
+                const tag = d.index === audioDevices.default_index ? '（默认）' : '';
+                // 标记真实物理麦克风（非虚拟/转发设备），供用户优先选择
+                const isPhysical = /realtek|conexant|alc|microphone|麦克风|usb audio|webcam/i.test(clean) && !/virtual|cable|wo mic|audiorelay|vb-audio/i.test(clean);
+                return <option key={d.index} value={String(d.index)}>{disp}{tag}{isPhysical ? ' ★物理麦' : ''} ·{d.index}</option>;
+              })}
+            </select>
+            <p className="text-[9px] text-sakura-300">直播姬用哪路麦就选哪路。<span className="text-rose-400">★物理麦</span> 是最佳选择；系统默认当前常是虚拟麦（收不到人声），建议明确选物理麦。</p>
             {/* 状态行 */}
             <div className="flex items-center gap-2 text-[9px]">
               <span className={`inline-flex items-center gap-1 ${humanVoiceStatus?.model_ready ? 'text-emerald-500' : 'text-sakura-400'}`}>

@@ -1,0 +1,382 @@
+"""Qt 桌宠独立语音输入模块 —— 完全不依赖后端 broadcast / connector / cue 链路。
+
+闭环（全部在桌宠进程内完成）：
+    麦克风采集(sounddevice) → 百炼云端 ASR(paraformer-realtime-v2)
+    → 桌宠直接反应(气泡/表情/动作) → LLM 生成回复(qwen-turbo)
+    → 百炼 TTS(covyvoice-v3-flash, HTTP 直连) → 桌宠播放。
+
+设计原则（用户明确要求）：
+- 不经过 inject_human_speech / _broadcast_cue / should_react_to_cue 概率衰减；
+- 不连后端任何接口，桌宠自己闭环，单测失败即整体失败（无“其他链路”兜底）；
+- 密钥与 TTS 与桌面端「语音模型」页共用同一百炼 Key（live_config.dashscope_api_key）。
+"""
+import os, json, logging, threading, queue, time, base64
+log = logging.getLogger("pet_voice")
+
+
+class PetVoiceInput:
+    """桌宠语音输入采集器。reactor 实现 on_heard / on_reply / on_state / on_error。"""
+
+    def __init__(self, reactor, device=None, sample_rate: int = 16000):
+        self.reactor = reactor              # PetWindow（实现下方四个回调）
+        self.device = device                # 麦克风索引/名称；None=自动选物理麦
+        self.sample_rate = sample_rate
+        self._thread = None
+        self._stop = threading.Event()
+        self._running = False
+        self._api_key = ""
+        self._reco = None
+        self._speaking = threading.Event()   # 播放 TTS 期间置位：麦帧全部丢弃，防扬声器回声被识别成说话
+        self._history = []                  # 多轮对话上下文（最近若干轮 user/assistant）
+        self._history_limit = 16            # 上下文最多保留条数（≈8 轮）
+        self._lock = threading.Lock()       # 保护 history / 记忆读写，避免并发回复污染
+
+    # ───────────────────────── 密钥（与 TTS 共用） ─────────────────────────
+    def _load_key(self) -> bool:
+        try:
+            from desktop_core import storage
+            self._ensure_db(storage)
+            k = ""
+            # 优先 audio 供应商真密钥（与后端 _resolve_tts_config 同口径）
+            try:
+                raw_dc = storage.meta_get("desktop_config")
+                if raw_dc:
+                    dc = json.loads(raw_dc)
+                    from desktop_core.storage import _KEY_MASK
+                    for _pid, _pc in dc.get("api_providers", {}).items():
+                        if _pc.get("type") == "audio":
+                            rk = _pc.get("api_key", "")
+                            if isinstance(rk, str) and rk.startswith("enc:"):
+                                rk = storage.decrypt_api_key(rk)
+                            if rk and rk != _KEY_MASK:
+                                k = rk
+                                break
+            except Exception:
+                pass
+            if not k:
+                raw = storage.meta_get("live_config")
+                cfg = json.loads(raw) if raw else {}
+                k = cfg.get("dashscope_api_key", "")
+                if isinstance(k, str) and k.startswith("enc:"):
+                    k = storage.decrypt_api_key(k)
+            self._api_key = k
+            return bool(k)
+        except Exception as e:
+            log.warning(f"[桌宠语音] 读取密钥失败: {e}")
+            return False
+
+    @staticmethod
+    def _ensure_db(storage):
+        """桌宠是独立进程，需自己定位 data/naixi_desktop.db（后端在导入前设了 DB_PATH）。"""
+        if storage.DB_PATH and os.path.exists(storage.DB_PATH):
+            return
+        here = os.path.dirname(os.path.abspath(__file__))
+        d = here
+        for _ in range(6):
+            cand = os.path.join(d, "data", "naixi_desktop.db")
+            if os.path.exists(cand):
+                storage.DB_PATH = cand
+                return
+            d = os.path.dirname(d)
+        storage.DB_PATH = os.path.join(here, "..", "data", "naixi_desktop.db")
+
+    # ───────────────────────── 设备解析（跳过虚拟麦/Sound Mapper） ─────────────────────────
+    def _resolve_device(self):
+        if self.device is not None:
+            try:
+                return int(self.device)
+            except (ValueError, TypeError):
+                return self.device
+        try:
+            import sounddevice as sd
+            devs = sd.query_devices()
+            di = int(sd.default.device[0])
+            VIRTUAL = ("virtual", "cable", "wo mic", "audiorelay", "vb-audio",
+                       "voicemeeter", "sound mapper", "microsoft")
+            if 0 <= di < len(devs):
+                nm = (devs[di].get("name") or "").lower()
+                if devs[di].get("max_input_channels", 0) > 0 and \
+                   not any(v in nm for v in VIRTUAL):
+                    return di
+            for i, d in enumerate(devs):
+                if d.get("max_input_channels", 0) > 0 and \
+                   not any(v in (d.get("name") or "").lower() for v in VIRTUAL):
+                    return i
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def list_input_devices(include_all: bool = False):
+        """列出可用输入设备，供桌宠右键菜单选择采集设备。
+
+        Windows 上 PortAudio 会把同一物理麦按 MME / DirectSound / WASAPI /
+        WDM-KS 多个 host API 各列一次，名字一字不差 → 菜单刷满“重复”项。
+        默认只返回 WASAPI 端点（现代 Windows 推荐、对 ASR 最稳；VoiceMeeter
+        虚拟麦也只在 WASAPI 下以独特名字出现），彻底去重。
+
+        返回 [(index, label, host_name), ...]。include_all=True 时返回全部输入
+        设备，并在 label 后追加 host 标注以区分同名项。
+        label 仅用于展示；真正传给采集的是 index（全局唯一，不随 host 重复）。
+        """
+        try:
+            import sounddevice as sd
+            devs = sd.query_devices()
+            hosts = sd.query_hostapis()
+
+            def _host_name(hidx):
+                try:
+                    return hosts[hidx].get("name", "") if 0 <= hidx < len(hosts) else ""
+                except Exception:
+                    return ""
+
+            wasapi_idx = None
+            for i, h in enumerate(hosts):
+                if "wasapi" in (h.get("name") or "").lower():
+                    # 设备的 hostapi 字段值即该 host API 在列表中的位置索引
+                    wasapi_idx = i
+                    break
+
+            out = []
+            for i, d in enumerate(devs):
+                if d.get("max_input_channels", 0) <= 0:
+                    continue
+                hidx = d.get("hostapi")
+                if (not include_all) and wasapi_idx is not None and hidx != wasapi_idx:
+                    continue  # 默认只留 WASAPI，剔除 MME/DirectSound/WDM-KS 复制品
+                hn = _host_name(hidx)
+                label = d.get("name", f"device {i}")
+                if include_all and hn:
+                    label = f"{label}  ·  {hn}"   # 全量模式标注 host，便于区分同名
+                out.append((i, label, hn))
+            if not out and not include_all:
+                # 极端情况：本机无 WASAPI，退回全部输入设备
+                for i, d in enumerate(devs):
+                    if d.get("max_input_channels", 0) > 0:
+                        out.append((i, d.get("name", f"device {i}"), _host_name(d.get("hostapi"))))
+            return out
+        except Exception:
+            return []
+
+    # ───────────────────────── 启停 ─────────────────────────
+    def start(self) -> bool:
+        if self._running:
+            return True
+        if not self._load_key():
+            self.reactor.on_error("未配置百炼 Key（与 TTS 同款），无法使用语音输入")
+            return False
+        self._running = True
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        return True
+
+    def stop(self):
+        self._running = False
+        self._stop.set()
+
+    # ───────────────────────── 主循环：采集 + ASR ─────────────────────────
+    def _run(self):
+        import sounddevice as sd
+        import dashscope
+        from dashscope.audio.asr import Recognition, RecognitionCallback
+        dashscope.api_key = self._api_key
+        dev_idx = self._resolve_device()
+        self.reactor.on_state("listening", dev_idx)
+        SR = self.sample_rate
+        outer = self
+
+        class CB(RecognitionCallback):
+            def on_event(self, result):
+                if result is None:
+                    return
+                if result.get("header", {}).get("name") == "TaskFailed":
+                    outer.reactor.on_error(f"ASR 任务失败: {result}")
+                    return
+                s = result.get_sentence()
+                if not s:
+                    return
+                # dashscope 不同小版本 get_sentence() 可能返回 dict（文本在 .text）或 str
+                txt = (s.get("text") if isinstance(s, dict) else str(s)).strip()
+                if txt and result.is_sentence_end(s):
+                    outer._on_sentence(txt)
+
+        try:
+            reco = Recognition(model="paraformer-realtime-v2", format="pcm",
+                               sample_rate=SR, callback=CB())
+            reco.start()
+            outer._reco = reco
+            q: "queue.Queue" = queue.Queue()
+
+            def _cb(indata, frames, t, status):
+                if status:
+                    log.warning(f"[桌宠语音] 音频回调状态: {status}")
+                # 播放 TTS 期间丢弃麦克风帧，避免扬声器声音被麦捕获形成回声回路
+                if outer._speaking.is_set():
+                    return
+                q.put(bytes(indata))
+
+            stream = sd.RawInputStream(device=dev_idx, samplerate=SR, blocksize=960,
+                                       dtype="int16", channels=1, callback=_cb)
+            with stream:
+                while not outer._stop.is_set():
+                    try:
+                        data = q.get(timeout=0.5)
+                    except queue.Empty:
+                        continue
+                    reco.send_audio_frame(data)
+        except Exception as e:
+            log.error(f"[桌宠语音] 运行异常: {e}")
+            self.reactor.on_error(f"语音识别异常: {e}")
+        finally:
+            try:
+                if outer._reco:
+                    outer._reco.stop()
+            except Exception:
+                pass
+            outer._reco = None
+            outer.reactor.on_state("stopped", None)
+
+    # ───────────────────────── 句子处理：反应 + 回复 + TTS ─────────────────────────
+    def _on_sentence(self, text: str):
+        self.reactor.on_heard(text)
+        threading.Thread(target=self._respond, args=(text,), daemon=True).start()
+
+    def _respond(self, text: str):
+        with self._lock:
+            reply = self._llm_reply(text)
+            audio_b64 = self._tts(reply) if reply else ""
+            self.reactor.on_reply(reply, audio_b64)
+        # 记忆抽取异步进行，不阻塞本轮回复与上下文写入
+        if reply:
+            threading.Thread(target=self._extract_memories,
+                             args=(text, reply), daemon=True).start()
+
+    def _llm_reply(self, text: str) -> str:
+        try:
+            import dashscope
+            from dashscope import Generation
+            dashscope.api_key = self._api_key  # 独立设置，不依赖 _run 时序
+            mem = self._load_memories(text)    # 按当前话题语义召回相关记忆
+            sys_content = ("你是桌宠奶昔，一个可爱贴心的桌面伙伴。"
+                           "用简短口语化中文回应，带情绪，不超过30字。")
+            if mem:
+                sys_content += f"\n【你已知关于用户的事】\n{mem}"
+            messages = [{"role": "system", "content": sys_content}]
+            # 注入多轮上下文（最近若干轮）
+            for m in self._history[-self._history_limit:]:
+                messages.append(m)
+            messages.append({"role": "user", "content": text})
+            r = Generation.call(model="qwen-turbo", messages=messages,
+                                result_format="message")
+            if r.status_code == 200:
+                ans = r.output.choices[0].message.content.strip()
+                self._history.append({"role": "user", "content": text})
+                self._history.append({"role": "assistant", "content": ans})
+                if len(self._history) > self._history_limit:
+                    self._history = self._history[-self._history_limit:]
+                return ans
+        except Exception as e:
+            log.warning(f"[桌宠语音] LLM 失败: {e}")
+        return "嗯？我听到你说话啦~"
+
+    def _tts(self, text: str) -> str:
+        """百炼 TTS（HTTP 直连，复刻后端已验证写法 cosyvoice-v3-flash）。
+        返回 base64 WAV；失败返回空串（桌宠仍会显示文字气泡）。"""
+        if not self._api_key or not text:
+            return ""
+        try:
+            import requests
+            url = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"
+            hdr = {"Authorization": f"Bearer {self._api_key}",
+                   "Content-Type": "application/json"}
+            payload = {"model": "cosyvoice-v3-flash",
+                       "input": {"text": text, "voice": "longfeifei_v3",
+                                 "format": "wav", "sample_rate": 24000}}
+            r = requests.post(url, json=payload, headers=hdr, timeout=60)
+            if r.status_code == 200:
+                out = r.json().get("output", {})
+                u = out.get("audio", {}).get("url", "")
+                if u:
+                    ad = requests.get(u, timeout=30).content
+                    return base64.b64encode(ad).decode() if ad else ""
+                data = out.get("audio", {}).get("data") or out.get("data")
+                if data:
+                    return data if isinstance(data, str) else base64.b64encode(data).decode()
+            else:
+                log.warning(f"[桌宠语音] TTS HTTP {r.status_code}: {r.text[:160]}")
+        except Exception as e:
+            log.warning(f"[桌宠语音] TTS 失败: {e}")
+        return ""
+
+    # ───────────────────────── 上下文 & 长期记忆层 ─────────────────────────
+    # 记忆直接复用后端那套 agent_memory（storage.mem_*），与「桌面对话 / 直播 /
+    # 弹幕」走同一张表、同一 viewer("主人") 维度——桌宠无论输入来自自己听麦还是
+    # 直播链路，记忆都在一处，不割裂。仅共享 data/naixi_desktop.db 文件，不连后端进程。
+
+    def _load_memories(self, query: str = "") -> str:
+        """读长期记忆，token 预算内按优先级打包（画像>当日>语义召回）。
+
+        复用后端 storage.mem_build_injection（与直播/桌面对话共用同一张表
+        agent=naixi / viewer=主人），记忆互通；内部已做 token 估算 + 画像封顶
+        + 优先级丢弃，解决「字符数当预算」与「画像无上限挤掉其它」两坑。
+        """
+        try:
+            from desktop_core import storage
+            self._ensure_db(storage)
+            text, _used, _info = storage.mem_build_injection(
+                "naixi", "主人", query=query, budget=800)
+            return text
+        except Exception as e:
+            log.warning(f"[桌宠语音] 读记忆失败: {e}")
+            return ""
+
+    def _save_memory(self, content: str):
+        """存一条稳定事实到 agent_memory（viewer=主人），mem_profile_set 自带去重。"""
+        try:
+            from desktop_core import storage
+            self._ensure_db(storage)
+            storage.mem_profile_set("naixi", "主人", content)
+        except Exception as e:
+            log.warning(f"[桌宠语音] 存记忆失败: {e}")
+
+    def _extract_memories(self, text: str, reply: str):
+        """对话后异步抽取值得长期记住的用户事实，存入记忆库（不阻塞回复）。"""
+        try:
+            import dashscope, json as _json
+            from dashscope import Generation
+            dashscope.api_key = self._api_key
+            prompt = ("从下面的对话中抽取值得长期记住的关于用户的事实"
+                      "（偏好、身份、习惯、重要信息）。只输出 JSON 数组，"
+                      "元素为简短中文事实字符串；没有则输出 []，不要其他内容。\n"
+                      f"用户：{text}\n桌宠：{reply}")
+            r = Generation.call(model="qwen-turbo",
+                                messages=[{"role": "user", "content": prompt}],
+                                result_format="message")
+            if r.status_code != 200:
+                return
+            raw = r.output.choices[0].message.content.strip()
+            arr = _json.loads(raw)
+            if isinstance(arr, list):
+                for item in arr:
+                    if isinstance(item, str) and item.strip():
+                        self._save_memory(item.strip())
+        except Exception as e:
+            log.warning(f"[桌宠语音] 记忆抽取失败: {e}")
+
+    def clear_memory(self):
+        """清空桌宠(主人维度)长期记忆与当前会话上下文（右键菜单调用）。"""
+        try:
+            from desktop_core import storage
+            self._ensure_db(storage)
+            conn = storage._get_conn()
+            try:
+                conn.execute("DELETE FROM agent_memory WHERE agent_id=? AND viewer_id=?",
+                             ("naixi", "主人"))
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            log.warning(f"[桌宠语音] 清空记忆失败: {e}")
+        self._history = []
+        log.info("[桌宠语音] 已清空桌宠记忆(主人维度)")

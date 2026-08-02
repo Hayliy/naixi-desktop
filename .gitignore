@@ -61,3 +61,9 @@ build_log_*.txt
 verify_shots/
 install_gui.log
 verify2.log
+
+# 下载产物 / 二进制工具（不进版本库，本地保留可从网重下）
+VoicemeeterSetup_v2122.zip
+aria2.zip
+aria2_tmp/
+aria2c.exe
