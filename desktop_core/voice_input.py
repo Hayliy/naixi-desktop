@@ -25,12 +25,25 @@ def _setup_pet_voice_log():
     if lg.handlers:
         return
     try:
-        here = os.path.dirname(os.path.abspath(__file__))
-        root = here
-        for _ in range(6):
-            if os.path.exists(os.path.join(root, "data", "naixi_desktop.db")):
-                break
-            root = os.path.dirname(root)
+        # 日志根目录推导：优先环境变量（启动器可注入），否则从本文件向上找
+        # 项目根（含 src-tauri/sidecar/naixi_api.py 或 logs/ 或 data/naixi_desktop.db），
+        # 最后回退 cwd。避免副本运行（cwd=src-tauri/resources）把日志写进 resources/logs 导致找不到。
+        root = os.environ.get("NAIXI_DESKTOP_ROOT") or ""
+        if not (root and os.path.isdir(root)):
+            root = os.path.dirname(os.path.abspath(__file__))
+            for _ in range(8):
+                if (os.path.isdir(os.path.join(root, "logs")) or
+                        os.path.exists(os.path.join(root, "src-tauri", "sidecar", "naixi_api.py")) or
+                        os.path.exists(os.path.join(root, "data", "naixi_desktop.db"))):
+                    if os.path.exists(os.path.join(root, "src-tauri", "sidecar", "naixi_api.py")):
+                        root = os.path.dirname(root)
+                    break
+                root = os.path.dirname(root)
+            # dev 态 cwd 兜底：cwd 下有 data/naixi_desktop.db 或 logs 时优先用 cwd
+            _cwd = os.getcwd()
+            if (os.path.exists(os.path.join(_cwd, "data", "naixi_desktop.db")) or
+                    os.path.isdir(os.path.join(_cwd, "logs"))):
+                root = _cwd
         logdir = os.path.join(root, "logs")
         os.makedirs(logdir, exist_ok=True)
         fh = logging.FileHandler(os.path.join(logdir, "pet_voice.log"),
@@ -43,6 +56,30 @@ def _setup_pet_voice_log():
         lg.propagate = False
     except Exception:
         pass
+
+
+def _resample_int16(indata_bytes: bytes, src_sr: int, dst_sr: int = 16000) -> bytes:
+    """抗混叠重采样 int16 PCM。设备采样率 != 16000（如 VM 总线 48000）时，
+    把音频转成百炼 ASR 需要的 16000Hz 单声道 PCM。无新依赖，纯 numpy。"""
+    if src_sr == dst_sr or not indata_bytes:
+        return indata_bytes
+    import numpy as _np
+    audio = _np.frombuffer(indata_bytes, dtype=_np.int16).astype(_np.float64)
+    # 抗混叠：FIR 低通，截止 = dst/2（相对 src Nyquist 归一化频率 = dst_sr/src_sr）
+    fc = dst_sr / src_sr
+    taps = 31
+    n = _np.arange(taps) - (taps - 1) // 2
+    h = _np.sinc(fc * n) * _np.hanning(taps)
+    if h.sum() != 0:
+        h = h / h.sum()
+    lp = _np.convolve(audio, h, mode="same")
+    n_dst = int(round(len(audio) * dst_sr / src_sr))
+    if n_dst < 1:
+        return b""
+    x_old = _np.arange(len(lp), dtype=_np.float64)
+    x_new = _np.linspace(0.0, float(len(lp) - 1), n_dst)
+    out = _np.interp(x_new, x_old, lp)
+    return out.astype(_np.int16).tobytes()
 
 
 class PetVoiceInput:
@@ -438,6 +475,15 @@ class PetVoiceInput:
             _rms_last = [0.0]
             _rms_acc = [0.0, 0]
 
+            # 设备采样率/通道自适应：百炼 ASR 固定要 16000Hz 单声道 PCM，但真机
+            # WASAPI 设备（尤其 VoiceMeeter 总线）常只支持自身默认率（如 48000）
+            # 且为立体声，强制 16000/单声道会直接崩（PaErrorCode -9997）。
+            # 优先试 16000 单声道，失败回退设备默认率+多通道，回调里转单声道+重采样。
+            _dev_info = sd.query_devices(dev_idx)
+            _dev_sr = int(_dev_info.get("default_samplerate") or SR)
+            _max_ch = int(_dev_info.get("max_input_channels") or 1)
+            _src = {"sr": SR, "ch": 1}  # 回调运行时被开流结果更新
+
             def _cb(indata, frames, t, status):
                 if status:
                     log.warning(f"[桌宠语音] 音频回调状态: {status}")
@@ -445,30 +491,56 @@ class PetVoiceInput:
                 if outer._speaking.is_set():
                     return
                 import numpy as _np
-                a = _np.frombuffer(indata, dtype=_np.int16).astype(_np.float32)
+                a = _np.frombuffer(indata, dtype=_np.int16)
+                # 多通道 -> 单声道（VM 总线多为立体声）
+                if _src["ch"] and _src["ch"] > 1:
+                    a = a.reshape(-1, _src["ch"]).mean(axis=1).astype(_np.int16)
+                # 重采样到 16000（ASR 要求）
+                if _src["sr"] != SR:
+                    raw = _resample_int16(a.tobytes(), _src["sr"], SR)
+                else:
+                    raw = a.tobytes()
+                if not raw:
+                    return
+                af = _np.frombuffer(raw, dtype=_np.int16).astype(_np.float32)
                 # 电平 RMS 日志（每秒一行）：≈0=无声，>300=正常说话。
-                # 用于诊断“说话没反应”——有电平却无识别说明 ASR 端问题；恒≈0 说明采集设备没收到人声（选错设备）。
-                rms = float(_np.sqrt(_np.mean(a * a) + 1e-9))
+                # 用于诊断“说话没反应”——有电平却无识别说明 ASR 端问题；恒≈0 说明采集设备没收到人声。
+                rms = float(_np.sqrt(_np.mean(af * af) + 1e-9))
                 _rms_acc[0] += rms
                 _rms_acc[1] += 1
                 now = time.time()
                 if now - _rms_last[0] >= 1.0:
                     avg = _rms_acc[0] / max(1, _rms_acc[1])
-                    log.info(f"[桌宠语音] 采集电平 RMS={avg:.1f}（≈0=无声，>300=正常说话）dev={dev_idx}")
+                    log.info(f"[桌宠语音] 采集电平 RMS={avg:.1f}（≈0=无声，>300=正常说话）dev={dev_idx} sr={_src['sr']}->{SR}")
                     _rms_last[0] = now
                     _rms_acc[0] = 0.0
                     _rms_acc[1] = 0
-                # 麦克风数字增益（音量滑块 0-100 映射到 0.0-2.0；1.0 即不变）
+                # 麦克风数字增益（音量滑块 0-100 映射 0.0-2.0；1.0 即不变）
                 if outer.input_gain and outer.input_gain != 1.0:
-                    a = a * outer.input_gain
-                    a = _np.clip(a, -32768, 32767).astype(_np.int16)
-                    q.put(a.tobytes())
-                else:
-                    q.put(bytes(indata))
+                    af = af * outer.input_gain
+                    raw = _np.clip(af, -32768, 32767).astype(_np.int16).tobytes()
+                q.put(raw)
 
-            stream = sd.RawInputStream(device=dev_idx, samplerate=SR, blocksize=960,
-                                       dtype="int16", channels=1, callback=_cb)
-            with stream:
+            # 开流：优先 16000 单声道，失败回退设备默认率 + 多通道
+            _stream = None
+            _open_errs = []
+            for _sr in (SR, _dev_sr):
+                for _ch in (1, _max_ch if _max_ch > 1 else 1):
+                    try:
+                        _stream = sd.RawInputStream(
+                            device=dev_idx, samplerate=_sr,
+                            blocksize=int(0.02 * _sr),
+                            dtype="int16", channels=_ch, callback=_cb)
+                        _src["sr"], _src["ch"] = _sr, _ch
+                        break
+                    except Exception as _e:
+                        _open_errs.append(f"sr={_sr},ch={_ch}:{_e}")
+                if _stream is not None:
+                    break
+            if _stream is None:
+                raise RuntimeError("无法打开音频输入流: " + "; ".join(_open_errs))
+            log.info(f"[桌宠语音] 输入流已打开 dev={dev_idx} sr={_src['sr']} ch={_src['ch']}（ASR 目标 {SR}）")
+            with _stream:
                 while not outer._stop.is_set():
                     try:
                         data = q.get(timeout=0.5)
