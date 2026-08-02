@@ -530,7 +530,31 @@ class LiveEngine:
             try:
                 return int(device)
             except ValueError:
-                return device  # 传的是设备名
+                # 设备名 → 解析为唯一整数索引。
+                # 直接把名字传给 sounddevice 会因同名多设备(WASAPI/MME 同名)
+                # 抛 "Multiple input devices found"，必须自己解析成整数索引再传。
+                try:
+                    import sounddevice as sd
+                    devs = sd.query_devices()
+                    name_l = str(device).lower()
+                    hits = [i for i, d in enumerate(devs)
+                            if (d.get("max_input_channels", 0) > 0)
+                            and (name_l in (d.get("name") or "").lower())]
+                    if not hits:
+                        return device  # 没命中输入设备，退化为原字符串(让 sounddevice 报错便于诊断)
+                    if len(hits) == 1:
+                        return hits[0]
+                    # 多个同名：优先 WASAPI（最稳、与前端列表一致）
+                    for i in hits:
+                        try:
+                            hapi = sd.query_hostapis()[devs[i].get("hostapi", 0)].get("name", "").lower()
+                            if "wasapi" in hapi:
+                                return i
+                        except Exception:
+                            pass
+                    return hits[0]
+                except Exception:
+                    return device
         try:
             import sounddevice as sd
             devs = sd.query_devices()
