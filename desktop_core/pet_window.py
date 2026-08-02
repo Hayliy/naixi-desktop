@@ -1675,8 +1675,9 @@ class PetWindow(QWidget):
                    "• 其余 A1~A5 / B1~B3 是音频环回总线，不是麦克风，默认已隐藏（勾选下方「显示全部设备」才看得到），一般不用选。")
         else:
             tip = ("桌宠说话的声音从哪个设备播出。\n"
-                   "• 自动（系统默认）= 用当前默认扬声器/耳机。\n"
-                   "• VoiceMeeter / CABLE 的输出 = 把桌宠声音送进虚拟声卡，便于混音或录制。")
+                   "• 自动（系统默认）= 用当前默认扬声器/耳机，只有你自己能听到。\n"
+                   "• VoiceMeeter Input / CABLE Input = 把桌宠声音送进虚拟声卡混音，随你一起推流或录屏（做直播/录播最推荐，认准 Input）。\n"
+                   "• VoiceMeeter Output / CABLE Output 是虚拟声卡的播放输出端，一般不用选。")
         tip_label = QLabel(tip)
         tip_label.setWordWrap(True)
         tip_label.setStyleSheet("color:#888; font-size:11px;")

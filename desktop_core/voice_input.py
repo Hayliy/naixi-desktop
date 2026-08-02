@@ -120,20 +120,22 @@ class PetVoiceInput:
     # 每项：(匹配片段(小写), 输入侧解释, 输出侧解释)
     # 解释为 None 表示该侧不适用此规则，继续往后匹配；顺序越具体越靠前。
     _DEVICE_KB = [
-        # VoiceMeeter（输入侧多为虚拟麦/总线，输出侧为 VM 主输出）
+        # VoiceMeeter —— 命名极易搞反：Input 是「应用把声音送进 VM」的入端；
+        # Out B1 是「采集真人声」的总线；Output 是「VM 混音结果送出」的播放端。
         ("voicemeeter out b1", "你的人声总线：VM 把物理麦路由到 B1，选它收真人声、自动挡掉视频/直播声（看视频或直播最推荐）", None),
         ("voicemeeter out b",  "VM 额外人声总线(B2/B3)，一般不用", None),
         ("voicemeeter out a1", "系统/视频混合总线，不是纯人声，一般不作麦", None),
         ("voicemeeter out a",  "VM 输出总线，一般不作麦", None),
         ("voicemeeter vaio",   "VM 虚拟麦(VAIO)，一般不用；收真人声请选 Out B1", None),
         ("voicemeeter aux",    "VM 虚拟麦(AUX)，一般不用", None),
-        ("voicemeeter input",  "VM 虚拟麦(播放端)，一般不用；收真人声请选 Out B1", None),
+        ("voicemeeter input",  "VM 虚拟麦(播放端)，一般不用；收真人声请选 Out B1", "VM 输入端(把桌宠声音送进 VM 混音，随你一起推流/录屏·推荐)"),
+        ("voicemeeter output", None, "VM 输出端(VM 混音结果由此出声，一般连着你的扬声器)"),
         # VB-Audio Cable / Virtual Audio Cable
-        ("cable input",        "虚拟声卡输入(别人往里送声)，一般不用", None),
-        ("cable output",       None, "虚拟声卡输出(把声音送进 VM/录制/直播)"),
+        ("cable input",        "虚拟声卡输入(别人往里送声)，一般不用", "虚拟声卡输入端(把桌宠声音送进 CABLE，再转给直播/录制·推荐)"),
+        ("cable output",       None, "虚拟声卡输出端(CABLE 已混好的声音由此出声，一般不选)"),
         ("virtual audio cable", "虚拟音频线(输入)", "虚拟音频线(输出)"),
         # 通用 VM / VB-Audio 兜底（某侧专用）
-        ("voicemeeter",        None, "VM 虚拟输出(把声音送进 VM 混音)"),
+        ("voicemeeter",        None, "VM 虚拟音频设备(路由/混音用)"),
         ("vb-audio",           "VB-Audio 虚拟音频(路由/录制用)", "VB-Audio 虚拟音频(路由/录制用)"),
     ]
 
