@@ -1892,7 +1892,15 @@ class PetWindow(QWidget):
                     # 绝不能硬用 WAV 自带采样率去播输出设备：WASAPI/WDM-KS 设备
                     # 只暴露 44.1k/48k，而 TTS 是 16k/24k 单声道，硬播会抛
                     # Invalid sample rate [-9997] 被吞 → 无声。必须查设备支持率。
-                    dinfo = sd.query_devices(out_dev, kind='output')
+                    try:
+                        dinfo = sd.query_devices(out_dev, kind='output')
+                    except Exception:
+                        dinfo = None
+                    if not isinstance(dinfo, dict):
+                        # 极少数情况下（如音频后端尚未初始化）query_devices 可能返回
+                        # 非 dict（曾观测到 'D' object has no attribute 'get' 首播崩溃），
+                        # 退化为安全默认值，避免整段播放失败导致「听不到」。
+                        dinfo = {'default_samplerate': 44100, 'max_output_channels': 2}
                     dev_rate = int(dinfo.get('default_samplerate') or 44100)
                     dev_ch = max(1, min(2, int(dinfo.get('max_output_channels') or 2)))
                     mono = arr
