@@ -14,6 +14,37 @@ import os, json, logging, threading, queue, time, base64
 log = logging.getLogger("pet_voice")
 
 
+def _setup_pet_voice_log():
+    """把桌宠语音日志写到 <项目根>/logs/pet_voice.log。
+
+    桌宠是独立 pythonw 子进程，stderr 被丢弃，logging 又没配 handler，
+    默认 lastResort 只打 WARNING 且进丢弃的 stderr——真机断点(ASR 连接/设备/
+    识别)完全看不见。此函数补一个文件 handler，让『说话没反应』可诊断。
+    """
+    lg = logging.getLogger("pet_voice")
+    if lg.handlers:
+        return
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        root = here
+        for _ in range(6):
+            if os.path.exists(os.path.join(root, "data", "naixi_desktop.db")):
+                break
+            root = os.path.dirname(root)
+        logdir = os.path.join(root, "logs")
+        os.makedirs(logdir, exist_ok=True)
+        fh = logging.FileHandler(os.path.join(logdir, "pet_voice.log"),
+                                 encoding="utf-8")
+        fh.setLevel(logging.DEBUG)
+        fh.setFormatter(logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(message)s"))
+        lg.addHandler(fh)
+        lg.setLevel(logging.DEBUG)
+        lg.propagate = False
+    except Exception:
+        pass
+
+
 class PetVoiceInput:
     """桌宠语音输入采集器。reactor 实现 on_heard / on_reply / on_state / on_error。"""
 
@@ -351,9 +382,11 @@ class PetVoiceInput:
 
     # ───────────────────────── 启停 ─────────────────────────
     def start(self) -> bool:
+        _setup_pet_voice_log()
         if self._running:
             return True
         if not self._load_key():
+            log.error("[桌宠语音] 未配置百炼 Key，语音输入不可用")
             self.reactor.on_error("未配置百炼 Key（与 TTS 同款），无法使用语音输入")
             return False
         self._running = True
@@ -374,6 +407,7 @@ class PetVoiceInput:
         dashscope.api_key = self._api_key
         dev_idx = self._resolve_device()
         self.reactor.on_state("listening", dev_idx)
+        log.info(f"[桌宠语音] 进入聆听，采集设备={dev_idx}")
         SR = self.sample_rate
         outer = self
 
@@ -382,6 +416,7 @@ class PetVoiceInput:
                 if result is None:
                     return
                 if result.get("header", {}).get("name") == "TaskFailed":
+                    log.error(f"[桌宠语音] ASR 任务失败: {result}")
                     outer.reactor.on_error(f"ASR 任务失败: {result}")
                     return
                 s = result.get_sentence()
@@ -397,6 +432,7 @@ class PetVoiceInput:
                                sample_rate=SR, callback=CB())
             reco.start()
             outer._reco = reco
+            log.info("[桌宠语音] ASR 已连接百炼云端")
             q: "queue.Queue" = queue.Queue()
 
             def _cb(indata, frames, t, status):
@@ -437,6 +473,7 @@ class PetVoiceInput:
 
     # ───────────────────────── 句子处理：反应 + 回复 + TTS ─────────────────────────
     def _on_sentence(self, text: str):
+        log.info(f"[桌宠语音] 识别到: {text}")
         self.reactor.on_heard(text)
         threading.Thread(target=self._respond, args=(text,), daemon=True).start()
 
