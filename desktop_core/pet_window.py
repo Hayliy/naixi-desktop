@@ -1572,7 +1572,17 @@ class PetWindow(QWidget):
             storage.meta_set("pet_audio_output_device", self._audio_output_device)
         except Exception as e:
             log.warning(f"[桌宠音频] 保存输出设备失败: {e}")
-        label = "系统默认" if not self._audio_output_device else self._audio_output_device
+        label = "系统默认"
+        if self._audio_output_device:
+            label = self._audio_output_device
+            try:
+                import sounddevice as sd
+                di = int(self._audio_output_device)
+                devs = sd.query_devices()
+                if 0 <= di < len(devs):
+                    label = PetVoiceInput.describe_audio_device(devs[di].get("name", label), "output")
+            except Exception:
+                pass
         self._bubble.show_text(f"音频输出：{label}", 3000)
 
     def _apply_volumes(self, out_vol: int, mic_vol: int):
@@ -1661,11 +1671,11 @@ class PetWindow(QWidget):
         if is_input:
             tip = ("桌宠用它来听你说话（采集麦克风）。\n"
                    "• 自动（物理麦）= 用系统默认麦克风。\n"
-                   "• VoiceMeeter Input = 配合 VoiceMeeter 路由，只收你的真人声、把视频/直播声挡在外面（看视频或直播时最推荐）。\n"
-                   "• 其余 A1~A5 / B1~B3 是音频环回，不是麦克风，一般不用选。")
+                   "• VoiceMeeter Out B1 = 配合 VoiceMeeter 路由，只收你的真人声、把视频/直播声挡在外面（看视频或直播时最推荐，认准 Out B1）。\n"
+                   "• 其余 A1~A5 / B1~B3 是音频环回总线，不是麦克风，默认已隐藏（勾选下方「显示全部设备」才看得到），一般不用选。")
         else:
             tip = ("桌宠说话的声音从哪个设备播出。\n"
-                   "• 自动（系统默认）= 用当前默认扬声器。\n"
+                   "• 自动（系统默认）= 用当前默认扬声器/耳机。\n"
                    "• VoiceMeeter / CABLE 的输出 = 把桌宠声音送进虚拟声卡，便于混音或录制。")
         tip_label = QLabel(tip)
         tip_label.setWordWrap(True)
@@ -1707,7 +1717,7 @@ class PetWindow(QWidget):
         _reload()
         layout.addWidget(lw)
 
-        show_all_cb = QCheckBox("显示所有设备（含重复项/环回，列表可滚动）")
+        show_all_cb = QCheckBox("显示全部设备（含系统重复项与虚拟声卡总线，列表可滚动）")
         show_all_cb.setChecked(self._voice_show_all)
 
         def _on_toggle(c):
@@ -1765,7 +1775,7 @@ class PetWindow(QWidget):
                 di = int(self._voice_device)
                 devs = sd.query_devices()
                 if 0 <= di < len(devs):
-                    label = devs[di].get("name", label)
+                    label = PetVoiceInput.describe_audio_device(devs[di].get("name", label), "input")
             except Exception:
                 pass
         self._bubble.show_text(f"语音采集设备：{label}", 3000)

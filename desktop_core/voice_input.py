@@ -116,42 +116,132 @@ class PetVoiceInput:
         n = (name or "").lower()
         return any(h in n for h in PetVoiceInput._OUT_LOOPBACK_HINTS)
 
+    # ───────────────── 设备中文解释知识库（易扩展：新增设备家族只需加一行） ─────────────────
+    # 每项：(匹配片段(小写), 输入侧解释, 输出侧解释)
+    # 解释为 None 表示该侧不适用此规则，继续往后匹配；顺序越具体越靠前。
+    _DEVICE_KB = [
+        # VoiceMeeter（输入侧多为虚拟麦/总线，输出侧为 VM 主输出）
+        ("voicemeeter out b1", "你的人声总线：VM 把物理麦路由到 B1，选它收真人声、自动挡掉视频/直播声（看视频或直播最推荐）", None),
+        ("voicemeeter out b",  "VM 额外人声总线(B2/B3)，一般不用", None),
+        ("voicemeeter out a1", "系统/视频混合总线，不是纯人声，一般不作麦", None),
+        ("voicemeeter out a",  "VM 输出总线，一般不作麦", None),
+        ("voicemeeter vaio",   "VM 虚拟麦(VAIO)，一般不用；收真人声请选 Out B1", None),
+        ("voicemeeter aux",    "VM 虚拟麦(AUX)，一般不用", None),
+        ("voicemeeter input",  "VM 虚拟麦(播放端)，一般不用；收真人声请选 Out B1", None),
+        # VB-Audio Cable / Virtual Audio Cable
+        ("cable input",        "虚拟声卡输入(别人往里送声)，一般不用", None),
+        ("cable output",       None, "虚拟声卡输出(把声音送进 VM/录制/直播)"),
+        ("virtual audio cable", "虚拟音频线(输入)", "虚拟音频线(输出)"),
+        # 通用 VM / VB-Audio 兜底（某侧专用）
+        ("voicemeeter",        None, "VM 虚拟输出(把声音送进 VM 混音)"),
+        ("vb-audio",           "VB-Audio 虚拟音频(路由/录制用)", "VB-Audio 虚拟音频(路由/录制用)"),
+    ]
+
+    # 芯片/厂商识别（物理声卡补充说明，越具体越靠前）
+    _VENDOR_KB = [
+        ("realtek",        "Realtek 板载声卡"),
+        ("conexant",       "Conexant 声卡"),
+        ("synaptics",      "Synaptics 声卡"),
+        ("cirrus",         "Cirrus 声卡(多见于笔记本/苹果)"),
+        ("creative",       "Creative 独立声卡"),
+        ("sound blaster",  "Sound Blaster 声卡"),
+        ("asus",           "华硕声卡"),
+        ("supremefx",      "华硕 SupremeFX 声卡"),
+        ("intel display",  "Intel 显卡 HDMI 音频"),
+        ("nvidia",         "NVIDIA 显卡 HDMI 音频"),
+        ("amd",            "AMD 显卡 HDMI 音频"),
+        ("high definition audio", "高清声卡"),
+    ]
+
+    # 类别识别（按 kind 给角色说明，命中即代表设备用途）
+    _CAT_OUTPUT = [
+        ("扬声器", "放音设备(你听桌宠说话从这里出声)"),
+        ("speaker", "放音设备(你听桌宠说话从这里出声)"),
+        ("音箱", "放音设备"),
+        ("耳机", "耳机(贴耳放音)"),
+        ("headphone", "耳机(贴耳放音)"),
+        ("headset", "耳麦(带麦)"),
+        ("显示器", "显示器内置音响"),
+        ("monitor", "显示器内置音响"),
+        ("蓝牙", "蓝牙放音设备"),
+        ("bluetooth", "蓝牙放音设备"),
+        ("bt ", "蓝牙放音设备"),
+        ("hdmi", "显卡 HDMI 接的音响/电视"),
+        ("displayport", "显卡 DP 接的音响/电视"),
+        ("电视", "电视"),
+        ("tv", "电视"),
+    ]
+    _CAT_INPUT = [
+        ("麦克风", "收音设备(收你的声音)"),
+        ("microphone", "收音设备(收你的声音)"),
+        (" mic", "收音设备(收你的声音)"),
+        ("阵列", "阵列麦(笔记本内置)"),
+        ("array", "阵列麦(笔记本内置)"),
+        ("摄像头", "摄像头麦"),
+        ("camera", "摄像头麦"),
+        ("webcam", "摄像头麦"),
+        ("headset", "耳麦麦"),
+    ]
+
+    # 虚拟设备签名（未知品牌的虚拟声卡也能识别）
+    _VIRTUAL_SIG = ("virtual", "voicemeeter", "vb-audio", "cable", "vac",
+                    "wo mic", "audiorelay", "blackhole", "soundflower", "jack audio")
+
+    @staticmethod
+    def describe_audio_device(name: str, kind: str) -> str:
+        """把任意音频设备名翻译成中文可读解释（输入/输出通用，未来新设备也自动归类）。
+
+        kind: "input"=麦克风(采集) / "output"=扬声器(播放)。
+        返回 "原名（解释）"，解释永远不为空——即使从没见过的设备，也会按
+        虚拟/物理/扬声器/麦克风等特征给出类别说明，不再把原始英文裸名丢给用户。
+        """
+        n = (name or "").strip()
+        if not n:
+            return "未知设备"
+        low = n.lower()
+        is_in = (kind == "input")
+        # 1) 已知家族知识库（最具体优先，某侧不适用的规则跳过）
+        for frag, in_expl, out_expl in PetVoiceInput._DEVICE_KB:
+            if frag in low:
+                expl = in_expl if is_in else out_expl
+                if expl:
+                    return f"{n}（{expl}）"
+        # 2) 厂商/芯片识别
+        vendor = ""
+        for frag, v in PetVoiceInput._VENDOR_KB:
+            if frag in low:
+                vendor = v
+                break
+        # 3) 类别识别（按 kind 给角色说明）
+        cat = ""
+        table = PetVoiceInput._CAT_INPUT if is_in else PetVoiceInput._CAT_OUTPUT
+        for frag, c in table:
+            if frag in low:
+                cat = c
+                break
+        # 4) 虚拟设备签名（覆盖未知虚拟品牌）
+        is_virtual = any(s in low for s in PetVoiceInput._VIRTUAL_SIG)
+        # 5) 组装解释（绝不裸名）
+        parts = []
+        if cat:
+            parts.append(cat)
+        if vendor:
+            parts.append(vendor)
+        if is_virtual and not parts:
+            parts.append("虚拟音频设备(软件声卡，常用于路由/录制)")
+        if not parts:
+            parts.append("音频输入设备(麦克风类)" if is_in else "音频输出设备(扬声器/耳机类)")
+        return f"{n}（{('，'.join(parts))}）"
+
     @staticmethod
     def friendly_input_label(name: str) -> str:
-        """把晦涩设备名翻译成中文可读提示，帮用户选对麦克风。"""
-        n = name or ""
-        low = n.lower()
-        # VoiceMeeter 的「Out B1」是录音设备，承载你路由进来的人声（物理麦→B1），桌宠应采集它
-        if "voicemeeter out b1" in low:
-            return f"{n}（你的人声·已隔离视频声，选这个）"
-        if "voicemeeter out b" in low:
-            return f"{n}（VM 人声总线，一般不用）"
-        if "voicemeeter out a1" in low:
-            return f"{n}（系统/视频混合声，一般不选）"
-        if "voicemeeter out a" in low:
-            return f"{n}（VM 总线，一般不用）"
-        if "voicemeeter input" in low:
-            return f"{n}（虚拟麦·播放端）"
-        if "cable output" in low:
-            return f"{n}（虚拟声卡·VM 输出）"
-        if "立体声混音" in (n or "") or "stereo mix" in low:
-            return f"{n}（系统立体声混音）"
-        if any(k in low for k in ("microphone", "mic ", "阵列", "array", "realtek")):
-            return f"{n}（物理麦克风）"
-        return n
+        """（兼容别名）输入设备中文解释。"""
+        return PetVoiceInput.describe_audio_device(name, "input")
 
     @staticmethod
     def friendly_output_label(name: str) -> str:
-        """把晦涩输出设备名翻译成中文可读提示。"""
-        n = name or ""
-        low = n.lower()
-        if "voicemeeter output" in low or "voicemeeter out" in low or "aux output" in low:
-            return f"{n}（虚拟声卡输出）"
-        if "cable output" in low:
-            return f"{n}（虚拟声卡输出）"
-        if any(k in low for k in ("扬声器", "speaker", "realtek", "default")):
-            return f"{n}（扬声器）"
-        return n
+        """（兼容别名）输出设备中文解释。"""
+        return PetVoiceInput.describe_audio_device(name, "output")
 
     @staticmethod
     def list_input_devices(usable_only: bool = True, include_all: bool = False):
