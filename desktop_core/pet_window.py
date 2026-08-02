@@ -16,7 +16,8 @@ import numpy as np  # alpha 扫描矢量化（替代 8 万次 ctypes 双层循�
 from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer, QPropertyAnimation, QSize, QRect
 from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont, QPainterPath, QImage, QCursor, QBitmap, QRegion
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
-from PySide6.QtWidgets import QApplication, QMenu, QFileDialog, QWidget, QLineEdit, QLabel
+from PySide6.QtWidgets import (QApplication, QMenu, QFileDialog, QWidget, QLineEdit,
+                                QLabel, QDialog, QSlider, QVBoxLayout, QHBoxLayout, QPushButton)
 
 from desktop_core.motion_engine import PoseEngine
 from desktop_core.idle_engine import IdleEngine
@@ -237,6 +238,10 @@ class PetWindow(QWidget):
         self._voice_enabled = True
         self._voice_device = self._load_voice_device()   # 采集设备：空=自动物理麦；或 VoiceMeeter 虚拟麦名
         self._voice_show_all = self._load_voice_show_all()  # 设备菜单是否展开全部 host（含重复项）
+        # 音频输出设备 + 音量（0-100，默认 80）；输出音量作用于 TTS 播放增益，麦克风音量作用于采集增益
+        self._audio_output_device = self._load_audio_output_device()  # 空=系统默认输出
+        self._output_volume = self._load_output_volume()
+        self._mic_volume = self._load_mic_volume()
         self._voice_queue: "queue.Queue" = queue.Queue()
 
         # 窗口属性：无边框 + 置顶 + 工具窗口 + 透明
@@ -1011,6 +1016,25 @@ class PetWindow(QWidget):
         clear_a = dev_sub.addAction("清空桌宠记忆")
         clear_a.triggered.connect(self._clear_voice_memory)
         menu.addMenu(dev_sub)
+        # 音频输出设备子菜单：列出 WASAPI 输出端点（去重），供 TTS 播放选路
+        out_sub = QMenu("音频输出设备", self)
+        cur_out = (self._audio_output_device or "").strip()
+        out_auto = out_sub.addAction("自动（系统默认）")
+        out_auto.setCheckable(True)
+        out_auto.setChecked(cur_out == "")
+        out_auto.triggered.connect(lambda _=False: self._set_audio_output_device(""))
+        try:
+            for _oidx, _oname in PetVoiceInput.list_output_devices(include_all=self._voice_show_all):
+                _oa = out_sub.addAction(f"{_oidx}: {_oname}")
+                _oa.setCheckable(True)
+                _oa.setChecked(cur_out == str(_oidx) or cur_out == _oname)
+                _oa.triggered.connect(lambda _c=False, n=str(_oidx): self._set_audio_output_device(n))
+        except Exception:
+            pass
+        menu.addMenu(out_sub)
+        # 音量设置：输出音量 + 麦克风音量 双滑块对话框
+        vol_a = menu.addAction("音量设置…")
+        vol_a.triggered.connect(self._open_volume_dialog)
         menu.addSeparator()
         # 表情 / 动作 手动触发（对齐 web 宠物 HotkeySettings 的手动触发入口）
         # 以注入时记录的自有列表为主源（live2d.v3 的 GetExpressionIds 未必回显注入项），
@@ -1475,7 +1499,8 @@ class PetWindow(QWidget):
         if not self._voice_enabled:
             return
         try:
-            v = PetVoiceInput(self, device=self._voice_device or None)
+            v = PetVoiceInput(self, device=self._voice_device or None,
+                              input_gain=self._mic_volume / 50.0)  # 50→1.0, 100→2.0, 0→0
             ok = v.start()
             if not ok:
                 self._voice = None
@@ -1526,6 +1551,115 @@ class PetWindow(QWidget):
         except Exception as e:
             log.warning(f"[桌宠语音] 保存显示全部设备失败: {e}")
         self._bubble.show_text("已切换设备列表显示模式（重开右键菜单生效）", 2500)
+
+    # ── 音频输出设备 / 音量 ──
+    def _load_audio_output_device(self) -> str:
+        """从存储读取 TTS 播放输出设备（空=系统默认）。"""
+        try:
+            from desktop_core import storage
+            PetVoiceInput._ensure_db(storage)
+            return (storage.meta_get("pet_audio_output_device") or "").strip()
+        except Exception:
+            return ""
+
+    def _load_output_volume(self) -> int:
+        """输出音量 0-100（默认 80）。"""
+        try:
+            from desktop_core import storage
+            PetVoiceInput._ensure_db(storage)
+            v = int(storage.meta_get("pet_audio_volume") or "80")
+            return max(0, min(100, v))
+        except Exception:
+            return 80
+
+    def _load_mic_volume(self) -> int:
+        """麦克风音量 0-100（默认 80，对应增益 1.6x 上限）。"""
+        try:
+            from desktop_core import storage
+            PetVoiceInput._ensure_db(storage)
+            v = int(storage.meta_get("pet_mic_volume") or "80")
+            return max(0, min(100, v))
+        except Exception:
+            return 80
+
+    def _set_audio_output_device(self, dev: str):
+        """设置并持久化 TTS 播放输出设备（存 index；空=系统默认）。下次播放即生效。"""
+        self._audio_output_device = (dev or "").strip()
+        try:
+            from desktop_core import storage
+            PetVoiceInput._ensure_db(storage)
+            storage.meta_set("pet_audio_output_device", self._audio_output_device)
+        except Exception as e:
+            log.warning(f"[桌宠音频] 保存输出设备失败: {e}")
+        label = "系统默认" if not self._audio_output_device else self._audio_output_device
+        self._bubble.show_text(f"音频输出：{label}", 3000)
+
+    def _apply_volumes(self, out_vol: int, mic_vol: int):
+        """持久化音量并即时生效（播放增益立即生效；采集增益下次说话即生效）。"""
+        self._output_volume = max(0, min(100, out_vol))
+        self._mic_volume = max(0, min(100, mic_vol))
+        try:
+            from desktop_core import storage
+            PetVoiceInput._ensure_db(storage)
+            storage.meta_set("pet_audio_volume", str(self._output_volume))
+            storage.meta_set("pet_mic_volume", str(self._mic_volume))
+        except Exception as e:
+            log.warning(f"[桌宠音频] 保存音量失败: {e}")
+        # 采集增益实时应用到运行中的语音输入
+        if self._voice is not None:
+            try:
+                self._voice.input_gain = self._mic_volume / 50.0
+            except Exception:
+                pass
+        self._bubble.show_text(f"音量：输出 {self._output_volume} / 麦克风 {self._mic_volume}", 3000)
+
+    def _open_volume_dialog(self):
+        """音量设置对话框：输出音量 + 麦克风音量 双滑块（0-100）。"""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("音量设置")
+        dlg.setMinimumWidth(320)
+        layout = QVBoxLayout(dlg)
+
+        # 输出音量
+        layout.addWidget(QLabel("输出音量（桌宠说话声音）"))
+        out_slider = QSlider(Qt.Orientation.Horizontal)
+        out_slider.setRange(0, 100)
+        out_slider.setValue(self._output_volume)
+        out_val = QLabel(f"{self._output_volume}")
+        out_slider.valueChanged.connect(lambda v: out_val.setText(str(v)))
+        _oh = QHBoxLayout()
+        _oh.addWidget(out_slider)
+        _oh.addWidget(out_val)
+        layout.addLayout(_oh)
+
+        # 麦克风音量
+        layout.addWidget(QLabel("麦克风音量（听你说话灵敏度）"))
+        mic_slider = QSlider(Qt.Orientation.Horizontal)
+        mic_slider.setRange(0, 100)
+        mic_slider.setValue(self._mic_volume)
+        mic_val = QLabel(f"{self._mic_volume}")
+        mic_slider.valueChanged.connect(lambda v: mic_val.setText(str(v)))
+        _mh = QHBoxLayout()
+        _mh.addWidget(mic_slider)
+        _mh.addWidget(mic_val)
+        layout.addLayout(_mh)
+
+        layout.addSpacing(8)
+        btn_row = QHBoxLayout()
+        ok_btn = QPushButton("确定")
+        cancel_btn = QPushButton("取消")
+        btn_row.addStretch(1)
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(ok_btn)
+        layout.addLayout(btn_row)
+
+        def _on_ok():
+            self._apply_volumes(out_slider.value(), mic_slider.value())
+            dlg.accept()
+        ok_btn.clicked.connect(_on_ok)
+        cancel_btn.clicked.connect(dlg.reject)
+
+        dlg.exec()
 
     def _clear_voice_memory(self):
         """清空桌宠语音长期记忆与当前会话上下文（右键「清空桌宠记忆」）。"""
@@ -1629,12 +1763,23 @@ class PetWindow(QWidget):
             rate = wf.getframerate()
             pcm = wf.readframes(wf.getnframes())
             arr = np.frombuffer(pcm, dtype=np.int16)
+            # 输出音量：0-100 映射到 0.0-2.0 增益（50→1.0 不变；>50 放大，<50 衰减）
+            gain = self._output_volume / 50.0
+            if gain != 1.0:
+                arr = np.clip(arr.astype(np.float32) * gain, -32768, 32767).astype(np.int16)
+            # 输出设备：空=系统默认；否则用菜单选中的 WASAPI 输出端点
+            out_dev = None
+            if self._audio_output_device:
+                try:
+                    out_dev = int(self._audio_output_device)
+                except (ValueError, TypeError):
+                    out_dev = None
             v = self._voice
             def _t():
                 try:
                     if v is not None:
                         v._speaking.set()   # 挂起麦：回声抑制
-                    sd.play(arr, rate)
+                    sd.play(arr, rate, device=out_dev)
                     sd.wait()
                 except Exception as e:
                     log.warning(f"[桌宠语音] 播放异常: {e}")

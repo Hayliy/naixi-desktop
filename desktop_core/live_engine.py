@@ -3293,6 +3293,10 @@ class LiveEngine:
         ]
         for c in candidates:
             if _os.path.exists(c):
+                # 优先用同目录的 pythonw.exe（无控制台窗口），避免桌宠子进程弹终端
+                w = _os.path.join(_os.path.dirname(c), "pythonw.exe")
+                if _os.path.exists(w):
+                    return w
                 return c
         # 兜底：向上逐级搜索 python-embed/python.exe
         d = here
@@ -3349,7 +3353,16 @@ class LiveEngine:
             pp = env.get("PYTHONPATH", "")
             if core_parent and core_parent not in pp.split(os.pathsep):
                 env["PYTHONPATH"] = core_parent + (os.pathsep + pp if pp else "")
-            self._pet_proc = subprocess.Popen(args, env=env)
+            # 隐藏子进程窗口：pythonw 已无控制台；再补 CREATE_NO_WINDOW + SW_HIDE 双保险，
+            # 避免任何情况下点桌宠弹出黑框/终端窗口。
+            popen_kwargs = {"env": env}
+            if os.name == "nt":
+                popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+                _si = subprocess.STARTUPINFO()
+                _si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                _si.wShowWindow = subprocess.SW_HIDE
+                popen_kwargs["startupinfo"] = _si
+            self._pet_proc = subprocess.Popen(args, **popen_kwargs)
             log.info(f"[桌宠] 已启动: {py} {pet_script} (PYTHONPATH={core_parent})")
             return True
         except Exception as e:

@@ -17,10 +17,11 @@ log = logging.getLogger("pet_voice")
 class PetVoiceInput:
     """桌宠语音输入采集器。reactor 实现 on_heard / on_reply / on_state / on_error。"""
 
-    def __init__(self, reactor, device=None, sample_rate: int = 16000):
+    def __init__(self, reactor, device=None, sample_rate: int = 16000, input_gain: float = 1.0):
         self.reactor = reactor              # PetWindow（实现下方四个回调）
         self.device = device                # 麦克风索引/名称；None=自动选物理麦
         self.sample_rate = sample_rate
+        self.input_gain = input_gain        # 麦克风数字增益（1.0=不变；>1 放大，<1 衰减）
         self._thread = None
         self._stop = threading.Event()
         self._running = False
@@ -138,6 +139,7 @@ class PetVoiceInput:
                     break
 
             out = []
+            seen_names = set()  # 名称级去重兜底：同一物理麦在部分机器上可能以相同名字出现两次
             for i, d in enumerate(devs):
                 if d.get("max_input_channels", 0) <= 0:
                     continue
@@ -148,12 +150,53 @@ class PetVoiceInput:
                 label = d.get("name", f"device {i}")
                 if include_all and hn:
                     label = f"{label}  ·  {hn}"   # 全量模式标注 host，便于区分同名
+                # 名称去重：默认视图下同一名字只保留首个（voice_input 的 index 全局唯一，
+                # 菜单靠 index 选设备，去重不影响选路；纯粹消除“看着像重复”的视觉项）
+                _key = label.strip().lower()
+                if _key in seen_names:
+                    continue
+                seen_names.add(_key)
                 out.append((i, label, hn))
             if not out and not include_all:
                 # 极端情况：本机无 WASAPI，退回全部输入设备
                 for i, d in enumerate(devs):
                     if d.get("max_input_channels", 0) > 0:
                         out.append((i, d.get("name", f"device {i}"), _host_name(d.get("hostapi"))))
+            return out
+        except Exception:
+            return []
+
+    @staticmethod
+    def list_output_devices(include_all: bool = False):
+        """列出可用输出设备，供桌宠 TTS 播放选路（默认只列 WASAPI 端点，名称级去重）。"""
+        try:
+            import sounddevice as sd
+            devs = sd.query_devices()
+            hosts = sd.query_hostapis()
+
+            wasapi_idx = None
+            for i, h in enumerate(hosts):
+                if "wasapi" in (h.get("name") or "").lower():
+                    wasapi_idx = i
+                    break
+
+            out = []
+            seen = set()
+            for i, d in enumerate(devs):
+                if d.get("max_output_channels", 0) <= 0:
+                    continue
+                hidx = d.get("hostapi")
+                if (not include_all) and wasapi_idx is not None and hidx != wasapi_idx:
+                    continue
+                nm = d.get("name", f"device {i}")
+                if nm.strip().lower() in seen:
+                    continue
+                seen.add(nm.strip().lower())
+                out.append((i, nm))
+            if not out and not include_all:
+                for i, d in enumerate(devs):
+                    if d.get("max_output_channels", 0) > 0:
+                        out.append((i, d.get("name", f"device {i}")))
             return out
         except Exception:
             return []
@@ -214,7 +257,14 @@ class PetVoiceInput:
                 # 播放 TTS 期间丢弃麦克风帧，避免扬声器声音被麦捕获形成回声回路
                 if outer._speaking.is_set():
                     return
-                q.put(bytes(indata))
+                # 麦克风数字增益（音量滑块 0-100 映射到 0.0-2.0；1.0 即不变）
+                if outer.input_gain and outer.input_gain != 1.0:
+                    import numpy as _np
+                    a = _np.frombuffer(indata, dtype=_np.int16).astype(_np.float32) * outer.input_gain
+                    a = _np.clip(a, -32768, 32767).astype(_np.int16)
+                    q.put(a.tobytes())
+                else:
+                    q.put(bytes(indata))
 
             stream = sd.RawInputStream(device=dev_idx, samplerate=SR, blocksize=960,
                                        dtype="int16", channels=1, callback=_cb)
