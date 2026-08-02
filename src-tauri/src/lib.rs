@@ -224,13 +224,22 @@ fn resolve_python(app: &tauri::AppHandle) -> String {
     if !cfg!(debug_assertions) {
         let mut candidates: Vec<std::path::PathBuf> = Vec::new();
         if let Ok(rd) = app.path().resource_dir() {
-            // 打包态资源可能落在单层 python-embed，也可能因源路径带
-            // resources/ 前缀而落在双层 resources/resources/python-embed，两种都兜底查找，
-            // 避免找不到嵌入式 Python 而回退系统 python 导致后端起不来、资源库为空。
+            // 优先无窗口解释器 pythonw.exe：后端与桌宠均不弹黑框控制台（专业感）
+            candidates.push(rd.join("python-embed").join("pythonw.exe"));
+            candidates.push(rd.join("resources").join("python-embed").join("pythonw.exe"));
+        }
+        // 从 exe 所在目录向上查找（双击裸 exe / 安装目录兜底）
+        if let Some(p) = find_from_exe(&["python-embed", "pythonw.exe"]) {
+            candidates.push(p);
+        }
+        if let Some(p) = find_from_exe(&["resources", "python-embed", "pythonw.exe"]) {
+            candidates.push(p);
+        }
+        // 兜底：退回到控制台版 python.exe（仅当 pythonw 缺失的极端情况，仍会弹窗）
+        if let Ok(rd) = app.path().resource_dir() {
             candidates.push(rd.join("python-embed").join("python.exe"));
             candidates.push(rd.join("resources").join("python-embed").join("python.exe"));
         }
-        // 从 exe 所在目录向上查找（双击裸 exe / 安装目录兜底）
         if let Some(p) = find_from_exe(&["python-embed", "python.exe"]) {
             candidates.push(p);
         }

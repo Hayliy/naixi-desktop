@@ -990,47 +990,28 @@ class PetWindow(QWidget):
         v_a.setCheckable(True)
         v_a.setChecked(self._voice_enabled)
         v_a.triggered.connect(self.toggle_voice_input)
-        # 语音采集设备子菜单：默认只列 WASAPI 端点（去重，剔除 MME/DirectSound/WDM-KS 复制品）；
-        # 装 VoiceMeeter 后可选其虚拟麦，路由级分开视频声。可勾选「显示全部」展开含重复项。
+        # 语音采集设备：用「选择设备…」打开可滚动对话框（带中文说明），避免一长串设备铺满屏幕
         dev_sub = QMenu("语音输入设备", self)
         cur_dev = (self._voice_device or "").strip()
         auto_a = dev_sub.addAction("自动（物理麦）")
         auto_a.setCheckable(True)
         auto_a.setChecked(cur_dev == "")
         auto_a.triggered.connect(lambda _=False: self._set_voice_device(""))
-        try:
-            for _idx, _name, _host in PetVoiceInput.list_input_devices(include_all=self._voice_show_all):
-                _a = dev_sub.addAction(f"{_idx}: {_name}")
-                _a.setCheckable(True)
-                # 存储值可能是 index（新）或旧版 name；两种都判定预勾选
-                _a.setChecked(cur_dev == str(_idx) or cur_dev == _name)
-                _a.triggered.connect(lambda _c=False, n=str(_idx): self._set_voice_device(n))
-        except Exception:
-            pass
-        dev_sub.addSeparator()
-        show_all_a = dev_sub.addAction("显示全部设备（含重复项）")
-        show_all_a.setCheckable(True)
-        show_all_a.setChecked(self._voice_show_all)
-        show_all_a.triggered.connect(self._toggle_voice_show_all)
+        pick_a = dev_sub.addAction("选择设备…")
+        pick_a.triggered.connect(lambda _=False: self._open_device_dialog("input"))
         dev_sub.addSeparator()
         clear_a = dev_sub.addAction("清空桌宠记忆")
         clear_a.triggered.connect(self._clear_voice_memory)
         menu.addMenu(dev_sub)
-        # 音频输出设备子菜单：列出 WASAPI 输出端点（去重），供 TTS 播放选路
+        # 音频输出设备：同样用对话框选择，带说明
         out_sub = QMenu("音频输出设备", self)
         cur_out = (self._audio_output_device or "").strip()
         out_auto = out_sub.addAction("自动（系统默认）")
         out_auto.setCheckable(True)
         out_auto.setChecked(cur_out == "")
         out_auto.triggered.connect(lambda _=False: self._set_audio_output_device(""))
-        try:
-            for _oidx, _oname in PetVoiceInput.list_output_devices(include_all=self._voice_show_all):
-                _oa = out_sub.addAction(f"{_oidx}: {_oname}")
-                _oa.setCheckable(True)
-                _oa.setChecked(cur_out == str(_oidx) or cur_out == _oname)
-                _oa.triggered.connect(lambda _c=False, n=str(_oidx): self._set_audio_output_device(n))
-        except Exception:
-            pass
+        out_pick = out_sub.addAction("选择设备…")
+        out_pick.triggered.connect(lambda _=False: self._open_device_dialog("output"))
         menu.addMenu(out_sub)
         # 音量设置：输出音量 + 麦克风音量 双滑块对话框
         vol_a = menu.addAction("音量设置…")
@@ -1659,6 +1640,99 @@ class PetWindow(QWidget):
         ok_btn.clicked.connect(_on_ok)
         cancel_btn.clicked.connect(dlg.reject)
 
+        dlg.exec()
+
+    def _open_device_dialog(self, kind: str):
+        """设备选择对话框（可滚动、带中文说明），替代原先铺满屏幕的内联菜单。
+
+        kind="input" 选采集麦克风；kind="output" 选 TTS 播放输出设备。
+        列表默认只显示「真正能用」的设备（物理麦 + 虚拟输入麦 / 真实扬声器 + 虚拟输出），
+        勾选「显示所有设备」才展开含重复项与环回设备的全量列表（仍可滚动，不会铺屏）。
+        """
+        from PySide6.QtWidgets import (QListWidget, QListWidgetItem, QCheckBox,
+                                        QDialogButtonBox)
+        dlg = QDialog(self)
+        is_input = (kind == "input")
+        dlg.setWindowTitle("选择语音输入设备" if is_input else "选择音频输出设备")
+        dlg.setMinimumWidth(480)
+        dlg.setMinimumHeight(420)
+        layout = QVBoxLayout(dlg)
+
+        if is_input:
+            tip = ("桌宠用它来听你说话（采集麦克风）。\n"
+                   "• 自动（物理麦）= 用系统默认麦克风。\n"
+                   "• VoiceMeeter Input = 配合 VoiceMeeter 路由，只收你的真人声、把视频/直播声挡在外面（看视频或直播时最推荐）。\n"
+                   "• 其余 A1~A5 / B1~B3 是音频环回，不是麦克风，一般不用选。")
+        else:
+            tip = ("桌宠说话的声音从哪个设备播出。\n"
+                   "• 自动（系统默认）= 用当前默认扬声器。\n"
+                   "• VoiceMeeter / CABLE 的输出 = 把桌宠声音送进虚拟声卡，便于混音或录制。")
+        tip_label = QLabel(tip)
+        tip_label.setWordWrap(True)
+        tip_label.setStyleSheet("color:#888; font-size:11px;")
+        layout.addWidget(tip_label)
+
+        lw = QListWidget()
+        lw.setMinimumHeight(220)
+        lw.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+
+        cur = (self._voice_device if is_input else self._audio_output_device or "").strip()
+        auto_text = "自动（物理麦）" if is_input else "自动（系统默认）"
+
+        def _reload():
+            lw.clear()
+            auto_item = QListWidgetItem(auto_text)
+            auto_item.setData(Qt.ItemDataRole.UserRole, "")
+            lw.addItem(auto_item)
+            show_all = self._voice_show_all
+            if is_input:
+                for _idx, _name, _hn in PetVoiceInput.list_input_devices(
+                        usable_only=not show_all, include_all=show_all):
+                    lab = PetVoiceInput.friendly_input_label(_name)
+                    it = QListWidgetItem(f"{_idx}: {lab}")
+                    it.setData(Qt.ItemDataRole.UserRole, str(_idx))
+                    lw.addItem(it)
+            else:
+                for _oidx, _oname in PetVoiceInput.list_output_devices(include_all=show_all):
+                    lab = PetVoiceInput.friendly_output_label(_oname)
+                    it = QListWidgetItem(f"{_oidx}: {lab}")
+                    it.setData(Qt.ItemDataRole.UserRole, str(_oidx))
+                    lw.addItem(it)
+            # 预选当前设备
+            for r in range(lw.count()):
+                if (lw.item(r).data(Qt.ItemDataRole.UserRole) or "") == cur:
+                    lw.setCurrentRow(r)
+                    break
+
+        _reload()
+        layout.addWidget(lw)
+
+        show_all_cb = QCheckBox("显示所有设备（含重复项/环回，列表可滚动）")
+        show_all_cb.setChecked(self._voice_show_all)
+
+        def _on_toggle(c):
+            self._toggle_voice_show_all(c)
+            _reload()
+        show_all_cb.toggled.connect(_on_toggle)
+        layout.addWidget(show_all_cb)
+
+        bbox = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
+                                QDialogButtonBox.StandardButton.Cancel)
+        layout.addWidget(bbox)
+
+        def _on_ok():
+            it = lw.currentItem()
+            if it is None:
+                dlg.reject()
+                return
+            val = it.data(Qt.ItemDataRole.UserRole) or ""
+            if is_input:
+                self._set_voice_device(val)
+            else:
+                self._set_audio_output_device(val)
+            dlg.accept()
+        bbox.accepted.connect(_on_ok)
+        bbox.rejected.connect(dlg.reject)
         dlg.exec()
 
     def _clear_voice_memory(self):

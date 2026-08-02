@@ -107,8 +107,54 @@ class PetVoiceInput:
             pass
         return None
 
+    # 输出环回设备的名字特征（不该出现在“可用麦克风”里，避免 A1~A5/B1~B3 迷惑用户）
+    _OUT_LOOPBACK_HINTS = ("output", "out a", "out b")
+
     @staticmethod
-    def list_input_devices(include_all: bool = False):
+    def _is_output_loopback(name: str) -> bool:
+        """该名字是不是音频输出环回设备（不是麦克风，选了也没法听你说话）。"""
+        n = (name or "").lower()
+        return any(h in n for h in PetVoiceInput._OUT_LOOPBACK_HINTS)
+
+    @staticmethod
+    def friendly_input_label(name: str) -> str:
+        """把晦涩设备名翻译成中文可读提示，帮用户选对麦克风。"""
+        n = name or ""
+        low = n.lower()
+        # VoiceMeeter 的「Out B1」是录音设备，承载你路由进来的人声（物理麦→B1），桌宠应采集它
+        if "voicemeeter out b1" in low:
+            return f"{n}（你的人声·已隔离视频声，选这个）"
+        if "voicemeeter out b" in low:
+            return f"{n}（VM 人声总线，一般不用）"
+        if "voicemeeter out a1" in low:
+            return f"{n}（系统/视频混合声，一般不选）"
+        if "voicemeeter out a" in low:
+            return f"{n}（VM 总线，一般不用）"
+        if "voicemeeter input" in low:
+            return f"{n}（虚拟麦·播放端）"
+        if "cable output" in low:
+            return f"{n}（虚拟声卡·VM 输出）"
+        if "立体声混音" in (n or "") or "stereo mix" in low:
+            return f"{n}（系统立体声混音）"
+        if any(k in low for k in ("microphone", "mic ", "阵列", "array", "realtek")):
+            return f"{n}（物理麦克风）"
+        return n
+
+    @staticmethod
+    def friendly_output_label(name: str) -> str:
+        """把晦涩输出设备名翻译成中文可读提示。"""
+        n = name or ""
+        low = n.lower()
+        if "voicemeeter output" in low or "voicemeeter out" in low or "aux output" in low:
+            return f"{n}（虚拟声卡输出）"
+        if "cable output" in low:
+            return f"{n}（虚拟声卡输出）"
+        if any(k in low for k in ("扬声器", "speaker", "realtek", "default")):
+            return f"{n}（扬声器）"
+        return n
+
+    @staticmethod
+    def list_input_devices(usable_only: bool = True, include_all: bool = False):
         """列出可用输入设备，供桌宠右键菜单选择采集设备。
 
         Windows 上 PortAudio 会把同一物理麦按 MME / DirectSound / WASAPI /
@@ -116,9 +162,14 @@ class PetVoiceInput:
         默认只返回 WASAPI 端点（现代 Windows 推荐、对 ASR 最稳；VoiceMeeter
         虚拟麦也只在 WASAPI 下以独特名字出现），彻底去重。
 
-        返回 [(index, label, host_name), ...]。include_all=True 时返回全部输入
-        设备，并在 label 后追加 host 标注以区分同名项。
-        label 仅用于展示；真正传给采集的是 index（全局唯一，不随 host 重复）。
+        usable_only=True（默认）：额外剔除“输出环回”设备（Voicemeeter Out
+        A1~A5 / B1~B3、VoiceMeeter Output、CABLE Output 等），只留真正能当
+        麦克风用的设备（物理麦 + VoiceMeeter Input 等虚拟输入），避免一堆
+        A1~A5 让用户不知道选哪个。
+        include_all=True：返回全部输入设备（跨 host API + 含环回），用于高级排查。
+
+        返回 [(index, label, host_name), ...]。label 仅展示；真正传给采集的是
+        index（全局唯一，不随 host 重复）。
         """
         try:
             import sounddevice as sd
@@ -146,28 +197,33 @@ class PetVoiceInput:
                 hidx = d.get("hostapi")
                 if (not include_all) and wasapi_idx is not None and hidx != wasapi_idx:
                     continue  # 默认只留 WASAPI，剔除 MME/DirectSound/WDM-KS 复制品
+                nm = d.get("name", f"device {i}")
+                # 默认视图剔除「立体声混音/系统音频采集」这类很少用作桌宠麦的设备，减少干扰；
+                # VM 的 B1/A1 等总线保留（B1 正是路由后承载你人声的采集设备，用户需要可选）
+                if usable_only and not include_all:
+                    _low = (nm or "").lower()
+                    if "立体声混音" in (nm or "") or "stereo mix" in _low:
+                        continue
                 hn = _host_name(hidx)
-                label = d.get("name", f"device {i}")
+                label = nm
                 if include_all and hn:
                     label = f"{label}  ·  {hn}"   # 全量模式标注 host，便于区分同名
-                # 名称去重：默认视图下同一名字只保留首个（voice_input 的 index 全局唯一，
-                # 菜单靠 index 选设备，去重不影响选路；纯粹消除“看着像重复”的视觉项）
                 _key = label.strip().lower()
                 if _key in seen_names:
                     continue
                 seen_names.add(_key)
                 out.append((i, label, hn))
             if not out and not include_all:
-                # 极端情况：本机无 WASAPI，退回全部输入设备
+                # 极端情况：本机无 WASAPI 或全被过滤，退回全部“非环回”输入设备
                 for i, d in enumerate(devs):
-                    if d.get("max_input_channels", 0) > 0:
+                    if d.get("max_input_channels", 0) > 0 and not PetVoiceInput._is_output_loopback(d.get("name", "")):
                         out.append((i, d.get("name", f"device {i}"), _host_name(d.get("hostapi"))))
             return out
         except Exception:
             return []
 
     @staticmethod
-    def list_output_devices(include_all: bool = False):
+    def list_output_devices(usable_only: bool = True, include_all: bool = False):
         """列出可用输出设备，供桌宠 TTS 播放选路（默认只列 WASAPI 端点，名称级去重）。"""
         try:
             import sounddevice as sd
