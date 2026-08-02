@@ -1857,12 +1857,22 @@ class PetWindow(QWidget):
         if not b64:
             return
         try:
-            import base64 as _b64, io, wave, numpy as np, sounddevice as sd, threading, time
+            import base64 as _b64, io, wave, numpy as np, sounddevice as sd, threading, time, logging
+            from desktop_core import voice_input as _vi
+            from desktop_core.voice_input import _resample_int16
+            # 播放诊断也落盘到 pet_voice.log（与语音采集同文件），否则桌宠子进程
+            # 的 stderr 被丢弃，播放失败完全不可见 = 「听不到」无从诊断。
+            _vi._setup_pet_voice_log()
+            _vlog = logging.getLogger("pet_voice")
             raw = _b64.b64decode(b64)
             wf = wave.open(io.BytesIO(raw), 'rb')
-            rate = wf.getframerate()
+            wav_rate = wf.getframerate()
+            wav_ch = wf.getnchannels()
             pcm = wf.readframes(wf.getnframes())
             arr = np.frombuffer(pcm, dtype=np.int16)
+            # 多声道 -> 单声道（TTS 一般为单声道，双声道保险起见取均值）
+            if wav_ch > 1:
+                arr = arr.reshape(-1, wav_ch).mean(axis=1).astype(np.int16)
             # 输出音量：0-100 映射到 0.0-2.0 增益（50→1.0 不变；>50 放大，<50 衰减）
             gain = self._output_volume / 50.0
             if gain != 1.0:
@@ -1879,17 +1889,31 @@ class PetWindow(QWidget):
                 try:
                     if v is not None:
                         v._speaking.set()   # 挂起麦：回声抑制
-                    sd.play(arr, rate, device=out_dev)
+                    # 绝不能硬用 WAV 自带采样率去播输出设备：WASAPI/WDM-KS 设备
+                    # 只暴露 44.1k/48k，而 TTS 是 16k/24k 单声道，硬播会抛
+                    # Invalid sample rate [-9997] 被吞 → 无声。必须查设备支持率。
+                    dinfo = sd.query_devices(out_dev, kind='output')
+                    dev_rate = int(dinfo.get('default_samplerate') or 44100)
+                    dev_ch = max(1, min(2, int(dinfo.get('max_output_channels') or 2)))
+                    mono = arr
+                    if wav_rate != dev_rate:
+                        mono = np.frombuffer(_resample_int16(mono.tobytes(), wav_rate, dev_rate), dtype=np.int16)
+                    _vlog.info(f"[桌宠语音] 播放 TTS：wav={wav_rate}Hz -> 设备={dev_rate}Hz ch={dev_ch} dev={out_dev} gain={gain:.2f}")
+                    if dev_ch >= 2:
+                        sd.play(np.column_stack((mono, mono)), dev_rate, device=out_dev)
+                    else:
+                        sd.play(mono, dev_rate, device=out_dev)
                     sd.wait()
                 except Exception as e:
-                    log.warning(f"[桌宠语音] 播放异常: {e}")
+                    _vlog.error(f"[桌宠语音] 播放异常: {e}")
                 finally:
                     if v is not None:
                         time.sleep(0.5)     # 余量：吞掉房间反射尾音，避免尾音被当人声
                         v._speaking.clear()  # 恢复监听
             threading.Thread(target=_t, daemon=True).start()
         except Exception as e:
-            log.warning(f"[桌宠语音] 解码/播放失败: {e}")
+            import logging as _lg
+            _lg.getLogger("pet_voice").error(f"[桌宠语音] 解码/播放失败: {e}")
 
     def closeEvent(self, event):
         self._running = False
