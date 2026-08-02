@@ -561,6 +561,31 @@ class LiveEngine:
         except Exception:
             return None
 
+    def _resample_int16(self, indata_bytes: bytes, src_sr: int, dst_sr: int = 16000) -> bytes:
+        """抗混叠重采样 int16 PCM（VM 总线 48k -> ASR 16000）。纯 numpy，无新依赖。
+
+        与 voice_input.py._resample_int16 同实现；避免云端/本地采集路径硬编码 16000
+        在 48k 设备(WASAPI VM 总线)上抛 -9997。
+        """
+        if src_sr == dst_sr or not indata_bytes:
+            return indata_bytes
+        import numpy as _np
+        audio = _np.frombuffer(indata_bytes, dtype=_np.int16).astype(_np.float64)
+        fc = dst_sr / src_sr
+        taps = 31
+        n = _np.arange(taps) - (taps - 1) // 2
+        h = _np.sinc(fc * n) * _np.hanning(taps)
+        if h.sum() != 0:
+            h = h / h.sum()
+        lp = _np.convolve(audio, h, mode="same")
+        n_dst = int(round(len(audio) * dst_sr / src_sr))
+        if n_dst < 1:
+            return b""
+        x_old = _np.arange(len(lp), dtype=_np.float64)
+        x_new = _np.linspace(0.0, float(len(lp) - 1), n_dst)
+        out = _np.interp(x_new, x_old, lp)
+        return out.astype(_np.int16).tobytes()
+
     async def _agent_human_voice(self, model_dir: str, device: str, provider: str = "cloud"):
         """真人语音识别分发：云端(百炼 paraformer) / 本地(vosk)。共享"采集+注入上麦"架构。"""
         if provider == "cloud":
@@ -607,12 +632,17 @@ class LiveEngine:
             return
 
         dev_idx = self._resolve_asr_device_index(device)
+        # 自适应采样率/通道：VM 总线(B1 等)多为 48k 立体声，硬编码 16000 单声道会抛 -9997
+        # （与 voice_input.py 104fae5 对称修复）。ASR 仍需 16000 单声道，故回调里重采样。
+        dev_sr, dev_ch, dev_name = 16000, 1, "系统默认"
         try:
-            _devs = sd.query_devices()
-            _dn = _devs[dev_idx]["name"] if (dev_idx is not None and 0 <= dev_idx < len(_devs)) else "系统默认"
-            log.info(f"[真人语音·云端] 监听设备: device={device!r} → dev_idx={dev_idx} ({_dn})")
+            _di = sd.query_devices(dev_idx)
+            dev_sr = int(_di.get("default_samplerate") or 16000)
+            dev_ch = max(1, min(2, int(_di.get("max_input_channels") or 1)))
+            dev_name = _di.get("name", "系统默认")
         except Exception:
-            log.info(f"[真人语音·云端] 监听设备: device={device!r} → dev_idx={dev_idx}")
+            pass
+        log.info(f"[真人语音·云端] 监听设备: device={device!r} → dev_idx={dev_idx} ({dev_name}) sr={dev_sr} ch={dev_ch}")
 
         SR = 16000
         loop = asyncio.get_running_loop()
@@ -668,14 +698,24 @@ class LiveEngine:
             if status:
                 log.debug(f"[真人语音·云端] 音频状态(非致命): {status}")
             try:
-                q.put(bytes(indata))  # 仅入队，绝不在此调用识别/网络（避免阻塞采集）
+                import numpy as _np
+                a = _np.frombuffer(indata, dtype=_np.int16)
+                if dev_ch > 1:  # 多通道 -> 单声道（VM 总线多为立体声）
+                    a = a.reshape(-1, dev_ch).mean(axis=1).astype(_np.int16)
+                if dev_sr != SR:
+                    raw = self._resample_int16(a.tobytes(), dev_sr, SR)
+                else:
+                    raw = a.tobytes()
+                if not raw:
+                    return
+                q.put(raw)  # 仅入队，绝不在此调用识别/网络（避免阻塞采集）
             except Exception as e:
                 log.warning(f"[真人语音·云端] 回调异常: {e}")
 
         log.info(f"[真人语音·云端] 开始监听麦克风（阿里百炼 paraformer 实时识别）")
         try:
-            with sd.RawInputStream(samplerate=SR, blocksize=4000, device=dev_idx,
-                                   dtype="int16", channels=1, latency="high", callback=callback):
+            with sd.RawInputStream(samplerate=dev_sr, blocksize=4000, device=dev_idx,
+                                   dtype="int16", channels=dev_ch, latency="high", callback=callback):
                 while True:
                     await asyncio.sleep(0.2)
         except asyncio.CancelledError:
@@ -738,8 +778,17 @@ class LiveEngine:
         # 解析输入设备（名称/索引）；device 为空时智能默认到物理麦（避开虚拟麦静音）
         dev_idx = self._resolve_asr_device_index(device)
 
-        sample_rate = 16000
-        blocksize = 320  # 20ms，WebRTC VAD 要求精确帧长(10/20/30ms)
+        # 自适应采样率/通道：VM 总线(B1 等)多为 48k 立体声，硬编码 16000 单声道会抛 -9997
+        # （与 voice_input.py 104fae5 / 云端路径对称修复）。VAD/vosk 仍需 16000 单声道，
+        # 故回调里把设备原生率重采样到 16000。
+        sample_rate = 16000  # VAD/vosk 目标率（恒定）
+        try:
+            _di = sd.query_devices(dev_idx)
+            dev_sr = int(_di.get("default_samplerate") or 16000)
+            dev_ch = max(1, min(2, int(_di.get("max_input_channels") or 1)))
+        except Exception:
+            dev_sr, dev_ch = 16000, 1
+        blocksize = int(0.02 * dev_sr)  # 20ms@设备率 → 重采样后≈320样本(20ms@16k)，满足 WebRTC VAD 帧长
 
         # ---- 自适应 VAD 校准 ----
         # 纯能量VAD(1.5×)在低信噪比场景失效: 实测背景噪音中位数1477≈人声均值1800,
@@ -751,8 +800,8 @@ class LiveEngine:
         _vad_low = 1200         # 双保险能量门限
         try:
             cal_samples = int(sample_rate * 2)  # 2 秒校准
-            cal_data = sd.rec(cal_samples, samplerate=sample_rate,
-                              channels=1, dtype="int16", device=dev_idx, blocking=True)
+            cal_data = sd.rec(cal_samples, samplerate=dev_sr,
+                              channels=dev_ch, dtype="int16", device=dev_idx, blocking=True)
             cal_energies = np.abs(cal_data.flatten().astype(np.float64))
             bg_median = float(np.median(cal_energies))
             _vad_threshold = max(120, int(bg_median * 1.5 + 80))
@@ -811,8 +860,17 @@ class LiveEngine:
             if status:
                 log.debug(f"[真人语音] 音频状态(已解耦，非致命): {status}")
             try:
-                data = bytes(indata)  # 复制独立 bytes，避免回调 buffer 被下一帧覆盖
-                audio = np.frombuffer(indata, dtype=np.int16).astype(np.float64)
+                # 设备原生率 → 16000 单声道，供 VAD/vosk 使用
+                a = np.frombuffer(indata, dtype=np.int16)
+                if dev_ch > 1:
+                    a = a.reshape(-1, dev_ch).mean(axis=1).astype(np.int16)
+                if dev_sr != sample_rate:
+                    data = self._resample_int16(a.tobytes(), dev_sr, sample_rate)
+                else:
+                    data = a.tobytes()
+                if not data:
+                    return
+                audio = np.frombuffer(data, dtype=np.int16).astype(np.float64)
                 energy = float(np.abs(audio).mean())
                 _prefx.append(data)  # 滑动前置缓冲（含最近若干帧）
                 _pass = False
@@ -839,9 +897,9 @@ class LiveEngine:
         _th.start()
         log.info(f"[真人语音] 开始监听麦克风（VAD 门限={_vad_threshold:.0f}，识别线程已启动，采集与识别解耦）")
         try:
-            with sd.RawInputStream(samplerate=sample_rate, blocksize=blocksize,
+            with sd.RawInputStream(samplerate=dev_sr, blocksize=blocksize,
                                    device=dev_idx, dtype="int16",
-                                   channels=1, latency="high", callback=_callback):
+                                   channels=dev_ch, latency="high", callback=_callback):
                 while True:
                     await asyncio.sleep(0.2)
         except asyncio.CancelledError:
