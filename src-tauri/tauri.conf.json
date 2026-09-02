@@ -60,7 +60,9 @@
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/uninstall.ico",
         "compression": "zlib"
-      }
+      },
+      "signCommand": "powershell -NoProfile -Command \"& { if ($env:NAIXI_CODESIGN_PFX -and $env:NAIXI_CODESIGN_THUMB -and $env:NAIXI_SIGNTOOL) { & $env:NAIXI_SIGNTOOL sign /fd SHA256 /sha1 $env:NAIXI_CODESIGN_THUMB /tr http://timestamp.digicert.com /td SHA256 $env:NAIXI_CODESIGN_PFX $file } }\"",
+      "digestAlgorithm": "sha256"
     },
     "resources": [
       "sidecar/*.py",

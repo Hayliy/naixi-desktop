@@ -6,6 +6,7 @@ import {
 import ProviderSettings from "./ProviderSettings";
 import ThemeSettings from "./ThemeSettings";
 import { apiGet, apiPost } from "@/lib/api";
+import { SPONSOR_REAL_NAME, SPONSOR_QR, sha256Hex } from "@/lib/sponsorIntegrity";
 import { INPUT, BTN, BTN_GHOST, Section, SettingRow, InfoRow, SaveBar } from "./settings/primitives";
 
 const TABS = [
@@ -324,6 +325,23 @@ function SettingsSecurity() {
 function SettingsAbout() {
   const [ver, setVer] = useState("加载中...");
   const [tools, setTools] = useState<number | null>(null);
+  const [tampered, setTampered] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      for (const k of ["wechat", "alipay"] as const) {
+        const b64 = SPONSOR_QR[k].b64;
+        if (!b64) continue;
+        try {
+          const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+          const h = await sha256Hex(bin);
+          if (h !== SPONSOR_QR[k].sha256) { if (!cancelled) setTampered(true); return; }
+        } catch { if (!cancelled) setTampered(true); return; }
+      }
+      if (!cancelled) setTampered(false);
+    })();
+    return () => { cancelled = true; };
+  }, []);
   useEffect(() => {
     apiGet<any>("/api/status").then(d => {
       setVer(d.version || "未知");
@@ -354,13 +372,26 @@ function SettingsAbout() {
       <div className="mt-1 rounded-lg border border-dashed border-sakura-200 bg-sakura-50/40 p-3">
         <div className="mb-2 text-xs font-semibold text-sakura-500">扫码赞助（微信 / 支付宝）</div>
         <div className="flex gap-4">
-          <div className="flex h-28 w-28 flex-col items-center justify-center rounded-lg border border-sakura-100 bg-white text-center text-[10px] text-sakura-300">微信收款码<br />（待添加）</div>
-          <div className="flex h-28 w-28 flex-col items-center justify-center rounded-lg border border-sakura-100 bg-white text-center text-[10px] text-sakura-300">支付宝收款码<br />（待添加）</div>
+          {(["wechat", "alipay"] as const).map((k) => (
+            <div key={k} className="flex flex-col items-center">
+              <img
+                src={`data:image/png;base64,${SPONSOR_QR[k].b64}`}
+                alt={k}
+                className="h-28 w-28 rounded-lg border border-sakura-100 bg-white object-contain"
+              />
+              <span className="mt-1 text-[10px] text-sakura-300">{k === "wechat" ? "微信" : "支付宝"}</span>
+            </div>
+          ))}
         </div>
-        <p className="mt-2 text-[10px] text-sakura-400">收款人：<span className="font-semibold text-sakura-500">【待填写：你的微信 / 支付宝收款名】</span></p>
-        <p className="mt-1 text-[10px] text-amber-500">⚠️ 付款前请核对收款人姓名，与上方一致再支付。二维码可能被替换，姓名核对是最后一道防线。</p>
+        <p className="mt-2 text-[10px] text-sakura-400">收款人：<span className="font-semibold text-sakura-500">{SPONSOR_REAL_NAME}</span></p>
+        {tampered ? (
+          <p className="mt-2 rounded bg-red-50 px-2 py-1 text-[10px] font-semibold text-red-600">
+            ⚠️ 收款码完整性校验未通过，可能被篡改。请只从官方 GitHub Releases 下载安装包，并核对收款人姓名。
+          </p>
+        ) : (
+          <p className="mt-1 text-[10px] text-amber-500">✅ 收款码完整性校验通过。付款前仍请核对收款人姓名与上方一致再支付——姓名是最后一道人工防线。</p>
+        )}
       </div>
-      <p className="text-[10px] text-sakura-400 mt-2">把收款码图片（微信 / 支付宝，各一张或一张）和收款人实名发我，我会替换占位并硬编码收款人姓名做「图片 + 文字」双核对。GitHub Sponsors 在中国大陆不可用，故用微信 / 支付宝官方收款渠道作为正规赞助方式。</p>
     </Section>
     </>
   );

@@ -1,0 +1,16 @@
+# 赞助与发布完整性关键文件 —— 任何修改必须仓库 owner 审查
+# 配合 main 分支保护（require_code_owner_reviews），改这些文件必须 @Hayliy 审批，
+# 防止恶意 PR 替换收款码 / 构建脚本导致赞助款被截胡或安装包被投毒（银狐类攻击）。
+* @Hayliy
+
+# 最高敏感文件（强制 code owner review）
+README.md
+src/components/SettingsPage.tsx
+src/lib/sponsorIntegrity.ts
+public/sponsor/
+scripts/gen-sponsor-hash.mjs
+scripts/gen-release-hashes.mjs
+src-tauri/installer.nsi
+src-tauri/tauri.conf.json
+package.json
+.github/

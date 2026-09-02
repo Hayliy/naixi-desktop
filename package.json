@@ -8,6 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "stage-core": "node scripts/stage-core.cjs",
+    "gen:sponsor-hash": "node scripts/gen-sponsor-hash.mjs",
+    "gen:release-hashes": "node scripts/gen-release-hashes.mjs",
     "tauri": "tauri"
   },
   "dependencies": {
