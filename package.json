@@ -1,7 +1,7 @@
 {
   "name": "naixi-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,6 +10,8 @@
     "stage-core": "node scripts/stage-core.cjs",
     "gen:sponsor-hash": "node scripts/gen-sponsor-hash.mjs",
     "gen:release-hashes": "node scripts/gen-release-hashes.mjs",
+    "sync:version": "node scripts/sync-version.mjs",
+    "pretauri": "node scripts/sync-version.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

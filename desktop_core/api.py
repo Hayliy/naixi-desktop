@@ -611,12 +611,27 @@ async def api_get_github_token(request):
 
 # ── 桌面端状态 ──
 
+def _app_version():
+    """从 desktop_core/version.json 读取版本（由 scripts/sync-version.mjs 从 tauri.conf.json 同步生成）。
+
+    单一真相源是 tauri.conf.json 的 version，避免后端硬编码版本号与前端/打包不一致。
+    缺失或解析失败时回退占位串，绝不返回具体版本号以免误导。
+    """
+    import os as _osv, json as _jsonv
+    try:
+        _p = _osv.path.join(_osv.path.dirname(_osv.path.abspath(__file__)), "version.json")
+        with open(_p, "r", encoding="utf-8") as _f:
+            return _jsonv.load(_f).get("version", "0.0.0-dev")
+    except Exception:
+        return "0.0.0-dev"
+
+
 async def api_status(request):
     """兼容原 /api/status 格式，返回桌面端可用的默认值"""
     from desktop_core import tools as _tools_mod
     tool_count = len(_tools_mod._registry)
     return web.json_response({
-        "version": "0.1.0",
+        "version": _app_version(),
         "trust_total": 0, "trust_level": 0, "trust_rate": 100,
         "knowledge_items": 0, "knowledge_cats": 0,
         "tools": tool_count, "skills": 0,
@@ -628,7 +643,7 @@ async def api_status(request):
 async def api_desktop_status(request):
     return web.json_response({
         "name": "奶昔桌面端",
-        "version": "0.1.0",
+        "version": _app_version(),
         "online": True,
     })
 
@@ -695,7 +710,7 @@ async def api_stats(request):
             services[name] = False
 
     return web.json_response({
-        "backend": {"pid": self_pid, "memory_mb": self_mem, "cpu": self_cpu, "version": "0.1.0"},
+        "backend": {"pid": self_pid, "memory_mb": self_mem, "cpu": self_cpu, "version": _app_version()},
         "services": services,
         "providers": {"total": len(providers), "with_key": sum(1 for p in providers if p.get("has_key")), "list": providers[:10]},
         "database": {"size_mb": round(db_size/(1024**2),1) if db_size else 0, "tables": db_tables},

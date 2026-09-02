@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { apiGet, apiPost, API_BASE } from "@/lib/api";
+import { APP_FALLBACK_VERSION } from "@/lib/version";
 import { AppShell, Sidebar, Header, Main } from "@/components/shell";
 import { AppProvider } from "@/contexts/AppContext";
 import { ToastProvider, useToast } from "@/components/Toast";
@@ -183,7 +184,7 @@ export default function Dashboard() {
     <ToastProvider>
     <AppShell
       onNavigate={setActiveNav}
-      sidebar={<Sidebar items={NAV_ITEMS} activeNav={activeNav} onNavChange={setActiveNav} version={`v${dstatus?.version ?? stats?.backend?.version ?? "0.1.0"}`} />}
+      sidebar={<Sidebar items={NAV_ITEMS} activeNav={activeNav} onNavChange={setActiveNav} version={`v${dstatus?.version ?? stats?.backend?.version ?? APP_FALLBACK_VERSION}`} />}
     >
       <Header>
         <div className="flex items-center gap-2">
@@ -253,7 +254,7 @@ export default function Dashboard() {
                     {dstatus?.name ?? "奶昔桌面端"} · {online ? "运行中" : "离线"}
                   </p>
                   <p className="text-xs text-sakura-400 mt-0.5">
-                    v{dstatus?.version ?? stats?.backend?.version ?? "0.1.0"}
+                    v{dstatus?.version ?? stats?.backend?.version ?? APP_FALLBACK_VERSION}
                     {offlineSvcs.length > 0 ? ` · ${offlineSvcs.join("、")} 未启动` : " · 全部服务正常"}
                   </p>
                 </div>

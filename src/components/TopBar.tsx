@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { cn, apiPost, apiGet } from "@/lib/api";
 import { useToast } from "@/components/Toast";
+import { APP_FALLBACK_VERSION } from "@/lib/version";
 
 /**
  * 自绘顶栏（奶昔桌面端 · 适配真实功能面）
@@ -123,7 +124,7 @@ export function TopBar({ onNavigate }: { onNavigate: (k: string) => void }) {
   /* ── 版本更新 / 开发者工具（帮助菜单）── */
   const [verOpen, setVerOpen] = useState(false);
   const [verLoading, setVerLoading] = useState(false);
-  const [verData, setVerData] = useState<{ version: string; changelog: any[] }>({ version: "0.1.0", changelog: [] });
+  const [verData, setVerData] = useState<{ version: string; changelog: any[] }>({ version: APP_FALLBACK_VERSION, changelog: [] });
   const [verCheck, setVerCheck] = useState<{ status: "idle" | "checking" | "done" | "error"; data?: any; msg?: string }>({ status: "idle" });
   const [devOpen, setDevOpen] = useState(false);
   const [devLoading, setDevLoading] = useState(false);
@@ -142,15 +143,15 @@ export function TopBar({ onNavigate }: { onNavigate: (k: string) => void }) {
     try {
       const [ver, clog] = await Promise.all([
         (async () => {
-          if (!isTauri) return "0.1.0";
+          if (!isTauri) return APP_FALLBACK_VERSION;
           try { const { getVersion } = await import("@tauri-apps/api/app"); return await getVersion(); }
-          catch { return "0.1.0"; }
+          catch { return APP_FALLBACK_VERSION; }
         })(),
         apiGet<any>("/api/ops/changelog?limit=30").catch(() => ({ changelog: [] })),
       ]);
-      setVerData({ version: ver || "0.1.0", changelog: clog?.changelog || [] });
+      setVerData({ version: ver || APP_FALLBACK_VERSION, changelog: clog?.changelog || [] });
     } catch {
-      setVerData({ version: "0.1.0", changelog: [] });
+      setVerData({ version: APP_FALLBACK_VERSION, changelog: [] });
     } finally {
       setVerLoading(false);
     }
@@ -159,7 +160,7 @@ export function TopBar({ onNavigate }: { onNavigate: (k: string) => void }) {
   const checkUpdate = useCallback(async () => {
     setVerCheck({ status: "checking" });
     try {
-      const res = await apiGet<any>(`/api/check_update?current=${encodeURIComponent(verData.version || "0.1.0")}`);
+      const res = await apiGet<any>(`/api/check_update?current=${encodeURIComponent(verData.version || APP_FALLBACK_VERSION)}`);
       setVerCheck({ status: res.ok ? "done" : "error", data: res, msg: res.error || res.message });
     } catch (e: any) {
       setVerCheck({ status: "error", msg: String(e?.message || e) });
@@ -483,7 +484,7 @@ export function TopBar({ onNavigate }: { onNavigate: (k: string) => void }) {
               </button>
             </div>
             <div className="mb-3 flex items-center gap-2 text-xs text-sakura-400">
-              <span className="rounded bg-sakura-50 px-2 py-0.5 font-semibold text-sakura-500">当前版本 v{verData?.version || "0.1.0"}</span>
+              <span className="rounded bg-sakura-50 px-2 py-0.5 font-semibold text-sakura-500">当前版本 v{verData?.version || APP_FALLBACK_VERSION}</span>
             </div>
             <div className="mb-3 rounded-lg border border-sakura-100 bg-sakura-50/50 p-3 text-xs leading-relaxed text-sakura-400">
               默认从 GitHub Releases（Hayliy/naixi-desktop）检查更新。如需用自己的更新源，可在「设置」中配置 desktop_config.update_source（返回 {"{ version, notes, url }"} 的 JSON 地址）覆盖默认源。
