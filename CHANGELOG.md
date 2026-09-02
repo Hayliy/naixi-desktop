@@ -8,7 +8,13 @@
 
 > 版本号唯一来源：`src-tauri/tauri.conf.json` 的 `version` 字段。修改后重新构建，安装包文件名与 GitHub Release tag 会自动跟随，无需在别处同步。
 
-## [Unreleased]
+## [0.2.0] - 2026-09-02
+
+### 新增（赞助防篡改全链路 / 2D-3D 切换 / 脱敏 / 真实收款码）
+- **赞助防篡改全链路**：应用内 SHA-256 自检（收款码 base64 内联进已编译 bundle，零运行时 fetch、不受 CSP 限制）+ 收款实名双核对 + 仓库 CODEOWNERS 强制 review + main 分支保护（禁 force-push/删分支）+ 代码签名预留（Authenticode signCommand 读 `NAIXI_CODESIGN_*` env）+ 发布 SHA256 清单；威胁模型与全链路见 `docs/RELEASE_SECURITY.md`。
+- **2D(Live2D)/3D(VRM) 切换**：设置页 `render_mode` 下拉，重启 pet 生效。
+- **发布脱敏**：安装包/仓库去除本地 PII 路径与用户名残留。
+- **真实收款码接入**：微信/支付宝真实收款码（收款昵称「苏婉」，隐藏真实实名）。
 
 ### 新增（渲染后端适配器层 AvatarBackend）
 - 新增 `desktop_core/avatar_backends.py`：渲染后端统一接口（`capabilities` 声明 + `send_expression/send_motion/send_parameters`），角色按 `agent_id` 绑定后端类型（`vts`/`vmc`/`self`），持久化到 SQLite meta（`live_backend_kinds`）。

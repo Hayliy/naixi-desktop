@@ -140,7 +140,7 @@ naixi-desktop/
 
 ## 快速开始（安装包）
 
-1. 到 [Releases](../../releases) 下载 `奶昔_0.1.0_x64-setup.exe`
+1. 到 [Releases](../../releases) 下载 `奶昔_0.2.0_x64-setup.exe`
 2. 运行安装程序，按向导完成安装（含 WebView2 运行时自动安装）
 3. 从开始菜单或桌面快捷方式启动「奶昔」
 
