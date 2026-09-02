@@ -9,6 +9,11 @@ export default defineConfig(async () => ({
   resolve: {
     alias: { "@": path.resolve(__dirname, "./src") },
   },
+  // vrm_html 是运行时由 WebView 通过 importmap 加载的静态资源（依赖 ./vendor/*.js，非 npm 包），
+  // 不应进入 Vite 依赖预构建扫描；否则会把 importmap 的裸模块误当 npm 包解析而报 three 缺失。
+  optimizeDeps: {
+    entries: ["src/index.html"],
+  },
   clearScreen: false,
   // 发布前必须保证 dist 干净，否则历史构建残留的死文件（如旧版含爱发电的 index chunk）
   // 会被 Tauri 一起嵌进 exe，既增大体积又违背"资源干净/防篡改"诉求。

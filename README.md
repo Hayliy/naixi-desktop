@@ -73,6 +73,18 @@
 - 支持场景：Minecraft（只读 MOD 注入 + 视觉 grounding）、Mindustry（看屏决策）、扫雷（视觉 grounding 实验）。
 - 组件：`game_agent.py`、`game_agent_mindustry.py`、`ui_grounding.py`（UI 定位）、`semantic_grounding.py`（语义理解）、`mc_bridge.cjs` / `mc_observer.cjs`（Minecraft 桥接）、`mc_readonly_mod`（只读 MOD）。
 
+### 13. 安全中心（银狐应急防护）
+
+针对银狐（Silver Fox / 游蛇 / Void Arachne）类木马的本机用户态前哨，入口：设置 → 安全。
+
+- **应急哨兵扫描**（`GET /api/security_scan`）：检测用户态可见痕迹——① Defender 排除项被篡改（银狐常把 C:–F: 加进排除列表致盲杀软）；② 已知 IOC 进程名；③ 可疑计划任务（`DesignAccent` / `Accent` / `zpaq` 等 Silver Fox 命名）；④ 到已知 C2 网段的外连。返回 safe / warn / danger 三级与逐条明细。
+- **一键急救**（`POST /api/security_remediate`）：移除已检出的用户态痕迹——结束 IOC 进程、删除可疑计划任务、恢复被篡改的 Defender 整盘排除项。**安全约束**：仅处理服务端 IOC 目录内的已知项，绝不接受客户端传来的任意路径/命令；所有动作服务端权威重算。
+- **360 系统急救箱**：调用官方正版工具，补用户态以外的内核/rootkit 级强杀能力。
+- **安装包完整性自检**（`GET /api/self_hash`）：展示本机主程序 `naixi-desktop.exe` 的 SHA-256，可一键复制，供与官方 `sha256sums.txt` 的「主程序」段人工比对。
+- **自动监测哨兵**：后台周期性巡检，命中异常时告警。
+
+> **能力边界（重要）**：银狐最新变种用 BYOVD 加载 `wnBios` 内核级 rootkit，能直接读写物理内存、致盲 Defender / 火绒 / 360。这种**内核层**的东西任何**用户态程序（含奶昔）都杀不掉**，必须靠专业杀软 + 安全模式全盘查杀。奶昔只处理**用户态可见痕迹**，UI 已写明，不做能力误导；也**绝不内置任何反制 C2 的能力**（对 C2 发起 DoS / 未授权访问既违法也无效）。
+
 ---
 
 ## 技术架构
@@ -218,17 +230,47 @@ A：全部存于本地 `data/` 目录（SQLite + 文件），不上传云端。
 
 ## 安全与完整性
 
+### 只认官方渠道
+
 本项目**只通过 [GitHub Releases](../../releases) 分发**。任何网盘、论坛、QQ 群、第三方站点的「奶昔」安装包都**不是官方**，请勿下载——银狐类木马常伪造开源项目安装包投毒。
 
-下载后建议校验：
+### 下载后怎么验（两步都要做）
+
+`sha256sums.txt` 随每次发布附在 Releases 里，由 `npm run gen:release-hashes` 生成，内含**两组**哈希：
+
+把清单和下载到的安装包放在**同一个目录**，然后：
 
 ```bash
-sha256sum -c sha256sums.txt
+sha256sum -c --ignore-missing sha256sums.txt
 ```
 
-`sha256sums.txt` 随每次发布附在 Releases 里（由 `npm run gen:release-hashes` 生成）。安装包经代码签名，未签名或签名不匹配的包不是官方构建。
+| 组 | 验的是 | 什么时候验 |
+| --- | --- | --- |
+| `[安装包]` | 你下载到的那个 msi / setup.exe | **下载后立刻验**，确认下载到的就是官方文件 |
+| `[主程序]` | 装好后的 `naixi-desktop.exe` | **安装后验**，确认安装目录里的程序没被替换 |
 
-发布安全规范（代码签名、哈希清单、官方渠道、分支保护、防银狐）见 [docs/RELEASE_SECURITY.md](docs/RELEASE_SECURITY.md)。
+`--ignore-missing` 是为了跳过 `[主程序]` 那一行——它不在下载目录里，缺了会报错。
+
+第二组怎么用：打开应用 → 设置 → 安全 → 「安装包完整性 · 本程序哈希」→ 一键复制那串 SHA-256，与清单 `[主程序]` 段 `naixi-desktop.exe` 那一行的值比对。不一致 = 本机程序已被篡改或替换，请卸载重装并全盘查杀。（也可在安装目录直接执行 `sha256sum naixi-desktop.exe`，安装位置从开始菜单「奶昔」右键 → 打开文件位置 即可定位。）
+
+> 开发调试版（`target\debug` 下的进程）哈希与官方发布版必然不同，页面会明确提示，仅正式安装包可比。
+
+### 为什么程序内不自动比对
+
+随安装包一起下发的「清单」是不可信的——攻击者换掉程序时会连清单一起换，自动比对等于自我安慰。所以本程序**只暴露哈希**，由你与 GitHub Releases 上的清单人工核对。
+
+### 关于代码签名（如实说明）
+
+**当前 0.2.0 安装包尚未做代码签名**（未购置 OV/EV 证书）。因此 Windows SmartScreen 会提示「未知发布者」，这是预期行为、不是被篡改——**正因如此，上面两步哈希校验更要照做**。补签名后本段会更新。
+
+### 在虚拟机里做样本分析 / 对抗演示
+
+如果你要在 VM 里跑银狐样本验证本程序的能力，请先读完 [docs/VM_SANDBOX_HARDENING.md](docs/VM_SANDBOX_HARDENING.md)：VMware 的 .vmx 加固项、网络隔离三档、宿主机共享面收敛、快照生命周期与演示后处置。**前提心态是「假设 VM 内已 100% 失陷」**——银狐带 BYOVD 内核 rootkit，VM 内的杀软必被致盲，安全性只能建立在虚拟化层与网络的外闸门上；真正要接近零风险，请用独立物理机。
+
+### 相关文档
+
+- 发布安全规范（哈希清单、官方渠道、防银狐）：[docs/RELEASE_SECURITY.md](docs/RELEASE_SECURITY.md)
+- 虚拟机防逃逸加固清单：[docs/VM_SANDBOX_HARDENING.md](docs/VM_SANDBOX_HARDENING.md)
 
 ---
 

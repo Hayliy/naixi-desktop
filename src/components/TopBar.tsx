@@ -196,7 +196,7 @@ export function TopBar({ onNavigate }: { onNavigate: (k: string) => void }) {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       await invoke("open_devtools");
-    } catch (e) {
+    } catch (e: any) {
       notify("开发者工具打开失败：" + (e?.message || String(e) || "未知错误"), "error");
     }
   }, [notify]);

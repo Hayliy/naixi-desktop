@@ -3354,24 +3354,146 @@ async def api_security_remediate(request):
     return web.json_response(result)
 
 
+MAIN_EXE_NAME = "naixi-desktop.exe"
+# 进程祖先链上的"非主程序"名：sidecar 自身与常见宿主，用于排除后取真正的主程序
+_SIDECAR_PROC_NAMES = {"pythonw.exe", "python.exe", "powershell.exe", "pwsh.exe",
+                       "conhost.exe", "cmd.exe", "cargo.exe", "rustc.exe"}
+
+
+def _pick_main_exe(chain):
+    """从进程路径链（由近及远）里挑出主程序：精确同名优先，其次第一个非 sidecar 的 exe。"""
+    import os
+    for l in chain:
+        if os.path.basename(l).lower() == MAIN_EXE_NAME and os.path.isfile(l):
+            return l
+    for l in chain:
+        b = os.path.basename(l).lower()
+        if b.endswith(".exe") and b not in _SIDECAR_PROC_NAMES and os.path.isfile(l):
+            return l
+    return ""
+
+
+def _ancestors_via_winapi():
+    """① 首选：纯 ctypes 遍历进程祖先链（NtQueryInformationProcess + QueryFullProcessImageNameW）。
+    不依赖 powershell/WMI，毫秒级、无子进程开销。返回路径链（由近及远），失败返回 []。"""
+    import os
+    import ctypes
+    from ctypes import wintypes
+    try:
+        ntdll = ctypes.WinDLL("ntdll")
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        class PROCESS_BASIC_INFORMATION(ctypes.Structure):
+            _fields_ = [("Reserved1", ctypes.c_void_p),
+                        ("PebBaseAddress", ctypes.c_void_p),
+                        ("Reserved2", ctypes.c_void_p * 2),
+                        ("UniqueProcessId", ctypes.c_ulonglong),
+                        ("InheritedFromUniqueProcessId", ctypes.c_void_p)]
+
+        ntdll.NtQueryInformationProcess.argtypes = [
+            wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+            wintypes.ULONG, ctypes.POINTER(wintypes.ULONG)]
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.QueryFullProcessImageNameW.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+        kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        chain, cur, seen = [], os.getpid(), set()
+        for _ in range(8):
+            if not cur or cur in seen:
+                break
+            seen.add(cur)
+            h = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, cur)
+            if not h:
+                break
+            try:
+                buf = ctypes.create_unicode_buffer(4096)
+                size = wintypes.DWORD(4096)
+                if kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+                    if buf.value:
+                        chain.append(buf.value)
+                pbi = PROCESS_BASIC_INFORMATION()
+                if ntdll.NtQueryInformationProcess(
+                        h, 0, ctypes.byref(pbi), ctypes.sizeof(pbi), None) != 0:
+                    break
+                cur = int(pbi.InheritedFromUniqueProcessId or 0)
+            finally:
+                kernel32.CloseHandle(h)
+        return chain
+    except Exception:
+        return []
+
+
+def _ancestors_via_ps():
+    """② 降级：powershell CIM 查祖先链。
+    ★坑（2026-09-03 实测）：Windows PowerShell 5.1 的 Get-Process 对象【没有 ParentProcessId
+    成员】（PowerShell 7 才有），`(Get-Process -Id X).ParentProcessId` 恒返回空导致整条链断掉、
+    页面永远显示"无法定位主程序路径"。必须用 Get-CimInstance Win32_Process。"""
+    import os
+    ps = ("$ErrorActionPreference='SilentlyContinue';"
+          "$cur=%d;" % os.getpid() +
+          "for($i=0;$i -lt 6;$i++){"
+          "  $c=Get-CimInstance Win32_Process -Filter ('ProcessId=' + $cur);"
+          "  if(-not $c){break};"
+          "  if($c.ExecutablePath){$c.ExecutablePath};"
+          "  $cur=$c.ParentProcessId;"
+          "  if(-not $cur -or $cur -eq 0){break}"
+          "}")
+    out, _err = _ps_run(ps)
+    return [l.strip() for l in (out or "").splitlines() if l.strip()]
+
+
+def _locate_main_exe():
+    """定位 Tauri 主程序（naixi-desktop.exe）的绝对路径。当前进程是 sidecar（pythonw.exe），
+    主程序在它的进程祖先链上。返回 (exe_path, chain_len)，便于失败时给出可诊断的原因。
+
+    降级链：① ctypes WinAPI 遍历祖先（首选，无外部依赖）
+            ② powershell CIM 查祖先
+            ③ 从 sys.executable / 本文件所在目录向上回溯目录树找同名 exe"""
+    import os, sys
+    for getter in (_ancestors_via_winapi, _ancestors_via_ps):
+        chain = getter()
+        hit = _pick_main_exe(chain)
+        if hit:
+            return hit, len(chain)
+    # ③ 目录回溯兜底（release 下主程序与 resources 同级/上级）
+    seen = set()
+    for base in (os.path.dirname(sys.executable or ""),
+                 os.path.dirname(os.path.abspath(__file__))):
+        d = base
+        for _ in range(6):
+            if not d:
+                break
+            cand = os.path.join(d, MAIN_EXE_NAME)
+            if cand not in seen and os.path.isfile(cand):
+                return cand, 0
+            seen.add(cand)
+            nd = os.path.dirname(d)
+            if not nd or nd == d:
+                break
+            d = nd
+    return "", 0
+
+
 async def api_self_hash(request):
-    """返回本程序主 exe（naixi-desktop.exe）的 SHA-256，供用户与官方 sha256sums.txt 比对，
-    识别『伪造安装包 / 整包被替换』。注意：随包携带清单的比对无意义（攻击者连清单一起换），
-    故只暴露哈希让用户自行对照官方发布值。"""
+    """返回本程序主 exe（naixi-desktop.exe）的 SHA-256，供用户与官方 sha256sums.txt 中
+    【主程序 naixi-desktop.exe】那一行比对，识别『伪造安装包 / 整包被替换』。
+    注意：随包携带清单的比对无意义（攻击者连清单一起换），故只暴露哈希让用户自行对照官方发布值。"""
     import hashlib, os, platform
-    result = {"ok": True, "platform": platform.system(), "exe_path": "", "sha256": ""}
+    result = {"ok": True, "platform": platform.system(), "exe_path": "", "sha256": "",
+              "target": MAIN_EXE_NAME}
     if platform.system() != "Windows":
         result["ok"] = False
         result["note"] = "仅 Windows 支持"
         return web.json_response(result)
-    # 当前进程是 pythonw.exe，其父进程即 Tauri 主程序 naixi-desktop.exe
-    pid = os.getpid()
-    out, err = _ps_run("$p=(Get-Process -Id %d -ErrorAction SilentlyContinue).ParentProcessId; "
-                       "if($p){(Get-Process -Id $p -ErrorAction SilentlyContinue).Path}" % pid)
-    exe_path = (out or "").strip()
+    exe_path, chain_len = _locate_main_exe()
     if not exe_path or not os.path.isfile(exe_path):
         result["ok"] = False
-        result["note"] = "无法定位主程序路径（%s）" % (err or "未知")
+        # 带上祖先链长度：0 表示连自身进程都没枚举到（接口级失败），>0 表示链里没有主程序
+        result["note"] = ("无法定位主程序路径（进程祖先链 %d 项内未找到 %s）"
+                          % (chain_len, MAIN_EXE_NAME))
         return web.json_response(result)
     try:
         h = hashlib.sha256()

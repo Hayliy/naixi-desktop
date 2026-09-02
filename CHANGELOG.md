@@ -15,6 +15,17 @@
 - **2D(Live2D)/3D(VRM) 切换**：设置页 `render_mode` 下拉，重启 pet 生效。
 - **发布脱敏**：安装包/仓库去除本地 PII 路径与用户名残留。
 - **真实收款码接入**：微信/支付宝真实收款码（收款昵称「苏婉」，隐藏真实实名）。
+- **银狐应急防护（用户态前哨 + 一键急救）**：设置页「安全急救 · 银狐应急哨兵」面板，检测本机银狐类木马用户态痕迹（Defender 排除项被篡改 / 已知 IOC 进程名 / 可疑计划任务 / 银狐 C2 网段外连），命中红黄告警 + 断网改密安全模式查杀应急指引 + 火绒/国家病毒平台一键跳转；提供「一键急救」移除已检测到的用户态痕迹（结束 IOC 进程、删计划任务、恢复 Defender 排除项）。诚实边界：用户态清不掉内核级 rootkit（银狐 BYOVD wnBios），UI 已写明需专业杀软+安全模式；绝不内置反攻 C2 能力（违法且无效）。
+- **安装包完整性自检**：设置页「安装包完整性 · 本程序哈希」展示主程序 SHA-256，供与官方 `sha256sums.txt` 人工比对（识别伪造/整包替换）。
+
+### 修复与改进（2026-09-03 · 安全中心收尾）
+- **「安全急救」区块移入「安全」tab**：银狐应急哨兵 / 安装包完整性 / 360 系统急救箱 / 自动监测哨兵四张卡片从「关于」tab 移到「安全」tab，与「安全设置」并置形成完整安全中心。
+- **修复「安装包完整性」永远显示"读取失败"**：定位主程序时误用了 `(Get-Process -Id X).ParentProcessId`——Windows PowerShell 5.1 的 `Get-Process` 对象**没有该成员**（PowerShell 7 才加），且**静默返回空不报错**，导致进程祖先链第一跳就断、`exe_path` 恒空。改为**纯 ctypes 遍历祖先链**（`OpenProcess` + `NtQueryInformationProcess` + `QueryFullProcessImageNameW`）为首选，powershell CIM 与目录回溯依次降级；失败原因也会带上祖先链长度便于诊断。
+- **修复「比不上」**：发布哈希清单原先只含安装包（msi/nsis），而卡片显示的是**安装后主程序** `naixi-desktop.exe` 的哈希——两者不是同一个文件，用户拿卡片哈希去清单里永远找不到对应行。`gen-release-hashes.mjs` 改为输出两组：`[安装包]`（下载后验下载到的文件）+ `[主程序]`（安装后验本机程序，`../naixi-desktop.exe`），并补充分组用法注释；`sha256sum -c` 实测 5 项全 OK（中文路径与注释行均正常）。发版前请务必重跑 `npm run gen:release-hashes`（旧清单里 0.2.0 的 msi 哈希已因重新构建而过期）。
+- **卡片可用性**：新增**一键复制**按钮（64 位哈希无法手抄）；文案明确指向清单「主程序」段；dev 调试版（`target\debug`）会提示哈希与官方发布版必然不同，避免误判为被篡改。
+- **全项目 TypeScript 错误清零**（`tsc --noEmit` 退出码 0）：修复 Chat / Dashboard / PetWindow / SetupGuide / Toast / TopBar / WorkflowEditor / sponsorIntegrity 的类型问题；`setIgnoreMouseEvents` 更正为 Tauri v2 的 `setIgnoreCursorEvents`；消除 `isTauri` 的 TDZ 隐患。dev 模式下 Vite 误扫 `vrm_html` importmap 裸模块的阻断性报错，用 `optimizeDeps.entries` 限定扫描入口解决（release 本就不扫描，故此前未暴露）。
+- **新增文档** `docs/VM_SANDBOX_HARDENING.md`：在虚拟机中做银狐样本分析 / 对抗演示时的防逃逸加固清单——VMware .vmx 加固项、网络隔离三档、宿主机共享面收敛、数据外带通道封堵、快照生命周期、演示前后自检命令，以及「没有任何虚拟化隔离是 100%」的诚实边界。
+- **README 诚实化**：明确 0.2.0 安装包**尚未做代码签名**（SmartScreen 提示"未知发布者"属预期、非篡改），补齐两步哈希校验（安装包段 / 主程序段）说明、安全中心章节与 VM 加固文档入口。
 
 ### 新增（渲染后端适配器层 AvatarBackend）
 - 新增 `desktop_core/avatar_backends.py`：渲染后端统一接口（`capabilities` 声明 + `send_expression/send_motion/send_parameters`），角色按 `agent_id` 绑定后端类型（`vts`/`vmc`/`self`），持久化到 SQLite meta（`live_backend_kinds`）。

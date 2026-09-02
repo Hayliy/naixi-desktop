@@ -171,7 +171,7 @@ export default function ChatPage() {
   // 快捷键处理：Ctrl+, 开设置 + 自定义快捷键
   useEffect(() => {
     const raw = localStorage.getItem("naixi_shortcuts");
-    try { shortcutsRef.current = JSON.parse(raw) || []; } catch { shortcutsRef.current = []; }
+    try { shortcutsRef.current = JSON.parse(raw ?? "[]") || []; } catch { shortcutsRef.current = []; }
 
     const handler = (e: KeyboardEvent) => {
       // Ctrl+, 开/关设置面板

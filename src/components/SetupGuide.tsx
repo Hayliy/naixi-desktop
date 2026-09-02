@@ -458,7 +458,7 @@ function SetupSteps({
                 <div className="mt-2 p-2 border border-lavender-100 rounded-lg bg-lavender-50/50 max-h-[180px] overflow-y-auto">
                   <div className="text-[10px] text-lavender-400 mb-1">API 返回的可用模型（点击选用）</div>
                   <div className="flex flex-wrap gap-1.5">
-                    {fetchedModels.map((m, i) => (
+                    {fetchedModels.map((m: any, i: number) => (
                       <button key={i} onClick={() => setModelName(m.id)}
                         className={`text-[10px] px-2 py-1 rounded-full border transition-colors ${modelName === m.id ? "bg-lavender-100 border-lavender-300 text-lavender-600" : "bg-white border-gray-200 text-gray-600 hover:border-lavender-200"}`}>
                         {m.owned_by === "error" ? "⚠ " : ""}{m.id}

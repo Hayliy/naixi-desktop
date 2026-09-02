@@ -243,7 +243,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
   }, []);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(DEFAULT_NODES);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [workflowName, setWorkflowName] = useState("新建工作流");
   const [workflowDesc, setWorkflowDesc] = useState("");
@@ -337,7 +337,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
     const handler = (e: KeyboardEvent) => {
       const raw = localStorage.getItem("naixi_shortcuts");
       let shortcuts: { key: string; desc: string }[] = [];
-      try { shortcuts = JSON.parse(raw) || []; } catch { shortcuts = []; }
+      try { shortcuts = JSON.parse(raw ?? "[]") || []; } catch { shortcuts = []; }
       for (const s of shortcuts) {
         if (s.desc !== "打开/关闭设置面板") continue;
         const parts = s.key.toLowerCase().split("+");
@@ -508,7 +508,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
       id, name: defaultName, description: "",
       nodes: DEFAULT_NODES.map(n => ({ ...n })),
       edges: [],
-    }).then(r => {
+    }).then((r: any) => {
       if (r?.success) {
         apiGet<any>("/api/workflows").then(d => {
           if (d?.workflows) setWorkflows(d.workflows);
@@ -2028,7 +2028,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                         const val = (document.getElementById("gh-token-input") as HTMLInputElement)?.value || "";
                         if (!val) { notify("请先输入 Token", "warning"); return; }
                         try {
-                          const r = await apiPost("/api/workflow/templates/test-token", { token: val });
+                          const r: any = await apiPost("/api/workflow/templates/test-token", { token: val });
                           if (r?.ok) {
                             notify(`连接成功！剩余配额: ${r.remaining}/${r.limit} 次/小时`, "success");
                             await apiPost("/api/workflow/templates/save-token", { token: val });
@@ -2044,7 +2044,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                       <button onClick={async () => {
                         const val = (document.getElementById("gh-token-input") as HTMLInputElement)?.value || "";
                         try {
-                          const r = await apiPost("/api/workflow/templates/save-token", { token: val });
+                          const r: any = await apiPost("/api/workflow/templates/save-token", { token: val });
                           if (r?.ok) {
                             notify(val ? "Token 已加密保存到数据库" : "Token 已清除", val ? "success" : "info");
                             setOnlineError("");

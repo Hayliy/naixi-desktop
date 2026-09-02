@@ -24,7 +24,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const notify = useCallback((msg: string, type: ToastType = "info") => {
     const id = ++_id;
-    setToasts(prev => [...prev, { id, type, msg }]);
+    setToasts(prev => [...prev, { id, type, message: msg }]);
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
   }, []);
 
@@ -49,7 +49,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                t.type === "warning" ? <AlertTriangle size={14} /> :
                <Info size={14} />}
             </span>
-            <span className="flex-1 break-words">{t.msg}</span>
+            <span className="flex-1 break-words">{t.message}</span>
             <button onClick={() => remove(t.id)} className="shrink-0 opacity-50 hover:opacity-100 transition-opacity">
               <X size={12} />
             </button>

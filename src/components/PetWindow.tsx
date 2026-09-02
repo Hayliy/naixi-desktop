@@ -29,6 +29,7 @@ export default function PetWindow() {
   const motionsRef = useRef<any[]>([]);
   const speakingRef = useRef(false);
   const idleTimerRef = useRef<number | null>(null);
+  const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
   // 加载模型列表
   useEffect(() => {
@@ -53,7 +54,7 @@ export default function PetWindow() {
           const { getCurrentWindow } = await import("@tauri-apps/api/window");
           const w = getCurrentWindow();
           clickThroughRef.current = !clickThroughRef.current;
-          await w.setIgnoreMouseEvents(clickThroughRef.current);
+          await w.setIgnoreCursorEvents(clickThroughRef.current);
         } catch {}
       })();
     };
@@ -290,7 +291,6 @@ export default function PetWindow() {
   }
 
   // 窗口控制（pet 窗口 decorations:false 无原生标题栏，需自绘最小/关闭）
-  const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
   async function handleMinimize() {
     if (isTauri) {
       try {

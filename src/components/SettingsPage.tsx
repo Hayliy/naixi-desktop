@@ -313,11 +313,17 @@ function SettingsBackup({ show }: { show: ShowFn }) {
 /* ── 安全 ── */
 function SettingsSecurity() {
   return (
+    <>
     <Section title="安全设置" desc="数据加密与访问策略（只读）">
       <InfoRow label="CORS 策略" value="*（允许所有来源，仅本地使用）" />
       <InfoRow label="API Key 加密" value="Fernet 对称加密（机器 UUID 派生密钥）" />
       <InfoRow label="密钥存储" value="SQLite desktop_config 表（加密后存储）" />
     </Section>
+    <SecurityScanCard />
+    <SelfIntegrityCard />
+    <FirstAidCard />
+    <SentinelCard />
+    </>
   );
 }
 
@@ -393,10 +399,6 @@ function SettingsAbout() {
         )}
       </div>
     </Section>
-    <SecurityScanCard />
-    <SelfIntegrityCard />
-    <FirstAidCard />
-    <SentinelCard />
     </>
   );
 }
@@ -512,20 +514,53 @@ function SecurityScanCard() {
 
 /* ── 自身安装包哈希自检（防伪造安装包 / 整包替换）── */
 function SelfIntegrityCard() {
-  const [info, setInfo] = useState<null | { ok: boolean; sha256: string; exe_path: string; note: string }>(null);
+  const [info, setInfo] = useState<null | { ok: boolean; sha256: string; exe_path: string; note: string; target: string }>(null);
+  const [copied, setCopied] = useState(false);
   useEffect(() => {
     apiGet<any>("/api/self_hash").then(setInfo).catch(() => {});
   }, []);
+  // 开发调试版（target\debug）与官方 release 发布版必然不是同一个文件，提前说清免得误判
+  const isDevBuild = !!info?.exe_path && /[\\/]target[\\/]debug[\\/]/i.test(info.exe_path);
+  const copy = async () => {
+    if (!info?.sha256) return;
+    try {
+      await navigator.clipboard.writeText(info.sha256);
+    } catch {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = info.sha256;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch { /* noop */ }
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
   return (
-    <Section title="安装包完整性 · 本程序哈希" desc="将此 SHA-256 与 GitHub Releases 的 sha256sums.txt 比对；不一致即安装包可能被伪造/替换。随包携带清单比对无意义（攻击者连清单一起换），故只暴露哈希供你人工核对。">
+    <Section title="安装包完整性 · 本程序哈希" desc="把下面这串 SHA-256 与 GitHub Releases 上 sha256sums.txt 的「主程序」段（naixi-desktop.exe 那一行）比对；不一致即本机程序可能被替换/篡改。随包自带清单的比对无意义（攻击者连清单一起换），故只暴露哈希供你人工核对。">
       <div className="rounded-lg border border-dashed border-sakura-200 bg-sakura-50/40 p-3">
         {!info && <p className="text-[10px] text-gray-500">读取中…</p>}
         {info && (
           <div className="text-[10px]">
             {info.ok ? (
               <>
-                <p className="break-all font-mono text-gray-700">SHA-256: {info.sha256}</p>
-                <p className="mt-1 text-gray-500">路径：{info.exe_path}</p>
+                <div className="flex items-start gap-2">
+                  <p className="break-all font-mono text-gray-700">SHA-256: {info.sha256}</p>
+                  <button
+                    onClick={copy}
+                    className="shrink-0 rounded border border-sakura-200 bg-white px-1.5 py-0.5 text-[10px] text-sakura-600 hover:bg-sakura-50"
+                  >
+                    {copied ? "已复制" : "复制"}
+                  </button>
+                </div>
+                <p className="mt-1 text-gray-500">文件：{info.exe_path}</p>
+                {isDevBuild && (
+                  <p className="mt-1 text-blue-600">当前是开发调试版（target\debug），哈希与官方发布版必然不同，仅正式安装包可比。</p>
+                )}
                 <p className="mt-1 text-amber-600">⚠️ 当前安装包未做代码签名（无 OV/EV 证书），SmartScreen 会提示「未知发布者」。请务必核对上方哈希与官方发布值一致后再使用。</p>
               </>
             ) : (

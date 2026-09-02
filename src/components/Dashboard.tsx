@@ -86,7 +86,7 @@ interface MemData {
   recent: { conv: string; role: string; content: string; time: string }[];
 }
 interface ToolData { tools: { name: string; desc: string }[]; }
-interface DesktopConfig { configured?: boolean; }
+interface DesktopConfig { configured?: boolean; api_providers?: Record<string, any>; }
 
 export default function Dashboard() {
   const [globalErrors, setGlobalErrors] = useState<{ msg: string; stack: string; time: number }[]>([]);
@@ -1711,7 +1711,7 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
           <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
             <span className="text-[10px] font-medium text-sakura-500">评分趋势（近24h）</span>
             <span className="text-[8px] text-sakura-400">
-              最高{Math.max(...health.score_trend.map((d) => d.score))} · 最低{Math.min(...health.score_trend.map((d) => d.score))}
+              最高{Math.max(...health.score_trend.map((d: any) => d.score))} · 最低{Math.min(...health.score_trend.map((d: any) => d.score))}
             </span>
           </div>
           <div className="p-3">
@@ -1781,7 +1781,7 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
                 </div>
                 {inspections[0].details?.system && (
                   <div className="grid grid-cols-3 gap-1">
-                    {Object.entries(inspections[0].details.system).map(([k, v]) => (
+                    {Object.entries(inspections[0].details.system).map(([k, v]: [string, any]) => (
                       <div key={k} className="bg-sakura-50 rounded-lg p-1.5 text-center">
                         <p className="text-[7px] text-sakura-400">{k === "cpu" ? "CPU" : k === "memory" ? "内存" : "磁盘"}</p>
                         <p className={"text-[10px] font-mono font-bold " + (v > 90 ? "text-red-600" : v > 80 ? "text-yellow-600" : "text-sakura-700")}>{v}%</p>
@@ -1866,7 +1866,7 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
             {maintResult && (
               <div className="bg-sakura-50 rounded-lg p-2 space-y-0.5">
                 <p className="text-[9px] font-medium text-sakura-600">结果：</p>
-                {Object.entries(maintResult.actions || {}).map(([k, v]) => (
+                {Object.entries(maintResult.actions || {}).map(([k, v]: [string, any]) => (
                   <p key={k} className={"text-[8px] " + (v.ok ? "text-green-600" : "text-red-600")}>{v.ok ? "OK" : "FAIL"} {k}：{v.message}</p>
                 ))}
               </div>
@@ -2116,7 +2116,7 @@ function LivePage() {
 
   const act = async (url: string, body?: any, okMsg?: string) => {
     try {
-      const r = await apiPost(url, body);
+      const r: any = await apiPost(url, body);
       if (r.ok) { if (okMsg) notify(okMsg, "success"); }
       else notify(r.status?.last_error || "失败", "error");
       pollStatus();
@@ -2137,7 +2137,7 @@ function LivePage() {
       if (res.ok && res.path) {
         notify(`模型已导入: ${res.name}`, "success");
         await apiPost("/api/live/save-config", { model_path: res.path });
-        const r = await apiPost("/api/live/pet-start", { model_path: res.path });
+        const r: any = await apiPost("/api/live/pet-start", { model_path: res.path });
         if (r?.ok) notify("桌宠已启动", "success");
         else notify("桌宠启动失败", "error");
       } else {
@@ -2187,7 +2187,7 @@ function LivePage() {
         const mp = cfg?.model_path || "";
         // 优先用已配置/后端自动发现的模型地址；都没有则让 Qt 桌宠自身 find_model3 兜底发现
         // （VTube Studio 目录等），真正没有任何模型时才回退文件选择器，避免「有模型却被迫手填地址」。
-        const r = await apiPost("/api/live/pet-start", { model_path: mp });
+        const r: any = await apiPost("/api/live/pet-start", { model_path: mp });
         if (r?.ok) notify("桌宠已启动", "success");
         else fileRef.current?.click();  // 启动失败（确实无模型）→ 选文件
       } catch {
@@ -2327,7 +2327,7 @@ function LivePage() {
                 <label className="block text-[10px] text-sakura-500 font-medium mb-1">语言模型 API Key（TTS 语音用）</label>
                 <div className="flex gap-1.5">
                   <input value={dashscopeKey} onChange={e=>setDashscopeKey(e.target.value)} type="password" className="flex-1 px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="留空则用对话页面的音频供应商或 Edge-TTS" />
-                  <button onClick={async ()=>{ try { const r = await apiPost('/api/live/test-tts',{}); notify(r.ok?'TTS 连接成功':'TTS 失败: '+r.error, r.ok?'success':'error'); } catch { notify('请求失败','error'); }}} disabled={!dashscopeKey} className="px-3 py-2 rounded-lg text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-40 transition-colors shrink-0">测试</button>
+                  <button onClick={async ()=>{ try { const r: any = await apiPost('/api/live/test-tts',{}); notify(r.ok?'TTS 连接成功':'TTS 失败: '+r.error, r.ok?'success':'error'); } catch { notify('请求失败','error'); }}} disabled={!dashscopeKey} className="px-3 py-2 rounded-lg text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-40 transition-colors shrink-0">测试</button>
                 </div>
               </div>
               <div>
