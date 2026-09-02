@@ -98,3 +98,20 @@ godot_renderer/*.vrm
 
 # 本地审计/设计文档（移入忽略目录，不公开）
 _local_docs/
+
+# 本地验证 / 诊断 / 安装验证脚手架（引用本机绝对路径 D:\naixi_desktop，非产品运行所需，不公开）
+install_gui.py
+install_probe.py
+verify_uninstall_gui.py
+test_grounding_http.py
+_e2e_quota_persist.py
+src-tauri/visual_check.py
+src-tauri/verify_*.py
+src-tauri/diag_*.py
+src-tauri/measure_timer.py
+src-tauri/gen_top.py
+src-tauri/installer/generate_banner.py
+src-tauri/installer/make_uninstall_ico.py
+desktop_core/vrm_html/pose_analyze.py
+desktop_core/vrm_html/pixel_band_analyze.py
+minesweeper_agent/make_replay.py

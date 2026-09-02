@@ -1399,6 +1399,25 @@ class LiveEngine:
             self._model_path = cfg["model_path"]
             self._render_mode = cfg["render_mode"]
             self._tts_engine = cfg["tts_engine"]
+            # ── 渲染模式运行时切换（2D/3D）：render_mode 变化且桌宠正在运行 → 重启 pet 进程立即生效 ──
+            _old_mode = base.get("render_mode") or "live2d"
+            if cfg["render_mode"] != _old_mode and self._pet_proc and self._pet_proc.poll() is None:
+                try:
+                    self._stop_pet()
+                    self._start_pet(kind=cfg["render_mode"])
+                    log.info(f"[直播] 渲染模式已切换为 {cfg['render_mode']}，桌宠已重启生效")
+                except Exception as e:
+                    log.warning(f"[直播] 渲染模式切换失败（配置已保存，可手动重启桌宠）: {e}")
+            # 持久化渲染模式偏好到 data/pet_kind.json（供后续 pet-start 默认恢复，可选）
+            try:
+                import json as _json
+                _bk = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # desktop_core 父 = 项目根
+                _kf = os.path.join(_bk, "data", "pet_kind.json")
+                os.makedirs(os.path.dirname(_kf), exist_ok=True)
+                with open(_kf, "w", encoding="utf-8") as f:
+                    _json.dump({"kind": cfg["render_mode"]}, f)
+            except Exception:
+                pass
             # 层3 真人语音闭环配置
             self._asr_model = cfg["asr_model"]
             self._asr_device = cfg["asr_device"]
@@ -3616,6 +3635,41 @@ class LiveEngine:
             return "vrm", model_path
         return "live2d", model_path
 
+    def _resolve_model_for_kind(self, kind: str):
+        """运行时 2D/3D 切换：按显式渲染模式解析模型路径。
+        kind="vrm"    -> godot_renderer 下首个 .vrm（找不到则空串，交给 vrm_pet 自动发现）
+        kind="live2d" -> l2d_discovery 发现的第一个 Live2D 模型
+        """
+        if kind == "vrm":
+            import glob as _glob
+            here = os.path.dirname(os.path.abspath(__file__))
+            d = here
+            for _ in range(8):
+                cands = _glob.glob(os.path.join(d, "godot_renderer", "*.vrm"))
+                if cands:
+                    return cands[0]
+                parent = os.path.dirname(d)
+                if parent == d:
+                    break
+                d = parent
+            for _ in range(8):
+                cands = _glob.glob(os.path.join(d, "**", "*.vrm"), recursive=True)
+                if cands:
+                    return cands[0]
+                parent = os.path.dirname(d)
+                if parent == d:
+                    break
+                d = parent
+            return ""
+        try:
+            from desktop_core.l2d_discovery import discover_models
+            ms = discover_models()
+            if ms:
+                return ms[0]["path"]
+        except Exception:
+            pass
+        return ""
+
     def _find_vrm_pet_script(self, here: str):
         """定位 desktop_core/vrm_pet.py（兼容活目录与打包 resources 两种布局）。
 
@@ -3636,7 +3690,20 @@ class LiveEngine:
             d = parent
         return None
 
-    def _start_pet(self, model_path: str = ""):
+    def _read_saved_pet_kind(self):
+        """读取持久化的渲染模式偏好（data/pet_kind.json），供 pet-start 默认恢复 2D/3D 选择。"""
+        try:
+            import json as _json
+            _bk = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # desktop_core 父 = 项目根
+            _kf = os.path.join(_bk, "data", "pet_kind.json")
+            if os.path.exists(_kf):
+                with open(_kf, "r", encoding="utf-8") as f:
+                    return _json.load(f).get("kind", "")
+        except Exception:
+            pass
+        return ""
+
+    def _start_pet(self, model_path: str = "", kind: str = None):
         """启动桌宠子进程（PySide6 独立窗口）
 
         兼容两种布局：
@@ -3647,6 +3714,8 @@ class LiveEngine:
         另强制注入 PYTHONPATH 到 desktop_core 的父目录，双保险：即便直接跑模块作脚本，
         `from desktop_core.xxx import` 也不会 ModuleNotFoundError。
         """
+        if kind is None:
+            kind = self._read_saved_pet_kind()
         if self._pet_proc and self._pet_proc.poll() is None:
             log.info("[桌宠] 已在运行")
             return True
@@ -3673,11 +3742,18 @@ class LiveEngine:
             # ── 按模型类型分流渲染器 ──
             #   VRM(.vrm)   -> vrm_pet.py（QWebEngineView + three-vrm，自带 mocap / 面捕）
             #   Live2D(.model3.json) -> pet_window.py（QOpenGLWidget + live2d，原逻辑不变）
-            kind, resolved = self._classify_model(model_path)
+            if kind in ("vrm", "live2d"):
+                # 运行时 2D/3D 切换：显式指定渲染模式，覆盖按模型扩展名的自动分类
+                resolved = self._resolve_model_for_kind(kind)
+            else:
+                kind, resolved = self._classify_model(model_path)
             vrm_script = self._find_vrm_pet_script(here) if kind == "vrm" else None
             if kind == "vrm" and vrm_script:
                 # --loop 指定循环动作（Spin/Squat/ShowFullBody 均已实测 52 轨全身 mocap）。
-                args = [py, "-B", vrm_script, "--vrm", resolved, "--loop", "Spin"]
+                args = [py, "-B", vrm_script]
+                if resolved:
+                    args += ["--vrm", resolved]
+                args += ["--loop", "Spin"]
                 # --face 会立即请求摄像头授权（vrm_html 里 FACE=true 即自动 startFaceCapture），
                 # 默认不开以免每次启动桌宠都弹授权；需要时落一个 data/vrm_face_enabled.json
                 # 内容 {"enabled": true} 即可，无需改代码。

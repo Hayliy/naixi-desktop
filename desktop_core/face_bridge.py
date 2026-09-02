@@ -27,8 +27,22 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 VRM_HTML_DIR = os.path.join(ROOT, "vrm_html")
-# 性能日志路径可经环境变量重定向（自测隔离用，避免污染真机实时日志）；默认原路径。
-PERF_LOG = os.environ.get("NAIXI_FACECAP_PERFLOG", r"D:\naixi_desktop\facecap_perf.log")
+
+def _proj_root():
+    """向上定位项目根（含 src-tauri / data / logs 之一），用于推导日志等运行时产物落点，
+    避免硬编码本机绝对路径（脱敏：原先写死 D:\\naixi_desktop\\...）。"""
+    d = ROOT
+    for _ in range(6):
+        if os.path.exists(os.path.join(d, "src-tauri")) or os.path.exists(os.path.join(d, "data")) or os.path.exists(os.path.join(d, "logs")):
+            return d
+        p = os.path.dirname(d)
+        if p == d:
+            break
+        d = p
+    return os.path.dirname(ROOT)
+
+# 性能日志路径可经环境变量重定向（自测隔离用，避免污染真机实时日志）；默认落到项目根（脱敏，不再硬编码本机路径）。
+PERF_LOG = os.environ.get("NAIXI_FACECAP_PERFLOG", os.path.join(_proj_root(), "facecap_perf.log"))
 
 # 面捕驱动的「参数用途」→ 中性值（丢失人脸时回落目标）。
 # 用用途而非参数名，是因为参数名因模型而异（见 _build_param_map）。
@@ -644,7 +658,7 @@ class FaceBridge:
                 "window.__faceStart ? window.__faceStart() : false", self._on_start_result)
         except Exception as e:
             try:
-                with open(r"D:\naixi_desktop\facecap_start_err.log", "a", encoding="utf-8") as f:
+                with open(os.path.join(_proj_root(), "facecap_start_err.log"), "a", encoding="utf-8") as f:
                     f.write("[START_ERR] runJavaScript 失败: %s\n" % e)
             except Exception:
                 pass
@@ -673,7 +687,7 @@ class FaceBridge:
             self._use_worker = bool(d.get("useWorker"))
             err = d.get("err") or ""
             if err:
-                with open(r"D:\naixi_desktop\facecap_start_err.log", "a", encoding="utf-8") as f:
+                with open(os.path.join(_proj_root(), "facecap_start_err.log"), "a", encoding="utf-8") as f:
                     f.write("[START_ERR] %s\n" % err)
         except Exception:
             pass
@@ -871,7 +885,7 @@ class FaceBridge:
                         continue
             self._prange = ranges
             import os as _os
-            with open(r"D:\naixi_desktop\facecap_param_range.log", "w", encoding="utf-8") as f:
+            with open(os.path.join(_proj_root(), "facecap_param_range.log"), "w", encoding="utf-8") as f:
                 for _use, _names in (self._pmap or {}).items():
                     for _pid in _names:
                         _r = ranges.get(_pid)

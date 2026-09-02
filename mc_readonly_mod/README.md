@@ -10,7 +10,7 @@
 > 这是用户 2026-08-03 明确批准的「不连服」铁律的**唯一例外**（约束 #1 字面 localhost 开例外）。
 
 ## 状态 JSON 契约
-见 `D:/naixi_desktop/mc_api_schema.md`（消费者 `game_agent._ingest_api_state` 按此解析）。
+见 `mc_api_schema.md`（消费者 `game_agent._ingest_api_state` 按此解析）。
 
 ## 安装（一次性）
 1. 装 Java 17+（MC 1.20.4 需 Java 17/21）。

@@ -3329,6 +3329,7 @@ def setup_routes(app):
     app.router.add_get("/api/live/live2d-stream", api_live2d_stream)
     app.router.add_post("/api/live/pet-start", api_live_pet_start)
     app.router.add_post("/api/live/pet-stop", api_live_pet_stop)
+    app.router.add_post("/api/live/pet-switch", api_live_pet_switch)
     app.router.add_post("/api/live/chat-test", api_live_chat_test)
     app.router.add_post("/api/live/scene", api_live_scene)
     app.router.add_post("/api/live/scene-auto", api_live_scene_auto)
@@ -4086,6 +4087,18 @@ async def api_live_pet_stop(request):
     from desktop_core.live_engine import engine
     engine._stop_pet()
     return web.json_response({"ok": True})
+
+async def api_live_pet_switch(request):
+    """运行时切换桌宠渲染模式（2D Live2D / 3D VRM）：停止当前桌宠 → 用新 kind 重启。
+    纯切换 API（不负责持久化，持久化在 save_config 的 render_mode 分支中完成）。"""
+    from desktop_core.live_engine import engine
+    body = await request.json() if request.body_exists else {}
+    kind = body.get("kind", "")
+    if kind not in ("vrm", "live2d"):
+        return web.json_response({"error": "kind 必须是 vrm 或 live2d"}, status=400)
+    engine._stop_pet()
+    ok = engine._start_pet(kind=kind)
+    return web.json_response({"ok": ok, "kind": kind})
 
 async def api_live_chat_test(request):
     """LLM 测试：发送文本 → 返回回复+情绪"""
