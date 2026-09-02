@@ -38,7 +38,7 @@ for (const k of keys) {
 
 // 保留用户手填的收款实名，仅重写 SPONSOR_QR 与工具函数
 let ts = existsSync(srcFile) ? readFileSync(srcFile, "utf8") : "";
-const m = ts.match(/export const SPONSOR_REAL_NAME = ("(?:[^"\\]|\\.)*");/);
+const m = ts.match(/export const SPONSOR_REAL_NAME = "((?:[^"\\]|\\.)*)";/);
 const realName = m ? m[1] : "【替换为你的微信/支付宝收款实名】";
 
 const out = `// 赞助收款码完整性校验 —— 防 fork/投毒替换收款码截胡赞助款（银狐类攻击）
