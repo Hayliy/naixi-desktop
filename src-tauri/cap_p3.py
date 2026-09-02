@@ -2,8 +2,8 @@ import subprocess, time, ctypes, sys, os
 from ctypes import wintypes, Structure, byref, sizeof, create_string_buffer, c_int, c_long, c_uint, c_ulong, c_void_p, c_short, c_ushort
 from PIL import Image, ImageGrab
 
-EXE = r"D:\naixi_desktop\src-tauri\test_flow.exe"
-OUT = r"D:\naixi_desktop\src-tauri\p3frames"
+EXE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_flow.exe")
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "p3frames")
 os.makedirs(OUT, exist_ok=True)
 
 user32 = ctypes.windll.user32

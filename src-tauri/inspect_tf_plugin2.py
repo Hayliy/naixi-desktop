@@ -25,7 +25,7 @@ def find_main():
     EnumWindows(EnumWindowsProc(cb), 0)
     return res[0] if res else None
 
-proc = subprocess.Popen([r"D:\naixi_desktop\src-tauri\test_flow.exe"])
+proc = subprocess.Popen([os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_flow.exe")])
 time.sleep(2.5)
 hwnd = find_main()
 print("HWND", hwnd)

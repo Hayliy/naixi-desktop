@@ -10,7 +10,9 @@
 from PIL import Image, ImageDraw, ImageFont
 import os
 
-BASE = r"D:\naixi_desktop\src-tauri\installer"
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_PROJ = os.path.dirname(os.path.dirname(_HERE))
+BASE = _HERE
 FONT = r"C:\Windows\Fonts\msyh.ttc"
 
 CLR_FOOTER_BG = (253, 248, 250)   # #FDF8FA
@@ -30,7 +32,7 @@ def get_font(size, bold=False):
 
 
 def gen_banner():
-    src = Image.open(r"D:\naixi_desktop\data\avatars\avatar-0.png").convert("RGBA")
+    src = Image.open(os.path.join(_PROJ, "data", "avatars", "avatar-0.png")).convert("RGBA")
     sw, sh = src.size
     tw, th = 540, 150
     scale = max(tw / sw, th / sh)

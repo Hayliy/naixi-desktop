@@ -10,7 +10,9 @@ import glob, os, sys
 import numpy as np
 from PIL import Image
 
-CAPDIR = r"D:\naixi_desktop\logs\capture"
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_PROJ = os.path.dirname(os.path.dirname(os.path.dirname(_HERE)))
+CAPDIR = os.path.join(_PROJ, "logs", "capture")
 name = sys.argv[1] if len(sys.argv) > 1 else "Squat"
 outdir = sys.argv[2] if len(sys.argv) > 2 else os.path.dirname(os.path.abspath(__file__))
 NMAX = int(sys.argv[3]) if len(sys.argv) > 3 else 24

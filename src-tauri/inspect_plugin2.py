@@ -29,7 +29,7 @@ def find_main():
     EnumWindows(EnumWindowsProc(cb), 0)
     return res[0] if res else None
 
-exe = r"D:\naixi_desktop\src-tauri\target\release\bundle\nsis\奶昔_0.1.0_x64-setup.exe"
+exe = os.path.join(os.path.dirname(os.path.abspath(__file__)), "target", "release", "bundle", "nsis", "奶昔_0.1.0_x64-setup.exe")
 proc = subprocess.Popen([exe])
 print("LAUNCH", exe)
 

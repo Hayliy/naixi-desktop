@@ -12,7 +12,7 @@
     1) 装依赖： pip install pyautogui requests pillow
     2) 百炼 key（二选一）：
          - 环境变量： set DASHSCOPE_API_KEY=你的key
-         - 或保证 D:/naixi_desktop/data/live_config.json 里有 "dashscope_api_key"
+         - 或保证 <项目根>/data/live_config.json 里有 "dashscope_api_key"
     3) 运行： python real_minesweeper_agent.py
     4) 按提示手动打开扫雷并置于前台，回车，AI 开始自动玩。
 """
@@ -27,14 +27,17 @@ import requests
 import pyautogui
 from PIL import Image
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_PROJ = os.path.dirname(_HERE)
+
 
 # ───────────────────────── API key ─────────────────────────
 def get_api_key():
     k = os.environ.get("DASHSCOPE_API_KEY")
     if k:
         return k
-    for p in (r"D:/naixi_desktop/data/live_config.json",
-              r"D:/naixi_desktop/data/config.json"):
+    for p in (os.path.join(_PROJ, "data", "live_config.json"),
+              os.path.join(_PROJ, "data", "config.json")):
         if os.path.isfile(p):
             try:
                 d = json.load(open(p, encoding="utf-8"))
@@ -52,7 +55,7 @@ def get_api_key():
 API_KEY = get_api_key()
 if not API_KEY:
     print("[错误] 未找到百炼 API key。请设置环境变量 DASHSCOPE_API_KEY，")
-    print("       或确保 D:/naixi_desktop/data/live_config.json 含 dashscope_api_key。")
+    print("       或确保", os.path.join(_PROJ, "data", "live_config.json"), "含 dashscope_api_key。")
     sys.exit(1)
 
 

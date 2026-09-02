@@ -1,6 +1,6 @@
 import http.server, socketserver, os, sys
 
-ROOT = r"D:\naixi_desktop\desktop_core\vrm_html"
+ROOT = os.path.dirname(os.path.abspath(__file__))
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 9922
 
 MIME = {

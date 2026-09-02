@@ -53,7 +53,7 @@ COSYVOICE_SR = 24000
 # （如指向共享盘上已下载好的模型，避免每台机器重复下载）。
 #
 # 路径解析同时兼容两种布局，但**无论哪种都把模型放在 resources/ 之外**：
-#   * 开发态：desktop_core/tts_router.py → 父目录即项目根（D:/naixi_desktop）
+#   * 开发态：desktop_core/tts_router.py → 父目录即项目根（仓库根目录）
 #   * 打包态：resources/desktop_core/tts_router.py → 父目录为 resources，需再上一层
 # 这样安装包不会把 ~120MB 模型打进去，且用户机器上模型落在安装根之外、不在 C 盘。
 _TTS_SRC_DIR = os.path.dirname(os.path.abspath(__file__))       # .../desktop_core

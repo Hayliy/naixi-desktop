@@ -1,8 +1,10 @@
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import os
 
-SRC = r"D:\naixi_desktop\data\avatars\avatar-0.png"
-OUT = r"D:\naixi_desktop\src-tauri\installer\banner.bmp"
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_PROJ = os.path.dirname(_HERE)
+SRC = os.path.join(_PROJ, "data", "avatars", "avatar-0.png")
+OUT = os.path.join(_HERE, "installer", "banner.bmp")
 W, H = 480, 110
 
 base = Image.open(SRC).convert("RGBA")

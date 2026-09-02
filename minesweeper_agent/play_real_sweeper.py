@@ -58,9 +58,9 @@ def get_api_key():
     # 优先：从桌面端 storage 读取 bailian_vision provider（DPAPI 加密，同机器同用户可解）
     try:
         import sys as _sys
-        _sys.path.insert(0, r"D:/naixi_desktop/desktop_core")
+        _sys.path.insert(0, os.path.join(os.path.dirname(HERE), "desktop_core"))
         import storage
-        storage.DB_PATH = r"D:/naixi_desktop/data/naixi_desktop.db"
+        storage.DB_PATH = os.path.join(os.path.dirname(HERE), "data", "naixi_desktop.db")
         cfg = json.loads(storage.meta_get("desktop_config"))
         storage.decrypt_config(cfg)
         for name in ("bailian_vision", "bailian"):
@@ -168,7 +168,7 @@ def main():
     time.sleep(2.5)
 
     steps = 0
-    shot_dir = r"D:/naixi_desktop/minesweeper_agent/_live_shots"
+    shot_dir = os.path.join(HERE, "_live_shots")
     os.makedirs(shot_dir, exist_ok=True)
     # 定位真实窗口（确定性坐标，不依赖 VL 给像素）
     rect = find_window("Naixi Minesweeper")

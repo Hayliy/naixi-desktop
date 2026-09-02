@@ -21,7 +21,9 @@
 import json, os, sys
 import numpy as np
 
-BASE = r"D:\naixi_desktop\logs\metrics"
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_PROJ = os.path.dirname(os.path.dirname(os.path.dirname(_HERE)))
+BASE = os.path.join(_PROJ, "logs", "metrics")
 BONES = ['hips', 'spine', 'chest', 'upperChest', 'neck', 'head',
          'leftShoulder', 'leftUpperArm', 'leftLowerArm', 'leftHand',
          'rightShoulder', 'rightUpperArm', 'rightLowerArm', 'rightHand',
