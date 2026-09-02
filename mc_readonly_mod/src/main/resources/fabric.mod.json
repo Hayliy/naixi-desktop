@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "naixi-readonly-mod",
+  "version": "1.0.0",
+  "name": "Naixi Readonly Mod",
+  "description": "只读暴露本机世界态 HTTP API 供 AI 操控用户角色（绝不发游戏指令、绝不生成独立实体）。用户已批准的单机读取例外。",
+  "authors": ["naixi"],
+  "contact": {},
+  "entrypoints": {
+    "main": ["com.naixi.readonlymod.NaixiReadonlyMod"]
+  },
+  "depends": {
+    "fabric-api": ">=0.97.0",
+    "minecraft": "1.20.4"
+  },
+  "environment": "client"
+}

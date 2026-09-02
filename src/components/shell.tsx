@@ -1,12 +1,16 @@
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/api";
+import { TopBar } from "@/components/TopBar";
 
 /* ─── AppShell ─── */
-export function AppShell({ sidebar, children }: { sidebar: React.ReactNode; children: React.ReactNode }) {
+export function AppShell({ sidebar, children, onNavigate }: { sidebar: React.ReactNode; children: React.ReactNode; onNavigate: (k: string) => void }) {
   return (
-    <div className="flex h-screen bg-sakura-50">
-      {sidebar}
-      <div className="flex flex-1 flex-col overflow-hidden">{children}</div>
+    <div className="flex h-screen flex-col bg-sakura-50">
+      <TopBar onNavigate={onNavigate} />
+      <div className="flex flex-1 overflow-hidden pt-9">
+        {sidebar}
+        <div className="flex flex-1 flex-col overflow-hidden">{children}</div>
+      </div>
     </div>
   );
 }

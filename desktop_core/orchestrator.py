@@ -56,11 +56,11 @@ class Orchestrator:
             ])
             # 尝试解析 JSON
             text = result.strip()
-            # 找 JSON 块
-            import re
-            json_match = re.search(r'\[.*?\]', text, re.DOTALL)
-            if json_match:
-                sub_tasks = json.loads(json_match.group())
+            # 找 JSON 数组：取首个 [ 到末个 ]（不用正则，且修复多元素数组被截断）
+            start = text.find("[")
+            end = text.rfind("]")
+            if start != -1 and end > start:
+                sub_tasks = json.loads(text[start:end + 1])
                 if isinstance(sub_tasks, list) and len(sub_tasks) > 1:
                     return sub_tasks
         except Exception as e:

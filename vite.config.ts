@@ -10,10 +10,11 @@ export default defineConfig(async () => ({
     alias: { "@": path.resolve(__dirname, "./src") },
   },
   clearScreen: false,
-  // 不自动清空 dist：vite 默认 build 会 rmSync 清空 outDir，触发 WorkBuddy safe-delete
-  // shim 拦截并改走回收站导致构建中止。关闭后 shim 不再被触发，不再需要 rm -rf 绕过。
-  // 代价：dist 可能残留旧文件；发布前手动清理一次即可（开发构建因资源带 hash 影响极小）。
-  build: { emptyOutDir: false },
+  // 发布前必须保证 dist 干净，否则历史构建残留的死文件（如旧版含爱发电的 index chunk）
+  // 会被 Tauri 一起嵌进 exe，既增大体积又违背"资源干净/防篡改"诉求。
+  // 已实测当前环境 vite 内置 emptyOutDir 不再触发 WorkBuddy safe-delete 拦截，
+  // 故恢复默认行为：每次 build 前自动清空 dist，从源头杜绝残留累积（无需再手动 rm -rf）。
+  build: { emptyOutDir: true },
   server: {
     port: 1420,
     strictPort: true,

@@ -7,6 +7,8 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Mutex;
 use std::time::Duration;
 use std::env;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 /// 后端 Python sidecar 进程 PID（托盘退出时用它杀掉整棵进程树，避免残留）
 #[derive(Default)]
@@ -27,6 +29,7 @@ fn kill_backend(app: &tauri::AppHandle) {
         // 由它在后台继续清理进程树，避免同步等待 taskkill 杀树导致托盘退出卡顿（#3）。
         let _ = std::process::Command::new("taskkill")
             .args(["/F", "/T", "/PID", &pid.to_string()])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW：GUI 父进程拉起 console 程序不弹窗
             .spawn();
     } else {
         // 兜底：PID 没存上（例如本次启动时端口已被上次残留占用而直接复用），
@@ -34,6 +37,7 @@ fn kill_backend(app: &tauri::AppHandle) {
         if let Some(port_pid) = pid_listening_on(9845) {
             let _ = std::process::Command::new("taskkill")
                 .args(["/F", "/T", "/PID", &port_pid.to_string()])
+                .creation_flags(0x08000000)
                 .spawn();
         }
     }
@@ -42,7 +46,7 @@ fn kill_backend(app: &tauri::AppHandle) {
 /// 查找监听指定端口的进程 PID（Windows netstat 解析），用于退出时兜底清理残留后端
 #[cfg(windows)]
 fn pid_listening_on(port: u16) -> Option<u32> {
-    let out = std::process::Command::new("netstat").args(["-ano"]).output().ok()?;
+    let out = std::process::Command::new("netstat").args(["-ano"]).creation_flags(0x08000000).output().ok()?;
     let text = String::from_utf8_lossy(&out.stdout);
     let needle = format!(":{}", port);
     for line in text.lines() {
@@ -111,13 +115,31 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(BackendPid::default())
-        .invoke_handler(tauri::generate_handler![start_backend, restart_backend])
+        .invoke_handler(tauri::generate_handler![
+            start_backend,
+            restart_backend,
+            open_config_dir,
+            open_url,
+            is_debug,
+            open_devtools,
+            backend_ready,
+        ])
         .setup(|app| {
             // 启动 Python 桌面后端；失败（如未检测到 Python）时通知前端显示提示，而非静默退出
             if let Err(e) = spawn_backend(app.handle()) {
                 let _ = app.emit("backend-error", e.clone());
                 eprintln!("桌面后端启动失败: {}", e);
             }
+            // 等后端就绪再显示主窗口：后端加载模型/Skill 较慢（实测约 48s），
+            // 若不等就绪就显示，前端首批请求会全部 ERR_CONNECTION_REFUSED，
+            // 在 DevTools 累积大量红色 error（#启动竞态）。主窗口配 visible:false。
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                wait_for_backend_ready();
+                if let Some(w) = handle.get_webview_window("main") {
+                    let _ = w.show();
+                }
+            });
             // 创建系统托盘图标（关窗最小化到托盘后可从此处唤回或退出）
             if let Err(e) = setup_tray(app.handle()) {
                 eprintln!("系统托盘创建失败: {}", e);
@@ -218,7 +240,7 @@ fn port_in_use(addr: &str) -> bool {
 fn resolve_python(app: &tauri::AppHandle) -> String {
     if let Ok(p) = std::env::var("NAIXI_PYTHON_PATH") {
         if !p.trim().is_empty() {
-            return p;
+            return prefer_windowless(p);
         }
     }
     if !cfg!(debug_assertions) {
@@ -252,7 +274,23 @@ fn resolve_python(app: &tauri::AppHandle) -> String {
             }
         }
     }
-    "python".to_string()
+    prefer_windowless("python".to_string())
+}
+
+/// 若给定解释器是控制台版 python.exe，且同目录存在无窗口版 pythonw.exe，
+/// 则改用 pythonw.exe。避免每次启动/重启后端都弹出黑色终端窗口
+/// （控制台窗口自带原生标题栏，强杀后又残留「无响应」窗口，#2）。
+fn prefer_windowless(python: String) -> String {
+    let p = std::path::Path::new(&python);
+    if python.to_lowercase().ends_with("python.exe") {
+        if let Some(parent) = p.parent() {
+            let w = parent.join("pythonw.exe");
+            if w.exists() {
+                return w.to_string_lossy().to_string();
+            }
+        }
+    }
+    python
 }
 
 /// 启动桌面后端：先预检 Python 解释器与端口占用，再拉起 sidecar。
@@ -296,10 +334,98 @@ fn spawn_backend(app: &tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+/// 阻塞等待桌面后端（127.0.0.1:9845）就绪，最多约 90 秒（180×500ms）。
+/// 后端加载模型/Skill 较慢（实测约 48s）；若不等就绪就显示主窗口，
+/// 前端首批请求会全部 ERR_CONNECTION_REFUSED，在 DevTools 累积大量红色 error（#启动竞态）。
+fn wait_for_backend_ready() {
+    for _ in 0..180 {
+        if TcpStream::connect("127.0.0.1:9845").is_ok() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+}
+
 /// 供前端「启动后端」按钮调用（仅在后端未运行时拉起，避免重复）
 #[tauri::command]
 fn start_backend(app: tauri::AppHandle) -> Result<(), String> {
     spawn_backend(&app)
+}
+
+/// 打开配置/数据目录（运行态 resources/data 或开发态 data），供菜单「打开配置目录」调用。
+/// Windows 用 explorer 打开；其它平台回退到 open。
+#[tauri::command]
+fn open_config_dir(app: tauri::AppHandle) {
+    let candidates: [Option<std::path::PathBuf>; 3] = [
+        find_from_exe(&["resources", "data"]),
+        find_from_exe(&["data"]),
+        app.path().resource_dir().ok().map(|p| p.join("data")),
+    ];
+    if let Some(dir) = candidates.into_iter().flatten().find(|p| p.exists()) {
+        #[cfg(target_os = "windows")]
+        {
+            let _ = std::process::Command::new("explorer")
+                .arg(dir)
+                .creation_flags(0x08000000)
+                .spawn();
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = std::process::Command::new("open").arg(dir).spawn();
+        }
+    }
+}
+
+/// 用系统默认程序打开一个 URL（如发布页、更新源页面）。供菜单「版本更新 → 前往发布页」调用。
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer")
+            .arg(&url)
+            .creation_flags(0x08000000)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+        std::process::Command::new(opener)
+            .arg(&url)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command]
+fn is_debug() -> bool {
+    cfg!(debug_assertions)
+}
+
+/// 供前端启动期探测后端就绪：仅检查 127.0.0.1:9845 是否可连接（LISTEN），返回 bool。
+/// 前端用 invoke（Tauri 内部通道，不走 HTTP）探测，后端就绪前不渲染主应用、
+/// 不发任何 HTTP 请求，从而避免在 DevTools 累积启动期 ERR_CONNECTION_REFUSED 红色 error。
+#[tauri::command]
+fn backend_ready() -> bool {
+    port_in_use("127.0.0.1:9845")
+}
+
+/// 打开 Webview 开发者工具（DevTools）。
+/// 关键坑：@tauri-apps/api 2.11 不暴露任何 devtools 方法，前端直接调
+/// `getCurrentWebview().openDevtools()` 会 TypeError（方法根本不存在），
+/// 与 Cargo 特性/ACL 权限无关——此前误判为特性/权限问题而南辕北辙。
+/// 因此自定义命令直达底层：wry Windows 后端 open_devtools 调用
+/// webview2.OpenDevToolsWindow()。前置条件（均已满足）：
+///   - Cargo.toml 开 `devtools` 特性 → 该 Rust 方法才编译进 release exe
+///   - tauri.conf 主窗口 `devtools: true` → webview 允许 devtools
+#[tauri::command]
+fn open_devtools(app: tauri::AppHandle) -> Result<(), String> {
+    app.get_webview_window("main")
+        .ok_or_else(|| "找不到主窗口 main".to_string())?
+        .open_devtools();
+    Ok(())
 }
 
 /// 供前端「重启后端」按钮调用：先彻底结束旧进程并确认端口释放，再重新拉起。
@@ -315,10 +441,12 @@ fn restart_backend(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(pid) = pid {
         let _ = std::process::Command::new("taskkill")
             .args(["/F", "/T", "/PID", &pid.to_string()])
+            .creation_flags(0x08000000)
             .status();
     } else if let Some(port_pid) = pid_listening_on(9845) {
         let _ = std::process::Command::new("taskkill")
             .args(["/F", "/T", "/PID", &port_pid.to_string()])
+            .creation_flags(0x08000000)
             .status();
     }
     // 3. 阻塞等待端口真正释放（最多约 5 秒），避免 spawn_backend 的端口占用检查误判而跳过拉起

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   setMouth, applyEmotion, applyAction, applyParams, loadScript, sleep,
 } from "@/lib/avatarDriver";
+import { API_BASE } from "@/lib/api";
 
 const STAGE_MODELS_KEY = "naixi_stage_models"; // agent_id -> 模型复合key 映射（localStorage 持久化）
 
@@ -52,7 +53,7 @@ export default function StageWindow() {
 
   // 拉取角色名单与模型列表
   useEffect(() => {
-    fetch("/api/live/connectors")
+    fetch(`${API_BASE}/api/live/connectors`)
       .then(r => r.json())
       .then(d => {
         const list: RosterItem[] = (d.connectors || []).filter((c: RosterItem) => !c.human_controlled);
@@ -61,7 +62,7 @@ export default function StageWindow() {
         setRoster(list);
       })
       .catch(() => {});
-    fetch("/api/live2d-model-list")
+    fetch(`${API_BASE}/api/live2d-model-list`)
       .then(r => r.json())
       .then(d => { if (d.models) setModels(d.models); })
       .catch(() => {});

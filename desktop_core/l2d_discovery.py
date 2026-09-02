@@ -9,9 +9,11 @@
 Hotkeys 里。任何渲染端直接读磁盘 model3.json 都会得到空表情列表。
 """
 
+import ctypes
 import glob
 import json
 import os
+import time
 
 __all__ = [
     "strip_ext",
@@ -19,6 +21,9 @@ __all__ = [
     "exp3_display_name",
     "discover_model_actions",
     "discover_models",
+    "get_extra_roots",
+    "add_model_root",
+    "remove_model_root",
 ]
 
 
@@ -159,43 +164,202 @@ def discover_model_actions(model3_path: str) -> dict:
     return out
 
 
-# VTube Studio 商店模型目录（用户实际模型常驻于此；桌面端 data/models 往往为空）。
+# VTube Studio 商店模型目录（业界固定布局，用 ProgramFiles 环境变量推导，不写死盘符）。
 # 与 pet_window.py 原本写死的 VTS_MODELS 保持一致，集中在此避免两处再次漂移。
-VTS_MODELS = r"D:\Program Files\Steam\steamapps\common\VTube Studio\VTube Studio_Data\StreamingAssets\Live2DModels"
+VTS_MODELS = os.path.join(
+    os.environ.get("ProgramFiles", r"C:\Program Files"),
+    "Steam", "steamapps", "common", "VTube Studio",
+    "VTube Studio_Data", "StreamingAssets", "Live2DModels",
+)
+
+# 部分机器 Steam 装在 ProgramFiles(x86)；补一路搜索根，避免“有模型却没自动发现”。
+VTS_MODELS_X86 = os.path.join(
+    os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+    "Steam", "steamapps", "common", "VTube Studio",
+    "VTube Studio_Data", "StreamingAssets", "Live2DModels",
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 一劳永逸的模型根探测（2026-08-06 重写，彻底消除硬编码）
+#
+# 设计原则：不写死任何盘符 / 用户名 / 子目录名。
+#   ① 标准根：data/models、godot_renderer/models、VTS 商店目录（布局固定，用环境变量推导）。
+#   ② 用户模型库：用 Windows API 取「真实文档路径」（SHGetFolderPathW，junction-safe），
+#      再递归扫描其下所有层级的 *.model3.json —— 不再假设「素材」之类的子目录名。
+#   ③ 自定义根：用户通过 API / UI 显式添加的常驻模型目录，持久化到 data/models_roots.json，
+#      亲手指定的路径永不漏、永不依赖猜目录结构，是最稳的一层。
+#   ④ 缓存：带 TTL，避免每次启动全量递归扫描；用户增删自定义根立即失效缓存。
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _known_folder_path(csidl: int) -> str:
+    """用 Windows API 取真实已知文件夹路径（正确处理 junction / 库重定向）。
+
+    优于读 USERPROFILE 环境变量：后者在 junction 机器上会解析到逻辑路径
+    （C:\\Users\\xxx）而非物理路径（D:\\用户\\xxx），导致漏掉真实模型库。
+    失败（非 Windows / 沙箱）时回退到 USERPROFILE 环境变量推导。
+    """
+    try:
+        buf = ctypes.create_unicode_buffer(4096)
+        res = ctypes.windll.shell32.SHGetFolderPathW(0, csidl, 0, 0, buf)
+        if res == 0 and buf.value:
+            return buf.value
+    except Exception:
+        pass
+    # 回退：CSIDL_Documents = 5
+    if csidl == 5:
+        up = os.environ.get("USERPROFILE", "")
+        if up:
+            return os.path.join(up, "Documents")
+    return ""
+
+
+def _roots_config_path() -> str:
+    desktop_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(desktop_root, "data", "models_roots.json")
+
+
+def get_extra_roots() -> list:
+    """用户显式添加的常驻模型根目录（持久化）。不存在返回 []。"""
+    p = _roots_config_path()
+    if not os.path.exists(p):
+        return []
+    try:
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+        if isinstance(d, list):
+            return [os.path.abspath(str(x)) for x in d if x]
+    except Exception:
+        pass
+    return []
+
+
+def add_model_root(path: str) -> bool:
+    """持久化添加一个模型根目录；成功返回 True（不存在的目录返回 False）。"""
+    path = os.path.abspath(path)
+    if not os.path.isdir(path):
+        return False
+    cur = get_extra_roots()
+    if path not in cur:
+        cur.append(path)
+        try:
+            os.makedirs(os.path.dirname(_roots_config_path()), exist_ok=True)
+            with open(_roots_config_path(), "w", encoding="utf-8") as f:
+                json.dump(cur, f, ensure_ascii=False, indent=2)
+            _invalidate_cache()
+        except Exception:
+            return False
+    return True
+
+
+def remove_model_root(path: str) -> bool:
+    """从持久化列表移除一个模型根目录；成功返回 True。"""
+    path = os.path.abspath(path)
+    cur = get_extra_roots()
+    if path in cur:
+        cur.remove(path)
+        try:
+            with open(_roots_config_path(), "w", encoding="utf-8") as f:
+                json.dump(cur, f, ensure_ascii=False, indent=2)
+            _invalidate_cache()
+        except Exception:
+            return False
+        return True
+    return False
+
+
+def _cache_path() -> str:
+    desktop_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(desktop_root, "data", ".discover_cache.json")
+
+
+_CACHE_TTL = 600  # 秒；短 TTL 防止长期漏扫（用户增删根会立即失效缓存）
+
+
+def _invalidate_cache() -> None:
+    try:
+        os.remove(_cache_path())
+    except OSError:
+        pass
+
+
+def _read_cache():
+    p = _cache_path()
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+        if time.time() - d.get("ts", 0) > _CACHE_TTL:
+            return None
+        return d
+    except Exception:
+        return None
+
+
+def _write_cache(models: list) -> None:
+    try:
+        os.makedirs(os.path.dirname(_cache_path()), exist_ok=True)
+        with open(_cache_path(), "w", encoding="utf-8") as f:
+            json.dump({"ts": time.time(), "models": models}, f, ensure_ascii=False)
+    except Exception:
+        pass
 
 
 def discover_models() -> list:
-    """自动发现本地 Live2D 模型（与 pet_window.find_model3 同源，供后端 / 前端共用）。
+    """自动发现本地 Live2D 模型（discover 的唯一权威实现，供后端 / 前端 / 桌宠共用）。
 
-    搜索根（按优先级）：
-      1) 桌面 data/models        —— 用户通过「导入模型」落盘目录；
+    根来源（不写死任何盘符 / 用户名 / 子目录名）：
+      1) 桌面 data/models        —— 「导入模型」落盘目录；
       2) godot_renderer/models   —— VRM/Godot 渲染兜底目录；
-      3) VTube Studio 商店目录   —— 用户真实模型常驻处（桌面端 data/models 常为空）。
+      3) VTS 商店目录(x64/x86)   —— 业界固定布局，用 ProgramFiles 变量推导；
+      4) 真实文档路径            —— Windows API 取（junction-safe），递归扫其下所有模型；
+      5) 用户自定义根            —— 持久化于 data/models_roots.json，亲手指定的永不漏。
 
-    返回 [{"name","modelFile","path"}...]，按目录名稳定排序；未发现返回 []，
-    调用方据此决定是否回退到文件选择器。
+    每层递归搜索所有层级的 *.model3.json（覆盖 VTS/data/models 深层 与 用户库任意嵌套）。
+    name 取模型所在文件夹名；按路径稳定排序；未发现返回 []（调用方回退文件选择器）。
 
-    注意：本函数仅依赖标准库，不引入 PySide/live2d，可在后端 aiohttp 进程与
-    Qt 桌宠子进程中安全共用，是「自动发现模型地址」的唯一权威实现。
+    缓存：TTL 内直接返回上次结果，避免每次启动全量递归扫描；用户增删自定义根立即失效。
+    仅依赖标准库（含 ctypes），不引入 PySide/live2d，可在后端 aiohttp 与 Qt 子进程安全共用。
     """
     desktop_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    roots = [
+    doc_path = _known_folder_path(5)  # CSIDL_Documents
+    raw_roots = [
         os.path.join(desktop_root, "data", "models"),
         os.path.join(desktop_root, "godot_renderer", "models"),
         VTS_MODELS,
-    ]
+        VTS_MODELS_X86,
+        doc_path,
+    ] + get_extra_roots()
+
+    # 去重 + 仅保留真实存在的目录
+    seen_root = set()
+    roots = []
+    for r in raw_roots:
+        if not r:
+            continue
+        rn = os.path.normcase(os.path.abspath(r))
+        if rn in seen_root:
+            continue
+        seen_root.add(rn)
+        if os.path.isdir(rn):
+            roots.append(rn)
+
+    # 缓存命中：TTL 内且无人为失效
+    cache = _read_cache()
+    if cache and cache.get("models") is not None:
+        return cache["models"]
+
     models = []
     seen = set()
     for base in roots:
-        if not os.path.exists(base):
-            continue
-        for entry in sorted(os.listdir(base)):
-            d = os.path.join(base, entry)
-            if not os.path.isdir(d):
+        for mp in sorted(glob.glob(os.path.join(base, "**", "*.model3.json"), recursive=True)):
+            key = os.path.normcase(mp)
+            if key in seen:
                 continue
-            for f in sorted(os.listdir(d)):
-                if f.endswith(".model3.json") and f not in seen:
-                    seen.add(f)
-                    models.append({"name": entry, "modelFile": f, "path": os.path.join(d, f)})
-                    break
+            seen.add(key)
+            name = os.path.basename(os.path.dirname(mp))
+            models.append({"name": name, "modelFile": os.path.basename(mp), "path": mp})
+
+    _write_cache(models)
     return models

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiGet, apiPost, API_BASE } from "@/lib/api";
 import { AppShell, Sidebar, Header, Main } from "@/components/shell";
 import { AppProvider } from "@/contexts/AppContext";
 import { ToastProvider, useToast } from "@/components/Toast";
@@ -61,9 +61,6 @@ const NAV_ITEMS = [
   { key: "knowledge",  icon: <BookOpen size={16} />,       label: "知识库" },
   { key: "tools",      icon: <Wrench size={16} />,         label: "工具" },
   { key: "memory",     icon: <Brain size={16} />,          label: "记忆" },
-  { key: "petmemory",  icon: <Users size={16} />,          label: "桌宠记忆" },
-  { key: "scene",      icon: <Eye size={16} />,            label: "场景感知" },
-  { key: "cohost",     icon: <MessageCircle size={16} />,  label: "直播搭档" },
   { key: "connection", icon: <Wifi size={16} />,         label: "连接" },
   { key: "ops",        icon: <Server size={16} />,         label: "运维" },
   { key: "live",       icon: <Film size={16} />,           label: "直播" },
@@ -128,14 +125,18 @@ export default function Dashboard() {
       apiGet<DesktopStatusData>("/api/desktop_status").then(setDstatus).catch(() => {});
       apiGet<StatsData>("/api/stats").then(setStats).catch(() => {});
       apiGet<NapcatData>("/api/napcat/status").then(setNapcat).catch(() => {});
-      apiGet<SysData>("/api/system/resources").then(setSys).catch(() => {});
       apiGet<KbData>("/api/knowledge/summary").then(setKb).catch(() => {});
       apiGet<MemData>("/api/memory/stats").then(setMem).catch(() => {});
       apiGet<ToolData>("/api/tools").then(setToolsData).catch(() => {});
     };
+    const sysFetch = () => {
+      apiGet<SysData>("/api/system/resources").then(setSys).catch(() => {});
+    };
     fetch();
+    sysFetch();
     const t = setInterval(fetch, 5000);
-    return () => clearInterval(t);
+    const tSys = setInterval(sysFetch, 1000);
+    return () => { clearInterval(t); clearInterval(tSys); };
   }, []);
 
   // 首次启动检测（未配置任何带 Key 的模型供应商时才弹出引导）
@@ -180,7 +181,10 @@ export default function Dashboard() {
   return (
     <AppProvider>
     <ToastProvider>
-    <AppShell sidebar={<Sidebar items={NAV_ITEMS} activeNav={activeNav} onNavChange={setActiveNav} version={`v${dstatus?.version ?? stats?.backend?.version ?? "0.1.0"}`} />}>
+    <AppShell
+      onNavigate={setActiveNav}
+      sidebar={<Sidebar items={NAV_ITEMS} activeNav={activeNav} onNavChange={setActiveNav} version={`v${dstatus?.version ?? stats?.backend?.version ?? "0.1.0"}`} />}
+    >
       <Header>
         <div className="flex items-center gap-2">
           {PAGE_ICONS[activeNav] || <LayoutDashboard size={15} className="text-sakura-400" />}
@@ -227,9 +231,6 @@ export default function Dashboard() {
           <div style={{ display: activeNav === "knowledge" ? "block" : "none", height: "100%" }}><ErrorBoundary name="知识库"><KbPage kb={kb} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "tools" ? "block" : "none", height: "100%" }}><ErrorBoundary name="工具"><ToolsPage toolsData={toolsData} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "memory" ? "block" : "none", height: "100%" }}><ErrorBoundary name="记忆"><MemPage /></ErrorBoundary></div>
-          <div style={{ display: activeNav === "petmemory" ? "block" : "none", height: "100%" }}><ErrorBoundary name="桌宠记忆"><PetMemoryPage /></ErrorBoundary></div>
-          <div style={{ display: activeNav === "scene" ? "block" : "none", height: "100%" }}><ErrorBoundary name="场景感知"><ScenePage /></ErrorBoundary></div>
-          <div style={{ display: activeNav === "cohost" ? "block" : "none", height: "100%" }}><ErrorBoundary name="直播搭档"><CohostPage /></ErrorBoundary></div>
           <div style={{ display: activeNav === "connection" ? "block" : "none", height: "100%" }}><ErrorBoundary name="连接"><NapcatPage napcat={napcat} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "ops" ? "block" : "none", height: "100%" }}><ErrorBoundary name="运维"><OpsPage errors={globalErrors} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "live" ? "block" : "none", height: "100%" }}><ErrorBoundary name="直播"><LivePage /></ErrorBoundary></div>
@@ -287,10 +288,10 @@ export default function Dashboard() {
 
             <Card className="p-4 h-[220px] flex flex-col"><p className="text-xs font-semibold text-sakura-500 mb-3">系统资源</p>
               <div className="flex-1 min-h-0 overflow-y-auto space-y-3">
-                <Bar label="CPU" val={`${sys?.cpu ?? 0}%`} w={sys?.cpu ?? 0} />
-                <Bar label="内存" val={`${sys?.memory ?? 0}%`} w={sys?.memory ?? 0} />
-                <Bar label="磁盘" val={`${sys?.disk ?? 0}%`} w={sys?.disk ?? 0} />
-                <Bar label="GPU" val={`${sys?.gpu_util ?? 0}%`} w={sys?.gpu_util ?? 0} />
+                <Bar label="CPU" val={`${sys?.cpu ?? 0}%`} w={sys?.cpu ?? 0} tip="全系统 CPU 占用（含所有进程），与任务管理器『性能→CPU』整体%一致" />
+                <Bar label="内存" val={`${sys?.memory ?? 0}%`} w={sys?.memory ?? 0} tip="整机物理内存占用百分比" />
+                <Bar label="磁盘容量" val={`${sys?.disk ?? 0}%`} w={sys?.disk ?? 0} tip="系统盘(C:)已用空间占比，并非磁盘繁忙度。任务管理器『性能→磁盘』显示的是活动时间%，两者概念不同" />
+                <Bar label="GPU" val={`${sys?.gpu_util ?? 0}%`} w={sys?.gpu_util ?? 0} tip="NVIDIA 整体利用率（任一引擎忙即计），任务管理器默认按单一引擎(3D/CUDA)显示，可切换对照" />
                 <div className="border-t border-sakura-100 pt-3 space-y-1.5 text-xs">
                   <Row l="显卡" v={sys?.gpu_name ?? "N/A"} />
                   <Row l="显存" v={`${sys?.gpu_mem_used ?? 0}/${sys?.gpu_mem_total ?? 0} MB`} />
@@ -418,11 +419,11 @@ export default function Dashboard() {
   );
 }
 
-function Bar({ label, val, w }: { label: string; val: string; w: number }) {
+function Bar({ label, val, w, tip }: { label: string; val: string; w: number; tip?: string }) {
   return (
     <div>
       <div className="flex justify-between text-xs mb-1">
-        <span className="text-sakura-400">{label}</span>
+        <span className="text-sakura-400 cursor-help" title={tip}>{label}</span>
         <span className="text-sakura-600 font-medium">{val}</span>
       </div>
       <div className="h-1.5 rounded-full bg-sakura-100 overflow-hidden">
@@ -1593,13 +1594,21 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
 
   const loadAll = useCallback(async () => {
     setLoading(true);
+    // 单个请求失败不影响其余；超时/取消(AbortError)属瞬态（窗口隐藏时 WebView 网络挂起），
+    // 静默处理，避免 DevTools 打「运维加载失败」红。
+    const safe = async (p: Promise<any>) => {
+      try { return await p; } catch (e: any) {
+        if (e?.name === "AbortError" || e?.message?.includes("aborted") || e?.message?.includes("suspended")) return null;
+        throw e;
+      }
+    };
     try {
       const [d, inc, insp, he, cl] = await Promise.all([
-        apiGet<any>("/api/ops/dashboard"),
-        apiGet<any>("/api/ops/incidents"),
-        apiGet<any>("/api/ops/inspections?limit=3"),
-        apiGet<any>("/api/ops/self-heals?limit=10"),
-        apiGet<any>("/api/ops/changelog?limit=20"),
+        safe(apiGet<any>("/api/ops/dashboard")),
+        safe(apiGet<any>("/api/ops/incidents")),
+        safe(apiGet<any>("/api/ops/inspections?limit=3")),
+        safe(apiGet<any>("/api/ops/self-heals?limit=10")),
+        safe(apiGet<any>("/api/ops/changelog?limit=20")),
       ]);
       if (d) setHealth(d);
       if (inc) { setIncidents(inc.active || []); setIncidentHistory(inc.history || []); }
@@ -1928,6 +1937,10 @@ function LivePage() {
   const [dashscopeKey, setDashscopeKey] = useState('');
   const [chatModel, setChatModel] = useState('');
   const [livePrompt, setLivePrompt] = useState('');
+  // 视觉模型（桌宠"看"视频/游戏的眼睛，写进 api_providers[vision]）
+  const [visionModel, setVisionModel] = useState('');
+  const [visionApiKey, setVisionApiKey] = useState('');
+  const [visionApiUrl, setVisionApiUrl] = useState('');
   const [danmaku, setDanmaku] = useState<any[]>([]);
   const [showConfig, setShowConfig] = useState(false);
   const [showRtmp, setShowRtmp] = useState(false);
@@ -2078,6 +2091,7 @@ function LivePage() {
     try { const cfg = await apiGet<any>('/api/live/config');
       setAccessKeyId(cfg.access_key_id||'');setAccessKeySecret(cfg.access_key_secret||'');
       setAppId(cfg.app_id||'');setCode(cfg.code||'');setRoomId(cfg.room_id||'');setRtmpUrl(cfg.rtmp_url||'');setDashscopeKey(cfg.dashscope_api_key||'');setChatModel(cfg.chat_model||'');setLivePrompt(cfg.live_prompt||'');
+      setVisionModel(cfg.vision_model||'');setVisionApiKey(cfg.vision_api_key||'');setVisionApiUrl(cfg.vision_api_url||'');
     } catch {}
   }, []);
 
@@ -2096,7 +2110,7 @@ function LivePage() {
   }, [status?.connected]);
 
   const saveCfg = async () => {
-    try { const r = await apiPost('/api/live/save-config', {access_key_id:accessKeyId,access_key_secret:accessKeySecret,app_id:appId,code:code,room_id:roomId,dashscope_api_key:dashscopeKey,chat_model:chatModel,live_prompt:livePrompt}); if (r) notify('配置已保存', 'success'); else notify('保存失败', 'error'); } catch { notify('保存失败', 'error'); }
+    try { const r = await apiPost('/api/live/save-config', {access_key_id:accessKeyId,access_key_secret:accessKeySecret,app_id:appId,code:code,room_id:roomId,dashscope_api_key:dashscopeKey,chat_model:chatModel,live_prompt:livePrompt,vision_model:visionModel,vision_api_key:visionApiKey,vision_api_url:visionApiUrl}); if (r) notify('配置已保存', 'success'); else notify('保存失败', 'error'); } catch { notify('保存失败', 'error'); }
   };
 
   const act = async (url: string, body?: any, okMsg?: string) => {
@@ -2322,6 +2336,21 @@ function LivePage() {
               <div>
                 <label className="block text-[10px] text-sakura-500 font-medium mb-1">直播间 ID（可选）</label>
                 <input value={roomId} onChange={e=>setRoomId(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white" placeholder="留空自动" />
+              </div>
+              <div className="rounded-lg border border-sakura-100 bg-sakura-50/40 p-3 space-y-2">
+                <p className="text-[10px] font-medium text-sakura-600 mb-1">视觉模型（桌宠"看"视频/游戏 的眼睛，必填才能陪看吐槽/自主游戏）</p>
+                <div>
+                  <label className="block text-[10px] text-sakura-500 font-medium mb-1">视觉模型名</label>
+                  <input value={visionModel} onChange={e=>setVisionModel(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="如 qwen-vl-plus / qwen-vl-max" />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-sakura-500 font-medium mb-1">API Key</label>
+                  <input value={visionApiKey} onChange={e=>setVisionApiKey(e.target.value)} type="password" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="与语言模型可同厂商(百炼)" />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-sakura-500 font-medium mb-1">API 地址（可留空用默认）</label>
+                  <input value={visionApiUrl} onChange={e=>setVisionApiUrl(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="留空=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions" />
+                </div>
               </div>
               <div>
                 <details className="text-[10px]">
@@ -2631,6 +2660,11 @@ function LivePage() {
           </div>
         </div>
       )}
+
+      {/* ── 以下三块原为独立导航页，已并入直播页（用户要求统一到直播页） ── */}
+      <PetMemoryPage />
+      <ScenePage />
+      <CohostPage />
       </div>
   );
 }
@@ -3095,7 +3129,7 @@ function SchedulerPage() {
 function LogsPage() {
   const [logs, setLogs] = useState("");
   useEffect(() => {
-    const fetchLogs = () => fetch("/api/logs").then(r => r.text().then(setLogs)).catch(() => {});
+    const fetchLogs = () => fetch(`${API_BASE}/api/logs`).then(r => r.text().then(setLogs)).catch(() => {});
     fetchLogs();
     const timer = setInterval(fetchLogs, 1000);
     return () => clearInterval(timer);
@@ -3163,7 +3197,7 @@ function PetMemoryPage() {
         <input
           value={agentId}
           onChange={(e) => setAgentId(e.target.value)}
-          className="bg-[#1a1a2e] border border-sakura-200/30 rounded px-2 py-1 text-xs text-sakura-100 w-32"
+          className="bg-white border border-sakura-100 rounded px-2 py-1 text-xs text-sakura-600 w-32"
           placeholder="角色ID"
         />
         <button
@@ -3177,15 +3211,15 @@ function PetMemoryPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* 左：记住的对象清单 */}
-        <div className="bg-white/60 dark:bg-[#232338] rounded-xl p-4">
-          <p className="text-xs font-semibold text-sakura-500 mb-2">记住了谁（{objects.length}）</p>
+        <div className="bg-white border border-sakura-100 rounded-xl p-4 h-[60vh] flex flex-col">
+          <p className="text-xs font-semibold text-sakura-500 mb-2 shrink-0">记住了谁（{objects.length}）</p>
           {objects.length === 0 && <p className="text-xs text-sakura-300">还没有记住任何人。让桌宠聊几句/接几发弹幕后回来刷新。</p>}
           <div className="space-y-2 max-h-[60vh] overflow-auto">
             {objects.map((o, i) => (
               <div
                 key={i}
                 onClick={() => loadDetail(o.viewer_id)}
-                className={`cursor-pointer rounded-lg p-2.5 border text-xs ${selected === o.viewer_id ? "border-sakura-400 bg-sakura-50 dark:bg-sakura-500/10" : "border-sakura-200/30 hover:border-sakura-300"}`}
+                className={`cursor-pointer rounded-lg p-2.5 border text-xs ${selected === o.viewer_id ? "border-sakura-400 bg-sakura-100" : "border-sakura-100 hover:border-sakura-300"}`}
               >
                 <div className="flex items-center justify-between">
                   <span className="font-medium text-sakura-600 dark:text-sakura-300">
@@ -3206,20 +3240,20 @@ function PetMemoryPage() {
         </div>
 
         {/* 右：选中对象的明细 */}
-        <div className="bg-white/60 dark:bg-[#232338] rounded-xl p-4">
-          <p className="text-xs font-semibold text-sakura-500 mb-2">明细</p>
+        <div className="bg-white border border-sakura-100 rounded-xl p-4 h-[60vh] flex flex-col">
+          <p className="text-xs font-semibold text-sakura-500 mb-2 shrink-0">明细</p>
           {!selected && <p className="text-xs text-sakura-300">点左侧某人查看它记住的画像与近期对话。</p>}
           {detail && (
-            <div className="space-y-3 max-h-[60vh] overflow-auto">
+            <div className="space-y-3 flex-1 min-h-0 overflow-auto">
               <div>
                 <p className="text-[11px] font-medium text-sakura-400 mb-1">关于对方的画像（注入每次对话）</p>
-                <pre className="bg-[#1a1a2e] text-sakura-100 text-[11px] p-3 rounded-lg whitespace-pre-wrap">{detail.profile || "（暂无画像，多聊几次后会由 LLM 抽取）"}</pre>
+                <pre className="bg-sakura-50 text-sakura-600 text-[11px] p-3 rounded-lg whitespace-pre-wrap">{detail.profile || "（暂无画像，多聊几次后会由 LLM 抽取）"}</pre>
               </div>
               <div>
                 <p className="text-[11px] font-medium text-sakura-400 mb-1">近期事件流（旧→新，最多 50）</p>
                 <div className="space-y-1">
                   {detail.episodes.map((e, i) => (
-                    <div key={i} className="text-[11px] text-sakura-200 bg-[#1a1a2e] rounded p-2">
+                    <div key={i} className="text-[11px] text-sakura-600 bg-sakura-50 rounded p-2">
                       <span className="text-sakura-400 mr-2">{new Date((e.ts || 0) * 1000).toLocaleTimeString("zh-CN")}</span>
                       {e.content}
                     </div>
@@ -3284,12 +3318,12 @@ function ScenePage() {
         ))}
       </div>
 
-      <div className="bg-white/60 dark:bg-[#232338] rounded-xl p-4 space-y-3">
+      <div className="bg-white border border-sakura-100 rounded-xl p-4 space-y-3">
         <textarea
           value={desc}
           onChange={(e) => setDesc(e.target.value)}
           placeholder="粘贴屏幕上的文字 / 描述你正在干嘛（自动截屏OCR也会填到这里）"
-          className="w-full h-24 bg-[#1a1a2e] text-sakura-100 text-xs p-3 rounded-lg resize-none"
+          className="w-full h-24 bg-white border border-sakura-100 text-sakura-600 text-xs p-3 rounded-lg resize-none"
         />
         <div className="flex items-center gap-3">
           <button
@@ -3308,9 +3342,9 @@ function ScenePage() {
       </div>
 
       {last && (
-        <div className="bg-white/60 dark:bg-[#232338] rounded-xl p-4">
+        <div className="bg-white border border-sakura-100 rounded-xl p-4">
           <p className="text-[11px] font-medium text-sakura-400 mb-1">桌宠反应</p>
-          <div className="text-sm text-sakura-100 bg-[#1a1a2e] rounded-lg p-3">
+          <div className="text-sm text-sakura-600 bg-sakura-50 rounded-lg p-3">
             {last.reply || "（桌宠没啥反应）"}
           </div>
           <div className="text-[10px] text-sakura-300 mt-1">
@@ -3371,7 +3405,7 @@ function CohostPage() {
           value={roomId}
           onChange={(e) => setRoomId(e.target.value)}
           placeholder="直播间ID（需先在设置配好B站开放平台密钥）"
-          className="bg-[#1a1a2e] border border-sakura-200/30 rounded px-2 py-1 text-xs text-sakura-100 w-80"
+          className="bg-white border border-sakura-100 rounded px-2 py-1 text-xs text-sakura-600 w-80"
         />
         <button
           onClick={connect}
@@ -3382,24 +3416,24 @@ function CohostPage() {
         </button>
         <button
           onClick={disconnect}
-          className="bg-sakura-200/20 hover:bg-sakura-200/30 text-sakura-100 text-xs px-3 py-1.5 rounded-lg"
+          className="bg-sakura-100 hover:bg-sakura-200 text-sakura-600 text-xs px-3 py-1.5 rounded-lg"
         >
           断开
         </button>
-        <span className={`text-[11px] px-2 py-1 rounded ${connected ? "bg-green-500/20 text-green-300" : "bg-gray-500/20 text-gray-300"}`}>
+        <span className={`text-[11px] px-2 py-1 rounded ${connected ? "bg-green-50 text-green-600" : "bg-sakura-100 text-sakura-400"}`}>
           {connected ? "已连接" : "未连接"}
         </span>
         {status?.last_error && <span className="text-[11px] text-red-300">{status.last_error}</span>}
       </div>
 
-      <div className="bg-white/60 dark:bg-[#232338] rounded-xl p-4">
+      <div className="bg-white border border-sakura-100 rounded-xl p-4">
         <p className="text-xs font-semibold text-sakura-500 mb-2">弹幕流（最近 {danmaku.length}）</p>
         <div className="space-y-1 max-h-[60vh] overflow-auto">
           {danmaku.length === 0 && (
             <p className="text-xs text-sakura-300">连接后，观众弹幕会在这里实时显示，桌宠会自然接话并用语音+字幕回应。</p>
           )}
           {danmaku.map((d, i) => (
-            <div key={i} className="text-[11px] text-sakura-200 bg-[#1a1a2e] rounded p-2">
+            <div key={i} className="text-[11px] text-sakura-600 bg-sakura-50 rounded p-2">
               <span className="text-sakura-400 mr-2">{d.user}</span>
               {d.text}
               {d.time_str && <span className="text-sakura-300 ml-2">{d.time_str}</span>}

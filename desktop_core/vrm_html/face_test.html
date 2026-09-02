@@ -1,0 +1,61 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>face_capture_real_test</title></head>
+<body>
+<pre id="out">running...</pre>
+<script type="module">
+import { FaceLandmarker, FilesetResolver } from './vendor/mediapipe/vision_bundle.mjs';
+import { arkitToVRM, matrixToEulerYXZ } from './arkit_to_vrm.js';
+
+const IMG = './face_test_sample.jpg';
+let step = 'start';
+function setOut(s){ step = s; document.getElementById('out').textContent = s; document.body.dataset.faceresult = s; document.title = 'STEP:' + s; }
+
+async function run(){
+  try {
+    setOut('fileset...');
+    const fileset = await FilesetResolver.forVisionTasks('./vendor/mediapipe/wasm');
+    setOut('model...');
+    const fl = await FaceLandmarker.createFromOptions(fileset, {
+      baseOptions: { modelAssetPath: './vendor/mediapipe/face_landmarker.task', delegate: 'CPU' },
+      runningMode: 'IMAGE', numFaces: 1,
+      outputFaceBlendshapes: true, outputFacialTransformationMatrixes: true,
+    });
+    setOut('imgload...');
+    const resp = await fetch(IMG);
+    const blob = await resp.blob();
+    const bmp = await createImageBitmap(blob);
+    setOut('draw+detect...');
+    const cv = document.createElement('canvas');
+    cv.width = bmp.width; cv.height = bmp.height;
+    cv.getContext('2d').drawImage(bmp, 0, 0);
+    const t0 = performance.now();
+    const res = fl.detect(cv);
+    const dt = (performance.now() - t0).toFixed(0);
+    if (!res.faceBlendshapes || res.faceBlendshapes.length === 0){ setOut('NO_FACE'); return; }
+    const cats = res.faceBlendshapes[0].categories;
+    const bs = {}; for (const c of cats) bs[c.categoryName] = c.score;
+    const expr = arkitToVRM(bs, { mirror: true, expressionGain: 1.0 });
+    const m = res.facialTransformationMatrixes[0].data;
+    const e = matrixToEulerYXZ(m);
+    const deg = r => +(r * 180 / Math.PI).toFixed(2);
+    const top = cats.filter(c => c.score > 0.01).sort((a, b) => b.score - a.score)
+      .slice(0, 14).map(c => c.categoryName + '=' + c.score.toFixed(3));
+    const exprSorted = Object.entries(expr).filter(([, v]) => v > 0.001).sort((a, b) => b[1] - a[1]);
+    const out = JSON.stringify({
+      detected: true, blendshapes: cats.length, detectMs: dt,
+      topBlendshapes: top,
+      vrmExpressions: exprSorted.map(([k, v]) => k + '=' + v.toFixed(3)),
+      headPose: { yaw: deg(e.y), pitch: deg(e.x), roll: deg(e.z) },
+      matrix: Array.from(m).map(x => +x.toFixed(3)),
+    });
+    setOut(out);
+    await fetch('/__faceresult', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: out });
+  } catch (err) {
+    setOut('ERROR ' + (err && err.stack ? err.stack : String(err)));
+  }
+}
+run();
+</script>
+</body>
+</html>

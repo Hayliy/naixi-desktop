@@ -41,7 +41,7 @@ export default function ThemeSettings() {
 
       {/* 主题色 — 预设色板 */}
       <SettingRow label="主题色" desc="点选预设配色">
-        <div className="flex flex-wrap gap-2 justify-end max-w-[220px]">
+        <div className="grid grid-cols-4 gap-2 w-fit justify-items-center">
           {PRESETS.map(p => (
             <button key={p.hue} onClick={() => setHue(p.hue)} title={p.name}
               className={`w-6 h-6 rounded-full border-2 transition-all ${

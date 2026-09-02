@@ -26,7 +26,8 @@ def _machine_uuid() -> str:
         r = subprocess.run(
             ["powershell", "-NoProfile", "-Command",
              "Get-CimInstance -Class Win32_ComputerSystemProduct | Select-Object -ExpandProperty UUID"],
-            capture_output=True, text=True, timeout=5
+            capture_output=True, text=True, timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         )
         mid = r.stdout.strip()
     except Exception:
@@ -36,7 +37,8 @@ def _machine_uuid() -> str:
             r = subprocess.run(
                 ["powershell", "-NoProfile", "-Command",
                  "Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | Select-Object -First 1 -ExpandProperty MacAddress"],
-                capture_output=True, text=True, timeout=5
+                capture_output=True, text=True, timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
             )
             mid = r.stdout.strip().replace("-", "")
         except Exception:
@@ -196,6 +198,57 @@ def mask_api_key(cipher_or_plain: str) -> str:
     return _KEY_MASK if cipher_or_plain else ""
 
 
+# ── 通用敏感文本加密（对话内容 / 长期记忆 / 消息预览）──
+# 与 API Key 共用同一把 DPAPI 主密钥；写入即密、读出即解密，**落库即密、绝不回退明文**。
+# 设计目标：直接打开 SQLite 文件（被 copy 出去）看到的全是密文，而前端经 API 取到的是服务端解密后的明文。
+def encrypt_text(plain: str) -> str:
+    """加密任意敏感文本，落库即密。幂等：已加密(enc: 前缀)原样返回；空值返回空。
+    加密失败绝不回退明文——宁可丢数据也不把对话/记忆以明文落库。"""
+    if not plain:
+        return ""
+    if plain.startswith(_ENCRYPT_PREFIX):
+        return plain
+    try:
+        f = _get_fernet()
+        if not f:
+            log.warning("文本加密不可用（无可用密钥），拒绝以明文落库")
+            return ""
+        return _ENCRYPT_PREFIX + f.encrypt(plain.encode()).decode()
+    except Exception as e:
+        log.warning(f"文本加密失败: {e}；拒绝以明文落库")
+        return ""
+
+
+def decrypt_text(cipher: str) -> str:
+    """解密敏感文本。未加密旧数据原样返回（向后兼容迁移期）；解密失败返回空。"""
+    if not cipher:
+        return ""
+    if not cipher.startswith(_ENCRYPT_PREFIX):
+        return cipher  # 历史明文，原样返回
+    from cryptography.fernet import InvalidToken
+    fernets = [x for x in (_get_fernet(), _legacy_fernet()) if x]
+    cur = cipher
+    for _ in range(10):  # 防御历史多层加密
+        if not cur.startswith(_ENCRYPT_PREFIX):
+            return cur
+        token = cur[len(_ENCRYPT_PREFIX):].encode()
+        plain = None
+        for f in fernets:
+            try:
+                plain = f.decrypt(token).decode()
+                break
+            except InvalidToken:
+                continue
+            except Exception:
+                continue
+        if plain is None:
+            log.warning("文本解密失败（无匹配密钥），返回空")
+            return ""
+        cur = plain
+    log.warning("文本解密层数异常，返回空")
+    return ""
+
+
 def is_masked_key(value: str) -> bool:
     """判断前端回传的值是否是掩码（含未改动占位符），或为空——两者都应保留原有密钥。"""
     return (not value) or (_KEY_MASK[:4] in value)
@@ -255,6 +308,47 @@ def _get_conn() -> sqlite3.Connection:
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
+
+def _migrate_text_at_rest():
+    """一次性迁移：把历史明文对话内容/结构化块/预览/长期记忆加密落库。
+    由 meta 标记 _text_at_rest_v1 守护，仅跑一次；失败静默重试（下次启动）。
+    仅在「未加密且非空」的行上加密，已加密行跳过，保证幂等。"""
+    if meta_get("_text_at_rest_v1", "") == "1":
+        return
+    try:
+        conn = _get_conn()
+        # conv_messages.content
+        for r in conn.execute(
+                "SELECT id, content FROM conv_messages WHERE content<>'' AND content NOT LIKE 'enc:%'"
+        ).fetchall():
+            conn.execute("UPDATE conv_messages SET content=? WHERE id=?",
+                         (encrypt_text(r["content"]), r["id"]))
+        # conv_messages.content_blocks（跳过 '[]' 空结构）
+        for r in conn.execute(
+                "SELECT id, content_blocks FROM conv_messages "
+                "WHERE content_blocks<>'' AND content_blocks<>'[]' AND content_blocks NOT LIKE 'enc:%'"
+        ).fetchall():
+            conn.execute("UPDATE conv_messages SET content_blocks=? WHERE id=?",
+                         (encrypt_text(r["content_blocks"]), r["id"]))
+        # convs.last_msg（去规范化预览）
+        for r in conn.execute(
+                "SELECT key, last_msg FROM convs WHERE last_msg<>'' AND last_msg NOT LIKE 'enc:%'"
+        ).fetchall():
+            conn.execute("UPDATE convs SET last_msg=? WHERE key=?",
+                         (encrypt_text(r["last_msg"]), r["key"]))
+        # agent_memory.content
+        for r in conn.execute(
+                "SELECT id, content FROM agent_memory WHERE content<>'' AND content NOT LIKE 'enc:%'"
+        ).fetchall():
+            conn.execute("UPDATE agent_memory SET content=? WHERE id=?",
+                         (encrypt_text(r["content"]), r["id"]))
+        conn.commit()
+        conn.close()
+        meta_set("_text_at_rest_v1", "1")
+        log.info("文本落库加密迁移完成（历史明文已加密）")
+    except Exception as e:
+        log.warning(f"文本加密迁移失败（下次启动重试）: {e}")
+
 
 def init_tables():
     """创建桌面端所需的数据表（工作流相关）"""
@@ -407,6 +501,8 @@ def init_tables():
             );
             CREATE INDEX IF NOT EXISTS idx_agent_memory_av ON agent_memory(agent_id, viewer_id, type, ts);
         """)
+        # executescript 建表后必须显式提交，否则下面的迁移函数用独立连接读 meta 会报 no such table
+        conn.commit()
         # 为现有表添加 duration_ms 列（如果不存在）
         try:
             conn.execute("ALTER TABLE naixi_automation_runs ADD COLUMN duration_ms INTEGER DEFAULT 0")
@@ -438,6 +534,8 @@ def init_tables():
         threading.Thread(target=live_engine.summarize_yesterday_live, daemon=True).start()
     except Exception:
         pass
+    # 一次性迁移：把历史明文对话/记忆/预览加密落库（仅跑一次，由 meta 标记守护）
+    _migrate_text_at_rest()
 
 # ── 头像缓存 ──
 
@@ -485,14 +583,21 @@ def avatar_list() -> list[dict]:
 
 def avatar_remove_expired():
     """删除已过期的 OSS 头像记录（本地存储的永久有效）"""
-    import time, re
+    import time
     conn = _get_conn()
     try:
         rows = conn.execute("SELECT seed, url FROM avatars").fetchall()
         for r in rows:
             if "Expires=" in r["url"]:
-                m = re.search(r"Expires=(\d+)", r["url"])
-                if m and int(m.group(1)) < time.time():
+                # 抠 Expires= 后的时间戳数字（纯字符串解析，避免正则）
+                rest = r["url"][r["url"].index("Expires=") + len("Expires="):]
+                num = ""
+                for ch in rest:
+                    if ch.isdigit():
+                        num += ch
+                    else:
+                        break
+                if num and int(num) < time.time():
                     conn.execute("DELETE FROM avatars WHERE seed = ?", (r["seed"],))
         conn.commit()
     finally:
@@ -531,7 +636,7 @@ def mem_add(agent_id: str, viewer_id: str, mtype: str, content: str,
         cur = conn.execute(
             "INSERT INTO agent_memory (agent_id, viewer_id, type, content, importance, ts, day_tag) "
             "VALUES (?,?,?,?,?,?,?)",
-            (agent_id, viewer_id or "", mtype, content, importance, ts, day_tag))
+            (agent_id, viewer_id or "", mtype, encrypt_text(content), importance, ts, day_tag))
         conn.commit()
         return cur.lastrowid
     finally:
@@ -552,7 +657,7 @@ def mem_recent(agent_id: str, viewer_id: str = "", limit: int = 30) -> list:
                 "SELECT content, ts FROM agent_memory "
                 "WHERE agent_id=? AND type='episodic' ORDER BY ts DESC, id DESC LIMIT ?",
                 (agent_id, limit)).fetchall()
-        return [dict(r) for r in rows]
+        return [{"content": decrypt_text(r["content"]), "ts": r["ts"]} for r in rows]
     finally:
         conn.close()
 
@@ -567,28 +672,35 @@ def mem_profile_get(agent_id: str, viewer_id: str = "") -> str:
             (agent_id, viewer_id or "")).fetchall()
         if not rows:
             return ""
-        facts = [r["content"] for r in rows if (r["content"] or "").strip()]
+        facts = [decrypt_text(r["content"]) for r in rows if (decrypt_text(r["content"]) or "").strip()]
         return "\n".join("- " + f for f in facts)
     finally:
         conn.close()
 
 def mem_profile_set(agent_id: str, viewer_id: str, content: str, importance: float = 1.0):
-    """写入/刷新一条画像事实（按 content 去重：同内容刷新重要度/ts，否则新增）。"""
+    """写入/刷新一条画像事实（按 content 去重：同内容刷新重要度/ts，否则新增）。
+    注意：content 落库即密（Fernet 非确定性），不能再用 SQL `WHERE content=?` 去重，
+    改为读出解密后在 Python 侧比较。"""
     import time as _t
     conn = _get_conn()
     try:
-        existing = conn.execute(
-            "SELECT id FROM agent_memory WHERE agent_id=? AND type='profile' "
-            "AND viewer_id=? AND content=?",
-            (agent_id, viewer_id or "", content)).fetchone()
-        if existing:
+        existing_rows = conn.execute(
+            "SELECT id, content FROM agent_memory WHERE agent_id=? AND type='profile' "
+            "AND viewer_id=?",
+            (agent_id, viewer_id or "")).fetchall()
+        existing_id = None
+        for r in existing_rows:
+            if decrypt_text(r["content"]) == content:
+                existing_id = r["id"]
+                break
+        if existing_id is not None:
             conn.execute("UPDATE agent_memory SET importance=?, ts=? WHERE id=?",
-                         (importance, _t.time(), existing["id"]))
+                         (importance, _t.time(), existing_id))
         else:
             conn.execute(
                 "INSERT INTO agent_memory (agent_id, viewer_id, type, content, importance, ts) "
                 "VALUES (?,?,?,?,?,?)",
-                (agent_id, viewer_id or "", "profile", content, importance, _t.time()))
+                (agent_id, viewer_id or "", "profile", encrypt_text(content), importance, _t.time()))
         conn.commit()
     finally:
         conn.close()
@@ -655,8 +767,8 @@ def mem_decay():
 
 def _bigram_set(text):
     """文本 → 字符 2-gram 集合（中文按字、英文按字母，去标点）。语义相似度基础。"""
-    import re
-    clean = re.sub(r'[^\w\u4e00-\u9fff]', '', (text or '').lower())
+    clean = ''.join(ch for ch in (text or '').lower()
+                   if ch.isalnum() or ch == '_' or '\u4e00' <= ch <= '\u9fff')
     if len(clean) <= 1:
         return set()
     return {clean[i:i + 2] for i in range(len(clean) - 1)}
@@ -690,7 +802,7 @@ def mem_relevant(agent_id: str, viewer_id: str = "", query: str = "",
                 (agent_id,)).fetchall()
         scored, seen = [], set()
         for r in rows:
-            c = (r["content"] or "").strip()
+            c = decrypt_text(r["content"] or "").strip()
             if not c or c in seen:
                 continue
             seen.add(c)
@@ -737,7 +849,7 @@ def mem_recent_day(agent_id: str, viewer_id: str = "", day: str = None, limit: i
                 "WHERE agent_id=? AND type='episodic' AND day_tag=? "
                 "ORDER BY ts DESC, id DESC LIMIT ?",
                 (agent_id, day, limit)).fetchall()
-        return [dict(r) for r in rows]
+        return [{"content": decrypt_text(r["content"]), "ts": r["ts"]} for r in rows]
     finally:
         conn.close()
 
@@ -926,14 +1038,15 @@ def conv_save_message(conv_key: str, role: str, content: str, content_blocks: li
     try:
         conn.execute(
             "INSERT INTO conv_messages (conv_key, role, content, content_blocks, time) VALUES (?, ?, ?, ?, ?)",
-            (conv_key, role, content, json.dumps(content_blocks or [], ensure_ascii=False), msg_time)
+            (conv_key, role, encrypt_text(content),
+             encrypt_text(json.dumps(content_blocks or [], ensure_ascii=False)), msg_time)
         )
         # 更新摘要
         prev = conn.execute("SELECT msg_count FROM convs WHERE key=?", (conv_key,)).fetchone()
         count = (prev["msg_count"] if prev else 0) + 1
         conn.execute(
             "INSERT OR REPLACE INTO convs (key, last_role, last_msg, last_time, msg_count) VALUES (?, ?, ?, ?, ?)",
-            (conv_key, role, content[:100], msg_time, count)
+            (conv_key, role, encrypt_text(content[:100]), msg_time, count)
         )
         conn.commit()
     finally:
@@ -948,13 +1061,14 @@ def conv_save_message_sync(conv_key: str, role: str, content: str, content_block
     try:
         conn.execute(
             "INSERT INTO conv_messages (conv_key, role, content, content_blocks, time) VALUES (?, ?, ?, ?, ?)",
-            (conv_key, role, content, json.dumps(content_blocks or [], ensure_ascii=False), msg_time)
+            (conv_key, role, encrypt_text(content),
+             encrypt_text(json.dumps(content_blocks or [], ensure_ascii=False)), msg_time)
         )
         prev = conn.execute("SELECT msg_count FROM convs WHERE key=?", (conv_key,)).fetchone()
         count = (prev["msg_count"] if prev else 0) + 1
         conn.execute(
             "INSERT OR REPLACE INTO convs (key, last_role, last_msg, last_time, msg_count) VALUES (?, ?, ?, ?, ?)",
-            (conv_key, role, content[:100], msg_time, count)
+            (conv_key, role, encrypt_text(content[:100]), msg_time, count)
         )
         conn.commit()
     finally:
@@ -968,12 +1082,12 @@ def conv_list():
             "SELECT key, last_role, last_msg, last_time, msg_count FROM convs ORDER BY last_time DESC"
         ).fetchall()
         return [{
-            "key": r["key"],
-            "last_role": r["last_role"],
-            "last_msg": r["last_msg"],
-            "last_time": r["last_time"] or 0,
-            "msg_count": r["msg_count"],
-        } for r in rows]
+                "key": r["key"],
+                "last_role": r["last_role"],
+                "last_msg": decrypt_text(r["last_msg"]),
+                "last_time": r["last_time"] or 0,
+                "msg_count": r["msg_count"],
+            } for r in rows]
     finally:
         conn.close()
 
@@ -989,13 +1103,13 @@ def conv_get_messages(conv_key: str):
         for r in rows:
             blocks = []
             try:
-                blocks = json.loads(r["content_blocks"]) if r["content_blocks"] else []
+                blocks = json.loads(decrypt_text(r["content_blocks"])) if r["content_blocks"] else []
             except:
                 pass
             msgs.append({
                 "id": r["id"],
                 "role": r["role"],
-                "content": r["content"],
+                "content": decrypt_text(r["content"]),
                 "content_blocks": blocks if blocks else None,
                 "time": r["time"] or 0,
             })
@@ -1026,7 +1140,7 @@ def conv_delete_message(conv_key: str, msg_id: int):
             ).fetchone()
             conn.execute(
                 "INSERT OR REPLACE INTO convs (key, last_role, last_msg, last_time, msg_count) VALUES (?, ?, ?, ?, ?)",
-                (conv_key, last["role"], last["content"][:100], last["time"], count)
+                (conv_key, last["role"], encrypt_text(decrypt_text(last["content"])[:100]), last["time"], count)
             )
         conn.commit()
         return True

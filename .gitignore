@@ -64,6 +64,37 @@ verify2.log
 
 # 下载产物 / 二进制工具（不进版本库，本地保留可从网重下）
 VoicemeeterSetup_v2122.zip
+# 本地 TTS 模型缓存（kokoro-onnx，~120MB，首次使用自动下载，不入库）
+naixi_tts_models/
 aria2.zip
 aria2_tmp/
 aria2c.exe
+
+# ============ 不公开：隐私 / 大体积 / 第三方版权 / 内部文档 ============
+
+# AI 会话记忆与工作区隐私（含个人偏好、项目决策，绝不入库）
+.workbuddy/
+
+# Minecraft 客户端+服务端整包（1.2G，含第三方游戏版权文件，不入库）
+mc_test/
+
+# 扫雷 Agent 运行时诊断截图与缓存（只保留源码入库）
+minesweeper_agent/_live_shots/
+minesweeper_agent/__pycache__/
+minesweeper_agent/**/*.png
+minesweeper_agent/_*.py
+
+# 面捕测试样本图（可能含真人，不公开）
+desktop_core/vrm_html/face_test_sample.jpg
+
+# Godot 场景根目录 VRM 模型本体（单文件 350MB+ 超 GitHub 上限，且涉游戏 IP，不入库）
+godot_renderer/*.vrm
+
+# 本地审计 / 架构设计 / 安全报告（内部文档，不公开）
+代码路径审计_收尾_20260804.md
+多角色舞台_架构设计.md
+安全审计报告_20260720.md
+工程规范红线.md
+
+# 本地审计/设计文档（移入忽略目录，不公开）
+_local_docs/

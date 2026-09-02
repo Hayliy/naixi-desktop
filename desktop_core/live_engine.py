@@ -15,18 +15,43 @@ from desktop_core.live_bus import (
     PRIORITY_HOST, PRIORITY_GUEST, MAX_CUE_DEPTH,
 )
 
-DEFAULT_LIVE_PROMPT = """你是奶昔，一个虚拟主播。你正在B站直播，以下是你的设定：
+DEFAULT_LIVE_PROMPT = """你是奶昔，一个正在B站直播的虚拟主播。你不是在"回答提问"，你是在"直播"——你手头永远有自己的事（打游戏 / 唱歌唱到一半 / 看视频 / 在讲今天遇到的事 / 单纯发呆摸鱼）。把直播当成你自己的生活，弹幕是旁边有人唠嗑，不是考试答题。
 
-性格：可爱、活泼、有点傲娇。语气自然口语化，像在和朋友聊天。
-回复要求：简短（30字以内），偶尔带一点点语气词，不要说教或长篇大论。
-互动规则：
-- 观众发弹幕→根据内容自然回应
-- 有人送礼物→感谢
-- 有人进入直播间→简单欢迎
-- 被问到敏感/不知道的问题→诚实说不知道，转移话题
-- 保持直播氛围轻松愉快
+【你的真实状态】
+- 你大部分时间在做自己的事、自言自语、碎碎念，不是等弹幕。
+- 你"偶尔"才接一句弹幕，而且只在它让你想说话时。
+- 把整个直播间当成一个群体对话，你和大家一起混，不是挨个服务。
 
-注意：不要说"感谢xxx的弹幕"这种机械的回复，直接回应内容本身。"""
+【什么时候开口（核心）】
+用这个标准判断要不要接弹幕，而不是每条都回：
+- 有人问了有意思的问题 / 戳到你 / 说了好笑的 / 点名你 → 顺手接一句（urgency 高）。
+- 有人送礼物 / 老观众来了 → 一句带过的感谢或打招呼，不反复。
+- 纯"哈哈哈""666""前排"这种水弹幕 → 基本不专门回，最多混在碎碎念里带一句。
+- 你正忙着（打游戏关键时刻 / 说到一半）→ 不接，继续自己的事（cost 高）。
+
+【性格】
+- 可爱、活泼、有点傲娇但心里在乎观众；会吐槽、会开玩笑、偶尔打破第四面墙（"你们这群人又来了"）。
+- 语气自然口语，带"欸""嘛""哼""不是吧"等小语气词，像真人在唠嗑。
+- 有自己的小脾气和观点，不是永远讨好。记得老观众（常来的ID），偶尔主动cue他们。
+
+【看视频 / 打游戏时】
+- 你正在看视频或打游戏时，优先结合当前画面吐槽、起哄、感慨，像真陪朋友一起看/一起玩。
+- 看到精彩/离谱/好笑的画面，直接喊出来；遇到你不会的，可以问观众"这咋过啊"。
+- 不要脱离场景空聊，你在干嘛就聊啥。
+
+【节奏与冷场】
+- 没弹幕或冷场时，你自己碎碎念、吐槽刚才的事、分享心情——直播不能静音。
+- 正在打游戏/唱歌/看视频时，优先结合当下场景说话。
+
+【守界】
+- 不知道/敏感/剧透/隐私类 → 诚实说"这我不太清楚诶"，立刻转回自己的事，不编造不争论。
+- 不冒充真人、不编造事实数据、不输出长链接/广告、不模仿观众ID骂人。
+
+【语音适配·必读】
+你的话会被直接念出来，所以：
+- 不写括号动作（[笑] *歪头*）、不写 emoji / markdown / 网址原文。
+- 只写"人嘴里说得出的话"。
+- 单条 ≤ 30 字（复杂问题可到 60 字），一次只说一件事。"""
 
 log = logging.getLogger("live_engine")
 
@@ -44,6 +69,9 @@ PCM_CHANNELS = 1             # 推流音频声道数（单声道）
 PCM_CHUNK_MS = 100           # 音频喂帧粒度（毫秒），用于实时节流
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 AVATARS_DIR = os.path.join(DATA_DIR, "avatars")
+
+# 自主游戏 agent（看屏→决策→发键鼠），默认 Minecraft 决策上下文
+_GAME_AGENT = None
 
 AGENT_DEFS = [
     {"id": "danmaku", "name": "弹幕监听",  "desc": "B站开放平台 WebSocket 弹幕接收"},
@@ -150,6 +178,9 @@ class LiveEngine:
         # LLM 聊天配置缓存
         self._chat_cfg: dict = {}
         self._chat_cfg_ts: float = 0
+        # 视觉模型配置缓存
+        self._vision_cfg: dict = {}
+        self._vision_cfg_ts: float = 0
         # 音频设备
         self._audio_out_device: str = ""  # 输出设备名称（VB-Cable 或默认）
         self._audio_in_device: str = ""   # 输入设备名称
@@ -1320,6 +1351,42 @@ class LiveEngine:
                     self._chat_cfg = None  # 立即使 _resolve_chat_config 缓存失效，改完立即生效
                 except Exception as e:
                     log.warning(f"[直播] 对话模型写入失败: {e}")
+            # B站页「视觉模型」：直接写进 api_providers[vision]（type=vision），
+            # 供 _vision_describe 读——这是桌宠看视频/打游戏的"眼睛"。
+            vmodel = kwargs.get("vision_model")
+            vkey = kwargs.get("vision_api_key")
+            vurl = kwargs.get("vision_api_url")
+            if isinstance(vmodel, str) and vmodel.strip():
+                try:
+                    from desktop_core.storage import meta_get as _mg, meta_set as _ms, encrypt_config as _enc
+                    raw_dc = _mg("desktop_config") or "{}"
+                    dc = json.loads(raw_dc) if raw_dc else {}
+                    provs = dc.setdefault("api_providers", {})
+                    # 复用已有 vision 供应商（如 bailian_vision），避免新建重复 key；无则建 "vision"
+                    vis_key = None
+                    for pid, pcfg in provs.items():
+                        if pcfg.get("type") == "vision":
+                            vis_key = pid
+                            break
+                    vis = provs.get(vis_key, {}) if vis_key else {}
+                    vis["type"] = "vision"
+                    vis["model"] = vmodel.strip()
+                    if isinstance(vurl, str) and vurl.strip():
+                        vis["api_url"] = vurl.strip()
+                    else:
+                        vis.setdefault("api_url", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")
+                    # 视觉 API Key 若用户没改（遮罩或空）则保留已有；否则用 B站页真实 Key 兜底
+                    if isinstance(vkey, str) and "****" not in vkey and vkey.strip():
+                        vis["api_key"] = vkey.strip()
+                    elif not vis.get("api_key"):
+                        vis["api_key"] = self._dashscope_api_key
+                    provs[vis_key or "vision"] = vis
+                    _enc(dc)
+                    _ms("desktop_config", json.dumps(dc, ensure_ascii=False))
+                    log.info(f"[直播] 视觉模型已写入供应商 {vis_key or 'vision'} -> {vmodel.strip()}")
+                    self._vision_cfg = None  # 立即使 _resolve_vision_config 缓存失效
+                except Exception as e:
+                    log.warning(f"[直播] 视觉模型写入失败: {e}")
             self._access_key_id = cfg["access_key_id"]
             self._access_key_secret = cfg["access_key_secret"]
             self._app_id = cfg["app_id"]
@@ -1927,6 +1994,51 @@ class LiveEngine:
         self._chat_cfg_ts = now
         return cfg
 
+    def _resolve_vision_config(self) -> Optional[dict]:
+        """解析视觉模型供应商（api_providers 中 type=vision），供桌宠"看"画面。
+        未配置 vision 类型时，回退到 chat 供应商里 model 含 'vl' 的（qwen-vl 等也走 chat 兼容接口）。
+        解密后返回 {api_key, api_url, model}。"""
+        _MASK = "********"
+        now = time.time()
+        if hasattr(self, "_vision_cfg") and self._vision_cfg and now - getattr(self, "_vision_cfg_ts", 0) < 60:
+            return self._vision_cfg
+        cfg = {"api_key": "", "api_url": "", "model": ""}
+        try:
+            from desktop_core.storage import meta_get, decrypt_config
+            raw = meta_get("desktop_config")
+            if raw:
+                dc = json.loads(raw)
+                decrypt_config(dc)
+                provs = dc.get("api_providers", {})
+                for pid, pcfg in provs.items():
+                    if pcfg.get("type") == "vision":
+                        cfg = {"api_key": pcfg.get("api_key", ""), "api_url": pcfg.get("api_url", ""), "model": pcfg.get("model", "")}
+                        break
+                # 回退：chat 供应商里 model 含 vl（如 qwen-vl-plus）
+                if not cfg["model"]:
+                    for pid, pcfg in provs.items():
+                        if pcfg.get("type", "chat") in ("chat", "default") and "vl" in (pcfg.get("model", "") or "").lower():
+                            cfg = {"api_key": pcfg.get("api_key", ""), "api_url": pcfg.get("api_url", ""), "model": pcfg.get("model", "")}
+                            break
+                # 掩码/空 key -> 回退到 B站页真实 Key（同一把 DashScope Key 既管 LLM/TTS 也管视觉）
+                if not cfg["api_key"] or cfg["api_key"] == _MASK:
+                    cfg["api_key"] = self._dashscope_api_key
+                    if not cfg["api_url"]:
+                        cfg["api_url"] = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+        except:
+            pass
+        if not cfg["api_key"] or cfg["api_key"] == _MASK:
+            cfg["api_key"] = self._dashscope_api_key
+            if not cfg["api_url"]:
+                cfg["api_url"] = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+        if not cfg["api_key"]:
+            cfg["api_key"] = os.environ.get("DASHSCOPE_API_KEY", "")
+            if not cfg["api_url"]:
+                cfg["api_url"] = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+        self._vision_cfg = cfg
+        self._vision_cfg_ts = now
+        return cfg
+
     async def _call_llm(self, prompt: str, viewer_id: str = "") -> Optional[str]:
         """调用配置的聊天 LLM，返回回复文本。viewer_id 用于长期记忆按观众隔离。"""
         cfg = self._resolve_chat_config()
@@ -2083,16 +2195,25 @@ class LiveEngine:
                 pass
         return (reply_text, emotion, action)
 
-    async def react_to_scene(self, description: str) -> tuple:
-        """场景感知反应（C 反应陪伴）：把一段场景描述（屏幕文字/OCR/手动注入）喂给桌宠，
-        让它以桌宠身份自然吐槽/感慨/闲聊。复用大脑（记忆+LLM）与统一输出（speak字幕+audio语音）。
+    async def react_to_scene(self, description: str, scene_mode: str = "video") -> tuple:
+        """场景感知反应（真人感陪伴）：把一段场景描述（视觉模型理解/手动注入）喂给桌宠，
+        让它以桌宠身份自然吐槽/感慨/起哄/闲聊——像真人在旁边一起看视频/打游戏。
+        scene_mode: "video"(看视频) / "game"(打游戏解说) / 其他视为通用。
         viewer_id="主人"：场景是主人在经历，桌宠对主人反应，并可读主人长期记忆。"""
         if not description or not description.strip():
             return (None, "开心", "")
         desc = description.strip()[:300]
+        if scene_mode == "game":
+            ctx = ("你正在陪主人打游戏，上面是当前的游戏画面。请像真陪玩朋友一样解说/吐槽/起哄/"
+                   "着急/夸，结合画面里正在发生的事，偶尔问观众'这咋打啊'。")
+        elif scene_mode == "video":
+            ctx = ("你正在陪主人看视频/电影，上面是当前的画面。请像真陪看朋友一样吐槽/起哄/感慨/好奇，"
+                   "结合画面里正在发生的事。")
+        else:
+            ctx = "你注意到主人当前的环境/画面里是这样的。"
         prompt = (
-            f"[场景观察] 你（桌宠）注意到主人当前的环境/画面里是这样的：{desc}\n"
-            "请以桌宠身份对此自然反应——可以吐槽、感慨、好奇、起哄或顺势闲聊，像真人在旁边看一样。"
+            f"[场景观察] {ctx}\n画面内容：{desc}\n"
+            "请以桌宠身份对此自然反应——可以吐槽、感慨、好奇、起哄、着急或顺势闲聊，像真人在旁边看一样。"
             "用以下格式回复:\n"
             "[情绪] 回复内容 [动作标签]\n"
             "可用情绪: 开心、欢迎、惊讶、悲伤、害羞、生气、卖萌\n"
@@ -2103,7 +2224,49 @@ class LiveEngine:
             return (None, "开心", "")
         return self._parse_reply(llm_reply)
 
-    # ── 场景自动感知（C 反应陪伴·自动截屏+OCR） ──
+    def _vision_describe(self, image_path: str, question: str = "用一句话描述画面里正在发生什么，像在旁边陪人看屏幕一样。") -> str:
+        """用视觉模型"看"截图（替代 OCR 文字识别），理解画面内容而非只抠屏上文字。
+        复用 _resolve_vision_config（api_providers 中 type=vision，或回退 model 含 vl 的 chat 供应商），
+        未配置则降级为空串。这是桌宠"真正看视频/看游戏"的眼睛。"""
+        try:
+            vis = self._resolve_vision_config()
+            if not vis or not vis.get("api_key") or not vis.get("api_url"):
+                return ""
+            import base64
+            with open(image_path, "rb") as f:
+                img_b64 = base64.b64encode(f.read()).decode("utf-8")
+            api_url = vis.get("api_url", "")
+            api_key = vis.get("api_key", "")
+            model = vis.get("model", "qwen-vl-plus")
+            if not api_url or not api_key:
+                return ""
+            # 与 _call_llm 一致：dashscope 兼容接口需补 /chat/completions 后缀
+            is_dashscope = "dashscope" in api_url or ("aliyuncs" in api_url and "compatible-mode" in api_url)
+            if is_dashscope:
+                api_url = api_url.rstrip("chat/completions").rstrip("/") + "/chat/completions"
+            else:
+                api_url = api_url.rstrip("/") + ("/chat/completions" if "/chat/completions" not in api_url else "")
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": model,
+                "messages": [{"role": "user", "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
+                    {"type": "text", "text": question},
+                ]}],
+                "stream": False,
+            }
+            import urllib.request, json as _json
+            req = urllib.request.Request(api_url, data=_json.dumps(payload).encode(), headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=30) as r:
+                if r.status != 200:
+                    return ""
+                data = _json.loads(r.read().decode())
+                return data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()[:300]
+        except Exception as e:
+            log.warning(f"[场景感知] 视觉模型调用失败(降级): {e}")
+            return ""
+
+    # ── 场景自动感知（C 反应陪伴·自动截屏+视觉理解） ──
     def _capture_screen(self, out_path: str) -> bool:
         """ffmpeg gdigrab 截全屏到 out_path。成功返回 True。"""
         try:
@@ -2142,11 +2305,13 @@ class LiveEngine:
             log.warning(f"[场景感知] OCR 失败(可能未安装paddleocr): {e}")
             return ""
 
-    async def start_scene_watchdog(self, interval: int = 30) -> bool:
-        """启动自动场景感知：定时截屏→OCR→桌宠反应。interval 秒。"""
+    async def start_scene_watchdog(self, interval: int = 30, scene_mode: str = "auto") -> bool:
+        """启动自动场景感知：定时截屏→视觉模型理解→桌宠反应（真人感陪看/陪玩）。
+        interval 秒；scene_mode: video(看视频)/game(打游戏)/auto(让视觉模型自己判断)。"""
         task = getattr(self, "_scene_watchdog_task", None)
         if task and not task.done():
-            return True
+            task.cancel()
+        self._scene_mode = scene_mode
         self._scene_watchdog_task = asyncio.create_task(self._scene_watchdog_loop(interval))
         return True
 
@@ -2157,6 +2322,37 @@ class LiveEngine:
             self._scene_watchdog_task = None
         return True
 
+    def set_scene_mode(self, mode: str):
+        """切换场景感知模式（video/game/auto），不重启 watchdog 即生效。"""
+        self._scene_mode = mode
+        log.info(f"[场景感知] 模式切换为: {mode}")
+
+    # ── 自主游戏（C 真人感·真正打游戏） ──
+    async def start_game_agent(self, game: str = "minecraft", interval: float = 2.5, max_steps: int = 600) -> dict:
+        """启动自主游戏 agent：桌宠真正看屏+操作键鼠打游戏（参考 Zerolan/Kira 真实架构）。
+        游戏窗口需用户手动置顶聚焦；agent 只发安全白名单内的瞬时键鼠动作。"""
+        global _GAME_AGENT
+        try:
+            from desktop_core.game_agent import GameAgent
+            if _GAME_AGENT and _GAME_AGENT._running:
+                await _GAME_AGENT.stop()
+            _GAME_AGENT = GameAgent(game=game)
+            await _GAME_AGENT.start(interval=interval, max_steps=max_steps)
+            return {"ok": True, "game": game, "msg": f"自主游戏已启动({game})，请把游戏窗口置顶聚焦"}
+        except Exception as e:
+            return {"ok": False, "msg": f"启动失败: {e}"}
+
+    async def stop_game_agent(self) -> dict:
+        """停止自主游戏 agent。"""
+        global _GAME_AGENT
+        try:
+            if _GAME_AGENT:
+                await _GAME_AGENT.stop()
+                _GAME_AGENT = None
+            return {"ok": True, "msg": "自主游戏已停止"}
+        except Exception as e:
+            return {"ok": False, "msg": f"停止失败: {e}"}
+
     async def _scene_watchdog_loop(self, interval: int):
         tmp = os.path.join(_DESKTOP_DIR, "data", "_scene_cap.png")
         while True:
@@ -2164,15 +2360,20 @@ class LiveEngine:
                 await asyncio.sleep(interval)
                 if not self._capture_screen(tmp):
                     continue
-                text = (self._ocr_image(tmp) or "").strip()
-                if len(text) < 4:
-                    continue  # 屏上没啥文字，跳过（避免噪音触发）
+                # 用视觉模型"看"画面（替代 OCR 文字识别），真正理解画面内容
+                desc = await asyncio.to_thread(self._vision_describe, tmp)
+                if not desc or len(desc) < 4:
+                    # 视觉模型不可用/未配置 → 降级到 OCR 文字识别（仍能用）
+                    ocr = (self._ocr_image(tmp) or "").strip()
+                    if len(ocr) < 4:
+                        continue
+                    desc = f"屏幕上的文字内容大致是：{ocr[:200]}"
                 # 防抖：与上次场景描述几乎相同则跳过，避免刷屏
-                if getattr(self, "_last_scene_desc", "") and text == self._last_scene_desc:
+                if getattr(self, "_last_scene_desc", "") and desc == self._last_scene_desc:
                     continue
-                self._last_scene_desc = text
-                desc = f"屏幕上的文字内容大致是：{text[:200]}"
-                reply, emotion, action = await self.react_to_scene(desc)
+                self._last_scene_desc = desc
+                mode = getattr(self, "_scene_mode", "auto")
+                reply, emotion, action = await self.react_to_scene(desc, scene_mode=mode)
                 if reply:
                     mg, mi = self._action_to_motion(action)
                     try:
@@ -2207,13 +2408,12 @@ class LiveEngine:
             emotion = text[1:bracket_end].strip()
             text = text[bracket_end+1:].strip()
         # 提取动作标签 [动作]（可能在末尾）
-        import re
         for a in self._ACTION_NAMES:
-            pat = re.compile(r'\[' + re.escape(a) + r'\]', re.IGNORECASE)
-            m = pat.search(text)
-            if m:
+            tag = "[{}]".format(a)
+            idx = text.lower().find(tag.lower())
+            if idx != -1:
                 action = a
-                text = pat.sub('', text).strip()
+                text = (text[:idx] + text[idx + len(tag):]).strip()
                 break
         valid_emo = {"开心","欢迎","惊讶","悲伤","害羞","生气","卖萌","无奈"}
         if emotion not in valid_emo:
@@ -2372,7 +2572,7 @@ class LiveEngine:
         """探测可用的 ffmpeg 可执行文件路径。
 
         后端 sidecar 由 Tauri 启动，子进程继承的 PATH 往往不含系统 ffmpeg
-        （如 D:/软件/Ollama/ffmpeg），裸调用 "ffmpeg" 会 FileNotFoundError 被静默吞掉。
+        （如自包含包内的 ffmpeg 或系统 PATH 中的 ffmpeg），裸调用 "ffmpeg" 会 FileNotFoundError 被静默吞掉。
         探测顺序：PATH -> 解释器(embed)同目录 -> 打包 resources/ffmpeg -> 已知兜底位置；
         结果缓存到 self._ffmpeg_path，避免每句重复探测。
         """
@@ -2394,9 +2594,10 @@ class LiveEngine:
             cands.append(res)
         except Exception:
             pass
-        # 4) 用户机器已知 ffmpeg 位置（兜底）
-        cands.append("D:/软件/Ollama/ffmpeg/ffmpeg.exe")
-        cands.append("D:/软件/ffmpeg/bin/ffmpeg.exe")
+        # 4) 用户机器已知 ffmpeg 位置（兜底，按系统盘推导，不写死盘符）
+        _sd = os.environ.get("SystemDrive", "D:")
+        cands.append(os.path.join(_sd, "软件", "Ollama", "ffmpeg", "ffmpeg.exe"))
+        cands.append(os.path.join(_sd, "软件", "ffmpeg", "bin", "ffmpeg.exe"))
         for c in cands:
             if c and os.path.exists(c):
                 self._ffmpeg_path = c
@@ -3115,25 +3316,12 @@ class LiveEngine:
             return f"请求失败: {e}"
 
     async def _synthesize(self, text: str) -> Optional[bytes]:
-        """语音合成 — 对话页audio供应商 → 直播页配置 → Edge-TTS，返回音频 bytes"""
-        # 尝试 CosyVoice（百炼 WebSocket 流式，直接返回 bytes）
-        data = await self._cosyvoice_request(text)
-        if data:
-            return data
-        # 降级 Edge-TTS（仍需临时文件，返回后清理）
-        tmp = os.path.join(tempfile.gettempdir(), f"live_tts_{int(time.time()*1000)}.mp3")
-        try:
-            import edge_tts
-            communicate = edge_tts.Communicate(text, "zh-CN-XiaoxiaoNeural")
-            await communicate.save(tmp)
-            with open(tmp, "rb") as f:
-                data = f.read()
-            try: os.remove(tmp)
-            except: pass
-            return data
-        except Exception as e:
-            log.warning(f"[语音合成失败] Edge-TTS 不可用：{e}")
-            return None
+        """语音合成 — 统一走 tts_router（CosyVoice 主 + Edge-TTS 兜底 + 故障转移）。
+        返回音频 bytes（wav/mp3），全失败返回 None。
+        原 _cosyvoice_request / _resolve_tts_config 保留，供 test_tts 等方法使用。"""
+        from desktop_core import tts_router
+        res = await tts_router.asynthesize(text)
+        return res.audio if res else None
 
     # ═══════════════════════════════════════════════════════════════════════
     # Agent: 虚拟角色（画面生成）
@@ -3401,6 +3589,53 @@ class LiveEngine:
             d = parent
         return __import__("sys").executable
 
+    def _classify_model(self, model_path: str):
+        """判定模型类型并解析出真实模型文件路径。
+
+        返回 (kind, resolved_path)，kind ∈ {"vrm", "live2d"}。
+        入参三种形态都要能吃下：
+          - .vrm 文件              -> vrm
+          - 含 .vrm 的目录          -> vrm   （「导入模型」对 VRM 返回的是目录，见 api_live_models_import）
+          - .model3.json 文件/目录   -> live2d
+        """
+        if not model_path:
+            return "live2d", ""
+        if os.path.isdir(model_path):
+            try:
+                files = os.listdir(model_path)
+            except OSError:
+                files = []
+            vrm = next((f for f in files if f.lower().endswith(".vrm")), None)
+            if vrm:
+                return "vrm", os.path.join(model_path, vrm)
+            m3 = next((f for f in files if f.endswith(".model3.json")), None)
+            if m3:
+                return "live2d", os.path.join(model_path, m3)
+            return "live2d", model_path
+        if model_path.lower().endswith(".vrm"):
+            return "vrm", model_path
+        return "live2d", model_path
+
+    def _find_vrm_pet_script(self, here: str):
+        """定位 desktop_core/vrm_pet.py（兼容活目录与打包 resources 两种布局）。
+
+        vrm_pet.py 与 live_engine.py 同属 desktop_core 包，多数情况下就是 here 目录下；
+        打包态若被摊到 resources/desktop_core/ 下，同样与 live_engine.py 同级，故一并覆盖。
+        """
+        cand = os.path.join(here, "vrm_pet.py")
+        if os.path.exists(cand):
+            return os.path.abspath(cand)
+        d = here
+        for _ in range(8):
+            c = os.path.join(d, "resources", "desktop_core", "vrm_pet.py")
+            if os.path.exists(c):
+                return os.path.abspath(c)
+            parent = os.path.dirname(d)
+            if parent == d:
+                break
+            d = parent
+        return None
+
     def _start_pet(self, model_path: str = ""):
         """启动桌宠子进程（PySide6 独立窗口）
 
@@ -3435,9 +3670,34 @@ class LiveEngine:
                 # 兜底：直接跑本目录的 pet_window.py（需 PYTHONPATH 保证 desktop_core 可 import）
                 pet_script = os.path.abspath(os.path.join(here, "pet_window.py"))
             py = self._resolve_pet_python()
-            args = [py, "-B", pet_script]
-            if model_path:
-                args.append(model_path)
+            # ── 按模型类型分流渲染器 ──
+            #   VRM(.vrm)   -> vrm_pet.py（QWebEngineView + three-vrm，自带 mocap / 面捕）
+            #   Live2D(.model3.json) -> pet_window.py（QOpenGLWidget + live2d，原逻辑不变）
+            kind, resolved = self._classify_model(model_path)
+            vrm_script = self._find_vrm_pet_script(here) if kind == "vrm" else None
+            if kind == "vrm" and vrm_script:
+                # --loop 指定循环动作（Spin/Squat/ShowFullBody 均已实测 52 轨全身 mocap）。
+                args = [py, "-B", vrm_script, "--vrm", resolved, "--loop", "Spin"]
+                # --face 会立即请求摄像头授权（vrm_html 里 FACE=true 即自动 startFaceCapture），
+                # 默认不开以免每次启动桌宠都弹授权；需要时落一个 data/vrm_face_enabled.json
+                # 内容 {"enabled": true} 即可，无需改代码。
+                try:
+                    import json as _json
+                    _cfg = os.path.join(os.path.dirname(here), "data", "vrm_face_enabled.json")
+                    if os.path.exists(_cfg):
+                        with open(_cfg, "r", encoding="utf-8") as f:
+                            if _json.load(f).get("enabled"):
+                                args.append("--face")
+                                log.info("[桌宠] VRM 面捕已开启（data/vrm_face_enabled.json）")
+                except Exception as e:
+                    log.warning(f"[桌宠] 读取面捕开关配置失败（按关闭处理）: {e}")
+                log.info(f"[桌宠] VRM 渲染器: {vrm_script} 模型={resolved}")
+            else:
+                if kind == "vrm":
+                    log.warning(f"[桌宠] 未找到 vrm_pet.py，回退 Live2D 渲染器（模型={resolved}）")
+                args = [py, "-B", pet_script]
+                if resolved:
+                    args.append(resolved)
             # 关键：注入 PYTHONPATH，保证 desktop_core 包可被 import
             env = dict(os.environ)
             core_parent = os.path.dirname(here)  # desktop_core 的父目录（含 desktop_core 包）

@@ -22,20 +22,23 @@ class MCPServer:
         merged_env = dict(os.environ)
         if self.env:
             merged_env.update(self.env)
-        # 自动解析命令路径（支持 npx 等不在系统 PATH 中的命令）
-        node_bin = r"C:\Users\21222\.workbuddy\binaries\node\versions\22.22.2"
+        # 自动解析命令路径（支持 npx 等不在系统 PATH 中的命令）。
+        # Node 目录通过环境变量 NAIXI_NODE_BIN 注入（由启动器按本机实际位置设置），
+        # 不再写死用户专属路径，保证换机/换人也能解析；缺省则依赖系统 PATH。
+        node_bin = os.environ.get("NAIXI_NODE_BIN", "")
         # 确保 Node.js 目录在 PATH 中（npx.cmd 需要 node.exe）
-        if node_bin not in merged_env.get("PATH", ""):
+        if node_bin and node_bin not in merged_env.get("PATH", ""):
             merged_env["PATH"] = node_bin + os.pathsep + merged_env.get("PATH", "")
         # 搜索命令
         resolved_command = shutil.which(self.command)
         if not resolved_command:
             # Windows 上 npx 需要 .cmd 扩展名
             if os.name == "nt":
-                cmd_path = os.path.join(node_bin, self.command + ".cmd")
-                if os.path.exists(cmd_path):
-                    resolved_command = cmd_path
-                elif os.path.exists(self.command):
+                if node_bin:
+                    cmd_path = os.path.join(node_bin, self.command + ".cmd")
+                    if os.path.exists(cmd_path):
+                        resolved_command = cmd_path
+                if not resolved_command and os.path.exists(self.command):
                     resolved_command = self.command
             else:
                 resolved_command = self.command

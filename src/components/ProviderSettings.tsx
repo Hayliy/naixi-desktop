@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Plus, Trash2, Check, X, Loader2, Pencil, Save, Eye, EyeOff } from "lucide-react";
 import { useAppConfig } from "@/contexts/AppContext";
-import { apiPost } from "@/lib/api";
+import { apiPost, apiGet } from "@/lib/api";
 
 const PROVIDER_TYPES = [
   // ─── 国际 ───
@@ -352,6 +352,18 @@ function EditProviderCard({ provider, onSave, onCancel, embedded }: {
   const [showEditKey, setShowEditKey] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // 眼睛切换：展开时若当前是掩码(*)，按需向后端拉取明文（仅本机、用户主动触发）
+  const toggleShowEditKey = async () => {
+    const next = !showEditKey;
+    setShowEditKey(next);
+    if (next && apiKey && apiKey.includes("*")) {
+      try {
+        const r = await apiGet<any>(`/api/desktop/provider-key?name=${encodeURIComponent(provider.key)}`);
+        if (r && r.api_key) setApiKey(r.api_key);
+      } catch { /* 拉取失败则保持掩码，不影响其它操作 */ }
+    }
+  };
+
   const handleSave = async () => {
     setSaving(true);
     try {
@@ -404,7 +416,7 @@ function EditProviderCard({ provider, onSave, onCancel, embedded }: {
             <input type={showEditKey ? "text" : "password"}
               className="w-full px-2.5 py-1.5 pr-9 rounded-lg border border-sakura-100 bg-white text-sakura-600 text-[11px] font-mono"
               value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="留空不改变" />
-            <button type="button" onClick={() => setShowEditKey(!showEditKey)}
+            <button type="button" onClick={toggleShowEditKey}
               className="absolute right-2 top-1/2 -translate-y-1/2 text-sakura-300 hover:text-sakura-500 transition-colors">
               {showEditKey ? <EyeOff size={13} /> : <Eye size={13} />}
             </button>

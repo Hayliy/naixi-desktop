@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "stage-core": "node scripts/stage-core.cjs",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -16,8 +17,11 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "easy-live2d": "^0.4.4",
+    "jsnes": "^2.1.0",
     "lucide-react": "^0.400.0",
+    "mineflayer": "^4.37.1",
     "pixi.js": "^8.19.0",
+    "rcon-client": "^4.2.5",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tailwind-merge": "^2.5.0"

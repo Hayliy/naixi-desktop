@@ -1,5 +1,5 @@
 """跨会话记忆 — SQLite 持久化 + 语义关键词检索"""
-import json, logging, time, re
+import json, logging, time
 from desktop_core.storage import meta_get, meta_set
 
 log = logging.getLogger("memory")
@@ -45,7 +45,18 @@ class MemoryManager:
         if not entries:
             return []
         query_lower = query.lower()
-        keywords = set(re.findall(r'[\w\u4e00-\u9fff]+', query_lower))
+        # 字符遍历分词（等价原 [\w\u4e00-\u9fff]+，避免正则）
+        keywords = set()
+        _buf = []
+        for _ch in query_lower:
+            if _ch.isalnum() or _ch == '_' or '\u4e00' <= _ch <= '\u9fff':
+                _buf.append(_ch)
+            else:
+                if _buf:
+                    keywords.add(''.join(_buf))
+                    _buf = []
+        if _buf:
+            keywords.add(''.join(_buf))
         scored = []
         for e in entries:
             content_lower = e.get("content", "").lower()

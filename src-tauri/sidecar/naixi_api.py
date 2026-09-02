@@ -141,12 +141,13 @@ async def main():
     # 初始化桌面端数据表
     desktop_storage.init_tables()
 
-    # 启动内置 SearXNG（如果存在）
-    _start_searxng()
+    # SearXNG 启动已移至 desktop_core.ops_engine._ensure_searxng()
+    # （由 api.py on_startup 钩子调用，使用 webapp.py 而非损坏的 exe 壳）
+    # 原 _start_searxng() 不再调用（避免启动 0xc000000be 坏 exe 弹窗）
 
-    # 自动连接 MCP 服务器（自动补全 npx 路径）
+    # 补全 Node.js 目录到 PATH，让后续 on_startup 的 MCP 子进程能找到 npx。
+    # （MCP 实际连接统一交给 api.py 的 on_startup 后台任务，避免此处重复 spawn）
     try:
-        # 将 Node.js 目录加入 PATH，让 MCP 子进程能找到 npx。
         # 解析优先级：环境变量 NAIXI_NODE_BIN > 系统 PATH 中已有的 npx > 跳过（不硬编码任何用户路径）
         import shutil as _shutil
         node_bin_dir = os.environ.get("NAIXI_NODE_BIN", "").strip()
@@ -156,14 +157,8 @@ async def main():
                 node_bin_dir = os.path.dirname(_npx)
         if node_bin_dir and node_bin_dir not in os.environ.get("PATH", ""):
             os.environ["PATH"] = node_bin_dir + os.pathsep + os.environ.get("PATH", "")
-        from desktop_core.tools import connect_mcp_servers
-        mcp_count = await asyncio.wait_for(connect_mcp_servers(), timeout=8)
-        if mcp_count > 0:
-            log.info(f"MCP: {mcp_count} 个服务器已自动连接")
-    except asyncio.TimeoutError:
-        log.warning("MCP 自动连接超时（跳过）")
     except Exception as e:
-        log.warning(f"MCP 自动连接失败: {e}")
+        log.warning(f"PATH 补全失败: {e}")
 
     from desktop_core.api import is_trusted_origin
 
@@ -185,7 +180,13 @@ async def main():
         if origin and not trusted:
             log.warning(f"拒绝不受信任的跨域请求，来源: {origin}")
             return web.json_response({"error": "来源不被信任"}, status=403)
-        resp = await handler(request)
+        try:
+            resp = await handler(request)
+        except web.HTTPException as e:
+            # 未匹配路由(404)等 HTTP 异常响应也需带 CORS 头：
+            # 否则 await handler 抛异常导致下面的加头逻辑不执行，浏览器会对 404 报 CORS 拦截，
+            # 前端轮询未匹配路由时红色 error 持续累积。HTTPException 本身是 Response 子类，可直接返回。
+            resp = e
         # 仅对可信来源回显 Origin（不再使用通配符 *）
         if origin and trusted:
             resp.headers["Access-Control-Allow-Origin"] = origin

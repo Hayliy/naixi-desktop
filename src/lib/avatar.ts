@@ -1,5 +1,7 @@
 /* 头像与昵称系统 — AI 生成二次元头像（方案2：预生成 + hash 分配）+ DiceBear 回退 */
 
+import { API_BASE } from "./api";
+
 const AVATAR_BASE = "https://api.dicebear.com/9.x";
 
 /** 备用 DiceBear 风格列表（AI 头像未生成时用） */
@@ -15,7 +17,7 @@ let _avatarTotal = 0;
 export async function loadAvatarCache(): Promise<Record<string, string>> {
   if (_avatarMap) return _avatarMap;
   try {
-    const res = await fetch("/api/avatar/list");
+    const res = await fetch(`${API_BASE}/api/avatar/list`);
     const data = await res.json();
     if (data.ok && Array.isArray(data.avatars)) {
       _avatarMap = {};
@@ -40,7 +42,7 @@ export function getAvatarTotal(): number {
 /** 触发后台批量预生成头像 */
 export async function prefillAvatars(count = 50): Promise<boolean> {
   try {
-    const res = await fetch("/api/avatar/prefill", {
+    const res = await fetch(`${API_BASE}/api/avatar/prefill`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ count }),

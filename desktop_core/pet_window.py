@@ -11,13 +11,35 @@ os.environ.setdefault("QT_QPA_PLATFORM", "windows")
 # 注意：QT_OPENGL=angle 是 Qt5 的值，Qt6 已移除会报 Invalid value 警告；
 # Qt6 下留空走默认 desktop OpenGL 即可，软渲染兜底用 QT_OPENGL=software。
 
+# 面捕 QWebEngineView（离屏透明捕获页）默认可被 Chromium 因「隐藏/透明/无前台窗口」
+# 禁用 GPU 合成 → WebGL 退回 SwiftShader 软件渲染 → MediaPipe WASM GPU delegate
+# 实为 CPU 推理（infer_ms≈52，帧率卡 16~19）。解除 GPU 黑名单让隐藏页也能用真实 GPU，
+# 推理可降到 ~10-15ms，面捕帧率追平 VTS 的 30fps。（2026-09-02 实机日志定位）
+# 面捕 QWebEngineView（离屏透明捕获页）默认可被 Chromium 因「隐藏/透明/无前台窗口」
+# 禁用 GPU 合成 → WebGL 退回 SwiftShader 软件渲染 → MediaPipe WASM GPU delegate
+# 实为 CPU 推理（infer_ms≈52，帧率卡 16~19）。解除 GPU 黑名单让隐藏页也能用真实 GPU，
+# 推理可降到 ~10-15ms，面捕帧率追平 VTS 的 30fps。（2026-09-02 实机日志定位）
+# ⚠ 必须用「合并追加」而非 setdefault：Tauri 启动 sidecar 时常已预设 QTWEBENGINE_CHROMIUM_FLAGS，
+# setdefault 会被直接吞掉 → 用户环境 GPU 黑名单未解、infer 退回 52ms、队列堆积→「延迟播放」。
+import re
+_MY_GPU_FLAGS = "--ignore-gpu-blocklist --enable-gpu-rasterization --enable-unsafe-swiftshader"
+_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+# Tauri 给面捕 sidecar 设 --disable-gpu/--disable-gpu-compositing 会强制软件渲染 → MediaPipe GPU delegate
+# 退回 CPU/WARP 推理(~52ms)→消费率<喂帧率→队列堆积→「延迟播放」。面捕必须跑在真实 GPU 上，
+# 故清理禁用 GPU 的 flag 再追加解黑名单参数（保留 Tauri 其他必要 flags 如 --no-sandbox）。
+_flags = re.sub(r'--disable-gpu-compositing\b', '', _flags)
+_flags = re.sub(r'--disable-gpu\b', '', _flags)
+if _MY_GPU_FLAGS not in _flags:
+    _flags = (_flags + " " + _MY_GPU_FLAGS).strip()
+os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = _flags
+
 from OpenGL.GL import glViewport, GL_RGBA8, glReadPixels, GL_ALPHA, GL_UNSIGNED_BYTE
 import numpy as np  # alpha 扫描矢量化（替代 8 万次 ctypes 双层循环，单帧 28ms→<2ms）
 from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer, QPropertyAnimation, QSize, QRect
 from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont, QPainterPath, QImage, QCursor, QBitmap, QRegion
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (QApplication, QMenu, QFileDialog, QWidget, QLineEdit,
-                                QLabel, QDialog, QSlider, QVBoxLayout, QHBoxLayout, QPushButton)
+                                QLabel, QDialog, QSlider, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox)
 
 from desktop_core.motion_engine import PoseEngine
 from desktop_core.idle_engine import IdleEngine
@@ -151,6 +173,11 @@ class BubbleWindow(QWidget):
         p.end()
 
 
+# 摄像头面捕接管期间需让位的 idle 动作：这些动作写 angle_x/y/z、eye_ball_x/y，
+# 与面捕争同一批参数。面捕驱动时让位，丢失人脸交还后自动恢复（避免两套每帧互抢产生抖动）。
+FACE_CEDE_IDLE_ACTS = ("look_cursor", "head_sway", "tilt")
+
+
 def find_model3() -> list[dict]:
     # 与后端 api_live_config 共用同一套自动发现逻辑（含 VTube Studio 目录）
     from desktop_core.l2d_discovery import discover_models
@@ -243,6 +270,17 @@ class PetWindow(QWidget):
         self._output_volume = self._load_output_volume()
         self._mic_volume = self._load_mic_volume()
         self._voice_queue: "queue.Queue" = queue.Queue()
+        # 摄像头面捕（2D/Live2D）：默认关；开启后用 QWebEngineView 采集并映射到 Cubism 参数
+        self._face = None
+        self._face_enabled = False
+        self._face_ceded = False   # 面捕是否正占用（已让 idle 头部/视线动作让位）
+        self._idle_backup = None   # 让位前的 idle 动作原值，关闭时按原样恢复
+        self._face_ready_notified = False  # 是否已提示「面捕已就绪」（首次加载约 10s）
+        # 面捕**永远默认关**，只由用户右键菜单「摄像头面捕」手动开启（_toggle_face_capture）。
+        # 2026-09-02 移除：原先留的调试用 autostart 分支（env NAIXI_FACECAP_AUTOSTART=1 或
+        # .facecap_autostart 标记文件 → 启动 3s 后自动开面捕）。该标记文件在触发后会被代码自动删除，
+        # 事后无法查证，却会让用户遇到「桌宠一启动就自己开摄像头」——已按用户要求彻底删除。
+        # 需要自验面捕时请直接 `FaceBridge().start()`（见 face_bridge.py），不要再引入任何自启动路径。
 
         # 窗口属性：无边框 + 置顶 + 工具窗口 + 透明
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -303,6 +341,24 @@ class PetWindow(QWidget):
         # 透明窗口重绘时尽量保留旧内容（无害保留）
         self.setAttribute(Qt.WA_StaticContents, True)
 
+        # 保底占位窗口：未加载模型（自动发现失败/未配置）时也必须可见，
+        # 证明桌宠进程活着，而不是“全透明看不见”。模型加载成功后隐藏。
+        self._fallback = QLabel(self)
+        self._fallback.setObjectName("pet_fallback")
+        self._fallback.setAlignment(Qt.AlignCenter)
+        self._fallback.setWordWrap(True)
+        self._fallback.setGeometry(70, int(self.BASE_H / 2) - 95, self.BASE_W - 140, 190)
+        self._fallback.setStyleSheet(
+            "QLabel{background:rgba(40,30,60,235);color:#ffd6e8;border:2px solid #d98cb3;"
+            "border-radius:18px;padding:18px;font-size:15px;line-height:1.6;}"
+        )
+        self._fallback.setText(
+            "奶昔桌宠 · 未加载模型\n\n请在奶昔「直播」页点「桌宠」按钮，\n"
+            "导入或选择 Live2D 模型后即可显示形象。"
+        )
+        self._fallback.show()
+        self._fallback.raise_()
+
         # 如果没有指定模型，自动找第一个
         if not self._model_path or not os.path.exists(self._model_path):
             models = find_model3()
@@ -318,8 +374,16 @@ class PetWindow(QWidget):
     def initializeGL(self):
         live2d.glInit()
         live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
-        with open(r"D:\pet_init.log", "a") as f:
-            f.write(f"{time.time():.0f} initializeGL _model_path={self._model_path!r}\n")
+        # 诊断日志写到应用目录下的 logs/，不散落到系统盘根目录，也不写死绝对路径。
+        _log_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs"
+        )
+        try:
+            os.makedirs(_log_dir, exist_ok=True)
+            with open(os.path.join(_log_dir, "pet_init.log"), "a") as f:
+                f.write(f"{time.time():.0f} initializeGL _model_path={self._model_path!r}\n")
+        except Exception:
+            pass
         if self._model_path and os.path.exists(self._model_path):
             try:
                 self.model = live2d.LAppModel()
@@ -404,6 +468,16 @@ class PetWindow(QWidget):
                 if hasattr(self._pose, '_available'):
                     log.info(f"可用参数数: {len(self._pose._available)} 参数={list(self._pose._available)[:15]}")
                 log.info(f"模型加载成功: {self._model_path}")
+                # 模型加载成功 → 隐藏“未加载模型”保底占位窗口（切回 GUI 线程安全隐藏）
+                if getattr(self, "_fallback", None) is not None:
+                    try:
+                        from PySide6.QtCore import QTimer
+                        QTimer.singleShot(0, self._fallback.hide)
+                    except Exception:
+                        try:
+                            self._fallback.hide()
+                        except Exception:
+                            pass
                 # 动作→骨骼动画（bone_rig 自带 Skeleton，与 engine.skeleton 的 _skeleton_root 是两套体系）
                 from desktop_core.bone_rig import create_default_animator, create_default_skeleton
                 self._animator = create_default_animator(create_default_skeleton())
@@ -551,6 +625,147 @@ class PetWindow(QWidget):
         self.show()
         log.info(f"[桌宠] 捕获模式: {'开启' if self._capture_mode else '关闭'}")
 
+    def _toggle_face_capture(self):
+        """开启 / 关闭摄像头面捕（2D）：驱动 Live2D 眼/眉/眼球/头部，嘴型与 TTS 合并。"""
+        if self._face is None:
+            try:
+                from .face_bridge import FaceBridge
+                # 面捕 view 现在由 FaceBridge 内部创建为独立离屏顶层窗口（绝不挂为桌宠子控件，
+                # 否则与 Live2D 的 QOpenGLWidget 争抢同一窗口呈现表面 → 整窗变黑框）。故这里不传 parent。
+                self._face = FaceBridge(port=9877)
+            except Exception as e:
+                try:
+                    import os as _os, time as _t, traceback as _tb
+                    _ef = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "facecap_init_err.log")
+                    with open(_ef, "a", encoding="utf-8") as _fh:
+                        _fh.write(_t.strftime("%Y-%m-%d %H:%M:%S") + " [INIT_FAIL] " + repr(e) + "\n" + _tb.format_exc() + "\n")
+                except Exception:
+                    pass
+                log.warning(f"[桌宠] 面捕初始化失败: {e}")
+                self._bubble.show_text("面捕初始化失败", 2500)
+                return
+        if self._face_enabled:
+            try:
+                self._face.stop()
+            except Exception:
+                pass
+            self._face_enabled = False
+            self._set_idle_cede(False)      # 交还 idle 头部/视线动作
+            self._face_ceded = False
+            try:
+                if self.model:
+                    self.model.SetAutoBlinkEnable(True)
+            except Exception:
+                pass
+            self._bubble.show_text("摄像头面捕已关闭", 2000)
+        else:
+            try:
+                self._face.start()
+            except Exception as e:
+                log.warning(f"[桌宠] 面捕启动失败: {e}")
+                self._bubble.show_text("面捕启动失败(检查摄像头)", 2500)
+                return
+            self._face_enabled = True
+            self._face_ceded = False
+            self._face_ready_notified = False
+            try:
+                if self.model:
+                    self.model.SetAutoBlinkEnable(False)  # 面捕接管眨眼，避免与自动眨眼打架
+            except Exception:
+                pass
+            # 实测首次开启要 10~16s 才检出（加载 MediaPipe WASM + 模型），
+            # 先明确告知，否则用户会以为点坏了；真正就绪时再提示一次（见 paintGL）。
+            self._bubble.show_text("面捕启动中（首次加载模型约需 10 秒）", 3200)
+
+    def _set_idle_cede(self, on: bool):
+        """面捕驱动期间让出 idle 的头部/视线动作，避免两套逻辑每帧互抢同一参数产生抖动。
+
+        只在状态翻转时调用（不是每帧）；关闭时恢复面捕开启前的原值，不覆盖用户手动勾选。
+        """
+        if getattr(self, "_idle", None) is None:
+            return
+        try:
+            if on:
+                if getattr(self, "_idle_backup", None) is None:
+                    self._idle_backup = {
+                        a: self._idle.enabled.get(a, False) for a in FACE_CEDE_IDLE_ACTS
+                    }
+                for a in FACE_CEDE_IDLE_ACTS:
+                    self._idle.set_enabled(a, False)
+            else:
+                backup = getattr(self, "_idle_backup", None)
+                if backup:
+                    for a, v in backup.items():
+                        self._idle.set_enabled(a, v)
+                self._idle_backup = None
+        except Exception as e:
+            log.warning(f"[桌宠] idle 让位切换失败: {e}")
+
+    def _reset_face_origin(self):
+        """把当前姿态采为面捕中性基准（VTS "Set as Center" 同款）。
+
+        不自动锁定：由用户坐正后自己点，时机由人掌控；不持久化（每次坐姿不同，
+        持久化会重蹈 3D 端校准值残留的覆辙）。
+        """
+        if not getattr(self, "_face", None):
+            self._bubble.show_text("请先开启摄像头面捕", 2200)
+            return
+        try:
+            self._face.recenter()
+            self._bubble.show_text("已重置面捕原点（请保持正坐）", 2400)
+        except Exception as e:
+            log.warning(f"[桌宠] 重置面捕原点失败: {e}")
+
+    def _toggle_face_mirror(self):
+        """切换面捕镜像（webcam 当镜子，左右翻转）。热更新，无需重开摄像头。"""
+        if not getattr(self, "_face", None):
+            self._bubble.show_text("请先开启摄像头面捕", 2200)
+            return
+        try:
+            import os
+            import json
+            p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "facecap_config.json")
+            cfg = {}
+            if os.path.isfile(p):
+                with open(p, "r", encoding="utf-8") as f:
+                    cfg = json.load(f) or {}
+            cfg["mirror"] = not bool(cfg.get("mirror", False))
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
+            self._face.reload_gain()
+            self._bubble.show_text("面捕镜像：%s" % ("开" if cfg["mirror"] else "关"), 2200)
+        except Exception as e:
+            log.warning(f"[桌宠] 切换面捕镜像失败: {e}")
+
+    def _toggle_face_autocalib(self):
+        """切换面捕自动校准（首次稳定检出即自动采中性基准，对齐 VTS 首次自动校准）。热更新。"""
+        if not getattr(self, "_face", None):
+            self._bubble.show_text("请先开启摄像头面捕", 2200)
+            return
+        try:
+            import os
+            import json
+            p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "facecap_config.json")
+            cfg = {}
+            if os.path.isfile(p):
+                with open(p, "r", encoding="utf-8") as f:
+                    cfg = json.load(f) or {}
+            on = not bool(cfg.get("autoCalibrate", True))
+            cfg["autoCalibrate"] = on
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
+            self._face.reload_gain()
+            if on:
+                # 开启后清掉旧基准，让下一次稳定检出重新自动采（否则 _calib 非空不会触发）
+                try:
+                    self._face._calib = None
+                    self._face._calib_want = 0
+                except Exception:
+                    pass
+            self._bubble.show_text("面捕自动校准：%s" % ("开" if on else "关"), 2200)
+        except Exception as e:
+            log.warning(f"[桌宠] 切换面捕自动校准失败: {e}")
+
     def paintGL(self):
         now = time.time()
         _t0 = time.perf_counter()  # 性能剖析：帧起点
@@ -596,6 +811,31 @@ class PetWindow(QWidget):
             except Exception:
                 pass
             _t1 = time.perf_counter()  # 性能剖析：骨骼动画 + idle 更新完成
+        # ── 摄像头面捕（2D）：眼/眉/眼球/头部由摄像头驱动（面捕优先于 idle 的同名参数）──
+        if getattr(self, "_face_enabled", False) and getattr(self, "_face", None):
+            try:
+                self._face.poll()  # 推一帧检测（回调异步写入 _last）
+                self._face.apply_to_l2d(self.model, dt)  # 写入眼/眉/眼球/头部（不含嘴）
+                # 面捕驱动中 → idle 让出头部/视线；丢失人脸并交还后自动恢复
+                driving = self._face.active()
+                if driving and not getattr(self, "_face_ready_notified", False):
+                    # 模型加载完成、真正检出第一帧时才提示「就绪」（首次开启有 10~16s 加载期）
+                    self._face_ready_notified = True
+                    self._bubble.show_text("面捕已就绪（坐正后右键「重置面捕原点」）", 2800)
+                if driving != getattr(self, "_face_ceded", False):
+                    self._set_idle_cede(driving)
+                    self._face_ceded = driving
+                # 嘴型：面捕张口度 与 TTS 说话嘴型取大值，避免互相覆盖
+                # ⚠ 2026-09-01 修正：ParamMouthForm 语义是「嘴形」（-1 嘟嘴 .. +1 微笑），
+                # 不是「张合度」。此前把张嘴值 m(0..1) 同时写进 MouthForm → 一张嘴就顺势咧嘴笑，
+                # 表情失真（笑与张嘴被绑死）。现只驱动 ParamMouthOpenY（张合），
+                # 嘴形交给 face_bridge 的 mouth_form 用途（由 ARKit 微笑/嘟嘴差值驱动）。
+                jaw = self._face.last_jaw()
+                if jaw > 0.01 or abs(self._mouth_current) > 0.01:
+                    m = max(jaw, self._mouth_current)
+                    self.model.SetParameterValue("ParamMouthOpenY", m, 1.0)
+            except Exception as e:
+                log.warning(f"[桌宠] 面捕应用失败: {e}")
         # ── 稳定离屏画布渲染 → 按比例贴到当前窗口 ──
         # 先清空屏幕
         live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
@@ -825,6 +1065,42 @@ class PetWindow(QWidget):
         # 调试叠加层标记已改为画进离屏 FBO（见上方 model.Draw 之后、release 之前），
         # 随 toImage 合成进可见帧，避免 QOpenGLWidget 上二次 QPainter 不显示 + 父 mask 裁剪子控件两坑。
 
+    def _update_facecap_mask(self, force=False):
+        """重算宠物窗 setMask：角色命中矩形 + chat_input，确保子控件可见可点。
+
+        force=True 时忽略变化检测缓存，立即重设。
+        （面捕灵敏度窗第 18 轮起是独立 owned window、不再是 PetWindow 子控件 → 不纳入本遮罩；
+         桌宠默认也不隐藏，仅当可见性自检判定"未合成到桌面"时才逐级补救。）
+        """
+        try:
+            if self._debug_overlay:
+                if self._last_mask_rect != "FULL":
+                    self.clearMask()
+                    self._last_mask_rect = "FULL"
+                return
+            self._hit_rect = self._compute_hit_rect()
+            hr = self._hit_rect
+            # 输入框可见时，把其几何并入遮罩 region → 子控件区域可见可点
+            # （chat_input 是 PetWindow 子控件，裸 setMask(hit_rect) 会裁掉；QRegion.united 豁免）
+            _ci = getattr(self, '_chat_input', None)
+            _ci_visible = bool(_ci is not None and _ci.isVisible())
+            _region = QRegion(hr)
+            if _ci_visible:
+                _region = _region.united(QRegion(_ci.geometry()))
+            # 变化检测：key 含 (hr, chat_visible)，避免显隐时漏重设 setMask
+            # （第 18 轮起灵敏度窗是独立 owned window、不再是子控件 → 不并入本遮罩）
+            _key = (hr, _ci_visible)
+            if hr is not None and hr.width() > 10 and hr.height() > 10 and (_key != getattr(self, '_last_mask_key', None) or force):
+                self._last_mask_key = _key
+                self.setMask(_region)
+                # 缩放/输入框显隐导致模型包围盒或输入区变化 → 同步气泡与输入框布局，
+                # 使其始终“长”在模型上（不再按固定窗口几何布局）。
+                self._layout_chat_input()
+                if hasattr(self, '_bubble'):
+                    self._bubble._reposition()
+        except Exception:
+            pass
+
     def timerEvent(self, event: QTimerEvent):
         self._gl.update()  # 触发子 GL 控件重绘（PetWindow 不再是 QOpenGLWidget，自身 update 无效）
         # 滚轮缩放：_zoom 平滑趋近 _target_zoom；缩放 = 模型 transform(SetScale，由 paintGL→idle 应用)，
@@ -834,43 +1110,23 @@ class PetWindow(QWidget):
             if abs(self._target_zoom - self._zoom) < 1e-3:
                 self._zoom = self._target_zoom
         # 重算几何命中矩形 + setMask 矩形穿透（随缩放变化，不依赖 GL 像素读取）
-        try:
-            if self._debug_overlay:
-                # 调试模式：取消裁剪 → 整窗可见可点（否则父窗口 mask 会把子 GL 上的红/蓝框、十字线剪掉，
-                # 诊断层"看似无效"）。调试期整窗可点可接受；关闭叠加层即恢复命中矩形穿透。
-                if self._last_mask_rect != "FULL":
-                    self.clearMask()
-                    self._last_mask_rect = "FULL"
-            else:
-                self._hit_rect = self._compute_hit_rect()
-                hr = self._hit_rect
-                # 输入框可见时，把其几何并入遮罩 region → 底部输入框区域可见可点
-                # （chat_input 是 PetWindow 子控件，裸 setMask(hit_rect) 会把它裁掉；QRegion.united 豁免）
-                _ci = getattr(self, '_chat_input', None)
-                _ci_visible = bool(_ci is not None and _ci.isVisible())
-                _region = QRegion(hr).united(QRegion(_ci.geometry())) if _ci_visible else QRegion(hr)
-                # 变化检测：key 含 (hr, chat_visible)，避免 chat_input 显隐时漏重设 setMask
-                # （居中锁定后 hr 基本不变，但聊天框开关需立即重设遮罩，否则输入框仍被裁）
-                _key = (hr, _ci_visible)
-                if hr is not None and hr.width() > 10 and hr.height() > 10 and _key != getattr(self, '_last_mask_key', None):
-                    self._last_mask_key = _key
-                    self.setMask(_region)
-                    # 缩放/输入框显隐导致模型包围盒或输入区变化 → 同步气泡与输入框布局，
-                    # 使其始终“长”在模型上（不再按固定窗口几何布局）。
-                    self._layout_chat_input()
-                    if hasattr(self, '_bubble'):
-                        self._bubble._reposition()
-        except Exception:
-            pass
+        self._update_facecap_mask()
         if not self.model:
             return
         now = time.time()
         # 手动眨眼 — VTS 模型未注册眨眼参数，SetAutoBlinkEnable 不生效
-        if getattr(self, '_eye_state', 'open') == 'closed' and now > getattr(self, '_eye_open_ts', 0):
+        # 面捕驱动期间让位：面捕每帧写 EyeOpen，手动眨眼会与之抢同一个参数；
+        # 面捕丢失人脸并交还后（active()==False）自动恢复，避免人走开后眼睛再也不眨。
+        _face_driving = bool(
+            getattr(self, "_face_enabled", False)
+            and getattr(self, "_face", None)
+            and self._face.active()
+        )
+        if not _face_driving and getattr(self, '_eye_state', 'open') == 'closed' and now > getattr(self, '_eye_open_ts', 0):
             for eye in ("ParamEyeLOpen", "ParamEyeROpen"):
                 self.model.SetParameterValue(eye, 1.0, 1.0)
             self._eye_state = 'open'
-        elif getattr(self, '_eye_state', 'open') == 'open' and now > getattr(self, '_next_blink_ts', 0):
+        elif not _face_driving and getattr(self, '_eye_state', 'open') == 'open' and now > getattr(self, '_next_blink_ts', 0):
             for eye in ("ParamEyeLOpen", "ParamEyeROpen"):
                 self.model.SetParameterValue(eye, 0.0, 1.0)
             self._eye_state = 'closed'
@@ -1021,6 +1277,52 @@ class PetWindow(QWidget):
         # 音量设置：输出音量 + 麦克风音量 双滑块对话框
         vol_a = menu.addAction("音量设置…")
         vol_a.triggered.connect(self._open_volume_dialog)
+        menu.addSeparator()
+        # 摄像头面捕（2D）：勾选开关，开启后由摄像头驱动表情/视线/头部位移
+        face_a = menu.addAction("摄像头面捕")
+        face_a.setCheckable(True)
+        face_a.setChecked(self._face_enabled)
+        face_a.triggered.connect(self._toggle_face_capture)
+        # 中性基准：用户坐正后手动采原点（不自动锁，时机由人掌控）
+        menu.addAction("重置面捕原点", self._reset_face_origin)
+        # 镜像：webcam 当镜子，左右翻转（默认关；真机核对方向后按需开启）
+        mir_a = menu.addAction("面捕镜像（左右翻转）")
+        mir_a.setCheckable(True)
+        mir_a.setChecked(bool(getattr(self._face, "mirror", False)) if getattr(self, "_face", None) else False)
+        mir_a.triggered.connect(self._toggle_face_mirror)
+        # 自动校准：首次稳定检出即自动采中性基准（默认开；手动重置可覆盖）
+        ac_a = menu.addAction("面捕自动校准")
+        ac_a.setCheckable(True)
+        ac_a.setChecked(bool(getattr(self._face, "auto_calibrate", True)) if getattr(self, "_face", None) else True)
+        ac_a.triggered.connect(self._toggle_face_autocalib)
+        # 灵敏度：实时调头部/躯干/表情增益、平滑、镜像（热更新，无需重开摄像头）
+        sens_a = menu.addAction("面捕灵敏度…")
+        # ⚠ "要点两下才打开"真根因（2026-09-02）：在 QMenu.triggered 里**同步** exec() 模态框时，
+        # QMenu 自身关闭时的焦点返还与对话框的 activateWindow() 竞争前台窗口 → 第一次点击对话框
+        # 被同样带 WindowStaysOnTopHint 的桌宠窗压住（用户看不到/看到但被盖），第二次点击菜单已
+        # 关闭干净才正常弹出。推迟一个事件循环（singleShot(0)）让菜单先完整关闭，焦点状态干净，
+        # 对话框一次即现。注意：QTimer 已在文件顶部导入（QtCore，38 行）。
+        # ⚠ 取证包装（2026-09-02 第 9 轮）：桌宠由 **pythonw.exe** 启动，**没有控制台** ——
+        # 槽函数里抛出的异常 PySide6 只能写 stderr，而 stderr 无处输出 → **异常静默丢失**，
+        # 表现为"点了完全没反应"、日志一片空白（第 5 轮的 QCheckBox NameError 就是这么藏住的）。
+        # 故在槽外裹一层 try/except，用 log.exception 把 traceback 写进 pet_debug.log。
+        # 一次点击后，日志里必然留下 SENS_OPEN / SENS_REUSE / DLG_PROBE / 异常 traceback 之一。
+        # （QTimer.singleShot(0) 让菜单先完整关闭再弹窗，避免菜单焦点返还与激活竞争前台）
+        # 注意：pet_debug.log 是 PetWindow._log() 手写写入的（1511/1515 行），
+        # 而 log = logging.getLogger("pet_window") 并未配置落盘 handler，其输出只能去 stderr，
+        # pythonw 无控制台 → 丢弃。故探针一律用 self._log()，logging 那句只作冗余兜底。
+        def _safe_open_sens():
+            try:
+                self._open_facecap_sensitivity_dialog()
+            except Exception:
+                try:
+                    import traceback as _tb
+                    self._log("SENS_EXC 打开面捕灵敏度对话框异常\n" + _tb.format_exc())
+                except Exception:
+                    pass
+                log.exception("[桌宠] 打开面捕灵敏度对话框异常")
+        sens_a.triggered.connect(lambda: QTimer.singleShot(0, _safe_open_sens))
+        menu.addAction("面捕灵敏度（网页备用）…", self._open_facecap_sensitivity_browser)
         menu.addSeparator()
         # 表情 / 动作 手动触发（对齐 web 宠物 HotkeySettings 的手动触发入口）
         # 以注入时记录的自有列表为主源（live2d.v3 的 GetExpressionIds 未必回显注入项），
@@ -1181,6 +1483,7 @@ class PetWindow(QWidget):
         _ci = getattr(self, '_chat_input', None)
         if _ci is not None and _ci.isVisible() and _ci.geometry().contains(client_x, client_y):
             return 1  # HTCLIENT
+        # （第 18 轮起灵敏度窗是独立 owned window、不再是子控件 → 无需在此豁免命中）
         return -1    # HTTRANSPARENT
 
     # _hit_scan / _init_hit_bbox 已弃用（2026-07-30）：HitDrawable 全画布扫描
@@ -1231,6 +1534,153 @@ class PetWindow(QWidget):
                 f.write(f"{time.time():.0f} {msg}\n")
         except:
             pass
+
+    @staticmethod
+    def _force_window_topmost(hw, pet_hw=None):
+        """Win32 确定性把 native 对话框窗口做成「不透明 + 最前」，盖过透明置顶的桌宠 Tool 窗。
+
+        背景（2026-09-02 第 10 轮，接第 9 轮）：第 9 轮只做了 SetWindowPos(HWND_TOPMOST)+
+        BringWindowToTop+SetForegroundWindow，但真机日志 DLG_PROBE 显示对话框 visible=True/active=True/
+        在屏幕内、用户却连点 6 次都说「看不见」→ 窗口物理存在但像素级不可见。透明桌宠 app 里只有两种
+        可能，本轮一次覆盖并埋 EXSTYLE 探针定量确认：
+          · (A) 窗口被当成分层透明合成（WS_EX_LAYERED 且 alpha=0）→ Qt 的 isVisible() 不等于像素可见。
+            治：清 WS_EX_LAYERED、加 WS_EX_APPWINDOW，强制 DWM 把它当普通不透明窗口绘制
+            （深灰 QPalette 背景已设，去 LAYERED 后即显形）。
+          · (B) 桌宠自身持续 SetWindowPos(HWND_TOPMOST) 抢回最前，把对话框压在全屏透明层底下。
+            治：打开对话框时把桌宠临时降为非 topmost（HWND_NOTOPMOST），关闭时（destroyed）恢复。
+        非 Windows 平台 ctypes.windll 不存在 → 整段静默跳过，pet 仅跑 Windows，无影响。
+        """
+        try:
+            import ctypes
+            _u = ctypes.windll.user32
+            HWND_TOPMOST, HWND_NOTOPMOST = -1, -2
+            GWL_EXSTYLE = -20
+            WS_EX_LAYERED, WS_EX_APPWINDOW = 0x80000, 0x40000
+            SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SWP_FRAMECHANGED = 0x0002, 0x0001, 0x0040, 0x0020
+            SW_SHOW = 1
+            RDW_INVALIDATE, RDW_UPDATENOW, RDW_FRAME = 0x0001, 0x0100, 0x0400
+            _hw = int(hw)
+            # ── 探针①：记录改前 EXSTYLE（判断是否带 WS_EX_LAYERED → 透明嫌疑 A）──
+            try:
+                _ex0 = _u.GetWindowLongPtrW(_hw, GWL_EXSTYLE)
+                PetWindow._log("[桌宠] DLG_EXSTYLE before=%s layered=%s appwindow=%s"
+                               % (_ex0, bool(_ex0 & WS_EX_LAYERED) if isinstance(_ex0, int) else "?",
+                                  bool(_ex0 & WS_EX_APPWINDOW) if isinstance(_ex0, int) else "?"))
+            except Exception:
+                pass
+            # ── 治 A：强制不透明（去分层合成 + 标为独立应用窗口，按普通不透明绘制）──
+            try:
+                _ex = _u.GetWindowLongPtrW(_hw, GWL_EXSTYLE)
+                if isinstance(_ex, int):
+                    _new = (_ex & ~WS_EX_LAYERED) | WS_EX_APPWINDOW
+                    _u.SetWindowLongPtrW(_hw, GWL_EXSTYLE, _new)
+            except Exception:
+                pass
+            # ── 治 B：桌宠临时让位（降为非 topmost，避免持续置顶盖住对话框）──
+            if pet_hw:
+                try:
+                    _u.SetWindowPos(int(pet_hw), HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
+                except Exception:
+                    pass
+            # ── 置顶 + 激活 + 重绘（SWP_FRAMECHANGED 触发去 LAYERED 后的样式/不透明重算）──
+            try:
+                _u.ShowWindow(_hw, SW_SHOW)
+            except Exception:
+                pass
+            _u.SetWindowPos(_hw, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+            _u.BringWindowToTop(_hw)
+            try:
+                _u.SetForegroundWindow(_hw)
+            except Exception:
+                pass
+            _u.UpdateWindow(_hw)
+            _u.SetWindowPos(_hw, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED)
+            _u.UpdateWindow(_hw)
+            _u.RedrawWindow(_hw, None, None, RDW_INVALIDATE | RDW_UPDATENOW | RDW_FRAME)
+            # ── 探针②：记录改后 EXSTYLE，确认 LAYERED 已被清 ──
+            try:
+                _ex1 = _u.GetWindowLongPtrW(_hw, GWL_EXSTYLE)
+                PetWindow._log("[桌宠] DLG_EXSTYLE after=%s layered=%s appwindow=%s"
+                               % (_ex1, bool(_ex1 & WS_EX_LAYERED) if isinstance(_ex1, int) else "?",
+                                  bool(_ex1 & WS_EX_APPWINDOW) if isinstance(_ex1, int) else "?"))
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _screenshot_dlg(self, dlg, tag=""):
+        """自动截图诊断：把对话框自身 + 整个桌面落盘，并枚举相关窗口。
+
+        用于复现「面捕灵敏度」在真机上 visible/active/屏内都对但用户仍看不见的问题。
+        落盘目录：D:/数据/naixi_facecap_diag/，文件名带时间戳与 tag。
+        失败只写 log，不阻塞对话框任何流程。
+        """
+        try:
+            import os, time as _t, ctypes
+            _dir = r"D:/数据/naixi_facecap_diag"
+            try:
+                os.makedirs(_dir, exist_ok=True)
+            except Exception:
+                pass
+            ts = int(_t.time())
+            base = os.path.join(_dir, "dlg_%d_%s" % (ts, tag))
+            try:
+                p_self = dlg.grab()
+                p_self.save(base + "_self.png")
+            except Exception as e:
+                self._log("[桌宠] DLG_SCREENSHOT self fail %s: %r" % (tag, e))
+            try:
+                screen = QApplication.primaryScreen()
+                p_desk = screen.grabWindow(0)
+                p_desk.save(base + "_desktop.png")
+            except Exception as e:
+                self._log("[桌宠] DLG_SCREENSHOT desktop fail %s: %r" % (tag, e))
+            try:
+                u = ctypes.windll.user32
+                GWL_EXSTYLE = -20
+                WS_EX_LAYERED, WS_EX_TOPMOST, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT = 0x80000, 0x8, 0x80, 0x20
+
+                class RECT(ctypes.Structure):
+                    _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                                ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+                keys = ['灵敏度', '面捕', 'naixi', '奶昔', '秧', 'Pet', 'pet', '桌宠', 'Desktop', 'pythonw', 'Qt6']
+                lines = ["[窗口枚举 %s]" % tag]
+
+                def cb(hwnd, lp):
+                    try:
+                        if u.IsWindowVisible(hwnd):
+                            n = u.GetWindowTextLengthW(hwnd)
+                            if n > 0:
+                                buf = ctypes.create_unicode_buffer(n + 1)
+                                u.GetWindowTextW(hwnd, buf, n + 1)
+                                t = buf.value
+                                if any(k in t for k in keys):
+                                    ex = int(u.GetWindowLongPtrW(hwnd, GWL_EXSTYLE))
+                                    r = RECT()
+                                    u.GetWindowRect(hwnd, ctypes.byref(r))
+                                    cls = ctypes.create_unicode_buffer(256)
+                                    u.GetClassNameW(hwnd, cls, 256)
+                                    fl = []
+                                    if ex & WS_EX_LAYERED: fl.append("LAYERED")
+                                    if ex & WS_EX_TOPMOST: fl.append("TOPMOST")
+                                    if ex & WS_EX_TOOLWINDOW: fl.append("TOOL")
+                                    if ex & WS_EX_TRANSPARENT: fl.append("TRANSPARENT")
+                                    lines.append(" HWND=%d TITLE=%r CLS=%r EX=0x%08X [%s] RECT=(%d,%d %dx%d)" %
+                                                 (hwnd, t, cls.value, ex, "|".join(fl), r.left, r.top,
+                                                  r.right - r.left, r.bottom - r.top))
+                    except Exception:
+                        pass
+                    return 1
+
+                ENUM = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.c_int)
+                u.EnumWindows(ENUM(cb), 0)
+                self._log("\n".join(lines))
+            except Exception as e:
+                self._log("[桌宠] DLG_SCREENSHOT enum fail %s: %r" % (tag, e))
+            self._log("[桌宠] DLG_SCREENSHOT %s saved=%s_*" % (tag, base))
+        except Exception as e:
+            self._log("[桌宠] DLG_SCREENSHOT outer %s: %r" % (tag, e))
 
     def _toggle_test_chat(self, checked: bool):
         """右键「开发者模式 → 测试对话」勾选切换：勾上=显示输入框并聚焦，取消勾选=关闭。
@@ -1559,12 +2009,12 @@ class PetWindow(QWidget):
             return ""
 
     def _load_output_volume(self) -> int:
-        """输出音量 0-100（默认 80）。"""
+        """输出音量 0-200（默认 80，200 对应 4 倍增益）。"""
         try:
             from desktop_core import storage
             PetVoiceInput._ensure_db(storage)
             v = int(storage.meta_get("pet_audio_volume") or "80")
-            return max(0, min(100, v))
+            return max(0, min(200, v))
         except Exception:
             return 80
 
@@ -1602,7 +2052,7 @@ class PetWindow(QWidget):
 
     def _apply_volumes(self, out_vol: int, mic_vol: int):
         """持久化音量并即时生效（播放增益立即生效；采集增益下次说话即生效）。"""
-        self._output_volume = max(0, min(100, out_vol))
+        self._output_volume = max(0, min(200, out_vol))
         self._mic_volume = max(0, min(100, mic_vol))
         try:
             from desktop_core import storage
@@ -1627,9 +2077,9 @@ class PetWindow(QWidget):
         layout = QVBoxLayout(dlg)
 
         # 输出音量
-        layout.addWidget(QLabel("输出音量（桌宠说话声音）"))
+        layout.addWidget(QLabel("输出音量（桌宠说话声音，200=最响）"))
         out_slider = QSlider(Qt.Orientation.Horizontal)
-        out_slider.setRange(0, 100)
+        out_slider.setRange(0, 200)
         out_slider.setValue(self._output_volume)
         out_val = QLabel(f"{self._output_volume}")
         out_slider.valueChanged.connect(lambda v: out_val.setText(str(v)))
@@ -1666,6 +2116,359 @@ class PetWindow(QWidget):
         cancel_btn.clicked.connect(dlg.reject)
 
         dlg.exec()
+
+    # ── 面捕灵敏度窗「可见性自检 + 阶梯自动补救」（2026-09-02 第 18 轮）──
+    # 本 app 宠物窗是 WA_TranslucentBackground + QOpenGLWidget + WS_EX_LAYERED 的透明置顶窗；
+    # 第 9~12 轮实测：parent=None 的独立窗口在真机 DWM **不提交合成**（dlg.grab() 有内容、桌面截图没有）。
+    # 第 18 轮换机制：owned window（QDialog(self)），靠 Windows owner/owned 规则让它永在桌宠之上。
+    # 但不再让用户当显示器——程序自己截屏判定，判不可见就自动升级补救，全程用户零操作。
+
+    def _facecap_dlg_visible_ratio(self, dlg):
+        """截真实桌面，统计设置窗矩形内「窗口背景特征色 #1e1e2e」像素占比（0~1）。
+
+        判定「窗口是否真的被合成到桌面」——dlg.isVisible()/grab() 都不可信（第 11~12 轮已实证：
+        自绘制正常但桌面合成图里没有）。唯一可信证据是 grabWindow(0) 的真实桌面像素。
+        失败返回 None（视为"不判定"，不触发补救，避免误伤把桌宠误隐藏）。
+        """
+        try:
+            screen = QApplication.primaryScreen()
+            if screen is None:
+                return None
+            img = screen.grabWindow(0).toImage().convertToFormat(QImage.Format_RGB32)
+            sg = screen.geometry()
+            if img.width() <= 0 or sg.width() <= 0 or sg.height() <= 0:
+                return None
+            # 逻辑坐标 → 截图物理像素（兼容 DPI 缩放）
+            sx = img.width() / float(sg.width())
+            sy = img.height() / float(sg.height())
+            fg = dlg.frameGeometry()
+            x0 = max(0, int((fg.x() - sg.x()) * sx))
+            y0 = max(0, int((fg.y() - sg.y()) * sy))
+            x1 = min(img.width(), int((fg.x() + fg.width() - sg.x()) * sx))
+            y1 = min(img.height(), int((fg.y() + fg.height() - sg.y()) * sy))
+            if (x1 - x0) < 8 or (y1 - y0) < 8:
+                return None
+            stride = img.bytesPerLine()
+            arr = np.frombuffer(img.constBits(), dtype=np.uint8)
+            arr = arr[:stride * img.height()].reshape(img.height(), stride // 4, 4)
+            sub = arr[y0:y1, x0:x1, :3].astype(np.int16)  # Format_RGB32 小端 = B,G,R,A
+            m = ((np.abs(sub[:, :, 0] - 46) <= 8) &
+                 (np.abs(sub[:, :, 1] - 30) <= 8) &
+                 (np.abs(sub[:, :, 2] - 30) <= 8))
+            return float(m.mean())
+        except Exception as e:
+            self._log("SENS_RATIO 计算失败: %r" % e)
+            return None
+
+    def _facecap_dlg_selfcheck(self, dlg, stage=0):
+        """全自动判定设置窗是否真的可见；不可见则逐级补救，每级复检（用户零操作）。
+
+        stage 0=owned 窗原样 → 1=Win32 强制置顶/去分层 → 2=桌宠 z-order 让位（仍同时显示）
+              → 3=桌宠临时隐藏（最后手段） → 4=转浏览器设置页
+        阈值取保守的 6%：宁可误判"可见"也不要误判"不可见"（后者会白白隐藏桌宠）。
+        """
+        try:
+            if dlg is None or not dlg.isVisible():
+                return
+            ratio = self._facecap_dlg_visible_ratio(dlg)
+            self._log("SENS_SELFCHECK stage=%d ratio=%s" % (stage, "None" if ratio is None else "%.4f" % ratio))
+            if ratio is None or ratio >= 0.06:
+                self._log("SENS_VISIBLE_OK stage=%d 桌宠=%s"
+                          % (stage, "已隐藏(兜底)" if getattr(self, '_facecap_pet_hidden', False) else "同时显示"))
+                return
+            if stage == 0:
+                self._log("SENS_FIX 0→1 Win32 强制置顶 + 去分层")
+                try:
+                    PetWindow._force_window_topmost(int(dlg.winId()), int(self.winId()))
+                    self._facecap_pet_notopmost = True
+                except Exception as e:
+                    self._log("SENS_FIX stage0 失败: %r" % e)
+                QTimer.singleShot(420, lambda: self._facecap_dlg_selfcheck(dlg, 1))
+            elif stage == 1:
+                self._log("SENS_FIX 1→2 桌宠 z-order 让位（两者仍同时显示）")
+                try:
+                    self.lower()
+                    self._facecap_pet_lowered = True
+                    dlg.raise_()
+                    dlg.activateWindow()
+                except Exception as e:
+                    self._log("SENS_FIX stage1 失败: %r" % e)
+                QTimer.singleShot(420, lambda: self._facecap_dlg_selfcheck(dlg, 2))
+            elif stage == 2:
+                self._log("SENS_FIX 2→3 桌宠临时隐藏（最后手段，关闭后自动恢复）")
+                try:
+                    self.hide()
+                    self._facecap_pet_hidden = True
+                    dlg.raise_()
+                    dlg.activateWindow()
+                    self._bubble.show_text("设置窗打开期间桌宠暂时隐藏，关掉设置就回来", 2600)
+                except Exception as e:
+                    self._log("SENS_FIX stage2 失败: %r" % e)
+                QTimer.singleShot(420, lambda: self._facecap_dlg_selfcheck(dlg, 3))
+            else:
+                self._log("SENS_FALLBACK 四级补救仍不可见 → 转浏览器设置页")
+                try:
+                    self._screenshot_dlg(dlg, "owned_fail")
+                except Exception:
+                    pass
+                try:
+                    dlg.close()
+                except Exception:
+                    pass
+                try:
+                    self._open_facecap_sensitivity_browser()
+                except Exception as e:
+                    self._log("SENS_FALLBACK 浏览器页也失败: %r" % e)
+        except Exception as e:
+            self._log("SENS_SELFCHECK 异常: %r" % e)
+
+    def _facecap_restore_pet(self):
+        """撤销自检补救对桌宠做的一切临时改动（隐藏→显示、让位/非置顶→重新置顶）。"""
+        try:
+            if getattr(self, '_facecap_pet_hidden', False):
+                self.show()
+            self._facecap_pet_hidden = False
+            self.raise_()
+            self._facecap_pet_lowered = False
+            try:
+                _u = ctypes.windll.user32
+                _u.SetWindowPos(int(self.winId()), -1, 0, 0, 0, 0, 0x0002 | 0x0001)  # HWND_TOPMOST
+            except Exception:
+                pass
+            self._facecap_pet_notopmost = False
+            self._log("[桌宠] 灵敏度窗关闭：桌宠已恢复显示并重新置顶")
+        except Exception as e:
+            self._log("[桌宠] 灵敏度窗关闭：恢复桌宠失败: %r" % e)
+
+    def _open_facecap_sensitivity_dialog(self):
+        """面捕灵敏度设置（第 18 轮：owned window 独立窗口 + 全自动可见性自检，彻底不内嵌）。
+
+        用户否决内嵌（第 13/17 轮）：「不管怎么修改使用都非常别扭」——子控件受父窗几何/遮罩约束，
+        既挡角色又拉不开，交互形态天生别扭。也否决隐藏桌宠（第 16 轮）：要两者同时显示。
+
+        本轮关键突破点：**历史 9~17 轮全部用 parent=None，从未试过 owned window**。改用 QDialog(self)
+        （parent=桌宠窗）→ Windows owner/owned 规则保证 **owned window 永远绘制在 owner 之上**，且它是
+        独立 HWND、有自己的合成表面（topmost 属性亦随 owner 继承）→ 从机制上破解「被 topmost 透明桌宠
+        压住 / DWM 不提交」，无需隐藏桌宠、无需内嵌，原生标题栏可拖到屏幕任意位置。
+
+        不再赌单一方案：show 后 450ms 程序自己截真实桌面判定可见性（_facecap_dlg_selfcheck），
+        判不可见就阶梯自动补救（Win32 置顶 → 桌宠让位 → 桌宠隐藏 → 浏览器页），用户零操作。
+        非模态（历史实证 exec() 会因 modality 切换重建 native 窗口 → 点两下；预设模态 → 完全不显示）。
+        滑块实时写 facecap_config.json + fb.reload_gain() 热更新。
+        """
+        # 探针①：函数入口。日志里若连这行都没有 → 菜单连接/触发层面就没进来。
+        self._log("SENS_OPEN 菜单已触发")
+        # 非模态：若上一次的窗口仍在显示，直接把它提到前台并返回
+        # （天然兜住"要点两下"——第二次点击必定让已存在的窗口显示；同时避免重复开窗）
+        _exist = getattr(self, "_facecap_dlg", None)
+        try:
+            if _exist is not None and _exist.isVisible():
+                self._log("SENS_REUSE 复用已有窗口（未新建）")
+                _exist.raise_()
+                _exist.activateWindow()
+                # 复用时也跑一次可见性自检：万一它被别的窗口盖住/未合成，同样自动补救
+                QTimer.singleShot(300, lambda: self._facecap_dlg_selfcheck(_exist, 0))
+                return
+        except Exception as e:
+            self._log("[桌宠] SENS_REUSE 复用失败: %r" % e)
+        fb = getattr(self, "_face", None)
+        cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "facecap_config.json")
+        try:
+            cfg = json.load(open(cfg_path, encoding="utf-8")) if os.path.isfile(cfg_path) else {}
+        except Exception:
+            cfg = {}
+
+        # 第 18 轮：owned window —— QDialog(self)，parent=桌宠窗。
+        # Windows owner/owned 规则：owned 窗口永远绘制在 owner 之上，且随 owner 继承 topmost；
+        # 它是独立 HWND（独立合成表面、原生标题栏可自由拖动），既不内嵌、也不必隐藏桌宠。
+        dlg = QDialog(self)
+        dlg.setWindowFlags(Qt.Window | Qt.WindowTitleHint | Qt.WindowCloseButtonHint | Qt.WindowStaysOnTopHint)
+        dlg.setWindowTitle("面捕灵敏度")
+        dlg.setMinimumWidth(380)
+        dlg.resize(420, 560)
+        dlg.setAttribute(Qt.WA_DeleteOnClose, True)  # close() 真销毁并触发 destroyed（清引用+恢复桌宠）
+        # 强制不透明背景：绝不继承桌宠窗的透明合成属性（否则又变成"自绘制有、桌面没有"）
+        dlg.setAttribute(Qt.WA_TranslucentBackground, False)
+        dlg.setAutoFillBackground(True)
+        _pal = dlg.palette()
+        _pal.setColor(dlg.backgroundRole(), QColor(30, 30, 46))
+        dlg.setPalette(_pal)
+        dlg.setStyleSheet(
+            "QDialog{background:#1e1e2e;}"  # 与 palette 同色 #1e1e2e=(30,30,46)，自检据此判定可见性
+            "QLabel{color:#e6e6e6;} QCheckBox{color:#e6e6e6;}"
+            "QSlider::groove:horizontal{background:#3a3a52;height:6px;border-radius:3px;}"
+            "QSlider::handle:horizontal{background:#9b7bd8;width:14px;margin:-5px 0;border-radius:7px;}"
+            "QPushButton{background:#3a3a55;color:#e6e6e6;padding:6px 14px;border-radius:6px;}"
+            "QPushButton:hover{background:#4a4a70;}")
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(10, 8, 10, 10)
+        # 原生标题栏已自带标题/关闭按钮/拖动 → 不再自绘标题栏、不再自写拖拽 hack（第 17 轮内嵌遗留）
+        _title = QLabel("面捕灵敏度")
+        _title.setStyleSheet("font-weight:bold;font-size:14px;color:#e6e6e6;padding:2px 0 6px;")
+        layout.addWidget(_title)
+
+        def _row(label, key, default, lo, hi, dec=2):
+            layout.addWidget(QLabel(label))
+            s = QSlider(Qt.Orientation.Horizontal)
+            s.setRange(int(lo * 100), int(hi * 100))
+            raw = float(cfg.get(key, default) or default)
+            s.setValue(int(raw * 100))
+            val = QLabel(f"{raw:.{dec}f}")
+            s.valueChanged.connect(lambda v: val.setText(f"{v / 100:.{dec}f}"))
+            h = QHBoxLayout()
+            h.addWidget(s)
+            h.addWidget(val)
+            layout.addLayout(h)
+            return s
+
+        # 代码默认值（唯一真源：滑块初值与「恢复默认」都引用同一份，消除散落字面量）
+        DEFAULTS = {
+            "masterGain": 1.0, "headGain": 1.2, "bodyYawLink": 0.7,
+            "bodyPitchLink": 0.7, "bodyRollLink": 0.6, "expressionGain": 1.0,
+            # 平滑时间常数（秒）。2026-09-01 实测修正：检测只有 ~14fps（间隔 ~71ms），
+            # 而 tau=0.05(50ms) < 检测间隔 → 上一次平滑还没走完就被新检测值拽走，
+            # 动作呈「一步一跳」的阶梯感，这就是「流畅度不如 VTS」的观感来源。
+            # 正确取值应 ≈ 检测间隔的 1.0~1.5 倍（71~107ms）→ 默认 0.09。
+            "smooth": 0.09,
+        }
+        MIR_DEF = False   # 镜像默认关
+        AC_DEF = True     # 自动校准默认开
+        sliders = {}
+        sliders["masterGain"] = _row("总灵敏度 masterGain", "masterGain", DEFAULTS["masterGain"], 0.2, 3.0)
+        sliders["headGain"] = _row("头部增益 headGain（动作幅度）", "headGain", DEFAULTS["headGain"], 0.3, 2.5)
+        sliders["bodyYawLink"] = _row("躯干联动·左右转 bodyYawLink", "bodyYawLink", DEFAULTS["bodyYawLink"], 0.0, 1.5)
+        sliders["bodyPitchLink"] = _row("躯干联动·俯仰 bodyPitchLink", "bodyPitchLink", DEFAULTS["bodyPitchLink"], 0.0, 1.5)
+        sliders["bodyRollLink"] = _row("躯干联动·歪头 bodyRollLink", "bodyRollLink", DEFAULTS["bodyRollLink"], 0.0, 1.5)
+        sliders["expressionGain"] = _row("表情增益 expressionGain", "expressionGain", DEFAULTS["expressionGain"], 0.3, 2.0)
+        sliders["smooth"] = _row("平滑 smooth（越大越顺滑，推荐 0.08~0.12）", "smooth", DEFAULTS["smooth"], 0.01, 0.3)
+
+        mir_cb = QCheckBox("面捕镜像（左右翻转，照镜子）")
+        mir_cb.setChecked(bool(cfg.get("mirror", False)))
+        layout.addWidget(mir_cb)
+        ac_cb = QCheckBox("面捕自动校准（首次稳定即采中性基准）")
+        ac_cb.setChecked(bool(cfg.get("autoCalibrate", True)))
+        layout.addWidget(ac_cb)
+
+        layout.addSpacing(8)
+
+        def _write():
+            out = {k: s.value() / 100.0 for k, s in sliders.items()}
+            out["mirror"] = mir_cb.isChecked()
+            out["autoCalibrate"] = ac_cb.isChecked()
+            try:
+                with open(cfg_path, "w", encoding="utf-8") as f:
+                    json.dump(out, f, ensure_ascii=False, indent=2)
+                if fb is not None:
+                    fb.reload_gain()
+                self._bubble.show_text("面捕灵敏度已更新" + ("" if fb else "（重启面捕后生效）"), 1600)
+            except Exception as e:
+                log.warning("[桌宠] 保存面捕灵敏度失败: %r" % e)
+        for _s in sliders.values():
+            _s.valueChanged.connect(lambda _=None: _write())
+
+        def _reset_defaults():
+            """把所有参数拉回代码默认值并立即落盘生效（无需重开摄像头）。"""
+            for k, s in sliders.items():
+                s.setValue(int(DEFAULTS[k] * 100))
+            mir_cb.setChecked(MIR_DEF)
+            ac_cb.setChecked(AC_DEF)
+            _write()
+            self._bubble.show_text("已恢复面捕灵敏度默认值", 1600)
+
+        btn_row = QHBoxLayout()
+        reset_btn = QPushButton("恢复默认")
+        ok_btn = QPushButton("确定")
+        cancel_btn = QPushButton("取消")
+        btn_row.addStretch(1)
+        btn_row.addWidget(reset_btn)
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(ok_btn)
+        layout.addLayout(btn_row)
+        reset_btn.clicked.connect(_reset_defaults)
+        # 非模态：配置已在拖动时实时保存，两个按钮都只负责关闭窗口
+        ok_btn.clicked.connect(dlg.close)
+        cancel_btn.clicked.connect(dlg.close)
+
+        # ── 非模态方案（2026-09-02 第 8 轮）：彻底绕开 QDialog.exec() ──
+        # 前 7 轮全部卡在「模态 exec()」上：exec() 内部还会再设一次模态，Windows 下 modality 变化会
+        # 销毁并重建 native 窗口，把之前所有 raise()/activateWindow() 全部抹掉 → "要点两下"；
+        # 第 7 轮改成 show 前预设 ApplicationModal 想免掉这次切换，结果**完全不显示**（用户"现在又
+        # 出现看不见了"）—— 预设模态这条路同样走不通。故本轮**既不用 exec()，也不预设 modality**：
+        #   · 本对话框的配置是**拖动即时保存**（_write 挂在 valueChanged），确定/取消只负责关闭，
+        #     本来就没有"确定才生效 / 取消要回滚"的模态语义 → 改成非模态在功能上完全等价；
+        #   · 非模态不 grab 焦点、不切换 modality、不重建 native 窗口 → 从机制上消除成因；
+        #   · 若上一次的窗口还在，再次点菜单直接 raise/activate 提到前台（天然兜住"两下"、且避免重复开窗）。
+
+        # 拖动/关闭全部交给原生标题栏（独立窗口，Windows 原生行为）→ 无需任何自写拖拽代码
+
+        # 补救状态标记（自检若动过桌宠，关闭时按标记逐项恢复）
+        self._facecap_pet_hidden = False
+        self._facecap_pet_lowered = False
+        self._facecap_pet_notopmost = False
+
+        # 独立 owned window：定位到角色旁（屏幕坐标，不重叠角色），桌宠**不隐藏**、两者同时显示
+        try:
+            scr = QApplication.primaryScreen().availableGeometry()
+            w, h = dlg.width(), dlg.height()
+            x = self.x() + self.BASE_W + 16          # 优先角色右侧
+            if x + w > scr.x() + scr.width():
+                x = self.x() - w - 16                # 右边放不下 → 角色左侧
+            if x < scr.x():
+                x = scr.x() + max(0, (scr.width() - w) // 2)   # 两侧都放不下 → 屏幕居中
+            y = self.y() + 40
+            if y + h > scr.y() + scr.height():
+                y = scr.y() + scr.height() - h - 20
+            if y < scr.y():
+                y = scr.y() + 20
+            dlg.move(int(x), int(y))
+        except Exception as e:
+            self._log("[桌宠] 灵敏度窗定位失败: %r" % e)
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
+        try:
+            _g = dlg.frameGeometry()
+            self._log("[桌宠] DLG_PROBE owned geom=%d,%d %dx%d visible=%s owner=%d"
+                      % (_g.x(), _g.y(), _g.width(), _g.height(), dlg.isVisible(), int(self.winId())))
+        except Exception as e:
+            self._log("[桌宠] DLG_PROBE 失败: %r" % e)
+
+        # 全自动可见性自检：450ms 后自己截真实桌面判定（等 DWM 合成落地），不可见则阶梯自动补救
+        QTimer.singleShot(450, lambda: self._facecap_dlg_selfcheck(dlg, 0))
+
+        # 非模态手动管理生命周期（WA_DeleteOnClose 保证 close() 真销毁并触发 destroyed）
+        self._facecap_dlg = dlg
+
+        def _on_dlg_destroyed(_=None):
+            """窗口销毁：清引用 + 撤销自检补救对桌宠做过的一切临时改动（显示/置顶）。"""
+            try:
+                self._facecap_dlg = None
+            except Exception:
+                pass
+            self._facecap_restore_pet()
+
+        dlg.destroyed.connect(_on_dlg_destroyed)
+
+    def _open_facecap_sensitivity_browser(self):
+        """面捕灵敏度设置（浏览器本地页 fallback）：face_bridge 已运行 server 挂内联 HTML 页。
+
+        仅作为 Qt 对话框的备用通道（用户若某环境 Qt 对话框仍不可见，可走浏览器页，已验证可用）。
+        """
+        fb = getattr(self, "_face", None)
+        if fb is None:
+            self._bubble.show_text("请先开启摄像头面捕，再调灵敏度", 2400)
+            return
+        port = getattr(fb, "port", 9877)
+        try:
+            from PySide6.QtGui import QDesktopServices
+            from PySide6.QtCore import QUrl
+            QDesktopServices.openUrl(QUrl(f"http://127.0.0.1:{port}/facecap_settings"))
+            self._bubble.show_text("已在浏览器打开面捕灵敏度设置页（拖滑块实时生效）", 2600)
+            log.info("[桌宠] 浏览器打开面捕灵敏度设置页 port=%s" % port)
+        except Exception as e:
+            log.warning("[桌宠] 打开灵敏度网页失败: %r" % e)
+            self._bubble.show_text("打开网页失败：%s" % e, 3000)
 
     def _open_device_dialog(self, kind: str):
         """设备选择对话框（可滚动、带中文说明），替代原先铺满屏幕的内联菜单。
@@ -1940,7 +2743,8 @@ def run_pet(model_path: str = ""):
     fmt.setAlphaBufferSize(8)
     fmt.setSamples(0)
     QSurfaceFormat.setDefaultFormat(fmt)
-    app = QApplication.instance() or QApplication(sys.argv)
+    # 摄像头视频为 muted，autoplay 通常放行；显式豁免避免策略误拦截导致 play() 失败。
+    app = QApplication.instance() or QApplication([sys.argv[0], "--autoplay-policy=no-user-gesture-required"])
     try:
         win = PetWindow(model_path)
         win.show()

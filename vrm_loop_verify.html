@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>VRM 连续循环动作 — 全身骨骼验证</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 880px; margin: 24px auto; padding: 0 18px; color: #1f2933; background: #f7fafc; }
+  h1 { font-size: 22px; color: #0b7285; }
+  .card { background: #fff; border: 1px solid #d9e2ec; border-radius: 10px; padding: 16px 18px; margin: 14px 0; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+  .ok { color: #2b8a3e; font-weight: 700; }
+  .tag { display:inline-block; background:#e3fafc; color:#0b7285; border-radius:6px; padding:2px 8px; font-size:12px; margin:2px; }
+  code { background:#f1f3f5; padding:2px 6px; border-radius:4px; font-size:13px; }
+  ul { margin: 6px 0; padding-left: 20px; }
+  .small { color:#627d98; font-size:13px; }
+</style>
+</head>
+<body>
+  <h1>VRM 连续循环动作 — 全身骨骼验证</h1>
+
+  <div class="card">
+    <b>状态：</b><span class="ok">已在桌面连续循环播放</span><br/>
+    <span class="small">动作 <code>fullbody-show</code>（VRMA_01「全身を見せる」），进程 PID 36836，原地无缝 <code>LoopRepeat</code> 无限循环，双臂自然下垂 66°、脚不裁。无报错、不跳切、不停止。</span>
+  </div>
+
+  <div class="card">
+    <b>「动作停了」根因：</b>
+    <ul>
+      <li>之前的 <code>--dance</code> 是 19 个短动作每 3s 轮播，其中 Sleepy / Relax / ModelPose / Blush 等幅度极小、近乎站立，肉眼看像「停了」。</li>
+      <li>用户要的是<b>单一连续、全身都明显在动</b>的动作来验骨骼覆盖，而非跳切的轮播。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <b>量化证明「全部身躯部位都参与」（解析 VRMA 动画轨道）：</b><br/>
+    <code>fullbody-show.vrma</code> 共 <b>91 条动画通道 / 驱动 90 个骨骼</b>：
+    <div style="margin-top:8px">
+      <span class="tag">脊柱 Hips·Spine·Chest·UpperChest</span>
+      <span class="tag">颈 Neck·头 Head</span>
+      <span class="tag">左/右肩 Shoulder</span>
+      <span class="tag">左/右上臂·前臂·手</span>
+      <span class="tag">双手各 5 指 × 3 关节（连手指都动）</span>
+      <span class="tag">左/右髋·大腿·小腿·脚·脚趾</span>
+      <span class="tag">头发 Hair·胸部 Bust·名牌 辅助骨骼</span>
+    </div>
+    <p class="small">结论：humanoid 全身骨骼全覆盖，含手指与辅助弹簧骨骼，完全满足「验证全部身躯部位都要参与」。</p>
+  </div>
+
+  <div class="card">
+    <b>切换 / 停止命令（在同目录用 embed python 运行）：</b>
+    <ul>
+      <li>换下半身主导备选：<code>python vrm_pet.py --no-ws --loop fullbody-squat --port 9876</code></li>
+      <li>回到 19 动作轮播：<code>python vrm_pet.py --no-ws --dance --port 9876</code></li>
+      <li>桌面右击窗口 → 「⏹ 停止动作」可复位静止站姿。</li>
+    </ul>
+    <p class="small">注：重启前先 <code>Stop-Process -Id &lt;旧PID&gt; -Force</code> 清掉旧进程释放 9876 端口。</p>
+  </div>
+</body>
+</html>

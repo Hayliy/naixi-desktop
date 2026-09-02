@@ -1,3 +1,4 @@
+import { API_BASE } from "./api";
 import type { ContentBlock } from "@/components/ContentRenderer";
 
 /* ─── StreamProcessor 状态 ─── */
@@ -156,7 +157,7 @@ export async function sendChatStream(
   signal?: AbortSignal
 ): Promise<void> {
   try {
-    const res = await fetch(url, {
+    const res = await fetch(url.startsWith("http") ? url : `${API_BASE}${url}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

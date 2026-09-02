@@ -1,0 +1,200 @@
+{
+  "templates": [
+    {
+      "name": "ui_btn_0",
+      "file": "ui_btn_0.png",
+      "click_offset": [
+        0,
+        0
+      ],
+      "interaction": "menu_hold",
+      "hold_ms": 200,
+      "alt_files": [],
+      "fallback_ratio": null,
+      "threshold": 0.78,
+      "search_region": null
+    },
+    {
+      "name": "ui_btn_1",
+      "file": "ui_btn_1.png",
+      "click_offset": [
+        0,
+        0
+      ],
+      "interaction": "menu_hold",
+      "hold_ms": 200,
+      "alt_files": [],
+      "fallback_ratio": null,
+      "threshold": 0.78,
+      "search_region": null
+    },
+    {
+      "name": "ui_btn_2",
+      "file": "ui_btn_2.png",
+      "click_offset": [
+        0,
+        0
+      ],
+      "interaction": "menu_hold",
+      "hold_ms": 200,
+      "alt_files": [],
+      "fallback_ratio": null,
+      "threshold": 0.78,
+      "search_region": null
+    },
+    {
+      "name": "ui_btn_3",
+      "file": "ui_btn_3.png",
+      "click_offset": [
+        0,
+        0
+      ],
+      "interaction": "menu_hold",
+      "hold_ms": 200,
+      "alt_files": [],
+      "fallback_ratio": null,
+      "threshold": 0.78,
+      "search_region": null
+    },
+    {
+      "name": "ui_btn_4",
+      "file": "ui_btn_4.png",
+      "click_offset": [
+        0,
+        0
+      ],
+      "interaction": "menu_hold",
+      "hold_ms": 200,
+      "alt_files": [],
+      "fallback_ratio": null,
+      "threshold": 0.78,
+      "search_region": null
+    },
+    {
+      "name": "ui_btn_5",
+      "file": "ui_btn_5.png",
+      "click_offset": [
+        0,
+        0
+      ],
+      "interaction": "menu_hold",
+      "hold_ms": 200,
+      "alt_files": [],
+      "fallback_ratio": null,
+      "threshold": 0.78,
+      "search_region": null
+    },
+    {
+      "name": "ui_btn_6",
+      "file": "ui_btn_6.png",
+      "click_offset": [
+        0,
+        0
+      ],
+      "interaction": "menu_hold",
+      "hold_ms": 200,
+      "alt_files": [],
+      "fallback_ratio": null,
+      "threshold": 0.78,
+      "search_region": null
+    },
+    {
+      "name": "ui_btn_7",
+      "file": "ui_btn_7.png",
+      "click_offset": [
+        0,
+        0
+      ],
+      "interaction": "menu_hold",
+      "hold_ms": 200,
+      "alt_files": [],
+      "fallback_ratio": null,
+      "threshold": 0.78,
+      "search_region": null
+    },
+    {
+      "name": "ui_btn_8",
+      "file": "ui_btn_8.png",
+      "click_offset": [
+        0,
+        0
+      ],
+      "interaction": "menu_hold",
+      "hold_ms": 200,
+      "alt_files": [],
+      "fallback_ratio": null,
+      "threshold": 0.78,
+      "search_region": null
+    },
+    {
+      "name": "ui_btn_9",
+      "file": "ui_btn_9.png",
+      "click_offset": [
+        0,
+        0
+      ],
+      "interaction": "menu_hold",
+      "hold_ms": 200,
+      "alt_files": [],
+      "fallback_ratio": null,
+      "threshold": 0.78,
+      "search_region": null
+    },
+    {
+      "name": "ui_btn_10",
+      "file": "ui_btn_10.png",
+      "click_offset": [
+        0,
+        0
+      ],
+      "interaction": "menu_hold",
+      "hold_ms": 200,
+      "alt_files": [],
+      "fallback_ratio": null,
+      "threshold": 0.78,
+      "search_region": null
+    },
+    {
+      "name": "ui_btn_11",
+      "file": "ui_btn_11.png",
+      "click_offset": [
+        0,
+        0
+      ],
+      "interaction": "menu_hold",
+      "hold_ms": 200,
+      "alt_files": [],
+      "fallback_ratio": null,
+      "threshold": 0.78,
+      "search_region": null
+    },
+    {
+      "name": "ui_btn_12",
+      "file": "ui_btn_12.png",
+      "click_offset": [
+        0,
+        0
+      ],
+      "interaction": "menu_hold",
+      "hold_ms": 200,
+      "alt_files": [],
+      "fallback_ratio": null,
+      "threshold": 0.78,
+      "search_region": null
+    },
+    {
+      "name": "ui_btn_13",
+      "file": "ui_btn_13.png",
+      "click_offset": [
+        0,
+        0
+      ],
+      "interaction": "menu_hold",
+      "hold_ms": 200,
+      "alt_files": [],
+      "fallback_ratio": null,
+      "threshold": 0.78,
+      "search_region": null
+    }
+  ]
+}

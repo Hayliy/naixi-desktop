@@ -159,7 +159,7 @@ user32.PostMessageW(hwnd, 0x0010, 0, 0)
 time.sleep(0.3)
 p.terminate()
 # dump diagnostic log
-logp = r"C:\Users\21222\AppData\Local\Temp\naixi_installer_ev.log"
+logp = os.path.join(os.environ.get("TEMP", os.environ.get("TMP", "C:\\Temp")), "naixi_installer_ev.log")
 try:
     with open(logp, encoding="utf-8", errors="ignore") as f:
         lines = f.read().splitlines()

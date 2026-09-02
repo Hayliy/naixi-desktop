@@ -1,5 +1,5 @@
 """工作流引擎 v2 — Dify 风格 DAG 执行器（VariablePool + GraphEngine + BaseNode + DSL）"""
-import json, logging, asyncio, time, uuid, re, copy, os
+import json, logging, asyncio, time, uuid, copy, os
 from datetime import datetime
 from typing import Optional, Any
 
@@ -9,14 +9,30 @@ log = logging.getLogger("workflow")
 # 第一部分：变量池 (VariablePool)
 # ══════════════════════════════════════════════
 
+def _sub_braces(template: str, repl) -> str:
+    """把模板里的 {{...}} 替换为 repl(inner)；不用正则，避免元字符与嵌套歧义。"""
+    out = []
+    i = 0
+    n = len(template)
+    while i < n:
+        if template.startswith("{{", i):
+            j = template.find("}}", i + 2)
+            if j == -1:
+                out.append(template[i:]); break
+            inner = template[i + 2:j]
+            out.append(repl(inner))
+            i = j + 2
+        else:
+            out.append(template[i]); i += 1
+    return "".join(out)
+
+
 class VariablePool:
     """全局变量池 — 节点间数据流的运行时状态管理
     
     引用语法: {{node_id.output_name}}
     示例: {{llm_1.text}} → 取 llm_1 节点的 text 输出
     """
-    
-    VAR_PATTERN = re.compile(r"\{\{(.+?)\}\}")
     
     def __init__(self):
         self._store: dict[str, dict] = {}  # node_id -> {output_name: value}
@@ -48,8 +64,8 @@ class VariablePool:
     
     def resolve(self, template: str) -> str:
         """解析模板中的变量引用 {{node_id.key}}"""
-        def _replace(match):
-            path = match.group(1).strip()
+        def _replace(inner):
+            path = inner.strip()
             parts = path.split(".")
             if len(parts) >= 2:
                 node_id = parts[0]
@@ -60,10 +76,10 @@ class VariablePool:
                         return json.dumps(val, ensure_ascii=False)
                     return str(val)
                 log.warning("[变量池] 变量未找到: %s", path)
-                return match.group(0)  # 保留原样
-            return match.group(0)
+                return "{{" + inner + "}}"  # 保留原样
+            return "{{" + inner + "}}"
         
-        return self.VAR_PATTERN.sub(_replace, template)
+        return _sub_braces(template, _replace)
     
     def snapshot(self) -> dict:
         """获取完整快照（用于持久化）"""
@@ -747,8 +763,8 @@ class TemplateTransformNode(BaseNode):
         # 注意: 模板可能同时包含 VariablePool 引用和 Jinja2 语法
         # VariablePool 用 {{node_id.key}}，Jinja2 也用它
         # 优先解析 VariablePool 引用
-        def _resolve_vp(match):
-            path = match.group(1).strip()
+        def _resolve_vp(inner):
+            path = inner.strip()
             parts = path.split(".")
             if len(parts) >= 2:
                 val = self.vp.get(parts[0], ".".join(parts[1:]))
@@ -756,9 +772,9 @@ class TemplateTransformNode(BaseNode):
                     if isinstance(val, (dict, list)):
                         return json.dumps(val, ensure_ascii=False)
                     return str(val)
-            return match.group(0)
+            return "{{" + inner + "}}"
         
-        resolved_template = VariablePool.VAR_PATTERN.sub(_resolve_vp, template)
+        resolved_template = _sub_braces(template, _resolve_vp)
         
         # 步骤2: Jinja2 渲染
         try:

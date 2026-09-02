@@ -2,6 +2,7 @@
 import json, os, sys, time, logging, asyncio, hmac, glob
 from aiohttp import web
 from datetime import datetime
+from desktop_core import html_util
 
 # 项目根目录（兼容直接 import 和通过 sidecar 运行）
 _DESKTOP_DIR = os.environ.get("DESKTOP_DIR") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -163,9 +164,9 @@ def _win_list_processes():
 _gpu_cache: dict = {"value": None, "ts": 0}
 
 async def _get_gpu_info():
-    """查询 NVIDIA GPU 信息，60 秒内复用缓存，避免高频 spawn 子进程。"""
+    """查询 NVIDIA GPU 信息，3 秒内复用缓存，避免高频 spawn 子进程。"""
     now = time.time()
-    if _gpu_cache["value"] is not None and (now - _gpu_cache["ts"]) < 60:
+    if _gpu_cache["value"] is not None and (now - _gpu_cache["ts"]) < 3:
         return _gpu_cache["value"]
     gpu = {"gpu_util": 0, "gpu_name": "N/A", "gpu_mem_total": 0, "gpu_mem_used": 0}
     try:
@@ -713,10 +714,10 @@ async def api_system_resources(request):
         # 内存
         mem_load, mem_total, mem_avail = _win_memory()
         mem_used_pct = round((1 - mem_avail / mem_total) * 100, 1) if mem_total > 0 else 0.0
-        # 系统盘（C:）使用率
-        disk_total, disk_free = _win_disk("C:\\")
+        # 系统盘使用率（用 SystemDrive 环境变量，不写死 C:，兼容系统盘非 C 的机器）
+        disk_total, disk_free = _win_disk(os.environ.get("SystemDrive", "C:") + "\\")
         disk_used_pct = round((1 - disk_free / disk_total) * 100, 1) if disk_total > 0 else 0.0
-        # GPU：走 60 秒缓存的 nvidia-smi 查询（进程稳固，不每轮询都 spawn）
+        # GPU：走 3 秒缓存的 nvidia-smi 查询（进程稳固，不每轮询都 spawn）
         gpu = await _get_gpu_info()
         return web.json_response({
             "cpu": cpu, "memory": mem_used_pct, "disk": disk_used_pct,
@@ -787,6 +788,32 @@ async def api_service_health(request):
     return web.json_response(result)
 
 
+async def api_napcat_status(request):
+    """返回 QQ NapCat 连接状态（供前端状态栏/连接子页轮询）。
+    探测 napcat HTTP(3000)/WS(3001) 端口连通性；未配置或未运行均返回 connected=False（200，不报错）。
+    关键：此前后端无此路由，前端 Dashboard 每几秒轮询 /api/napcat/status → aiohttp 抛 HTTPNotFound
+    → CORS 中间件 await handler 抛异常、未给 404 响应加 Access-Control-Allow-Origin → 浏览器 CORS 拦截
+    → DevTools 红色 error 持续累积。实现本路由后返回 200+正确 CORS 头，根除该刷屏源。"""
+    try:
+        import asyncio
+
+        async def _probe(host: str, port: int) -> bool:
+            try:
+                _, writer = await asyncio.wait_for(
+                    asyncio.open_connection(host, port), timeout=2
+                )
+                writer.close()
+                await writer.wait_closed()
+                return True
+            except Exception:
+                return False
+
+        connected = await _probe("127.0.0.1", 3000) or await _probe("127.0.0.1", 3001)
+    except Exception:
+        connected = False
+    return web.json_response({"connected": connected, "groups": 0})
+
+
 async def api_database_stats(request):
     """数据库各表记录数"""
     from desktop_core.storage import _get_conn
@@ -818,6 +845,26 @@ async def api_desktop_config_get(request):
     return web.json_response({"api_providers": {}, "platform_configs": {}})
 
 
+async def api_desktop_provider_key_get(request):
+    # 按需返回单个供应商的明文 API Key——仅本机、用户主动点眼睛触发；
+    # 默认列表接口(api_desktop_config_get)仍返回掩码，不主动泄露明文。
+    name = request.query.get("name", "")
+    if not name:
+        return web.json_response({"api_key": ""})
+    raw = meta_get("desktop_config")
+    if not raw:
+        return web.json_response({"api_key": ""})
+    try:
+        config = json.loads(raw)
+    except Exception:
+        return web.json_response({"api_key": ""})
+    pcfg = (config.get("api_providers", {}) or {}).get(name)
+    if not isinstance(pcfg, dict):
+        return web.json_response({"api_key": ""})
+    plain = decrypt_api_key(pcfg.get("api_key", ""))
+    return web.json_response({"api_key": plain})
+
+
 async def api_desktop_config_set(request):
     try:
         body = await request.json()
@@ -829,7 +876,7 @@ async def api_desktop_config_set(request):
                 original = json.loads(raw)
                 existing = original
                 # 只合并已知的顶层键
-                for key in ("api_providers", "platform_configs", "mcp_servers", "desktop_full_trust", "settings"):
+                for key in ("api_providers", "platform_configs", "mcp_servers", "desktop_full_trust", "settings", "update_source"):
                     if key in body:
                         existing[key] = body[key]
                 body = existing
@@ -863,6 +910,19 @@ async def api_desktop_restart(request):
     except Exception as e:
         log.warning(f"重启后端失败: {e}")
         return web.json_response({"error": "重启失败"}, status=500)
+
+
+async def api_system_restart_searxng(request):
+    """手动重启 SearXNG 搜索服务（菜单「系统 → 重启 SearXNG」调用）"""
+    try:
+        from desktop_core.ops_engine import _restart_searxng
+        ok, msg = await _restart_searxng()
+        if ok:
+            return web.json_response({"ok": True, "message": msg})
+        return web.json_response({"ok": False, "message": msg}, status=500)
+    except Exception as e:
+        log.warning(f"重启 SearXNG 失败: {e}")
+        return web.json_response({"error": "重启 SearXNG 失败"}, status=500)
 
 
 async def api_desktop_paths(request):
@@ -1279,8 +1339,15 @@ async def api_avatar_prefill(request):
             if existing:
                 # 检查是否过期（OSS URL），过期则重新生成
                 if "Expires=" in existing:
-                    m = re.search(r"Expires=(\d+)", existing)
-                    if m and int(m.group(1)) < time.time():
+                    # 抠 Expires= 后的时间戳数字（纯字符串解析，避免正则）
+                    rest = existing[existing.index("Expires=") + len("Expires="):]
+                    num = ""
+                    for ch in rest:
+                        if ch.isdigit():
+                            num += ch
+                        else:
+                            break
+                    if num and int(num) < time.time():
                         existing = None  # 过期，重新生成
             if existing:
                 _generation_completed += 1
@@ -1471,31 +1538,18 @@ async def api_generate_voice(request):
         audio_bytes = None
         fmt = "wav"
 
-        # 1) 优先用配置的语音供应商（与 Qt 桌宠共用 engine._cosyvoice_request，避免两条 TTS 路径分叉）
+        # 统一走 tts_router（CosyVoice 主 + Edge-TTS 兜底 + 故障转移），消除分散的 TTS 路径
         try:
-            from desktop_core.live_engine import engine
-            audio_bytes = await engine._cosyvoice_request(text)
-            if audio_bytes:
-                fmt = "wav"
+            from desktop_core import tts_router
+            res = await tts_router.asynthesize(text)
+            if res:
+                audio_bytes = res.audio
+                fmt = res.format
         except Exception as e:
-            log.warning(f"[语音] 配置供应商合成失败，准备降级 Edge-TTS: {e}")
+            log.warning(f"[语音] tts_router 合成失败: {e}")
 
-        # 2) 降级 Edge-TTS（保证总有声音，不依赖用户是否配供应商 / 网络是否可达）
         if not audio_bytes:
-            try:
-                import edge_tts, tempfile, os
-                tmp = os.path.join(tempfile.gettempdir(), f"gen_voice_{int(time.time() * 1000)}.mp3")
-                communicate = edge_tts.Communicate(text, "zh-CN-XiaoxiaoNeural")
-                await communicate.save(tmp)
-                with open(tmp, "rb") as f:
-                    audio_bytes = f.read()
-                try:
-                    os.remove(tmp)
-                except Exception:
-                    pass
-                fmt = "mp3"
-            except Exception as e2:
-                return web.json_response({"error": f"语音合成失败且 Edge-TTS 降级失败: {e2}"}, status=500)
+            return web.json_response({"error": "语音合成失败（所有引擎均不可用）"}, status=500)
 
         import base64
         return web.json_response({
@@ -1586,21 +1640,9 @@ async def api_search(request):
                     async with session.get(bing_url, timeout=8) as resp:
                         if resp.status == 200:
                             html = await resp.text()
-                            # 提取 Bing 搜索结果
-                            for item in re.finditer(r'<li class="b_algo">.*?<h2><a[^>]*href="([^"]*)"[^>]*>(.*?)</a>', html, re.DOTALL):
-                                url = item.group(1)
-                                title = re.sub(r'<[^>]+>', '', item.group(2)).strip()
+                            # 提取 Bing 搜索结果（零正则，标准库 html.parser）
+                            for url, title in html_util.extract_bing_results(html)[:8]:
                                 results.append({"title": title, "url": url, "content": title})
-                                if len(results) >= 8:
-                                    break
-                            # 如果上面的没匹配到，尝试另一个 Bing 格式
-                            if not results:
-                                for item in re.finditer(r'<a[^>]*href="(https?://[^"]*)"[^>]*><h2>(.*?)</h2>', html, re.DOTALL):
-                                    url = item.group(1)
-                                    title = re.sub(r'<[^>]+>', '', item.group(2)).strip()
-                                    results.append({"title": title, "url": url, "content": title})
-                                    if len(results) >= 8:
-                                        break
             except:
                 pass
 
@@ -2477,14 +2519,9 @@ async def api_knowledge_import_url(request):
                 if resp.status != 200:
                     return web.json_response({"error": f"请求失败: HTTP {resp.status}"}, status=400)
                 html = await resp.text()
-        import re
-        title = url.split("/")[-1][:60] or "网页导入"
-        m = re.search(r'<title>(.*?)</title>', html, re.IGNORECASE | re.DOTALL)
-        if m:
-            title = m.group(1).strip()[:60]
+        title = html_util.extract_title(html)[:60] or url.split("/")[-1][:60] or "网页导入"
         # 去标签取纯文本
-        text = re.sub(r'<[^>]+>', ' ', html)
-        text = re.sub(r'\s+', ' ', text).strip()[:2000]
+        text = html_util.strip_tags(html)[:2000]
         if not text:
             text = "(无法提取内容)"
         raw = meta_get("knowledge_base")
@@ -2586,7 +2623,7 @@ async def api_knowledge_import_github(request):
 
 async def api_memory_stats(request):
     """记忆统计：总数、按对话类型分组、最近活动"""
-    from desktop_core.storage import _get_conn
+    from desktop_core.storage import _get_conn, decrypt_text
     try:
         conn = _get_conn()
         # 总消息数
@@ -2609,7 +2646,7 @@ async def api_memory_stats(request):
         recent = conn.execute(
             "SELECT COUNT(*) as c FROM conv_messages WHERE time >= datetime('now', '-7 days', 'localtime')"
         ).fetchone()["c"]
-        # 最近记忆片段（最新 5 条消息）
+        # 最近记忆片段（最新 5 条消息）—— content 落库即密，读出解密
         recent_rows = conn.execute(
             "SELECT conv_key, role, content, datetime(time, 'unixepoch', 'localtime') as time FROM conv_messages ORDER BY id DESC LIMIT 5"
         ).fetchall()
@@ -2618,7 +2655,7 @@ async def api_memory_stats(request):
             recent_items.append({
                 "conv": r["conv_key"],
                 "role": r["role"],
-                "content": r["content"][:100] if r["content"] else "",
+                "content": decrypt_text(r["content"] or "")[:100],
                 "time": r["time"],
             })
         conn.close()
@@ -2634,8 +2671,9 @@ async def api_memory_stats(request):
 
 
 async def api_memory_search(request):
-    """搜索记忆（对话内容 FTS）"""
-    from desktop_core.storage import _get_conn
+    """搜索记忆（对话内容）。content 落库即密，故读出后在 Python 侧解密再按关键词过滤，
+    不依赖 SQL LIKE（否则命中密文）。桌宠量级下全量读出解密可接受。"""
+    from desktop_core.storage import _get_conn, decrypt_text
     try:
         body = await request.json()
         query = body.get("query", "").strip().lower()
@@ -2644,38 +2682,38 @@ async def api_memory_search(request):
         limit = min(50, max(1, int(body.get("limit", 20))))
         if not query:
             return web.json_response({"items": [], "total": 0})
-        
+
         conn = _get_conn()
-        where = "WHERE LOWER(content) LIKE ?"
-        params = [f"%{query}%"]
+        sql = "SELECT id, conv_key, role, content, datetime(time, 'unixepoch', 'localtime') as time FROM conv_messages"
+        params = []
         if conv_filter:
-            where += " AND conv_key = ?"
+            sql += " WHERE conv_key = ?"
             params.append(conv_filter)
-        
-        total = conn.execute(f"SELECT COUNT(*) as c FROM conv_messages {where}", params).fetchone()["c"]
-        offset = (page - 1) * limit
-        rows = conn.execute(
-            f"SELECT id, conv_key, role, content, datetime(time, 'unixepoch', 'localtime') as time FROM conv_messages {where} ORDER BY id DESC LIMIT ? OFFSET ?",
-            params + [limit, offset]
-        ).fetchall()
+        sql += " ORDER BY id DESC"
+        rows = conn.execute(sql, params).fetchall()
         conn.close()
-        items = []
+        matched = []
         for r in rows:
-            items.append({
-                "id": r["id"],
-                "conv": r["conv_key"],
-                "role": r["role"],
-                "content": (r["content"] or "")[:300],
-                "time": r["time"],
-            })
-        return web.json_response({"items": items, "total": total, "page": page})
+            plain = decrypt_text(r["content"] or "")
+            if query in plain.lower():
+                matched.append({
+                    "id": r["id"],
+                    "conv": r["conv_key"],
+                    "role": r["role"],
+                    "content": plain[:300],
+                    "time": r["time"],
+                })
+        total = len(matched)
+        offset = (page - 1) * limit
+        page_items = matched[offset:offset + limit]
+        return web.json_response({"items": page_items, "total": total, "page": page})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
 
 
 async def api_memory_categories(request):
     """记忆分类列表（对话列表作为分类）"""
-    from desktop_core.storage import _get_conn
+    from desktop_core.storage import _get_conn, decrypt_text
     try:
         conn = _get_conn()
         rows = conn.execute(
@@ -2688,7 +2726,7 @@ async def api_memory_categories(request):
                 "key": r["key"],
                 "label": r["key"][:30],
                 "count": r["msg_count"] or 0,
-                "last_msg": (r["last_msg"] or "")[:60],
+                "last_msg": decrypt_text(r["last_msg"] or "")[:60],
                 "last_time": r["last_time"] or "",
             })
         return web.json_response({"categories": categories, "total": len(categories)})
@@ -2994,6 +3032,99 @@ async def api_ops_changelog(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
+def _parse_ver(v: str) -> list:
+    """把版本号解析为可比整数列表（无正则：逐字符提取数字段）。"""
+    v = str(v).lstrip("vV").strip()
+    parts: list = []
+    for seg in v.split("."):
+        num = ""
+        for ch in seg:
+            if ch.isdigit():
+                num += ch
+            else:
+                break
+        parts.append(int(num) if num else 0)
+    return parts
+
+
+def _version_gt(a: str, b: str) -> bool:
+    """a 是否严格大于 b（语义化版本比较，无正则）。"""
+    pa, pb = _parse_ver(a), _parse_ver(b)
+    n = max(len(pa), len(pb))
+    pa += [0] * (n - len(pa))
+    pb += [0] * (n - len(pb))
+    return pa > pb
+
+
+# 默认更新源：GitHub Releases（仓库地址取自项目 git remote）
+GITHUB_REPO = "Hayliy/naixi-desktop"
+GITHUB_API_LATEST = "https://api.github.com/repos/Hayliy/naixi-desktop/releases/latest"
+GITHUB_RELEASES_URL = "https://github.com/Hayliy/naixi-desktop/releases"
+
+
+async def api_check_update(request):
+    """检查版本更新。
+    默认源：GitHub Releases（GITHUB_REPO 的 latest release）。
+    覆盖：若 desktop_config.update_source 配置了返回 {version,notes,url} 的 JSON 地址，则改用自定义源。
+    """
+    try:
+        current = (request.query.get("current", "") or "").strip()
+        raw = meta_get("desktop_config") or "{}"
+        try:
+            cfg = json.loads(raw)
+        except Exception:
+            cfg = {}
+        source = (cfg.get("update_source") or "").strip()
+
+        import aiohttp
+        timeout = aiohttp.ClientTimeout(total=8)
+        async with aiohttp.ClientSession(timeout=timeout) as s:
+            if source:
+                # 自定义 JSON 源
+                async with s.get(source, headers={"User-Agent": "naixi-desktop-update-check"}) as r:
+                    if r.status != 200:
+                        return web.json_response({"ok": False, "error": f"更新源返回 HTTP {r.status}"}, status=502)
+                    data = await r.json()
+                latest = str(data.get("version", "") or "").strip()
+                if not latest:
+                    return web.json_response({"ok": False, "error": "更新源未包含 version 字段"}, status=502)
+                return web.json_response({
+                    "ok": True, "configured": True, "source_type": "custom",
+                    "current": current, "latest": latest,
+                    "has_update": bool(_version_gt(latest, current)),
+                    "notes": data.get("notes", ""),
+                    "url": data.get("url", ""),
+                    "releases_url": data.get("url", "") or GITHUB_RELEASES_URL,
+                    "published_at": data.get("published_at", ""),
+                })
+            else:
+                # 默认 GitHub Releases
+                async with s.get(GITHUB_API_LATEST, headers={
+                    "User-Agent": "naixi-desktop",
+                    "Accept": "application/vnd.github+json",
+                }) as r:
+                    if r.status != 200:
+                        return web.json_response({"ok": False, "error": f"GitHub 返回 HTTP {r.status}"}, status=502)
+                    data = await r.json()
+                tag = str(data.get("tag_name", "") or "").strip()
+                latest = tag.lstrip("vV") or str(data.get("name", "") or "").strip()
+                if not latest:
+                    return web.json_response({"ok": False, "error": "GitHub 未包含版本信息"}, status=502)
+                return web.json_response({
+                    "ok": True, "configured": True, "source_type": "github",
+                    "current": current, "latest": latest,
+                    "has_update": bool(_version_gt(latest, current)),
+                    "notes": data.get("body", ""),
+                    "url": data.get("html_url", ""),
+                    "releases_url": GITHUB_RELEASES_URL,
+                    "published_at": (data.get("published_at") or "")[:10],
+                })
+    except asyncio.TimeoutError:
+        return web.json_response({"ok": False, "error": "更新源请求超时（GitHub 可能不可达）"}, status=504)
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
 async def api_ops_health_history(request):
     """获取健康评分历史趋势"""
     from desktop_core.ops_engine import get_health_history, get_uptime_since
@@ -3039,6 +3170,7 @@ async def api_ops_delete(request):
 def setup_routes(app):
     # 兼容原 /api/status（让前端不再显示"连接中"）
     app.router.add_get("/api/status", api_status)
+    app.router.add_get("/api/system_info", api_system_info)
     # 桌面状态
     app.router.add_get("/api/desktop/status", api_desktop_status)
     app.router.add_get("/api/desktop_status", api_desktop_status)  # 前端下划线路径别名
@@ -3046,7 +3178,9 @@ def setup_routes(app):
     app.router.add_get("/api/system/resources", api_system_resources)
     app.router.add_get("/api/system/info", api_system_info)
     app.router.add_get("/api/system/processes", api_system_processes)
+    app.router.add_post("/api/system/restart_searxng", api_system_restart_searxng)
     app.router.add_get("/api/desktop/config", api_desktop_config_get)
+    app.router.add_get("/api/desktop/provider-key", api_desktop_provider_key_get)
     app.router.add_post("/api/desktop/config", api_desktop_config_set)
     app.router.add_get("/api/desktop/paths", api_desktop_paths)
     app.router.add_post("/api/desktop/restart", api_desktop_restart)
@@ -3132,6 +3266,7 @@ def setup_routes(app):
     app.router.add_get("/api/ops/incidents", api_ops_incidents)
     app.router.add_post("/api/ops/maintenance", api_ops_maintenance)
     app.router.add_get("/api/ops/changelog", api_ops_changelog)
+    app.router.add_get("/api/check_update", api_check_update)
     app.router.add_get("/api/ops/health-history", api_ops_health_history)
     app.router.add_get("/api/ops/trends", api_ops_trends)
     app.router.add_post("/api/ops/delete", api_ops_delete)
@@ -3197,6 +3332,9 @@ def setup_routes(app):
     app.router.add_post("/api/live/chat-test", api_live_chat_test)
     app.router.add_post("/api/live/scene", api_live_scene)
     app.router.add_post("/api/live/scene-auto", api_live_scene_auto)
+    app.router.add_post("/api/live/game-start", api_live_game_start)
+    app.router.add_post("/api/live/game-stop", api_live_game_stop)
+    app.router.add_post("/api/live/scene-mode", api_live_scene_mode)
     app.router.add_get("/api/live/models", api_live_models)
     app.router.add_post("/api/live/models/delete", api_live_models_delete)
     app.router.add_post("/api/live/models/import", api_live_models_import)
@@ -3221,18 +3359,23 @@ def setup_routes(app):
     app.router.add_post("/api/live/backend", api_live_backend_set)
     # 层3 真人语音闭环（麦克风 ASR → 自动上麦）
     app.router.add_post("/api/live/human_voice/toggle", api_live_human_voice_toggle)
+    # 前端运行时错误自动上报（error / unhandledrejection / console.error）→ 写应用日志，便于无头定位
+    app.router.add_post("/api/client-error", api_client_error)
     app.router.add_get("/api/live/human_voice/status", api_live_human_voice_status)
 
-    # 启动时连接 MCP 服务器
-    app.on_startup.append(_on_startup_mcp)
-    # 启动 VTS 风格全局热键监听
-    app.on_startup.append(_on_startup_hotkeys)
+    # 启动钩子统一后台化（不阻塞 9845 绑定，缩短冷启动）
+    # 原先依次 append 三协程会被 aiohttp await，拖到端口 LISTEN 之后；
+    # 改为 _launch_startup_tasks 内 create_task 立即返回，服务在后台连。
+    app.on_startup.append(_launch_startup_tasks)
 
     # 工具权限确认
     app.router.add_get("/api/tools", api_tools_list)
     app.router.add_post("/api/tool/permit", api_tool_permit)
     app.router.add_get("/api/config/trust", api_config_trust)
     app.router.add_post("/api/config/trust", api_config_trust)
+
+    # QQ NapCat 连接状态（前端 Dashboard 轮询；缺此路由会导致 404+CORS 刷屏）
+    app.router.add_get("/api/napcat/status", api_napcat_status)
 
     # 任务管理
     app.router.add_get("/api/tasks", api_tasks_list)
@@ -3280,6 +3423,25 @@ async def api_cancel_chat(request):
         return web.json_response({"ok": True, "cancelled": "all"})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
+
+
+async def _on_startup_services(app):
+    """应用启动时拉起离线服务（SearXNG），并启动持续看门狗自动重启。
+
+    设计要点（用户要求）：
+      - SearXNG 随整个桌面端应用（Tauri 启动 -> 后端 sidecar 启动）而启动，
+        不依赖用户点「桌宠」按钮；桌宠是可选的 Qt 子进程，搜索服务不应耦合其上。
+      - 同时启动 _searxng_watchdog 常驻循环：SearXNG 离线时自动拉起，
+        与后端 self-heal「检测->重启」机制一致，无需用户手动触发自愈。
+    """
+    try:
+        from desktop_core.ops_engine import _ensure_searxng, _searxng_watchdog
+        ok, msg = await _ensure_searxng()
+        log.info(f"启动钩子：SearXNG {msg}")
+        asyncio.create_task(_searxng_watchdog(interval=60))
+        log.info("启动钩子：SearXNG 看门狗已启动（离线自动拉起）")
+    except Exception as e:
+        log.warning(f"启动钩子：SearXNG 拉起失败：{e}")
 
 
 async def _on_startup_mcp(app):
@@ -3536,6 +3698,20 @@ async def _on_startup_hotkeys(app):
         hotkeys.init_hotkeys()
     except Exception as e:
         log.warning(f"全局热键初始化失败: {e}")
+
+
+async def _launch_startup_tasks(app):
+    """启动钩子统一后台化：不在 on_startup 信号里 await，避免阻塞 9845 端口绑定。
+
+    设计要点（用户要求缩短冷启动）：aiohttp 的 on_startup 信号会依次 await 注册的协程，
+    原三钩子（MCP 连接 / 热键 / SearXNG 拉起）都在 web.run_app 绑定端口前完成，
+    导致 9845 LISTEN 被拖慢（尤其配了 MCP 服务器时握手耗时 2-15s）。
+    改为此处只 create_task 立即返回，三钩子在后台并发运行，9845 立即 LISTEN，
+    前端 BackendGuard 探测到端口通即可进主界面；MCP/SearXNG 后台连好前有看门狗/重试兜底。
+    """
+    asyncio.create_task(_on_startup_services(app))
+    asyncio.create_task(_on_startup_mcp(app))
+    asyncio.create_task(_on_startup_hotkeys(app))
 
 
 async def api_live_connector_bind(request):
@@ -3811,6 +3987,10 @@ async def api_live_config(request):
             "dashscope_api_key": engine._dashscope_api_key[:4]+"****" if engine._dashscope_api_key else "",
             "chat_model": (engine._resolve_chat_config() or {}).get("model", ""),
             "live_prompt": engine._live_prompt,
+            # 视觉模型（从 api_providers[vision] 读出，供 B站 配置页回显）
+            "vision_model": (engine._resolve_vision_config() or {}).get("model", ""),
+            "vision_api_key": (((engine._resolve_vision_config() or {}).get("api_key", "") or "")[:4] + "****") if (engine._resolve_vision_config() or {}).get("api_key") else "",
+            "vision_api_url": (engine._resolve_vision_config() or {}).get("api_url", ""),
             "audio_out_device": engine._audio_out_device,
             "audio_in_device": engine._audio_in_device,
             "model_path": mp,
@@ -3999,6 +4179,34 @@ async def api_live_scene_auto(request):
     await engine.stop_scene_watchdog()
     return web.json_response({"ok": True, "running": False})
 
+async def api_live_game_start(request):
+    """启动自主游戏 agent（桌宠真正看屏+发键鼠打游戏）。需游戏窗口置顶聚焦。"""
+    from desktop_core.live_engine import engine
+    body = await request.json()
+    game = str(body.get("game", "minecraft"))
+    interval = float(body.get("interval", 2.5))
+    interval = max(0.5, min(10.0, interval))
+    max_steps = int(body.get("max_steps", 600))
+    res = await engine.start_game_agent(game=game, interval=interval, max_steps=max_steps)
+    return web.json_response(res)
+
+
+async def api_live_game_stop(request):
+    """停止自主游戏 agent。"""
+    from desktop_core.live_engine import engine
+    res = await engine.stop_game_agent()
+    return web.json_response(res)
+
+
+async def api_live_scene_mode(request):
+    """切换场景感知模式（video/game/auto）。"""
+    from desktop_core.live_engine import engine
+    body = await request.json()
+    mode = str(body.get("mode", "auto"))
+    engine.set_scene_mode(mode)
+    return web.json_response({"ok": True, "mode": mode})
+
+
 async def api_live_models(request):
     """列出 data/models/ 目录中的模型"""
     models_dir = os.path.join(_DESKTOP_DIR, "data", "models")
@@ -4084,7 +4292,7 @@ _MAX_TEX_SIDE = 8192
 # VTS 模型搜索根（与 api_live2d_model / api_live2d_model_list 保持一致）
 _L2D_SEARCH_ROOTS = [
     os.path.join(_DESKTOP_DIR, "data", "models"),
-    r"D:\Program Files\Steam\steamapps\common\VTube Studio\VTube Studio_Data\StreamingAssets\Live2DModels",
+    os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "Steam", "steamapps", "common", "VTube Studio", "VTube Studio_Data", "StreamingAssets", "Live2DModels"),
 ]
 
 
@@ -4293,7 +4501,7 @@ async def api_live2d_model(request):
         return web.json_response({"error": "invalid path"}, status=400)
     search_roots = [
         os.path.join(_DESKTOP_DIR, "data", "models"),
-        r"D:\Program Files\Steam\steamapps\common\VTube Studio\VTube Studio_Data\StreamingAssets\Live2DModels",
+        os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "Steam", "steamapps", "common", "VTube Studio", "VTube Studio_Data", "StreamingAssets", "Live2DModels"),
     ]
     # 前置：按完整相对路径直接拼接（前端传入「模型目录名/文件名」结构）
     for base in search_roots:
@@ -4365,30 +4573,58 @@ def _model_response(fp: str, request=None):
     return web.FileResponse(served_fp, headers=headers)
 
 async def api_live2d_model_list(request):
-    """列出可用的 Live2D 模型（扫描 VTube Studio 和本地目录）"""
+    """列出可用模型：Live2D(.model3.json) + VRM(.vrm)。
+
+    VRM 有两种常见布局，都必须覆盖：
+      1) 根目录直接的 .vrm（如 godot_renderer/鸣潮_秧秧玄翎1.04.vrm，vrm_pet 默认也从此目录找首个 .vrm）；
+      2) 「导入模型」落盘的 data/models/<name>/<name>.vrm（子目录内）。
+    返回项新增 type 字段（"live2d"/"vrm"），供前端区分、后端 pet-start 分流渲染器。
+    去重键用绝对路径（原实现按文件名去重，会把不同目录下的同名模型误删）。
+    """
     search_roots = [
         os.path.join(_DESKTOP_DIR, "data", "models"),
-        r"D:\Program Files\Steam\steamapps\common\VTube Studio\VTube Studio_Data\StreamingAssets\Live2DModels",
+        os.path.join(_DESKTOP_DIR, "godot_renderer"),   # VRM 兜底目录
+        os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "Steam", "steamapps", "common", "VTube Studio", "VTube Studio_Data", "StreamingAssets", "Live2DModels"),
     ]
     models = []
     seen = set()
+
+    def _add(name, model_file, path, mtype):
+        key = os.path.normcase(os.path.abspath(path))
+        if key in seen:
+            return
+        seen.add(key)
+        models.append({
+            "name": name,
+            "modelFile": model_file,
+            "path": path,
+            "type": mtype,
+        })
+
     for base in search_roots:
         if not os.path.exists(base):
             continue
-        for entry in os.listdir(base):
-            model_dir = os.path.join(base, entry)
-            if not os.path.isdir(model_dir):
-                continue
-            # 查找 model3.json（支持直接以目录名下划线格式）
-            for f in os.listdir(model_dir):
-                if f.endswith(".model3.json") and f not in seen:
-                    seen.add(f)
-                    models.append({
-                        "name": entry,
-                        "modelFile": f,
-                        "path": os.path.join(model_dir, f),
-                    })
-                    break
+        try:
+            entries = os.listdir(base)
+        except OSError:
+            continue
+        for entry in entries:
+            full = os.path.join(base, entry)
+            if os.path.isdir(full):
+                try:
+                    files = os.listdir(full)
+                except OSError:
+                    continue
+                # 同目录内优先 Live2D，其次 VRM（二选一，避免同一模型出两条）
+                m3 = next((f for f in files if f.endswith(".model3.json")), None)
+                vrm = next((f for f in files if f.lower().endswith(".vrm")), None)
+                if m3:
+                    _add(entry, m3, os.path.join(full, m3), "live2d")
+                elif vrm:
+                    _add(entry, vrm, os.path.join(full, vrm), "vrm")
+            elif entry.lower().endswith(".vrm"):
+                # 根目录下直接的 .vrm
+                _add(os.path.splitext(entry)[0], entry, full, "vrm")
     return web.json_response({"models": models})
 
 # ── MCP 管理 API ──
@@ -4589,3 +4825,19 @@ async def api_logs(request):
         return web.Response(text="日志文件不存在", content_type="text/plain", charset="utf-8", status=404)
     except Exception as e:
         return web.Response(text=f"读取日志失败: {e}", content_type="text/plain", charset="utf-8", status=500)
+
+
+async def api_client_error(request):
+    """接收前端运行时错误（error / unhandledrejection / console.error）并写入应用日志，
+    便于无头环境直接读取首条错误文本精准定位，无需用户开 DevTools 贴字。"""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid json"}, status=400)
+    try:
+        import json as _json
+        text = _json.dumps(body, ensure_ascii=False, default=str)
+    except Exception:
+        text = str(body)
+    log.error("[CLIENT_ERROR] %s", text)
+    return web.json_response({"ok": True})

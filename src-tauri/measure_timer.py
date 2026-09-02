@@ -1,6 +1,6 @@
 import subprocess, time, os
 EXE = r"D:\naixi_desktop\src-tauri\gt_timer2.exe"
-LOG = r"C:\Users\21222\AppData\Local\Temp\gt_count.log"
+LOG = os.path.join(os.environ.get("TEMP", os.environ.get("TMP", "C:\\Temp")), "gt_count.log")
 if os.path.exists(LOG): os.remove(LOG)
 p = subprocess.Popen([EXE])
 time.sleep(4.0)

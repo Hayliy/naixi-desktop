@@ -1,0 +1,1850 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: transparent; overflow: hidden; }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #hint { position: fixed; left: 10px; top: 10px; color: #9fe1cb; font: 12px/1.5 sans-serif; opacity: .75; text-shadow: 0 1px 2px #000; }
+</style>
+</head>
+<body>
+<script>
+  window.addEventListener('error', function (e) { console.error('[window error]', e.message, e.filename || ''); });
+  window.addEventListener('unhandledrejection', function (e) { console.error('[unhandledrejection]', e.reason && (e.reason.message || e.reason)); });
+</script>
+<div id="app"><canvas id="c"></canvas></div>
+<div id="hint">three-vrm 初始化中…</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.js",
+    "three/addons/loaders/GLTFLoader.js": "./vendor/GLTFLoader.js",
+    "@pixiv/three-vrm": "./vendor/three-vrm.module.js",
+    "@pixiv/three-vrm-animation": "./vendor/three-vrm-animation.module.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+import { createVRMAnimationClip, VRMAnimationLoaderPlugin, VRMLookAtQuaternionProxy } from '@pixiv/three-vrm-animation';
+import { FaceTracker, arkitToVRM } from './face_tracker.js';
+import { poseArmDirections, torsoToVRM, POSE_DEFAULTS, MODEL_LEFT_X_SIGN } from './pose_to_vrm.js';
+
+const MODEL_URL = "__MODEL_URL__";
+const MOTION_URL = "__MOTION_URL__";
+const DANCE = "__DANCE__" === "1";   // 服务端按 --dance 替换成 "1"
+const LOOP_MOTION = "__LOOP_MOTION__";   // 服务端按 --loop <name> 替换成动作名（不含.vrma）或 ""
+const FACE = "__FACE__" === "1";     // 服务端按 --face 替换成 "1"（开启摄像头面捕）
+const NOSKIRT = new URLSearchParams(location.search).get("noskirt") === "1";  // 隐藏裙摆，露出腿部
+const KNEE_DEBUG = new URLSearchParams(location.search).get("kneedebug") === "1";  // 膝盖诊断：区分 normalized/raw 与真正关节角
+const FACE_MIRROR = true;            // 前置摄像头镜像：交换左右眼/嘴角
+const FACE_GAIN = 1.0;               // 表情总增益（觉得夸张/不明显就调这个）
+// 面捕灵敏度 fallback 配置：faceTracker 未初始化（无头自验 / 摄像头未开）时，__vrmFaceConfig 仍写入此处，
+// 使 expressionGain / headGain 在无 faceTracker 下也能动态调节。真机有 faceTracker 时 applyFaceCapture 优先读 faceTracker.cfg。
+const FACE_CFG = {
+  headGain: { x: 0.8, y: 0.8, z: 0.8 },
+  headSign: { x: 1, y: 1, z: 1 },
+  headLimitRad: { pitch: 0.44, yaw: 0.61, roll: 0.26 },
+  smoothing: 0.1,
+  headSmoothing: 0.13,
+  expressionGain: FACE_GAIN,
+};
+let faceTracker = null, faceEnabled = false;
+console.log('[VRM] three.js + three-vrm-animation module imported');
+
+const canvas = document.getElementById('c');
+const hint = document.getElementById('hint');
+
+// 桌面宠小窗：锁像素比上限，避免高分屏 2x 把填充率放大 4 倍（业界桌面级常用 1~1.5）。
+// preserveDrawingBuffer 保留用于窗口合成抓取；antialias 仅对小窗可接受。
+// premultipliedAlpha: false —— Qt 透明窗口合成时，premultiplied 容易把 WebGL 输出的低 alpha 像素（发丝/半透明边）
+// 与 Qt 背景误混合甚至丢弃，表现为「头发/衣袖缺块」。用非 premultiplied 让 Qt 按常规 alpha 混合。
+const RENDER_PIXEL_RATIO = 1.5;
+const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: true, premultipliedAlpha: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, RENDER_PIXEL_RATIO));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x000000, 0);
+console.log('[VRM] WebGLRenderer created, context:', renderer.getContext() ? 'ok' : 'null');
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.05, 100);
+camera.position.set(0, 1.0, 5.0);
+scene.add(new THREE.AmbientLight(0xffffff, 1.4));
+const dir = new THREE.DirectionalLight(0xffffff, 1.6); dir.position.set(1, 2, 1.5); scene.add(dir);
+const dir2 = new THREE.DirectionalLight(0x88aaff, 0.5); dir2.position.set(-1, 1, -1); scene.add(dir2);
+
+let vrm = null;
+let mixer = null, idleAction = null, lookAtProxy = null;
+let _chestProbeTs = 0;
+let mouthValue = 0, targetMouth = 0;
+let expressionName = null;
+let activeMotion = null;
+let currentAction = null;     // 当前播放的真实 VRMA action
+let prevAction = null;        // 淡出中的上一个 action（crossFade 期间）
+let _fadeUntil = 0;           // 淡出完成的时刻，到时清理 prevAction
+let savedHipsPos = null;      // 动作前 hips 位移快照（VRMA 含根位移时还原）
+let danceMode = false;
+let danceIdx = -1;
+const motionClips = {};       // name -> THREE.AnimationClip（已编译）
+const clock = new THREE.Clock();
+
+const loader = new GLTFLoader();
+loader.register((parser) => new VRMLoaderPlugin(parser));
+loader.register((parser) => new VRMAnimationLoaderPlugin(parser));   // 支持加载 .vrma 动画
+
+console.log('[VRM] start loading', MODEL_URL);
+loader.load(MODEL_URL,
+  (gltf) => {
+    try {
+      vrm = gltf.userData.vrm;
+      console.log('[VRM] loaded. humanoid:', !!vrm.humanoid, 'springBone:', !!vrm.springBoneManager, 'expression:', !!vrm.expressionManager);
+      if (VRMUtils.removeUnnecessaryVertices) VRMUtils.removeUnnecessaryVertices(gltf.scene);
+      if (VRMUtils.removeUnnecessaryJoints) VRMUtils.removeUnnecessaryJoints(gltf.scene);
+      // ⚠️ combineSkeletons 会重建/合并 skeleton，导致 three-vrm humanoid 持有的 raw 骨骼
+      // 与 SkinnedMesh.skeleton.bones 变成两套不同对象（实测 idxInSkin = -1，见 [SKIN] 日志）。
+      // 后果：动画只驱动 humanoid 那套骨骼，网格顶点不受任何影响 —— 表现为
+      // 「角色随 hips 根位移整体平移，但所有关节都不弯」。
+      // 默认关闭；确需合并时用 ?combine=1 打开。
+      const DO_COMBINE = new URLSearchParams(location.search).get('combine') === '1';
+      if (DO_COMBINE && VRMUtils.combineSkeletons) { try { VRMUtils.combineSkeletons(gltf.scene); } catch (e) {} }
+      if (!DO_COMBINE) console.log('[VRM] combineSkeletons 已跳过（避免骨骼与网格脱钩）');
+      if (VRMUtils.combineMorphs) { try { VRMUtils.combineMorphs(vrm); } catch (e) {} }
+      vrm.scene.traverse((obj) => {
+        obj.frustumCulled = false;   // 官方示例关键：关闭视锥剔除，避免误裁
+        if (obj.isMesh || obj.isSkinnedMesh) {
+          const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+          for (const m of mats) {
+            if (m) {
+              m.side = THREE.DoubleSide;   // 面捕/动作驱动骨骼时，薄部件（发丝、裙摆、衣袖）可能被翻转到背面；
+                                           // VRM/MToon 默认多为 FrontSide，翻面后会直接“卡没”。
+            }
+          }
+        }
+      });
+      vrm.scene.scale.setScalar(0.85);
+      scene.add(vrm.scene);
+
+      // ── 修复：双骨骼 rig（MMD control/deform 平行骨）──
+      // 本模型腿骨是"控制骨(足L/ひざL/足首L) + 蒙皮变形骨(足DL/ひざDL/足首DL)"两套平行兄弟。
+      // three-vrm 的动画只驱动控制骨，但网格权重实际绑在变形骨 → 画面上腿不动。
+      // 修复：每帧把控制骨的世界变换同步到平行变形骨的 local，让蒙皮顶点随控制骨一起形变。
+      const FIX_N = (function () {
+        try { return _fixDualBoneRig(); } catch (e) { console.warn('[FIX] dual-bone 修复失败:', e.message); return -1; }
+      })();
+      console.log('[FIX] dual-bone rig 修复完成，reparented =', FIX_N);
+
+      // 加载 VRMA（来自 three-vrm 官方示例）。建好 mixer 但默认不自动播放——
+      // 模型默认站姿由官方 humanoid.resetNormalizedPose() 设为双臂自然下垂（非手写角度、非预设 idle）。
+      loader.load(MOTION_URL,
+        (g) => {
+          try {
+            const vrmAnim = g.userData.vrmAnimations && g.userData.vrmAnimations[0];
+            if (vrmAnim) {
+              // 先建并挂载 lookAt 代理，再编译 clip（消除自动创建警告，确保 lookAt 轨道生效）
+              lookAtProxy = new VRMLookAtQuaternionProxy(vrm.lookAt);
+              lookAtProxy.name = 'lookAtQuaternionProxy';
+              vrm.scene.add(lookAtProxy);
+              const clip = createVRMAnimationClip(vrmAnim, vrm);
+              mixer = new THREE.AnimationMixer(vrm.scene);
+              idleAction = mixer.clipAction(clip);   // 仅建好，默认不播放（静止站姿）
+              console.log('[VRM] VRMA 已加载（默认静止，双臂自然下垂）');
+              if (LOOP_MOTION && !FACE) {
+                const lm = (LOOP_MOTION || '').toLowerCase();
+                if (lm === 'dance' || lm === 'mix') startDance();   // 舞蹈合集轮播（多个动作、有表情）
+                else startLoopMotion(LOOP_MOTION);                   // 单动作无限循环
+              }
+              else if (DANCE && !FACE) startDance();
+              else if (FACE) console.log('[VRM] 面捕模式：开局待机静止站姿，身体不自动播放动作（手动 __vrmStartDance 仍可跳舞）');
+            } else {
+              console.warn('[VRM] VRMA 无动画轨道');
+            }
+          } catch (e) {
+            console.error('[VRM] 动画编译失败:', e && e.message);
+          }
+        },
+        undefined,
+        (e) => { console.error('[VRM] 动画加载失败:', e && (e.message || e)); }
+      );
+
+      // 默认站姿：双臂自然下垂。先 reset 回模型 rest，再按"手相对髋的几何距离"自动判定平举/张开并收拢到下垂
+      autoDropArms();
+      console.log('[VRM] 默认站姿：双臂自然下垂（测量自修正）');
+
+      fitCamera();
+      setTimeout(fitCamera, 300);    // 捕捉 springBone/初始稳定后的最终包围盒
+      setTimeout(fitCamera, 800);
+      hint.style.display = 'none';
+      window.dispatchEvent(new Event('vrm-ready'));
+      console.log('[VRM] ready. bbox=', bboxSizeStr());
+      try { console.log('[SKIN] ' + JSON.stringify(_skinDiag())); } catch (e) { console.warn('[SKIN] diag fail', e.message); }
+      setTimeout(() => { try { console.log('[WEIGHT] ' + JSON.stringify(_weightDiag())); } catch (e) { console.warn('[WEIGHT] diag fail', e.message); } }, 300);
+      setTimeout(() => { try { console.log('[HIER] ' + JSON.stringify(_boneHierDiag())); } catch (e) { console.warn('[HIER] diag fail', e.message); } }, 350);
+      // 修复验证：?verify=1 时，等循环动作跑起来后采样变形骨/网格最低点的世界Y振幅，证明腿真的在动
+      const VERIFY = new URLSearchParams(location.search).get('verify');
+      if (VERIFY) setTimeout(_verifyLegs, 2200);
+      if (KNEE_DEBUG) setTimeout(_kneeDebug, 2400);
+      // 诊断截图：?diag=N 时把每帧画面 POST 回后端存盘，供离线肉眼核对（不依赖用户当显示器）
+      const DIAG_N = new URLSearchParams(location.search).get('diag');
+      if (DIAG_N) setTimeout(startDiagCapture, 1800);
+      const METRICS_N = new URLSearchParams(location.search).get('metrics');
+      if (METRICS_N) setTimeout(startDiagMetrics, 1800);
+      if (NOSKIRT) {
+        // 延迟执行，等 window.__vrmHideSkirt（定义在文件后段）完成赋值
+        setTimeout(() => { try { window.__vrmHideSkirt(true); } catch (e) { console.warn('[VRM] 隐藏裙摆失败:', e.message); } }, 600);
+      }
+    } catch (e) {
+      console.error('[VRM] post-load setup error:', e && e.message ? e.message : e);
+    }
+  },
+  (xhr) => { if (xhr.total) console.log('[VRM] progress', (xhr.loaded / xhr.total * 100).toFixed(1) + '%'); },
+  (err) => {
+    console.error('[VRM] load error:', err && err.message ? err.message : err);
+    hint.textContent = 'VRM 加载失败：' + (err && err.message ? err.message : err);
+  }
+);
+
+function bboxSizeStr() {
+  const box = new THREE.Box3().setFromObject(vrm.scene);
+  const s = box.getSize(new THREE.Vector3());
+  return s.x.toFixed(2) + ' ' + s.y.toFixed(2) + ' ' + s.z.toFixed(2);
+}
+
+// 迭代式取景：保证包围盒 8 个角投影后，脚(最小 y)与头(最大 y)都落在 NDC [-MARGIN, MARGIN] 内。
+// 关键：测全部 8 角而非仅 box.min——脚尖在 z_max(更靠相机)，透视投影后 NDC y 比脚后跟更低，
+// 只测 box.min 会漏掉脚尖被裁而误判"安全"。
+function projectCornerExtents(box, cam) {
+  let feetY = Infinity, topY = -Infinity;
+  for (const sx of [box.min.x, box.max.x])
+    for (const sy of [box.min.y, box.max.y])
+      for (const sz of [box.min.z, box.max.z]) {
+        const p = new THREE.Vector3(sx, sy, sz).project(cam);
+        if (p.y < feetY) feetY = p.y;
+        if (p.y > topY) topY = p.y;
+      }
+  return [feetY, topY];
+}
+function fitCamera() {
+  if (!vrm) return;
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  const box = new THREE.Box3().setFromObject(vrm.scene);
+  // 面捕/动作会驱动手臂、头发、裙摆超出静态 T-pose/自然下垂的包围盒；
+  // 若相机只按静态 box 取景，高举手臂、甩头会把 mesh 甩出视锥，出现"缺斤少两"。
+  // 把静态 box 各方向外扩 30% 留足安全余量，确保面捕动作范围仍在画面内。
+  const ext = new THREE.Vector3().copy(box.getSize(new THREE.Vector3())).multiplyScalar(0.30);
+  box.expandByVector(ext);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const fovV = THREE.MathUtils.degToRad(camera.fov);
+  const MARGIN = 0.72;   // 更保守的 NDC 安全边界，给 tall/narrow 窗口和头顶发饰留余量
+  const tanHalf = Math.tan(fovV / 2);
+  let d = Math.max((size.y / 2) / (tanHalf * MARGIN), 0.01);
+  let cy = center.y;
+  for (let i = 0; i < 20; i++) {
+    camera.position.set(center.x, cy, center.z + d);
+    camera.lookAt(center.x, cy, center.z);
+    camera.updateMatrixWorld(true);
+    camera.updateProjectionMatrix();
+    const [feetY, topY] = projectCornerExtents(box, camera);
+    const midNDC = (topY + feetY) / 2;
+    // 先修正垂直居中（非对称时头顶/脚底偏向一侧），再考虑拉远
+    if (Math.abs(midNDC) > 0.02) {
+      cy += midNDC * d * tanHalf;
+      continue;
+    }
+    if (feetY > -MARGIN && topY < MARGIN) break;
+    d *= 1.06;
+  }
+  const [feetY, topY] = projectCornerExtents(box, camera);
+  console.log(`[FIT] d=${d.toFixed(2)} cy=${cy.toFixed(2)} feetNDC.y=${feetY.toFixed(3)} topNDC.y=${topY.toFixed(3)} (应在[-${MARGIN},${MARGIN}])`);
+}
+
+// ── 骨骼 helper ──
+function bone(name) {
+  try { return vrm.humanoid.getNormalizedBoneNode(name); } catch (e) { return null; }
+}
+// ── 自动判定并修正"双臂自然下垂" ──
+// 数据驱动，不靠肉眼、不写死角度：
+// 1) 先 reset 回模型 rest pose（多数 VRM 是 T-pose 平举，或 A-pose 微张）；
+// 2) 测量左手/右手世界坐标相对 hips 的水平距离 dx 与垂直距离 dy；
+// 3) 若手的水平距离明显大于垂直（即平举/张开），则把上臂旋到"肩->髋下略外"、前臂旋到"继续向下"，
+//    让手落到 hips 正下方附近（自然下垂）；若手本就在髋下且贴身，则不动。
+function worldPosOf(node) {
+  const v = new THREE.Vector3();
+  if (node) node.getWorldPosition(v);
+  return v;
+}
+// 把一个骨骼的世界方向从 curDir 旋到 tgtDir（换算成该骨骼的 local 四元数，保持父级约束）
+function rotateBoneWorldDir(boneNode, curDir, tgtDir) {
+  // 防御（2026-08-30 实锤）：任一输入为非有限值/零向量时，setFromUnitVectors 会产出 NaN 四元数，
+  // 而 NaN 一旦写进骨骼就会沿骨架永久扩散 —— 表现为"某些 mesh 突然整个消失且再也回不来"。
+  // 这里直接跳过本帧驱动，宁可这一帧不动，也不能污染骨架。
+  if (!boneNode || !boneNode.parent || !curDir || !tgtDir) return;
+  const okCur = isFinite(curDir.x) && isFinite(curDir.y) && isFinite(curDir.z);
+  const okTgt = isFinite(tgtDir.x) && isFinite(tgtDir.y) && isFinite(tgtDir.z);
+  if (!okCur || !okTgt) return;
+  if (curDir.lengthSq() < 1e-12 || tgtDir.lengthSq() < 1e-12) return;
+  const qDelta = new THREE.Quaternion().setFromUnitVectors(curDir, tgtDir);
+  const parentWorld = new THREE.Quaternion();
+  boneNode.parent.getWorldQuaternion(parentWorld);
+  const invParent = parentWorld.clone().invert();
+  const newLocal = invParent.multiply(qDelta).multiply(parentWorld).multiply(boneNode.quaternion.clone());
+  boneNode.quaternion.copy(newLocal);
+}
+// 安全写旋转：任一分量非有限值就跳过（NaN 会永久污染骨架，宁可这一帧不动）
+function setRotSafe(node, x, y, z) {
+  if (!node) return;
+  if (!isFinite(x) || !isFinite(y) || !isFinite(z)) return;
+  node.rotation.set(x, y, z);
+}
+// 双臂下垂角度（明确参数，非 90° 垂直、非瞎猜）：
+//   ARM_OUTWARD_DEG = 手臂与竖直方向的夹角（→ 与水平夹角 = 90-10 = 80°，即用户要求的"80° 量级"）。
+//   参考社区 VRM rest-pose 量级（gunbark.dev: UPPER_ARM_Z≈1.15rad≈66°，相对 T-pose 水平）；
+//   社区参考 gunbark.dev 的 UPPER_ARM_Z≈1.15rad≈66° 是"相对 T-pose 水平"的下垂角，
+//   即与水平夹角 66° → 与竖直夹角 = 90-66 = 24°。此处取该社区值（贴身改小/外张改大只动此常量）。
+const ARM_OUTWARD_DEG = 24;
+const ARM_OUTWARD_RAD = THREE.MathUtils.degToRad(ARM_OUTWARD_DEG);
+const ARM_FWD_RAD = 0.12;   // 手臂略朝前(相机+Z)，避免夹在身体正侧、更自然
+function dropOneArm(upper, lower, hand, hipsW, side) {
+  const aPos = worldPosOf(upper);
+  const hPos = worldPosOf(hand);
+  const curDir = hPos.clone().sub(aPos).normalize();
+  const armLen = hPos.distanceTo(aPos);
+  // 已下垂判定：手明显在髋下且贴近身体 → 不强行改（保留模型自带 A-pose 等自然姿态）
+  if (hPos.y < hipsW.y - armLen * 0.5 && Math.abs(hPos.x - hipsW.x) < armLen * 0.45) return false;
+  // 上臂目标方向：竖直向下，绕身体前后轴(Z)外张 ARM_OUTWARD 到体侧，再绕X略朝前
+  const down = new THREE.Vector3(0, -1, 0);
+  const qZ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), side * ARM_OUTWARD_RAD);
+  const qX = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -ARM_FWD_RAD);
+  const tgtDirUpper = down.clone().applyQuaternion(qZ).applyQuaternion(qX).normalize();
+  rotateBoneWorldDir(upper, curDir, tgtDirUpper);
+  upper.updateMatrixWorld(true);
+  // 前臂：继续向下，略向中线 + 略朝前，消除 T-pose 水平外伸
+  if (lower) {
+    const ePos = worldPosOf(lower);
+    const hPos2 = worldPosOf(hand);
+    const curDirLower = hPos2.clone().sub(ePos).normalize();
+    const tgtDirLower = tgtDirUpper.clone();  // 前臂续接上臂方向，整体手臂外张=ARM_OUTWARD_DEG（与水平66°），避免竖直前臂抵消外张
+    rotateBoneWorldDir(lower, curDirLower, tgtDirLower);
+    lower.updateMatrixWorld(true);
+  }
+  return true;
+}
+let _droppedPose = null;   // 首次 autoDropArms 算出的手臂下垂快照（local 四元数），后续直接复用
+function autoDropArms() {
+  if (!vrm || !vrm.humanoid) return;
+  vrm.humanoid.resetNormalizedPose();
+  vrm.scene.updateMatrixWorld(true);
+  const hips = bone('hips');
+  const lu = bone('leftUpperArm'), ru = bone('rightUpperArm');
+  const ll = bone('leftLowerArm'), rl = bone('rightLowerArm');
+  const hl = bone('leftHand'), hr = bone('rightHand');
+  if (!hips || !lu || !ru || !hl || !hr) return;
+  const hipsW = worldPosOf(hips);
+  const haL0 = worldPosOf(hl), haR0 = worldPosOf(hr);
+  const firstTime = !_droppedPose;
+  if (firstTime) console.log(`[POSE] 修正前 handL(dx=${(haL0.x-hipsW.x).toFixed(2)},dy=${(haL0.y-hipsW.y).toFixed(2)}) handR(dx=${(haR0.x-hipsW.x).toFixed(2)},dy=${(haR0.y-hipsW.y).toFixed(2)})`);
+  dropOneArm(lu, ll, hl, hipsW, +1);
+  dropOneArm(ru, rl, hr, hipsW, -1);
+  vrm.scene.updateMatrixWorld(true);
+  if (vrm.humanoid.update) vrm.humanoid.update();
+  // 缓存快照，避免后续每轮 demo 复位时重复计算 + 刷屏
+  _droppedPose = {
+    lu: lu.quaternion.clone(),
+    ll: ll ? ll.quaternion.clone() : null,
+    ru: ru.quaternion.clone(),
+    rl: rl ? rl.quaternion.clone() : null,
+  };
+  if (firstTime) {
+    const haL1 = worldPosOf(hl), haR1 = worldPosOf(hr);
+    console.log(`[POSE] 修正后 handL(dx=${(haL1.x-hipsW.x).toFixed(2)},dy=${(haL1.y-hipsW.y).toFixed(2)}) handR(dx=${(haR1.x-hipsW.x).toFixed(2)},dy=${(haR1.y-hipsW.y).toFixed(2)})`);
+  }
+}
+// 自然站立复位：有快照则直接复位全身 + 套用下垂手臂（不重算、不刷屏）；首次则测量自修正
+function applyRestPose() {
+  if (_droppedPose) {
+    if (!vrm || !vrm.humanoid) return;
+    vrm.humanoid.resetNormalizedPose();
+    const lu = bone('leftUpperArm'), ll = bone('leftLowerArm'), ru = bone('rightUpperArm'), rl = bone('rightLowerArm');
+    if (lu) lu.quaternion.copy(_droppedPose.lu);
+    if (ll && _droppedPose.ll) ll.quaternion.copy(_droppedPose.ll);
+    if (ru) ru.quaternion.copy(_droppedPose.ru);
+    if (rl && _droppedPose.rl) rl.quaternion.copy(_droppedPose.rl);
+    if (vrm.humanoid.update) vrm.humanoid.update();
+  } else {
+    autoDropArms();
+  }
+}
+
+// ── 动作库（程序化拓展，播放时暂停 VRMA idle）──
+// ── 真实 VRMA 动作库（motions/ 目录已下载的社区动作模组，非手写角度）──
+const MOTION_FILES = [
+  'Spin', 'Jump', 'Shoot', 'Squat', 'PeaceSign', 'Clapping', 'ShowFullBody',
+  'Greeting', 'Angry', 'Surprised', 'ModelPose', 'Sleepy', 'Thinking',
+  'LookAround', 'Relax', 'Goodbye', 'Sad', 'Blush', 'sample-mocopi'
+];
+
+// 舞蹈合集：连续表演用的「舞蹈向」动作序列（不含纯情绪动作），用于 --loop dance 的丰富轮播
+const DANCE_MIX = ['Dance', 'sample-mocopi', 'ShowFullBody', 'Spin', 'Jump', 'Clapping', 'Squat'];
+
+const motionClipFlags = {};   // 记录每个 clip 的 stripArms 编译标志（面捕开关切换时需重编译）
+function loadMotionClip(name, cb, stripRoot, stripArms) {
+  // 缓存需匹配 stripArms 标志：面捕开启/关闭切换时同一动作要按新标志重新编译
+  if (motionClips[name] && !!((motionClipFlags[name] || {}).stripArms) === !!stripArms) { cb && cb(true); return; }
+  const url = `/motions/${name}.vrma`;
+  loader.load(url, (g) => {
+    try {
+      const va = g.userData.vrmAnimations && g.userData.vrmAnimations[0];
+      if (!va) { console.warn(`[VRM] 动作无轨道: ${name}`); cb && cb(false); return; }
+      const clip = createVRMAnimationClip(va, vrm);
+      if (stripRoot) {
+        // 去根位移：去掉 hips 的 position 轨道，让角色原地循环、不漂移出画面（VRMA 常含走位根位移）
+        clip.tracks = clip.tracks.filter((tr) => {
+          const low = tr.name.toLowerCase();
+          return !(low.includes('hip') && low.endsWith('.position'));
+        });
+      }
+      if (stripArms) {
+        // 面捕开启时剥掉手臂轨道：舞蹈只动下半身/hips，上肢完全由摄像头驱动，
+        // 否则 mixer 每帧写手臂、面捕再覆盖，两者互抢 → 「动作与我做的不符合」。
+        // 注意社区 VRMA 用日文骨骼名（腕/ひじ/手首/肩/指），英文关键字匹配不到，必须都带上。
+        const armKw = ['upperarm', 'lowerarm', 'hand', 'shoulder', 'clavicle', 'arm', '腕', 'ひじ', '手首', '肩', '指'];
+        clip.tracks = clip.tracks.filter((tr) => !armKw.some((k) => tr.name.toLowerCase().includes(k)));
+      }
+      motionClips[name] = clip;
+      motionClipFlags[name] = { stripArms: !!stripArms };
+      console.log(`[VRM] 动作已编译: ${name} dur=${clip.duration.toFixed(2)}s stripRoot=${!!stripRoot} stripArms=${!!stripArms} tracks=${clip.tracks.length}`);
+      clip.tracks.forEach((tr, idx) => {
+        const n = tr.times ? tr.times.length : 0;
+        const t0 = n ? tr.times[0] : 0, t1 = n ? tr.times[n - 1] : 0;
+        let v0 = '?';
+        if (tr.values && tr.values.length) {
+          const stride = tr.values.length / Math.max(1, n);
+          v0 = Array.from(tr.values.slice(0, Math.min(stride, 4))).map(x => (+x).toFixed(3)).join(',');
+        }
+        console.log(`[TRACK ${idx}] ${tr.name} keys=${n} t=[${t0.toFixed(2)},${t1.toFixed(2)}] v0=${v0}`);
+      });
+      cb && cb(true);
+    } catch (e) { console.error(`[VRM] 动作编译失败 ${name}:`, e && e.message); cb && cb(false); }
+  }, undefined, (e) => { console.error(`[VRM] 动作加载失败 ${name}:`, e && (e.message || e)); cb && cb(false); });
+}
+
+function startMotionClip(name) {
+  if (!mixer) return;
+  const clip = motionClips[name];
+  if (!clip) { console.warn('[VRM] 未就绪动作:', name); return; }
+  const hips = bone('hips');
+  savedHipsPos = hips ? hips.position.clone() : null;
+  const next = mixer.clipAction(clip);
+  next.reset();
+  next.setLoop(THREE.LoopRepeat, 1);
+  next.clampWhenFinished = true;
+  next.enabled = true;
+  const prev = currentAction;
+  if (prev && prev !== next) {
+    // 平滑过渡：保留上一动作 0.4s 交叉淡入淡出，避免合集轮播硬切导致姿势瞬跳（“闪”）
+    prev.enabled = true;
+    prev.setEffectiveWeight(1);
+    next.setEffectiveWeight(0);
+    next.setEffectiveWeight(0);
+    next.play();
+    next.fadeIn(0.4);
+    prev.fadeOut(0.4);
+    prevAction = prev;
+    _fadeUntil = clock.elapsedTime + 0.45;
+  } else {
+    next.setEffectiveWeight(1);
+  }
+  next.play();
+  currentAction = next;
+  if (idleAction) idleAction.paused = true;
+  activeMotion = { name, dur: clip.duration, t: 0 };
+  console.log('[VRM] motion ->', name);
+}
+
+function playMotion(name) {
+  if (!vrm || !vrm.humanoid) return false;
+  if (motionClips[name]) { startMotionClip(name); }
+  else { loadMotionClip(name, (ok) => { if (ok) startMotionClip(name); }); }
+  return true;
+}
+
+function nextDance() {
+  danceIdx = (danceIdx + 1) % DANCE_MIX.length;
+  const name = DANCE_MIX[danceIdx];
+  if (motionClips[name] && !!((motionClipFlags[name] || {}).stripArms) === !!faceEnabled) startMotionClip(name);
+  else loadMotionClip(name, (ok) => { if (ok) startMotionClip(name); }, false, faceEnabled);
+}
+
+function startDance() {
+  if (!mixer) { console.warn('[VRM] mixer 未就绪，dance 延迟启动'); setTimeout(startDance, 200); return; }
+  danceMode = true;
+  danceIdx = -1;
+  let firstStarted = false;
+  // 面捕开启时舞蹈按 stripArms 编译：上肢归摄像头，舞蹈只动下半身
+  DANCE_MIX.forEach((n) => loadMotionClip(n, () => {
+    if (!firstStarted) { firstStarted = true; nextDance(); }
+  }, false, faceEnabled));
+  console.log(`[DANCE] 已启动：循环播放舞蹈合集（${DANCE_MIX.length} 个，stripArms=${!!faceEnabled}）`);
+}
+
+function startLoopMotion(name) {
+  if (!name) return;
+  if (name === 'proc') { startProceduralLoop(); return; }   // 程序化全身动作（社区 VRMA 与本模型不兼容时的兜底）
+  danceMode = false;
+  const begin = () => {
+    if (!mixer) { setTimeout(begin, 200); return; }
+    if (!motionClips[name]) { loadMotionClip(name, begin, true, false); return; }
+    const clip = motionClips[name];
+    const hips = bone('hips');
+    savedHipsPos = hips ? hips.position.clone() : null;
+    const next = mixer.clipAction(clip);
+    next.reset();
+    next.setLoop(THREE.LoopRepeat, Infinity);
+    next.enabled = true;
+    const prev = currentAction;
+    if (prev && prev !== next) {
+      prev.enabled = true;
+      prev.setEffectiveWeight(1);
+      next.setEffectiveWeight(0);
+      next.play();
+      next.fadeIn(0.4);
+      prev.fadeOut(0.4);
+      prevAction = prev;
+      _fadeUntil = clock.elapsedTime + 0.45;
+    } else {
+      next.setEffectiveWeight(1);
+    }
+    next.play();
+  currentAction = next;   // 无限循环，连续不停
+    if (idleAction) idleAction.paused = true;
+    activeMotion = { name, dur: Infinity, t: 0, stripArms: false };   // dur=Infinity → frame 不切下一个，持续循环
+    console.log('[LOOP] 连续动作循环播放 ->', name, '(去根位移, 保留手臂真·mocap, 原地无缝全身舞)');
+  };
+  begin();
+}
+
+// 剥掉手臂 track 后，补一个极小幅的程序化自然摆动，避免手臂完全僵硬静止，同时保持下垂不 T-pose
+function applyProceduralArmSwing(t) {
+  if (!_droppedPose) return;
+  const phase = Math.sin(t * 1.2) * 0.06;   // 约 ±3.4°，小幅度
+  const qx = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), phase);
+  const lu = bone('leftUpperArm'), ru = bone('rightUpperArm');
+  const ll = bone('leftLowerArm'), rl = bone('rightLowerArm');
+  if (lu && _droppedPose.lu) lu.quaternion.copy(_droppedPose.lu).multiply(qx);
+  if (ru && _droppedPose.ru) ru.quaternion.copy(_droppedPose.ru).multiply(qx.clone().invert());
+  if (ll && _droppedPose.ll) {
+    const q2 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), phase * 0.6);
+    ll.quaternion.copy(_droppedPose.ll).multiply(q2);
+  }
+  if (rl && _droppedPose.rl) {
+    const q2 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), phase * 0.6);
+    rl.quaternion.copy(_droppedPose.rl).multiply(q2.clone().invert());
+  }
+}
+
+// ── 程序化全身动作（兜底层）：真实的 VRoid Motion Pack VRMA 在 three-vrm 3.4.3 + 本 VRM1 模型下
+//    已能完整解析全身 52 骨轨道（headless 验证 totalTracks=52），循环即全身真·mocap 舞。
+//    程序化正弦动作仅作为 --loop proc 的兜底（不依赖任何外部素材、保证“连续+全身明显在动+手臂自然不 T-pose”），
+//    用于素材全部缺失的极端情况。正常 --loop <Spin/Squat/ShowFullBody> 走真实 VRMA。 ──
+let _procRest = null;   // 程序化动作的骨骼静止快照（local 四元数 + hips Y），每帧在其上叠加正弦增量
+function startProceduralLoop() {
+  danceMode = false;
+  if (currentAction) { currentAction.stop(); currentAction = null; }
+  if (idleAction) idleAction.paused = true;
+  if (vrm && vrm.humanoid) vrm.humanoid.resetNormalizedPose();
+  applyRestPose();                 // 全身复位 + 双臂自然下垂
+  vrm.scene.updateMatrixWorld(true);
+  const snap = (n) => { const b = bone(n); return b ? b.quaternion.clone() : null; };
+  const hips = bone('hips');
+  _procRest = {
+    hipsY: hips ? hips.position.y : 0,
+    hips: snap('hips'), spine: snap('spine'), chest: snap('chest'), upperChest: snap('upperChest'),
+    neck: snap('neck'), head: snap('head'),
+    lu: snap('leftUpperArm'), ll: snap('leftLowerArm'), ru: snap('rightUpperArm'), rl: snap('rightLowerArm'),
+    lul: snap('leftUpperLeg'), lll: snap('leftLowerLeg'), rul: snap('rightUpperLeg'), rll: snap('rightLowerLeg'),
+  };
+  activeMotion = { name: 'proc', dur: Infinity, t: 0, procedural: true };
+  console.log('[PROC] 程序化全身动作循环启动（驱动 hips/spine/chest/head/arm/leg，验证全身骨骼）');
+}
+const _qY = (a) => new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), a);
+const _qX = (a) => new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), a);
+const _qZ = (a) => new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), a);
+function _setRot(name, restKey, dq) {
+  const b = bone(name); const r = _procRest && _procRest[restKey];
+  if (b && r) b.quaternion.copy(r).multiply(dq);
+}
+function applyProceduralFullBody(t) {
+  if (!_procRest) return;
+  // 髋部：上下起伏（轻微深蹲感）
+  const hips = bone('hips');
+  if (hips) hips.position.y = _procRest.hipsY + Math.sin(t * 2.0) * 0.035 + Math.sin(t * 4.0) * -0.015;
+  // 脊柱/胸腔：缓慢扭转
+  _setRot('spine', 'spine', _qY(Math.sin(t * 1.3) * 0.12));
+  _setRot('chest', 'chest', _qY(Math.sin(t * 1.3 + 0.4) * 0.10));
+  _setRot('upperChest', 'upperChest', _qY(Math.sin(t * 1.3 + 0.7) * 0.06));
+  // 头：慢转 + 点头
+  _setRot('head', 'head', _qY(Math.sin(t * 0.7) * 0.22).multiply(_qX(Math.sin(t * 1.1) * 0.08)));
+  _setRot('neck', 'neck', _qY(Math.sin(t * 0.7 + 0.2) * 0.10));
+  // 手臂：在“自然下垂”基础上前后 + 侧向摆动（左右反相），幅度明显但不 T-pose
+  const sw = 0.45;
+  _setRot('leftUpperArm', 'lu', _qX(Math.sin(t * 2.0) * sw).multiply(_qZ(-0.12)));
+  _setRot('rightUpperArm', 'ru', _qX(Math.sin(t * 2.0 + Math.PI) * sw).multiply(_qZ(0.12)));
+  _setRot('leftLowerArm', 'll', _qX(Math.sin(t * 2.0) * 0.22 + 0.22));
+  _setRot('rightLowerArm', 'rl', _qX(Math.sin(t * 2.0 + Math.PI) * 0.22 + 0.22));
+  // 腿：随髋起伏轻微屈膝（验证下肢骨骼）
+  const knee = (Math.sin(t * 2.0) * 0.5 + 0.5) * 0.16;
+  _setRot('leftUpperLeg', 'lul', _qX(-knee * 0.4));
+  _setRot('rightUpperLeg', 'rul', _qX(-knee * 0.4));
+  _setRot('leftLowerLeg', 'lll', _qX(knee));
+  _setRot('rightLowerLeg', 'rll', _qX(knee));
+}
+
+// 诊断截图：把画面 POST 回后端存盘（base64 PNG），离线肉眼核对动作是否异常
+function startDiagCapture() {
+  const n = parseInt(new URLSearchParams(location.search).get('diag'), 10) || 16;
+  let i = 0;
+  const timer = setInterval(() => {
+    i++;
+    try {
+      const url = renderer.domElement.toDataURL('image/png');
+      fetch('/capture?i=' + i, { method: 'POST', body: url, headers: { 'Content-Type': 'text/plain' } });
+    } catch (e) { console.warn('[DIAG] capture err', e.message); }
+    if (i >= n) { clearInterval(timer); console.log('[DIAG] 截图完成 n=' + n); }
+  }, 500);
+}
+
+// 数值指标探针：用真实骨骼世界坐标算“手臂抬起角(相对竖直向下)”与“各部位世界 Y 位移”，POST 回后端 jsonl。
+// 关键价值：AI 读到的是数字而非 PNG（本模型不支持读图），从而可数学自证“右胳膊不再反复平举”且“全身在动”。
+function armElevDeg(side) {
+  const sh = bone(side + 'UpperArm');
+  const hd = bone(side + 'Hand');
+  if (!sh || !hd) return null;
+  const a = new THREE.Vector3(); sh.getWorldPosition(a);
+  const b = new THREE.Vector3(); hd.getWorldPosition(b);
+  const dir = b.clone().sub(a).normalize();
+  const down = new THREE.Vector3(0, -1, 0);
+  const cos = THREE.MathUtils.clamp(dir.dot(down), -1, 1);
+  return Math.acos(cos) * 180 / Math.PI;   // 0=竖直向下(自然下垂) 90=水平(T-pose 平举) 180=竖直向上
+}
+function _boneWorldY(name) { const n = bone(name); if (!n) return null; const v = new THREE.Vector3(); n.getWorldPosition(v); return v.y; }
+function _boneWorldX(name) { const n = bone(name); if (!n) return null; const v = new THREE.Vector3(); n.getWorldPosition(v); return v.x; }
+
+// ── 三维多点骨骼模型（姿态点云）──
+// 把这 20 个骨骼点当作一帧的"形状"。分析时用 Procrustes(Kabsch) 把每帧点云
+// 最优刚体对齐到参考帧，扣除【整体平移 + 整体旋转】后剩下的残差，才是
+// "该骨骼相对身体真的动了"。这样就能区分「整体根位移导致的坐标变化」与
+// 「部位自身真在动」，避免把角色整体位移误判成"全身在动"。
+const SKELETON_BONES = [
+  'hips', 'spine', 'chest', 'upperChest', 'neck', 'head',
+  'leftShoulder', 'leftUpperArm', 'leftLowerArm', 'leftHand',
+  'rightShoulder', 'rightUpperArm', 'rightLowerArm', 'rightHand',
+  'leftUpperLeg', 'leftLowerLeg', 'leftFoot',
+  'rightUpperLeg', 'rightLowerLeg', 'rightFoot',
+];
+function _skeletonPoints() {
+  const out = [];
+  for (const n of SKELETON_BONES) {
+    const b = bone(n);
+    if (!b) { out.push(null); continue; }
+    const v = new THREE.Vector3();
+    b.getWorldPosition(v);
+    out.push([+v.x.toFixed(4), +v.y.toFixed(4), +v.z.toFixed(4)]);
+  }
+  return out;
+}
+// 关节旋转（local quaternion）：位置点云会被"整体位移"污染，且深蹲这类动作里
+// 「腿弯曲 → 躯干下降」会被 Procrustes 误当成整体平移扣掉。关节角不受平移影响，
+// 是判断"这个关节到底动没动"的金标准：与参考帧的夹角 = 2*acos(|dot(q0,q)|)。
+function _skeletonQuats() {
+  const out = [];
+  for (const n of SKELETON_BONES) {
+    const b = bone(n);
+    if (!b) { out.push(null); continue; }
+    const q = b.quaternion;   // 相对父骨骼的局部旋转
+    out.push([+q.x.toFixed(5), +q.y.toFixed(5), +q.z.toFixed(5), +q.w.toFixed(5)]);
+  }
+  return out;
+}
+// 诊断：SkinnedMesh 究竟绑定了哪些骨骼。
+// 若 humanoid 的 raw 骨骼不在 SkinnedMesh.skeleton.bones 里，动画再怎么驱动骨骼，
+// 网格顶点也不会变形 —— 这就是"骨骼数据显示在动、画面上纹丝不动"的最后一处嫌疑。
+function _skinDiag() {
+  const out = [];
+  if (!vrm || !vrm.scene || !vrm.humanoid) return out;
+  vrm.scene.traverse((o) => {
+    if (!o.isSkinnedMesh) return;
+    const bones = o.skeleton ? o.skeleton.bones : [];
+    const probe = {};
+    for (const n of ['hips', 'leftUpperLeg', 'leftLowerLeg', 'leftFoot']) {
+      let raw = null;
+      try { raw = vrm.humanoid.getRawBoneNode(n); } catch (e) { raw = null; }
+      probe[n] = {
+        rawName: raw ? raw.name : null,
+        idxInSkin: raw ? bones.indexOf(raw) : -1,
+      };
+    }
+    out.push({ mesh: o.name, boneCount: bones.length, probe });
+  });
+  return out;
+}
+
+// 诊断：蒙皮权重 —— 每条骨骼到底被多少个顶点引用。
+// 骨骼已绑进 skeleton 也不够：若腿部顶点的权重全挂在 hips/センター 上（MMD 转 VRM 常见缺陷），
+// 腿骨怎么转网格都不变形。boundVerts 为 0 或极小 = 该骨骼对网格无实际影响。
+function _weightDiag() {
+  const out = [];
+  if (!vrm || !vrm.scene || !vrm.humanoid) return out;
+  const names = ['hips', 'leftUpperLeg', 'leftLowerLeg', 'leftFoot',
+                 'rightUpperLeg', 'rightLowerLeg', 'rightFoot', 'leftUpperArm', 'head'];
+  vrm.scene.traverse((o) => {
+    if (!o.isSkinnedMesh) return;
+    const bones = o.skeleton ? o.skeleton.bones : [];
+    const idxOf = {};
+    for (const n of names) {
+      let raw = null; try { raw = vrm.humanoid.getRawBoneNode(n); } catch (e) {}
+      idxOf[n] = raw ? bones.indexOf(raw) : -1;
+    }
+    const si = o.geometry.attributes.skinIndex;
+    const sw = o.geometry.attributes.skinWeight;
+    const cnt = {}; for (const n of names) cnt[n] = 0;
+    // 统计每个 skeleton bone 被多少顶点引用（top 10），用来发现"腿顶点到底绑在哪些骨上"
+    const byBone = {};
+    if (si && sw) {
+      for (let i = 0; i < si.count; i++) {
+        for (let c = 0; c < 4; c++) {
+          const w = sw.getComponent(i, c);
+          if (w <= 0.0001) continue;
+          const b = si.getComponent(i, c);
+          byBone[b] = (byBone[b] || 0) + 1;
+          for (const n of names) if (idxOf[n] === b) cnt[n]++;
+        }
+      }
+    }
+    const top = Object.entries(byBone).sort((a, b) => b[1] - a[1]).slice(0, 10)
+      .map(([b, c]) => ({ bone: bones[+b] ? bones[+b].name : ('idx' + b), cnt: c }));
+    out.push({
+      mesh: o.name, verts: si ? si.count : 0,
+      legBind: {
+        leftUpperLeg: cnt.leftUpperLeg, leftLowerLeg: cnt.leftLowerLeg, leftFoot: cnt.leftFoot,
+        rightUpperLeg: cnt.rightUpperLeg, rightLowerLeg: cnt.rightLowerLeg, rightFoot: cnt.rightFoot
+      },
+      topBones: top
+    });
+  });
+  // 全部网格（不再只取前 6），按顶点数降序，便于核对腿部到底在哪块网格、绑在哪些骨
+  out.sort((a, b) => b.verts - a.verts);
+  return out;
+}
+
+// 原始(raw)骨骼位置：与 normalized 对照，用来判断"动画有没有同步到真正驱动网格的骨骼"。
+// 若 pts(normalized) 在动而 rpts(raw) 不动，就是骨骼同步失效 —— 表现为数据说在动、画面不动。
+function _skeletonRawPoints() {
+  const out = [];
+  for (const n of SKELETON_BONES) {
+    let b = null;
+    try { b = (vrm && vrm.humanoid && vrm.humanoid.getRawBoneNode) ? vrm.humanoid.getRawBoneNode(n) : null; } catch (e) { b = null; }
+    if (!b) { out.push(null); continue; }
+    const v = new THREE.Vector3();
+    b.getWorldPosition(v);
+    out.push([+v.x.toFixed(4), +v.y.toFixed(4), +v.z.toFixed(4)]);
+  }
+  return out;
+}
+
+// 诊断：骨骼父子层级 —— 判断"真正蒙皮的变形骨(足DL/ひざDL/足首DL)"是不是 humanoid 控制骨(足L/ひざL/足首L)的子节点。
+// 若是子节点，旋转控制骨会继承到变形骨 → 腿会动；若两者平级(同父)，旋转控制骨带不动变形骨 → 腿不动（本 bug 嫌疑）。
+function _boneHierDiag() {
+  if (!vrm || !vrm.scene) return [];
+  const out = [];
+  const keyBone = (n) => { try { return vrm.humanoid.getRawBoneNode(n); } catch (e) { return null; } };
+  const targets = {};
+  for (const n of ['hips','leftUpperLeg','leftLowerLeg','leftFoot','rightUpperLeg','rightLowerLeg','rightFoot']) {
+    const b = keyBone(n); if (b) targets[n] = b.name;
+  }
+  vrm.scene.traverse((o) => {
+    if (!o.isBone) return;
+    const nm = o.name || '';
+    if (!/足|ひざ|足首|腿|膝|下半身/.test(nm)) return;   // 只看腿相关骨
+    const chain = [];
+    let p = o.parent;
+    while (p) { chain.push(p.name || p.type); p = p.parent; }
+    out.push({ bone: nm, parent: o.parent ? (o.parent.name || o.parent.type) : null, chainToRoot: chain.slice(0, 10) });
+  });
+  // 附加：humanoid 控制骨 → 其父链，便于对照
+  const ctrl = [];
+  for (const [n, nm] of Object.entries(targets)) {
+    let b = null; try { b = vrm.humanoid.getRawBoneNode(n); } catch (e) {}
+    if (!b) continue;
+    const chain = []; let p = b.parent; while (p) { chain.push(p.name || p.type); p = p.parent; }
+    ctrl.push({ humanoid: n, rawName: nm, parent: b.parent ? (b.parent.name || b.parent.type) : null, chainToRoot: chain.slice(0, 10) });
+  }
+  return { deformBones: out, humanoidCtrl: ctrl };
+}
+
+// 修复：MMD 双骨骼 rig——humanoid 控制骨（足L/ひざL/足首L）驱动动画，
+// 但网格顶点实际绑在变形骨（足DL/ひざDL/足首DL）上，且两套骨原先是平行兄弟。
+// 方案：每帧把控制骨的【世界变换】同步到对应变形骨（保持变形骨在原 skeleton 层级里不动），
+// 这样 SkinnedMesh 的 bindMatrix/boneInverse 完全不用改，网格会随控制骨正确形变。
+let _dualBoneMap = [];
+function _fixDualBoneRig() {
+  if (!vrm || !vrm.scene) return 0;
+  // 离线解析已确认：本模型 MMD 控制骨与蒙皮变形骨完全平行。
+  // humanoid.getRawBoneNode 在本模型/three-vrm 3.4.3 下可能返回 null，直接用节点名兜底。
+  const findBone = (nm) => { let b=null; vrm.scene.traverse((o)=>{ if(!b && o.isBone && o.name===nm) b=o; }); return b; };
+  // three-vrm 加载后节点名去掉了点：原始 glTF `足.L` -> 运行时 `足L`。
+  const PAIRS = [
+    ['足L','足DL'], ['ひざL','ひざDL'], ['足首L','足首DL'],
+    ['足R','足DR'], ['ひざR','ひざDR'], ['足首R','足首DR']
+  ];
+  _dualBoneMap = [];
+  for (const [cname, dname] of PAIRS) {
+    const ctrl = findBone(cname);
+    const deform = findBone(dname);
+    if (!ctrl) { console.warn('[FIX] 未找到控制骨', cname); continue; }
+    if (!deform) { console.warn('[FIX] 未找到变形骨', dname, '(控制骨', cname, ')'); continue; }
+    // MMD 双骨骼 rig：动画只驱动控制骨，网格却绑在变形骨。
+    // 把变形骨 attach 到对应控制骨下（保留世界变换），重建单链，
+    // 之后动画驱动控制骨时子骨自动跟随，无需每帧同步，避免手动折算矩阵的轴向/scale 错误。
+    ctrl.attach(deform);
+    _dualBoneMap.push({ hb: cname, ctrl, deform });
+  }
+  console.log('[FIX] dual-bone map count =', _dualBoneMap.length, _dualBoneMap.map(p => p.ctrl.name + '->' + p.deform.name).join(','));
+  return _dualBoneMap.length;
+}
+
+function _syncDualBones() {
+  if (!_dualBoneMap || !_dualBoneMap.length) return;
+  // attach 已重建单链，动画驱动控制骨即带动变形骨，无需每帧同步。
+}
+
+// 验证：采样"真正蒙皮的变形骨(大腿/膝/踝/头)"在循环动作中的三维轨迹振幅。
+// 修复前这些变形骨不被驱动 → 振幅≈0（腿不动）；修复后膝盖应大幅前移/下移（腿在弯/蹲）。
+// 注：SkinnedMesh 的 geometry.boundingBox 只反映静止姿态、不含骨骼形变，故改用骨骼世界坐标。
+function _verifyLegs() {
+  if (!vrm || !vrm.scene) return;
+  const findBone = (nm) => { let b = null; vrm.scene.traverse((o) => { if (!b && o.isBone && o.name === nm) b = o; }); return b; };
+  const bones = {
+    thighL: findBone('足DL') || findBone('足L'),
+    kneeL:  findBone('ひざDL') || findBone('ひざL'),
+    ankleL: findBone('足首DL') || findBone('足首L'),
+    head:   findBone('頭') || findBone('head'),
+    ctrlHip: findBone('センター') || findBone('hips'),
+  };
+  const samples = [];
+  let i = 0;
+  const id = setInterval(() => {
+    i++;
+    vrm.scene.updateMatrixWorld(true);
+    const rec = { i, t: +clock.elapsedTime.toFixed(3) };
+    for (const k in bones) {
+      const b = bones[k];
+      if (!b) { rec[k] = null; continue; }
+      const p = b.getWorldPosition(new THREE.Vector3());
+      rec[k] = [+p.x.toFixed(4), +p.y.toFixed(4), +p.z.toFixed(4)];
+    }
+    samples.push(rec);
+    if (i >= 60) {
+      clearInterval(id);
+      const amp3d = (k) => {
+        const ps = samples.map(s => s[k]).filter(v => v != null);
+        if (ps.length < 2) return null;
+        let mx = 0;
+        for (let a = 0; a < ps.length; a++) for (let b = a + 1; b < ps.length; b++) {
+          const d = Math.hypot(ps[a][0]-ps[b][0], ps[a][1]-ps[b][1], ps[a][2]-ps[b][2]);
+          if (d > mx) mx = d;
+        }
+        return +mx.toFixed(4);
+      };
+      const out = {}; for (const k in bones) out[k] = amp3d(k);
+      console.log('[VERIFY] 腿动验证(循环动作中, 三维轨迹最大振幅 n=' + samples.length + ') ' + JSON.stringify(out));
+    }
+  }, 100);
+}
+
+// 膝盖关节诊断：采样 normalized / raw / deform 三链的局部关节角，排除根运动干扰。
+// 用户质疑"像 3D 摆钟整体旋转但内部结构不变"，本诊断直接量"大腿-小腿夹角"是否真变。
+function _kneeDebug() {
+  if (!vrm || !vrm.humanoid) return;
+  const nHip = vrm.humanoid.getNormalizedBoneNode('leftUpperLeg');
+  const nKnee = vrm.humanoid.getNormalizedBoneNode('leftLowerLeg');
+  const nAnkle = vrm.humanoid.getNormalizedBoneNode('leftFoot');
+  const rHip = vrm.humanoid.getRawBoneNode('leftUpperLeg');
+  const rKnee = vrm.humanoid.getRawBoneNode('leftLowerLeg');
+  const rAnkle = vrm.humanoid.getRawBoneNode('leftFoot');
+  const findBone = (nm) => { let b = null; vrm.scene.traverse((o) => { if (!b && o.isBone && o.name === nm) b = o; }); return b; };
+  const dHip = findBone('足DL') || rHip;
+  const dKnee = findBone('ひざDL') || rKnee;
+  const dAnkle = findBone('足首DL') || rAnkle;
+  const angle = (hip, knee, ankle) => {
+    if (!hip || !knee || !ankle) return null;
+    const a = new THREE.Vector3(); hip.getWorldPosition(a);
+    const k = new THREE.Vector3(); knee.getWorldPosition(k);
+    const c = new THREE.Vector3(); ankle.getWorldPosition(c);
+    const thigh = k.clone().sub(a).normalize();
+    const calf = c.clone().sub(k).normalize();
+    return THREE.MathUtils.radToDeg(Math.acos(THREE.MathUtils.clamp(thigh.dot(calf), -1, 1)));
+  };
+  const qstr = (q) => q ? [q.x.toFixed(3), q.y.toFixed(3), q.z.toFixed(3), q.w.toFixed(3)].join(',') : null;
+  const samples = [];
+  let i = 0;
+  const id = setInterval(() => {
+    i++;
+    vrm.scene.updateMatrixWorld(true);
+    samples.push({
+      i, t: +clock.elapsedTime.toFixed(3),
+      nAng: angle(nHip, nKnee, nAnkle),
+      rAng: angle(rHip, rKnee, rAnkle),
+      dAng: angle(dHip, dKnee, dAnkle),
+      nQ: qstr(nKnee && nKnee.quaternion),
+      rQ: qstr(rKnee && rKnee.quaternion),
+      dQ: qstr(dKnee && dKnee.quaternion)
+    });
+    if (i >= 40) {
+      clearInterval(id);
+      console.log('[KNEEDEBUG] ' + JSON.stringify(samples));
+      const amp = (arr, k) => {
+        const vs = arr.map(s => s[k]).filter(v => v != null);
+        if (vs.length < 2) return null;
+        return +(Math.max(...vs) - Math.min(...vs)).toFixed(3);
+      };
+      console.log('[KNEEDEBUG-AMP] nAng=' + amp(samples, 'nAng') + ' rAng=' + amp(samples, 'rAng') + ' dAng=' + amp(samples, 'dAng'));
+    }
+  }, 300);
+}
+
+function startDiagMetrics() {
+  const n = parseInt(new URLSearchParams(location.search).get('metrics'), 10) || 40;
+  const loop = new URLSearchParams(location.search).get('loop') || (LOOP_MOTION || 'static');
+  let i = 0;
+  const timer = setInterval(() => {
+    i++;
+    try {
+      const aL = armElevDeg('left'), aR = armElevDeg('right');
+      const sample = {
+        i: i, t: +clock.elapsedTime.toFixed(3),
+        armL: (aL == null ? null : +aL.toFixed(2)),
+        armR: (aR == null ? null : +aR.toFixed(2)),
+        hipsY: +_boneWorldY('hips').toFixed(4),
+        headY: +_boneWorldY('head').toFixed(4),
+        lFootY: +_boneWorldY('leftFoot').toFixed(4),
+        rFootY: +_boneWorldY('rightFoot').toFixed(4),
+        lHandY: +_boneWorldY('leftHand').toFixed(4),
+        rHandY: +_boneWorldY('rightHand').toFixed(4),
+        lHandX: +_boneWorldX('leftHand').toFixed(4),
+        rHandX: +_boneWorldX('rightHand').toFixed(4),
+        // 三维多点骨骼点云（与 SKELETON_BONES 顺序一致，null=该骨在模型上缺失）
+        pts: _skeletonPoints(),
+        // 各关节局部旋转四元数（判断"关节自身转没转"，不受整体平移干扰）
+        qs: _skeletonQuats(),
+        // 原始骨骼位置，与 pts(normalized) 对照，诊断骨骼同步是否失效
+        rpts: _skeletonRawPoints(),
+      };
+      fetch('/metrics?name=' + encodeURIComponent(loop), { method: 'POST', body: JSON.stringify(sample), headers: { 'Content-Type': 'application/json' } });
+    } catch (e) { console.warn('[METRICS] err', e.message); }
+    if (i >= n) { clearInterval(timer); console.log('[METRICS] 完成 n=' + n); }
+  }, 200);
+}
+
+// 面捕 Pose 手臂：3D 方向对齐法 —— 上臂对齐「肩→肘」、前臂对齐「肘→腕」的 Pose 世界向量，
+// 可完整表达侧举/前伸/后摆（替代旧 lift/bend 两自由度近似，准确性差的主因）。
+// 目标方向补一点外张（ARM_OUTWARD_RAD），垂手贴身时避免穿模；方向向量做时间常数平滑抗抖。
+const _armSmooth = { left: null, right: null };
+const _armTgt = { left: null, right: null };   // 每帧记录的目标方向，供肘部自检对比
+// 方向插值必须走球面（slerp 语义），不能对向量做线性 lerp 再归一化：
+// 真人手从身体一侧扫到另一侧时，上臂目标方向接近反向（夹角≈180°），
+// lerp 的中点趋近原点，归一化后方向急剧不确定 → 手臂「抽搐/甩动」（数学必然，非猜测）。
+// 球面插值：绕 (prev×tgt) 轴转 夹角*k，全程单位长度，无奇异点。
+function _smoothVec(prev, tgt, k) {
+  if (!tgt) return null;
+  const t = new THREE.Vector3(tgt.x, tgt.y, tgt.z);
+  if (t.lengthSq() < 1e-12) return null;
+  t.normalize();
+  if (!prev) return { x: t.x, y: t.y, z: t.z };
+  const p = new THREE.Vector3(prev.x, prev.y, prev.z);
+  if (p.lengthSq() < 1e-12) return { x: t.x, y: t.y, z: t.z };
+  p.normalize();
+  const dot = Math.min(1, Math.max(-1, p.dot(t)));
+  const angle = Math.acos(dot);
+  if (angle < 1e-4) return { x: t.x, y: t.y, z: t.z };
+  const axis = new THREE.Vector3().crossVectors(p, t);
+  if (axis.lengthSq() < 1e-12) {
+    // 完全反向（180°）：此处 lerp 会退化成零向量再归一化爆炸，改走任一垂直轴的球面半程
+    axis.set(-p.y, p.x, 0);
+    if (axis.lengthSq() < 1e-12) axis.set(1, 0, 0);
+  }
+  axis.normalize();
+  const q = new THREE.Quaternion().setFromAxisAngle(axis, angle * k);
+  const out = p.clone().applyQuaternion(q);
+  return { x: out.x, y: out.y, z: out.z };
+}
+function poseOneArmDir(upper, lower, hand, side, tgtU, tgtL) {
+  // 外张补偿只给上臂（防垂手贴身穿模）；前臂用真人原始方向——
+  // 若前臂也补外张，垂手时竖直前臂被硬掰歪 24°，肘部呈反向别扭（实锤 bug，已修）
+  const tgtUv = new THREE.Vector3(tgtU.x, tgtU.y, tgtU.z);
+  if (tgtUv.lengthSq() < 1e-12) return;
+  tgtUv.normalize();
+  const down = new THREE.Vector3(0, -1, 0);
+  // 【2026-08-30 实测修正】外张补偿必须「自适应衰减」，不能固定叠加：
+  // 真人 Pose 给出的上臂方向本来就包含真实外张，再无条件叠加 24° 会让上臂在**所有姿势**下
+  // 系统性偏离真人约 22°（[ELBOW] 上臂误差=22°，与 ARM_OUTWARD_RAD=24° 吻合），
+  // 用户观感就是「手臂姿势不对 / 像反了」。
+  // 改为：只在接近下垂时补 8°（防贴身穿模），平举/上举时补 0，完全跟随真人。
+  const downDot = THREE.MathUtils.clamp(tgtUv.dot(down), -1, 1);   // 1=完全下垂, 0=水平, <0=上举
+  const outwardNow = THREE.MathUtils.degToRad(8) * Math.max(0, downDot);
+  // 绕 +Z 转正角度作用于「向下」(0,-1,0) ⇒ x' = +sin(θ)，即把上臂推向 +X。
+  // left 传入 side=+1 → 推向 +X，与 MODEL_LEFT_X_SIGN(+1) 一致；right(side=-1) → -X。左右对称。
+  tgtUv.applyAxisAngle(new THREE.Vector3(0, 0, 1), side * outwardNow).normalize();
+  // 桌面宠窗口小，手臂举过头顶会把袖子/头发甩出相机视锥 → "缺块"。
+  // 限制上臂与「自然下垂方向(0,-1,0)」的夹角最大 110°（约举到肩高略上），防止飞出画面。
+  const ARM_MAX_ELEVATION = THREE.MathUtils.degToRad(110);
+  const elev = Math.acos(THREE.MathUtils.clamp(tgtUv.dot(down), -1, 1));
+  if (elev > ARM_MAX_ELEVATION) {
+    const axis = new THREE.Vector3().crossVectors(down, tgtUv).normalize();
+    if (axis.lengthSq() > 1e-12) {
+      const q = new THREE.Quaternion().setFromAxisAngle(axis, ARM_MAX_ELEVATION - elev);
+      tgtUv.applyQuaternion(q).normalize();
+    }
+  }
+  const curU = worldPosOf(lower).sub(worldPosOf(upper)).normalize();  // 肩→肘（不是肩→手，弯肘时后者会带偏上臂）
+  rotateBoneWorldDir(upper, curU, tgtUv);
+  // 注意：这里绝不能每帧 updateMatrixWorld(true)——强制刷新整条手臂子树（含全部手指骨骼）
+  // 每帧 4 次会把 FPS 从 58 拖到 20。worldPosOf/getWorldQuaternion 内部已自动更新父链，取值即时正确。
+  if (lower && tgtL) {   // 前臂方向缺失（肘/腕不可见）时优雅跳过，不整帧崩（否则会连带躯干也不驱动）
+    const curL = worldPosOf(hand).sub(worldPosOf(lower)).normalize();  // 肘→腕
+    rotateBoneWorldDir(lower, curL, new THREE.Vector3(tgtL.x, tgtL.y, tgtL.z));
+  }
+}
+
+// ── 关节方向自校准：不靠用户肉眼逐个提醒 ──
+// 原理（物理先验）：真人弯肘时手几乎总在身体前方 → 目标前臂 z 分量应 >0（模型系朝用户）。
+// 统计窗口内「明显弯肘(>120°)且前臂 z<0」占比 >70% → 判定 zSign 反了，自动翻转并持久化。
+// 方向自校准窗口：只在面捕启动后这段时间内允许翻转 zSign/xSign。
+// 翻转等于让目标方向掉头 180°，若发生在用户正常使用中途（例如他几分钟后才第一次弯肘），
+// 观感就是「手臂毫无预兆地翻面」——那本身也是一种抽搐。限制在启动初期：
+// 刚开面捕时用户通常会自然活动一下，样本很快攒够；超时没攒够就放弃本轮，保持当前方向。
+let _calibDeadline = 0;
+let _zCalib = { bent: 0, bentBehind: 0, done: false };
+function _zAutoCalib(arms) {
+  if (_zCalib.done) return;
+  if (_calibDeadline && performance.now() > _calibDeadline) { _zCalib.done = true; return; }  // 超窗口：不再翻转方向
+  const zc = _zCalib;
+  for (const key of ['left', 'right']) {
+    const s = arms[key];
+    if (!s || !s.visible || !s.u || !s.l) continue;
+    const bendCos = s.u.x * s.l.x + s.u.y * s.l.y + s.u.z * s.l.z;
+    if (bendCos < -0.5) {           // 上臂-前臂夹角 >120° = 明显弯肘
+      zc.bent++;
+      if (s.l.z < 0) zc.bentBehind++;
+    }
+  }
+  if (zc.bent >= 20) {
+    const ratio = zc.bentBehind / zc.bent;
+    if (ratio > 0.7) {
+      POSE_DEFAULTS.zSign *= -1;
+      try { localStorage.setItem('naixi_pose_zsign', String(POSE_DEFAULTS.zSign)); } catch (e) {}
+      // 切勿重置 _armSmooth：重置后下一帧会直接取新目标 = 瞬间跳过去（比不重置更抖）。
+      // 正确做法是保留旧平滑值，交给球面插值（_smoothVec 的 slerp）慢慢转过去，
+      // 180° 反向在球面路径上也没有奇异点，观感是「平滑转过去」而非「咔一下翻面」。
+      console.log(`[POSE-CHECK] z 方向自动校准：弯肘时前臂 ${Math.round(ratio * 100)}% 朝后 → zSign 自动翻转为 ${POSE_DEFAULTS.zSign}（已持久化，球面插值平滑过渡）`);
+    } else {
+      console.log(`[POSE-CHECK] z 方向自检通过（弯肘朝后占比 ${Math.round(ratio * 100)}%，zSign=${POSE_DEFAULTS.zSign}）`);
+    }
+    _zCalib.done = true;   // 每次会话只校准一次，防振荡
+    zc.bent = 0; zc.bentBehind = 0;
+  }
+}
+
+// ── 关节方向自校准（x 水平：外展/内收）── 不靠用户提醒，AI 自己判断
+// 物理先验：真人手臂「明显外展」时（上臂水平分量主导、非下垂），上臂必指向身体外侧。
+//   【2026-08-30 实锤修正】这里原来写「模型 left 臂在 -X 侧」→ 判定写成 left 外展需 u.x < 0，
+//   与 pose_to_vrm.js（left 在 +X）**完全相反**。后果：用户只要抬几次手攒够 20 个外展样本，
+//   这里就把「完全正确」的方向判成「70% 朝内」→ 翻转 xSign → 手臂**用着用着突然全反**。
+//   这正是用户反复说「面捕动作都是反的」而我自检始终 0° 误差的真根因之一
+//   （目标被翻转后模型忠实执行，误差当然是 0°）。
+//   现在统一引用 MODEL_LEFT_X_SIGN（唯一真源，实测 left 在 +X），杜绝两处打架。
+let _xCalib = { abduct: 0, inward: 0, done: false };
+function _xAutoCalib(arms) {
+  if (_xCalib.done) return;
+  if (_calibDeadline && performance.now() > _calibDeadline) { _xCalib.done = true; return; }  // 超窗口：不再翻转方向
+  const xc = _xCalib;
+  for (const key of ['left', 'right']) {
+    const s = arms[key];
+    if (!s || !s.visible || !s.u) continue;
+    const u = s.u;
+    const horiz = Math.abs(u.x), vert = Math.abs(u.y);
+    if (horiz < 0.5 || vert > 0.7) continue;   // 仅统计「明显外展」（水平主导、非下垂）
+    xc.abduct++;
+    // left 外展 ⇒ u.x 与 MODEL_LEFT_X_SIGN 同号；right 反之。禁止就地写死 ±1。
+    const outward = (key === 'left') ? (u.x * MODEL_LEFT_X_SIGN > 0) : (u.x * MODEL_LEFT_X_SIGN < 0);
+    if (!outward) xc.inward++;
+  }
+  if (xc.abduct >= 20) {
+    const ratio = xc.inward / xc.abduct;
+    if (ratio > 0.7) {
+      POSE_DEFAULTS.xSign *= -1;
+      try { localStorage.setItem('naixi_pose_xsign', String(POSE_DEFAULTS.xSign)); } catch (e) {}
+      // 同 z 校准：不重置平滑状态（重置 = 下一帧取新目标 = 瞬移），交给球面插值平滑转过去
+      console.log(`[POSE-CHECK] x 方向自动校准：外展时 ${Math.round(ratio * 100)}% 朝内 → xSign 自动翻转为 ${POSE_DEFAULTS.xSign}（已持久化，球面插值平滑过渡）`);
+    } else {
+      console.log(`[POSE-CHECK] x 方向自检通过（外展朝内占比 ${Math.round(ratio * 100)}%，xSign=${POSE_DEFAULTS.xSign}）`);
+    }
+    _xCalib.done = true;
+    xc.abduct = 0; xc.inward = 0;
+  }
+}
+
+// 关节收敛自检：每 2s 抽查上臂「渲染后实际方向 vs 目标方向」误差角，>25° 说明目标未达成（动画抢占/对齐失败），日志直接点名
+let _poseCheckLast = 0;
+const _poseCheckDefs = [
+  ['left', 'leftUpperArm', 'leftLowerArm'],
+  ['right', 'rightUpperArm', 'rightLowerArm'],
+];
+function _poseCheckLog() {
+  const now = performance.now();
+  if (now - _poseCheckLast < 2000) return;
+  _poseCheckLast = now;
+  for (const [key, upName, loName] of _poseCheckDefs) {
+    const s = _armSmooth[key];
+    const ub = bone(upName), lb = bone(loName);
+    if (!s || !s.u || !ub || !lb) continue;
+    const actual = worldPosOf(lb).sub(worldPosOf(ub)).normalize();
+    const tgt = new THREE.Vector3(s.u.x, s.u.y, s.u.z);
+    const err = THREE.MathUtils.radToDeg(actual.angleTo(tgt));
+    if (err > 25) console.warn(`[POSE-CHECK] ${key} 上臂方向误差 ${err.toFixed(0)} 度（目标未收敛：动画抢占或对齐失败，需排查）`);
+  }
+}
+
+// ── 面捕：摄像头驱动表情 + 头部姿态；身体(hips/spine/四肢)仍交给 VRMA 或程序化动作 ──
+// 这样可以同时得到「脸跟着真人动」+「身体在跳 mocap」，两者互不抢轨：面捕只写表情与 head 骨。
+let faceLastExpr = {};
+let faceLastDom = 0;
+// 平滑时间常数（秒），帧率无关：越大越柔。对照 VTS：头/表情/身体是分开调的，且头比表情更柔
+// （既防晕也防抽搐）。这里同样分开：表情跟手、头更稳、手臂最柔（Pose 世界坐标抖动最大）。
+let FACE_SMOOTH_TAU = 0.09;   // 表情：沿用原值（未反馈表情滞后/抽搐，保持既有观感）
+let HEAD_SMOOTH_TAU = 0.09;   // 头部：收窄（0.13→0.09）更跟手；仍压 MediaPipe ±2-3° 噪声（2026-09-02 延迟播放修复）
+let ARM_SMOOTH_TAU  = 0.10;   // 手臂：Pose 世界坐标抖动最大，保留略柔（0.13→0.10）防抖，同时明显更跟手
+let smoothHead = { x: 0, y: 0, z: 0 };  // 头部欧拉平滑值（持久，已减中性基准）
+
+// ── 中性基准（模拟 VTS "Calibrate / Set as Center"）──
+// **完全手动**：用户坐好、点「重置面捕原点」时，把当前姿态设为原点；之后运动 = 当前 − 原点。
+// 不再自动锁（用户明确反对：开启即自动锁会锁到「还没坐好」的姿态，且无法预期何时生效）。
+// 未校准时(_calib=null)走绝对量：会有坐姿固定偏移，但能真实跟随；用户点一次重置即修正。
+// 基准不持久化（每次开面捕需点一次，用户完全掌控原点时机，符合 VTS 手动校准语义）。
+let _calib = null;        // { head:{x,y,z}, torso:{yawRaw,pitchRaw,rollRaw} } 已锁定
+let _recenterRequested = false;  // 用户点了「重置面捕原点」→ 下一帧起采当前姿态为原点
+let _recenterBuf = null;         // 短均值缓冲（容忍手抖）
+let _recenterN = 0;
+const RECENTER_FRAMES = 15;      // ≈0.25s@60fps / ≈0.75s@20fps：用户已坐好，短均值足够平滑手抖
+function _calibReset() {         // 触发一次手动重校（清空旧基准，采新原点）
+  _recenterRequested = true; _recenterBuf = null; _recenterN = 0;
+  console.log('[CALIB] 重校请求：将把当前姿态设为原点（请保持当前姿势稳定 ~0.3s）');
+}
+// 在 applyFaceCapture 每帧调用：若用户请求重校且头+身体都检测到，采 RECENTER_FRAMES 帧均值锁基准
+function _calibTick(headEuler, torsoRaw) {
+  if (!_recenterRequested || !headEuler || !torsoRaw) return;
+  if (!_recenterBuf) _recenterBuf = { head: { x: 0, y: 0, z: 0 }, torso: { yawRaw: 0, pitchRaw: 0, rollRaw: 0 }, n: 0 };
+  _recenterBuf.head.x += headEuler.x; _recenterBuf.head.y += headEuler.y; _recenterBuf.head.z += headEuler.z;
+  _recenterBuf.torso.yawRaw += torsoRaw.yawRaw; _recenterBuf.torso.pitchRaw += torsoRaw.pitchRaw; _recenterBuf.torso.rollRaw += torsoRaw.rollRaw;
+  _recenterBuf.n++;
+  if (_recenterBuf.n >= RECENTER_FRAMES) {
+    _calib = {
+      head: { x: _recenterBuf.head.x / _recenterBuf.n, y: _recenterBuf.head.y / _recenterBuf.n, z: _recenterBuf.head.z / _recenterBuf.n },
+      torso: { yawRaw: _recenterBuf.torso.yawRaw / _recenterBuf.n, pitchRaw: _recenterBuf.torso.pitchRaw / _recenterBuf.n, rollRaw: _recenterBuf.torso.rollRaw / _recenterBuf.n },
+    };
+    _recenterRequested = false; _recenterBuf = null;
+    const h = _calib.head, t = _calib.torso;
+    console.log(`[CALIB] 手动原点已设定 head(x=${h.x.toFixed(3)},y=${h.y.toFixed(3)},z=${h.z.toFixed(3)}) torsoRaw(yaw=${t.yawRaw.toFixed(3)},pitch=${t.pitchRaw.toFixed(3)},roll=${t.rollRaw.toFixed(3)})`);
+  }
+}
+function applyFaceCapture(dt, t) {
+  // 无头自验（__vrmInjected）时放行：注入模拟了检测，无需真实摄像头/faceTracker.running
+  if (!faceEnabled && !window.__vrmInjected) return;
+  if (!faceTracker && !window.__vrmInjected) return;
+  if (faceTracker && !faceTracker.running && !window.__vrmInjected) return;
+  // 每约 1 秒把面捕诊断写进 body[data-face]：供 devtools 排障与无头自验（--dump-dom）读取
+  const _now = performance.now();
+  if (_now - faceLastDom > 1000) {
+    faceLastDom = _now;
+    try { document.body.dataset.face = JSON.stringify(faceTracker.getDiagnostics()); } catch (e) {}
+  }
+  if (!vrm) return;
+  // 无头自验钩子：注入合成 Pose 让重校/躯干链路走真实 applyFaceCapture（默认无注入，不影响真机）
+  // 注入模式完全不调 faceTracker.update，避免摄像头初始化期 update 抛错中断整帧渲染
+  let r;
+  if (window.__vrmInjected && window.__vrmInjected.pose) {
+    r = { detected: true, pose: window.__vrmInjected.pose,
+          headEuler: window.__vrmInjected.headEuler || { x: 0, y: 0, z: 0 },
+          poseVis: window.__vrmInjected.vis != null ? window.__vrmInjected.vis : 1,
+          blendshapes: window.__vrmInjected.bs || {} };
+  } else {
+    r = faceTracker.update(performance.now());
+  }
+  if (!r || !r.detected) return;
+  // 时间常数式平滑（帧率无关）：20fps 检测 → 60fps 渲染的自然插值，比固定 lerp 更柔
+  const dtc = Math.min(dt || 0.016, 0.05);
+  const k = 1 - Math.exp(-dtc / FACE_SMOOTH_TAU);       // 表情
+  const headK = 1 - Math.exp(-dtc / HEAD_SMOOTH_TAU);   // 头部（更柔）
+  const armK = 1 - Math.exp(-dtc / ARM_SMOOTH_TAU);     // 手臂（最柔）
+  if (vrm.expressionManager) {
+    // 表情总增益：优先读 __vrmFaceConfig 动态设的 faceTracker.cfg.expressionGain（缺省回退 FACE_GAIN）。
+    // ⚠ 旧写法写死 FACE_GAIN 常量 → 调「表情灵敏度」完全不生效，必须读 cfg。
+    const exprGain = (faceTracker && faceTracker.cfg && faceTracker.cfg.expressionGain != null) ? faceTracker.cfg.expressionGain : FACE_CFG.expressionGain;
+    const raw = arkitToVRM(r.blendshapes, { mirror: FACE_MIRROR, expressionGain: exprGain });
+    for (const key in raw) {
+      const cur = faceLastExpr[key] || 0;
+      let v = cur + (raw[key] - cur) * k;
+      if (Math.abs(v) < 0.001) v = 0;
+      faceLastExpr[key] = v;
+    }
+    // TTS/外部正在驱动嘴时，口型取两者较大值，避免面捕与语音口型互相抢嘴
+    if (faceLastExpr.aa !== undefined) faceLastExpr.aa = Math.max(faceLastExpr.aa, mouthValue);
+    for (const key in faceLastExpr) {
+      const val = faceLastExpr[key];
+      // 防御：NaN/Inf 写进 expression 会让 morph 顶点位移变成 NaN，整个 mesh 消失且不可恢复
+      if (isFinite(val)) vrm.expressionManager.setValue(key, val);
+      else faceLastExpr[key] = 0;
+    }
+  }
+  if (r.headEuler) {
+    // 前置镜像：表情左右已镜像，头部 yaw/roll 也需同步翻转，否则头部转向与脸的实际方向相反
+    const yaw  = FACE_MIRROR ? -r.headEuler.y : r.headEuler.y;
+    const roll = FACE_MIRROR ? -r.headEuler.z : r.headEuler.z;
+    // 减中性基准（VTS "Set as Center"）：静止时头部回到模型中心，只有相对偏移驱动
+    const hbx = _calib ? _calib.head.x : 0, hby = _calib ? _calib.head.y : 0, hbz = _calib ? _calib.head.z : 0;
+    // 头部增益：优先读 __vrmFaceConfig 动态设的 faceTracker.cfg.headGain（分轴 {x,y,z}），缺省回退 0.8。
+    // ⚠ 旧写法没乘 headGain → 调「头部灵敏度」完全不生效，必须乘在减基准后的目标值上再平滑。
+    const hg = (faceTracker && faceTracker.cfg && faceTracker.cfg.headGain) ? faceTracker.cfg.headGain : FACE_CFG.headGain;
+    smoothHead.x += (((r.headEuler.x - hbx) * hg.x) - smoothHead.x) * headK;
+    smoothHead.y += (((yaw  - hby) * hg.y) - smoothHead.y) * headK;
+    smoothHead.z += (((roll - hbz) * hg.z) - smoothHead.z) * headK;
+    // idle 呼吸微动（<1°、双频率慢波）：面捕静止时也有生命感，动作时被面捕值主导不察觉
+    const idleY = t != null ? Math.sin(t * 0.9) * 0.012 + Math.sin(t * 0.37 + 1.3) * 0.008 : 0;
+    const idleX = t != null ? Math.sin(t * 0.63 + 0.5) * 0.010 : 0;
+    const hx = smoothHead.x + idleX, hy = smoothHead.y + idleY;
+    // 桌宠窗口小，头转动过大会让脸/头发直接甩出画面；限制到桌宠自然范围（VTS 默认也类似）
+    const HEAD_LIMIT = { pitch: 0.44, yaw: 0.61, roll: 0.26 }; // 25° / 35° / 15°
+    const clamp = (v, lo, hi) => (hi !== undefined ? Math.max(lo, Math.min(hi, v)) : Math.max(-lo, Math.min(lo, v)));
+    const cx = clamp(hx, HEAD_LIMIT.pitch);
+    const cy = clamp(hy, HEAD_LIMIT.yaw);
+    const cz = clamp(smoothHead.z, HEAD_LIMIT.roll);
+    const head = vrm.humanoid ? vrm.humanoid.getNormalizedBoneNode('head') : null;
+    setRotSafe(head, cx, cy, cz);
+
+    // 躯干：优先用 Pose 肩-髋向量捕捉前倾/侧倾（摄像头驱动）；Pose 缺失时回落「跟随头」
+    const chest = vrm.humanoid && (vrm.humanoid.getNormalizedBoneNode('upperChest') || vrm.humanoid.getNormalizedBoneNode('chest'));
+    const spine = vrm.humanoid && (vrm.humanoid.getNormalizedBoneNode('spine') || vrm.humanoid.getNormalizedBoneNode('lowerChest'));
+    if (r.pose) {
+      const torso = torsoToVRM(r.pose, {
+        mirror: FACE_MIRROR,
+        torsoGain: POSE_DEFAULTS.torsoGain,
+        torsoPitchGain: POSE_DEFAULTS.torsoPitchGain,
+        torsoRollGain: POSE_DEFAULTS.torsoRollGain,
+        torsoYawGain: POSE_DEFAULTS.torsoYawGain,
+        torsoCalib: _calib ? _calib.torso : null,   // 减中性基准：静止时 chest 回到中心
+      });
+      // 用户点「重置面捕原点」时，把当前姿态采为中性基准（手动，不自动锁）
+      _calibTick(r.headEuler, torso._raw);
+      // 躯干左右转走 **Pose 真实捕捉**（肩线 z 分量差 → 躯干朝向），
+      // 不再用「头部 yaw × 系数」顶替 —— 后者在真人只转身不转头时躯干完全不动（用户实锤"只是被带动的模拟"）。
+      // 仅保留 0.15 的头带动：兜住 Pose 抖动，同时让静止时躯干随头部 idle 微动呼吸。
+      const tyaw = clamp((isFinite(torso.yaw) ? torso.yaw : 0) + cy * 0.15, -0.5, 0.5);
+      const tp = isFinite(torso.pitch) ? clamp(torso.pitch, -0.35, 0.35) : 0;
+      const tr = isFinite(torso.roll) ? clamp(torso.roll, -0.35, 0.35) : 0;
+      setRotSafe(chest, tp + cx * 0.1, tyaw, tr + cz * 0.1);
+      if (spine && spine !== chest) setRotSafe(spine, tp * 0.6, tyaw * 0.6, tr * 0.6);
+      // [CHEST] 调试日志已移除（自验期用于确认 torsoGain 生效，现灵敏度已验证通过）
+    } else {
+      if (_recenterRequested) console.log('[CALIB] 重校中：当前帧未检测到身体姿态，请在画面中保持上半身入镜');
+      // 修复：chestPitchGain/chestRollGain 此前未定义 → cx*undefined=NaN → setRotSafe 早退 → chest 卡 rest pose
+      const cp = POSE_DEFAULTS.chestPitchGain ?? 0.5;
+      const cr = POSE_DEFAULTS.chestRollGain ?? 0.5;
+      setRotSafe(chest, cx * cp, cy * POSE_DEFAULTS.chestYawGain, cz * cr);
+      if (spine && spine !== chest) setRotSafe(spine, cx * 0.15, cy * 0.20, cz * 0.15);
+      // [CHEST] 调试日志已移除（自验期用于确认 torsoGain 生效，现灵敏度已验证通过）
+    }
+  }
+  // 手臂（Pose）：3D 方向对齐 + 平滑；肘/腕不可见（出画/低置信度）的侧不驱动
+  if (r.pose) {
+    _driveArmsFromPose(r.pose, r.poseVis, armK);
+  }
+}
+
+/**
+ * 用一份 Pose 数据驱动双臂 —— 真实链路的唯一入口。
+ * 抽成函数是为了让无头自验能绕过摄像头直接注入合成 Pose（window.__vrmPoseInject）：
+ * 「方向对不对」如果只能靠用户坐到镜头前肉眼判断，就既无法自证也无法回归，
+ * 只能陷入「用户说反 → AI 猜 → 又反」的循环（2026-08-30 已反复踩过）。
+ */
+function _driveArmsFromPose(pose, vis, armK) {
+  // vis 必传：Pose 置信度门控（低置信/关键点丢失的帧不驱动手臂，防抽搐）
+  const dirs = poseArmDirections(pose, { mirror: FACE_MIRROR, zSign: POSE_DEFAULTS.zSign, xSign: POSE_DEFAULTS.xSign, vis });
+  const applySide = (key, sideSign, up, lo, hand) => {
+    if (!(dirs[key].visible && up && lo && hand)) { _armSmooth[key] = null; _armTgt[key] = null; return; }
+    _armSmooth[key] = {
+      u: _smoothVec(_armSmooth[key] && _armSmooth[key].u, dirs[key].u, armK),
+      l: _smoothVec(_armSmooth[key] && _armSmooth[key].l, dirs[key].l, armK),
+    };
+    // 记录本帧「目标方向」，供每秒一次的肘部自检对比模型实际骨骼方向
+    _armTgt[key] = { u: { ..._armSmooth[key].u }, l: { ..._armSmooth[key].l } };
+    poseOneArmDir(up, lo, hand, sideSign, _armSmooth[key].u, _armSmooth[key].l);
+  };
+  applySide('left', +1, bone('leftUpperArm'), bone('leftLowerArm'), bone('leftHand'));
+  applySide('right', -1, bone('rightUpperArm'), bone('rightLowerArm'), bone('rightHand'));
+  _zAutoCalib(dirs);
+  _xAutoCalib(dirs);
+  _poseCheckLog();
+  return dirs;
+}
+
+async function startFaceCapture(opts = {}) {
+  if (!faceTracker) faceTracker = new FaceTracker({ mirror: FACE_MIRROR, expressionGain: FACE_GAIN, ...opts });
+  await faceTracker.start(opts);
+  faceEnabled = true;
+  // 方向自校准窗口（默认 15s）：只在刚开启这段时间允许翻转 zSign/xSign，超时没攒够样本就放弃本轮
+  _calibDeadline = performance.now() + (opts.calibWindowMs ?? 15000);
+  console.log('[VRM] 面捕已开启：表情+头部由摄像头驱动，身体待机静止（不自动播放动作轨）');
+  return true;
+}
+
+function stopFaceCapture() {
+  faceEnabled = false;
+  if (faceTracker) faceTracker.stop();
+  // 停了要把面捕写进去的表情清零，否则会挂着最后一帧的鬼脸不放
+  if (vrm && vrm.expressionManager) for (const k in faceLastExpr) vrm.expressionManager.setValue(k, 0);
+  faceLastExpr = {};
+  console.log('[VRM] 面捕已关闭');
+}
+
+if (FACE) {
+  // 浏览器策略：getUserMedia 可能需要用户手势或尚未授权；失败保留手动入口 __vrmFaceStart()
+  startFaceCapture().catch((e) => console.warn('[VRM] 面捕自动启动失败，可手动调用 __vrmFaceStart():', e.message));
+}
+
+// ── 自动表情：跳舞/有动作时脸上要有表情，避免面瘫；手动表情(__vrmSetEmotion)/面捕优先 ──
+const _autoExprNames = ['happy', 'angry', 'sad', 'relaxed', 'surprised'];
+let _autoExprName = null;
+let _autoExprHoldUntil = 0;
+let _autoBlinkLeft = 0;
+let _autoNextBlink = 2.5;
+const _autoExprTargets = Object.fromEntries(_autoExprNames.map((e) => [e, 0]));
+const _autoExprValues  = Object.fromEntries(_autoExprNames.map((e) => [e, 0]));
+function _autoExpr(dt) {
+  if (!vrm || !vrm.expressionManager) return;
+  if (expressionName || faceEnabled) {        // 手动表情 / 面捕优先
+    // 淡出当前自动表情，避免和手动/面捕打架
+    const speed = Math.min(1, dt * 10);
+    for (const e of _autoExprNames) {
+      _autoExprValues[e] += (0 - _autoExprValues[e]) * speed;
+      if (Math.abs(_autoExprValues[e]) < 0.001) _autoExprValues[e] = 0;
+      vrm.expressionManager.setValue(e, _autoExprValues[e]);
+    }
+    // 面捕/手动表情时保留自然眨眼（与面捕眨眼取 max）：MediaPipe 眨眼不稳时脸不会长时间不眨、显僵硬
+    if (_autoBlinkLeft > 0) _autoBlinkLeft -= dt;
+    else if (performance.now() / 1000 > _autoNextBlink) { _autoBlinkLeft = 0.12; _autoNextBlink = performance.now() / 1000 + 2.5 + Math.random() * 2.5; }
+    if (vrm.expressionManager.getValue) {
+      const fb = vrm.expressionManager.getValue('blink') || 0;
+      vrm.expressionManager.setValue('blink', Math.max(fb, _autoBlinkLeft > 0 ? 1 : 0));
+    }
+    return;
+  }
+  const now = performance.now() / 1000;
+  const active = !!activeMotion || danceMode;
+  // 情绪：每 1.5~4s 随机切换目标，但数值会做平滑过渡，避免脸上“闪一下”
+  if (now > _autoExprHoldUntil) {
+    const pool = active ? ['happy', 'surprised', 'relaxed', 'happy'] : ['relaxed', 'relaxed', 'happy'];
+    _autoExprName = pool[Math.floor(Math.random() * pool.length)];
+    _autoExprHoldUntil = now + 1.5 + Math.random() * 2.5;
+    for (const e of _autoExprNames) _autoExprTargets[e] = (e === _autoExprName ? 0.85 : 0);
+  }
+  const speed = Math.min(1, dt * 10);
+  for (const e of _autoExprNames) {
+    _autoExprValues[e] += (_autoExprTargets[e] - _autoExprValues[e]) * speed;
+    if (Math.abs(_autoExprValues[e]) < 0.001) _autoExprValues[e] = 0;
+    vrm.expressionManager.setValue(e, _autoExprValues[e]);
+  }
+  // 自然眨眼：每 2.5~5s 一次，闭眼约 0.12s
+  if (_autoBlinkLeft > 0) _autoBlinkLeft -= dt;
+  else if (now > _autoNextBlink) { _autoBlinkLeft = 0.12; _autoNextBlink = now + 2.5 + Math.random() * 2.5; }
+  vrm.expressionManager.setValue('blink', _autoBlinkLeft > 0 ? 1 : 0);
+}
+
+// ── 肘部自检（数据模型，2026-08-30）──
+// 把"肘部动作反"从主观描述变成数字：对比「目标方向」与「模型骨骼实际方向」。
+//   上臂误差 / 前臂误差 大 → 骨骼没转到目标（执行层问题）；
+//   肘弯(目标 vs 实际) 差很多 → 弯曲程度不对；两者都小 → 问题在目标方向本身（坐标/符号）。
+function _elbowAudit() {
+  if (!vrm || !vrm.humanoid) return;
+  const defs = [
+    ['left', 'leftUpperArm', 'leftLowerArm', 'leftHand'],
+    ['right', 'rightUpperArm', 'rightLowerArm', 'rightHand'],
+  ];
+  const parts = [];
+  for (const [key, upN, loN, handN] of defs) {
+    const t = _armTgt[key];
+    const up = bone(upN), lo = bone(loN), hand = bone(handN);
+    if (!up || !lo || !hand) { parts.push(`${key}: humanoid 骨骼缺失`); continue; }
+    if (!t) { parts.push(`${key}: 本秒未驱动（Pose 不可见 / 被置信度门控）`); continue; }
+    const actU = worldPosOf(lo).sub(worldPosOf(up));
+    const actL = worldPosOf(hand).sub(worldPosOf(lo));
+    if (actU.lengthSq() < 1e-12 || actL.lengthSq() < 1e-12) continue;
+    actU.normalize(); actL.normalize();
+    const tgtU = new THREE.Vector3(t.u.x, t.u.y, t.u.z);
+    const tgtL = new THREE.Vector3(t.l.x, t.l.y, t.l.z);
+    if (tgtU.lengthSq() < 1e-12 || tgtL.lengthSq() < 1e-12) continue;
+    tgtU.normalize(); tgtL.normalize();
+    const errU = THREE.MathUtils.radToDeg(actU.angleTo(tgtU));
+    const errL = THREE.MathUtils.radToDeg(actL.angleTo(tgtL));
+    const bendTgt = THREE.MathUtils.radToDeg(tgtU.angleTo(tgtL));
+    const bendAct = THREE.MathUtils.radToDeg(actU.angleTo(actL));
+    // 反关节检测：肘是铰链关节，前臂只能朝上臂「前侧」弯。
+    // 取前臂相对上臂的垂直分量，其世界 Z（朝相机=身体前方）若为正 = 正常弯曲；为负 = 反折（反关节）。
+    const perpT = tgtL.clone().sub(tgtU.clone().multiplyScalar(tgtL.dot(tgtU)));
+    const perpA = actL.clone().sub(actU.clone().multiplyScalar(actL.dot(actU)));
+    const flag = (perpA.z < -0.02) ? ' ⚠反关节' : '';
+    parts.push(`${key}: 上臂误差=${errU.toFixed(0)}° 前臂误差=${errL.toFixed(0)}° 肘弯目标/实际=${bendTgt.toFixed(0)}°/${bendAct.toFixed(0)}° 弯曲朝前(Z)目标/实际=${perpT.z.toFixed(2)}/${perpA.z.toFixed(2)}${flag}`);
+  }
+  if (parts.length) console.log('[ELBOW] ' + parts.join(' | '));
+}
+
+// ── 坐标轴一致性自检（2026-08-30）──
+// 前面所有自检都在验证「模型有没有跟上目标」，**无法发现目标本身算反了**
+// （目标反 + 模型忠实执行 = 误差 0°，看着一切正常，但真人和模型动作相反）。
+// 这里直接把「MediaPipe 原始数据」和「模型骨骼世界坐标」摆在一起对照：
+//   MP: 右腕-左腕 的 x/y/z   vs   MODEL: 右腕-左腕 的 x/y
+// 判据：两者符号应一致。若相反 → 目标方向算反了（x/y/z 某个轴取反错）。
+function _axisAudit() {
+  if (!vrm || !vrm.humanoid || !faceTracker || !faceTracker.result) return;
+  const r = faceTracker.result;
+  if (!r.pose || r.pose.length < 25) return;
+  const P = r.pose;
+  const nose = P[0], wl = P[15], wr = P[16], hipL = P[23], hipR = P[24];
+  if (!nose || !wl || !wr || !hipL || !hipR) return;
+  const hipMidY = (hipL.y + hipR.y) / 2;
+  const mpYup = (nose.y - hipMidY) > 0;   // MediaPipe world 坐标 y 是否「向上为正」
+  // 【2026-08-30 重写】旧版只输出「腕差」这个二次加工量，无法判定坐标轴真实朝向，
+  // 导致符号推导全靠纸上假设、改一处翻一处。现在直接 dump **原始坐标**，让数据自己说话。
+  // 判定手册（真人面对摄像头、MediaPipe 索引 L=图像左=真人右侧）：
+  //   world x 若「图像右为正」→ 真人左肩(12).x > 0 > 真人右肩(11).x
+  //   world x 若「被摄者右为正」→ 真人右肩(11).x > 0 > 真人左肩(12).x  ← 真机已观察到此形态
+  //   y：nose.y < hip.y ⇒ y 向下为正（图像式），conv 的 y 取反正确
+  const f = (p) => (p ? `${p.x >= 0 ? '+' : ''}${p.x.toFixed(2)},${p.y >= 0 ? '+' : ''}${p.y.toFixed(2)},${p.z >= 0 ? '+' : ''}${p.z.toFixed(2)}` : '-');
+  const mw = (n) => { const b = bone(n); if (!b) return '-'; const v = worldPosOf(b); return `${v.x >= 0 ? '+' : ''}${v.x.toFixed(2)},${v.y >= 0 ? '+' : ''}${v.y.toFixed(2)},${v.z >= 0 ? '+' : ''}${v.z.toFixed(2)}`; };
+  console.log(`[AXIS] MP y向上=${mpYup} | 真人右肩11=${f(P[11])} 真人左肩12=${f(P[12])} 真人右腕15=${f(P[15])} 真人左腕16=${f(P[16])}`);
+  console.log(`[AXIS] MODEL(世界) 左肩=${mw('leftUpperArm')} 右肩=${mw('rightUpperArm')} 左腕=${mw('leftHand')} 右腕=${mw('rightHand')}`);
+  // 头部/躯干对照：真人转头与侧倾的**原始指示量** vs 模型实际旋转值，一次拿全，避免逐关节试错。
+  //   真人转头指示 = 鼻(0).x - 肩中点.x：真人向自己右侧转头时鼻子偏向他的右手方向
+  //     （MP x 以真人右为正 ⇒ 指示量变大）。模型头 yaw>0 = 转向 +X = 模型的 left 侧，
+  //     而真人向右转时镜中像应转向模型 right ⇒ **模型 yaw 应与指示量反号**。
+  //   真人侧倾指示 = 真人左肩12.y - 真人右肩11.y：y 向下为正 ⇒ 正值 = 左肩更低 = 身体向左倾。
+  const shMidX = (P[11] && P[12]) ? (P[11].x + P[12].x) / 2 : null;
+  const headTurn = (nose && shMidX != null) ? (nose.x - shMidX) : null;
+  // 躯干三轴指示量（都用肩宽归一化，与距离无关；与 torsoToVRM 的输入严格同源，便于直接比对）
+  //   转体指示 = (真人右肩11.z - 真人左肩12.z)/肩宽 ：正 = 真人转向自己的右侧
+  //   前倾指示 = 肩中点z - 髋中点z                ：负 = 真人朝相机前倾（z 越小越靠近相机）
+  //   侧倾指示 = (真人左肩12.y - 真人右肩11.y)/肩宽 ：正 = 真人左肩更低 = 向左倾
+  const sp = (P[11] && P[12]) ? (Math.hypot(P[12].x - P[11].x, P[12].y - P[11].y, P[12].z - P[11].z) || 1e-6) : 1e-6;
+  const lean = (P[11] && P[12]) ? ((P[12].y - P[11].y) / sp) : null;
+  const torsoTurn = (P[11] && P[12]) ? ((P[11].z - P[12].z) / sp) : null;
+  const shMidZ = (P[11] && P[12]) ? (P[11].z + P[12].z) / 2 : null;
+  const hpMidZ = (P[23] && P[24]) ? (P[23].z + P[24].z) / 2 : null;
+  const torsoFwd = (shMidZ != null && hpMidZ != null) ? (shMidZ - hpMidZ) : null;
+  const hd = bone('head'), ch = bone('upperChest') || bone('chest');
+  const rot = (n) => { if (!n) return '-'; return `x=${n.rotation.x.toFixed(2)} y=${n.rotation.y.toFixed(2)} z=${n.rotation.z.toFixed(2)}`; };
+  console.log(`[AXIS] 头 真人转头指示=${headTurn == null ? '-' : headTurn.toFixed(3)} headEuler=${r.headEuler ? `x=${r.headEuler.x.toFixed(2)} y=${r.headEuler.y.toFixed(2)} z=${r.headEuler.z.toFixed(2)}` : '-'}`
+    + ` || MODEL head ${rot(hd)}`);
+  console.log(`[AXIS] 躯干 转体=${torsoTurn == null ? '-' : torsoTurn.toFixed(3)} 前倾=${torsoFwd == null ? '-' : torsoFwd.toFixed(3)} 侧倾=${lean == null ? '-' : lean.toFixed(3)}`
+    + ` || MODEL chest ${rot(ch)}`);
+}
+
+// ── NaN 自愈（2026-08-30）──
+// NaN 一旦写进骨骼/表情就会永久残留，表现为"某些部件突然消失且再也回不来"。
+// 检测到顶点 NaN 后统一复位：表情清零 + humanoid/gender 复位 + 弹簧骨重置 + 面捕平滑清空。
+function _nanHeal(reason) {
+  console.log('[NAN-HEAL] 检测到顶点 NaN（' + reason + '），执行自愈复位');
+  try {
+    for (const k in faceLastExpr) faceLastExpr[k] = 0;
+    if (vrm && vrm.expressionManager) {
+      try {
+        for (const e of (vrm.expressionManager.expressions || [])) {
+          const nm = e.expressionName || e.name;
+          vrm.expressionManager.setValue(nm, 0);
+        }
+      } catch (e) {}
+    }
+    _armSmooth.left = null;
+    _armSmooth.right = null;
+    smoothHead.x = 0; smoothHead.y = 0; smoothHead.z = 0;
+    if (vrm && vrm.humanoid) vrm.humanoid.resetNormalizedPose();
+    try { if (vrm && vrm.springBoneManager && vrm.springBoneManager.reset) vrm.springBoneManager.reset(); } catch (e) {}
+    applyRestPose();
+    vrm.scene.updateMatrixWorld(true);
+    _nanReported = {};   // 允许复位后若再次 NaN 重新 dump 根因
+  } catch (e) {
+    console.log('[NAN-HEAL] 复位失败: ' + e.message);
+  }
+}
+
+// ── 渲染自检「数据模型」（2026-08-30 新增）──
+// 目的：把"缺斤少两"从肉眼描述变成可量化指标，让代码自己回答
+//   「哪个 mesh 缺了 / 是被视锥裁掉、还是骨骼解算炸了(NaN)、还是被显式隐藏」。
+// 做法：对每个 mesh 采样顶点 → 应用蒙皮(boneTransform) → 转世界坐标 → 投影到 NDC，
+//       统计是否超出 [-1,1]（= GPU 会裁掉）与是否 NaN。每秒跑一次，不每帧，不影响帧率。
+let _auditLast = 0;
+let _auditWorst = {};   // 累积「该 mesh 本次会话中出现过的最大越界方向」，便于事后归因
+let _nanReported = {};  // 每个 mesh 的 NaN 根因只 dump 一次，避免刷屏
+let _nanHealLast = 0;   // 自愈节流时间戳
+function _renderAudit() {
+  const nowMs = performance.now();
+  if (nowMs - _auditLast < 1000) return;
+  _auditLast = nowMs;
+  if (!vrm || !vrm.scene || !camera) return;
+  vrm.scene.updateMatrixWorld(true);
+  const clipped = [], nanList = [], invisible = [];
+  const v = new THREE.Vector3();
+  vrm.scene.traverse((obj) => {
+    if (!(obj.isSkinnedMesh || obj.isMesh)) return;
+    const pos = obj.geometry && obj.geometry.attributes && obj.geometry.attributes.position;
+    if (!pos || !pos.count) return;
+    const nm = obj.name || '(unnamed)';
+    if (obj.visible === false) { invisible.push(nm); return; }
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, maxZ = -Infinity;
+    let hasNaN = false;
+    const step = Math.max(1, Math.floor(pos.count / 512));   // 每个 mesh 最多采样 512 点（太稀会漏报局部裁剪）
+    for (let i = 0; i < pos.count; i += step) {
+      v.fromBufferAttribute(pos, i);
+      if (obj.isSkinnedMesh) {
+        try {
+          if (typeof obj.applyBoneTransform === 'function') obj.applyBoneTransform(i, v);
+          else if (typeof obj.boneTransform === 'function') obj.boneTransform(i, v);
+        } catch (e) { hasNaN = true; break; }
+      }
+      obj.localToWorld(v);
+      if (!isFinite(v.x) || !isFinite(v.y) || !isFinite(v.z)) { hasNaN = true; break; }
+      const p = v.clone().project(camera);
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+      if (p.z > maxZ) maxZ = p.z;
+    }
+    if (hasNaN) {
+      nanList.push(nm);
+      // 一次性根因 dump：找出到底是哪个骨骼的 quaternion / position / matrixWorld 炸成 NaN
+      if (!_nanReported[nm]) {
+        _nanReported[nm] = true;
+        const bad = [];
+        const sk = obj.skeleton;
+        if (sk && sk.bones) {
+          for (const b of sk.bones) {
+            const q = b.quaternion, p = b.position, s = b.scale;
+            const qOK = isFinite(q.x) && isFinite(q.y) && isFinite(q.z) && isFinite(q.w);
+            const pOK = isFinite(p.x) && isFinite(p.y) && isFinite(p.z);
+            const sOK = isFinite(s.x) && isFinite(s.y) && isFinite(s.z);
+            if (!(qOK && pOK && sOK)) bad.push(`${b.name}[q=${qOK ? 'ok' : 'NaN'} p=${pOK ? 'ok' : 'NaN'} s=${sOK ? 'ok' : 'NaN'}]`);
+          }
+        }
+        console.log(`[NaN-ROOT] mesh=${nm} 坏骨骼: ${bad.length ? bad.join(', ') : '（骨骼都正常 → 顶点/skinIndex/skeleton.boneMatrices 问题）'}`);
+      }
+      return;
+    }
+    const out = [];
+    if (minY < -1) out.push('bottom(' + minY.toFixed(2) + ')');
+    if (maxY > 1) out.push('top(' + maxY.toFixed(2) + ')');
+    if (minX < -1) out.push('left(' + minX.toFixed(2) + ')');
+    if (maxX > 1) out.push('right(' + maxX.toFixed(2) + ')');
+    if (maxZ > 1) out.push('far(' + maxZ.toFixed(2) + ')');
+    if (out.length) {
+      clipped.push(nm + ':' + out.join(','));
+      // 累积最坏情况（按 mesh 名），方便事后看「到底哪个部件最容易甩出去」
+      const w = _auditWorst[nm] || (_auditWorst[nm] = { bottom: 0, top: 0, left: 0, right: 0, far: 0 });
+      if (minY < -1) w.bottom = Math.min(w.bottom, minY);
+      if (maxY > 1) w.top = Math.max(w.top, maxY);
+      if (minX < -1) w.left = Math.min(w.left, minX);
+      if (maxX > 1) w.right = Math.max(w.right, maxX);
+      if (maxZ > 1) w.far = Math.max(w.far, maxZ);
+    }
+  });
+  // 自愈：NaN 会永久残留，必须主动复位（节流 3s，避免每帧复位导致画面抽搐）
+  if (nanList.length && nowMs - (_nanHealLast || 0) > 3000) {
+    _nanHealLast = nowMs;
+    _nanHeal(nanList.length + ' 个 mesh');
+  }
+  // 表情诊断：面捕写入的 blendshape 若越界（>1 / <0）会让 mesh 顶点被 morph 拉飞，形状"缺块"
+  const exprs = [];
+  try {
+    const em = vrm.expressionManager;
+    const list = (em && em.expressions) || [];
+    for (const e of list) {
+      const nm = e.expressionName || e.name;
+      let val = 0;
+      try { val = em.getValue ? em.getValue(nm) : (em.getWeight ? em.getWeight(nm) : 0); } catch (err) { val = 0; }
+      if (val && Math.abs(val) > 0.05) exprs.push(nm + '=' + val.toFixed(2));
+    }
+  } catch (e) {}
+  // 半透明部件清单：transparent 材质最容易因排序/深度变化"看起来消失"
+  const semi = [];
+  vrm.scene.traverse((obj) => {
+    if (!(obj.isMesh || obj.isSkinnedMesh)) return;
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+    for (const m of mats) if (m && m.transparent) { semi.push(obj.name || '(unnamed)'); break; }
+  });
+  // 「会话最坏值」：用户动作是瞬时的，1 秒采样可能正好错过越界那一帧；
+  // 累积后即便当前帧 clipped=0，也能看到本轮是否曾经越界、越了多少。
+  const wkeys = Object.keys(_auditWorst);
+  const worstStr = wkeys.length
+    ? wkeys.map((k) => k + ':' + JSON.stringify(_auditWorst[k])).join(' | ')
+    : '';
+  console.log(`[AUDIT] clipped=${clipped.length} nan=${nanList.length} invisible=${invisible.length} semi=${semi.length}` +
+    (clipped.length ? `\n  CLIP: ${clipped.join(' | ')}` : '') +
+    (nanList.length ? `\n  NaN: ${nanList.join(' | ')}` : '') +
+    (exprs.length ? `\n  EXPR: ${exprs.join(' ')}` : '') +
+    (worstStr ? `\n  WORST: ${worstStr}` : ''));
+  try { document.body.dataset.audit = JSON.stringify({ clipped, nan: nanList, invisible, semi, exprs }); } catch (e) {}
+  _elbowAudit();   // 肘部方向自检（上臂/前臂误差 + 肘弯曲角目标 vs 实际）
+  _axisAudit();    // 坐标轴一致性自检（真人原始数据 vs 模型骨骼，判定目标是否整体反了）
+}
+window.__vrmAuditWorst = () => _auditWorst;   // 供外部一次性取累积最坏值归因
+
+let _fpsAccum = 0, _fpsFrames = 0, _fpsLast = 0;
+function frame() {
+  requestAnimationFrame(frame);
+  // clamp delta：掉帧/卡顿时若把超大 dt 喂给 vrm.update，弹簧物理会瞬间爆炸、越卡越糟（业界 90% 掉帧根因）
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = clock.elapsedTime;
+  // FPS 探针：每 ~1s 打印一次实际帧率，方便排查卡顿
+  _fpsAccum += dt; _fpsFrames++;
+  if (_fpsAccum >= 1 && _fpsLast !== Math.floor(t)) { _fpsLast = Math.floor(t); console.log('[FPS] ' + Math.round(_fpsFrames / _fpsAccum)); _fpsAccum = 0; _fpsFrames = 0; }
+  if (vrm) {
+    mouthValue += (targetMouth - mouthValue) * Math.min(1, dt * 18);
+    if (vrm.expressionManager) vrm.expressionManager.setValue('aa', mouthValue);
+    _autoExpr(dt);
+    if (activeMotion) {
+      activeMotion.t += dt;
+      if (activeMotion.t >= activeMotion.dur) {
+        activeMotion = null;
+        if (danceMode) {
+          nextDance();
+        } else {
+          if (currentAction) { currentAction.stop(); currentAction = null; }
+          if (savedHipsPos) { const h = bone('hips'); if (h) h.position.copy(savedHipsPos); savedHipsPos = null; }
+          applyRestPose();   // 回到双臂自然下垂静止站姿
+        }
+      }
+    }
+    if (mixer) mixer.update(dt);   // 驱动 idle / 真实 VRMA 动作 clip
+    if (activeMotion && activeMotion.stripArms) {
+      // 循环模式保留 hips Y（深蹲/跳跃的垂直动作），但把 X/Z 锁回初始位置，避免角色走离画面中心
+      const hips = bone('hips');
+      if (hips && savedHipsPos) hips.position.set(savedHipsPos.x, hips.position.y, savedHipsPos.z);
+      applyProceduralArmSwing(clock.elapsedTime);
+    }
+    if (activeMotion && activeMotion.procedural) {
+      applyProceduralFullBody(clock.elapsedTime);
+    }
+    applyFaceCapture(dt, t);   // 面捕：覆盖表情与头部（必须在 mixer.update 之后，否则会被 VRMA 动作轨冲掉）
+    vrm.update(dt);
+    _syncDualBones();     // 双骨骼 rig：把控制骨世界变换同步到蒙皮变形骨，让腿真正形变
+    if (prevAction && clock.elapsedTime >= _fadeUntil) { prevAction.stop(); prevAction = null; }
+    _renderAudit();   // 每秒量化自检：哪些 mesh 被视锥裁掉 / NaN / 隐藏
+  }
+  renderer.render(scene, camera);
+}
+frame();
+
+// ── 对外 API ──
+window.__vrmSetEmotion = (name) => {
+  expressionName = name;
+  if (vrm && vrm.expressionManager) {
+    for (const e of ['happy', 'angry', 'sad', 'relaxed', 'surprised']) vrm.expressionManager.setValue(e, e === name ? 1 : 0);
+    console.log('[VRM] emotion ->', name);
+  }
+};
+window.__vrmSetMouth = (v) => { targetMouth = Math.max(0, Math.min(1, v)); };
+window.__vrmResetExpr = () => {
+  expressionName = null;
+  if (vrm && vrm.expressionManager) for (const e of ['happy', 'angry', 'sad', 'relaxed', 'surprised']) vrm.expressionManager.setValue(e, 0);
+};
+window.__vrmPlayMotion = (name) => playMotion(name);
+window.__vrmStopMotion = () => {
+  activeMotion = null;
+  if (currentAction) { currentAction.stop(); currentAction = null; }
+  if (idleAction) idleAction.paused = false;
+  applyRestPose();
+};
+window.__vrmGetMotion = () => activeMotion ? activeMotion.name : null;
+// 右键菜单用：无限循环播放某个动作 / 启动舞蹈合集
+window.__vrmLoop = (name) => startLoopMotion(name);
+window.__vrmStartDance = () => startDance();
+window.__vrmReady = () => !!vrm;
+window.__vrmGetExpr = () => expressionName;
+window.__vrmGetMouth = () => mouthValue;
+
+// ── 裙摆遮挡：本模型(鸣潮秧秧玄翎)有多层裙摆材质(B最外摆/B内摆/MI_Cloth…)，
+//    腿在骨骼层面确实在动，但视觉上被裙摆完全盖住，肉眼只看得到"整体在上下移动"。
+//    提供开关把裙摆隐藏，露出腿部，便于核对腿部动作是否真的生效。 ──
+const SKIRT_MAT_KEYWORDS = ['最外摆', '内摆', '摆', 'cloth', 'skirt', 'dress'];
+let _skirtMeshes = null;
+function _collectSkirtMeshes() {
+  if (_skirtMeshes || !vrm || !vrm.scene) return _skirtMeshes || [];
+  const found = [];
+  vrm.scene.traverse((o) => {
+    if (!o.isMesh) return;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    const hit = mats.some((m) => m && m.name &&
+      SKIRT_MAT_KEYWORDS.some((k) => String(m.name).toLowerCase().includes(k.toLowerCase())));
+    if (hit) found.push(o);
+  });
+  _skirtMeshes = found;
+  return found;
+}
+window.__vrmHideSkirt = (hide = true) => {
+  const list = _collectSkirtMeshes();
+  list.forEach((m) => { m.visible = !hide; });
+  console.log(`[VRM] 裙摆网格 ${list.length} 个 -> ${hide ? '已隐藏(露出腿部)' : '已恢复'}`);
+  return list.length;
+};
+window.__vrmSkirtInfo = () => _collectSkirtMeshes().map((m) => {
+  const mats = Array.isArray(m.material) ? m.material : [m.material];
+  return { name: m.name, mats: mats.map((x) => x && x.name), visible: m.visible };
+});
+// 面捕对外接口：start/stop 供 UI 或外部脚本调用，status 用于自验，config 用于实机调参
+window.__vrmFaceStart = (opts) => startFaceCapture(opts || {}).catch((e) => { console.error('[VRM] 面捕启动失败:', e && e.message); return false; });
+window.__vrmFaceStop = () => stopFaceCapture();
+window.__vrmFaceStatus = () => (faceTracker ? faceTracker.getDiagnostics() : { running: false, reason: '未初始化' });
+window.__vrmFaceConfig = (cfg = {}) => {
+  // 始终同步到 FACE_CFG fallback（faceTracker 未初始化 / 无头自验时也能调灵敏度）
+  if (cfg.headGain) Object.assign(FACE_CFG.headGain, cfg.headGain);
+  if (cfg.headSign) Object.assign(FACE_CFG.headSign, cfg.headSign);
+  if (cfg.headLimitRad) Object.assign(FACE_CFG.headLimitRad, cfg.headLimitRad);
+  if (cfg.smoothing != null) FACE_CFG.smoothing = cfg.smoothing;
+  if (cfg.headSmoothing != null) FACE_CFG.headSmoothing = cfg.headSmoothing;
+  if (cfg.expressionGain != null) FACE_CFG.expressionGain = cfg.expressionGain;
+  // 真机有 faceTracker 时同步到其实例（applyFaceCapture 优先读 faceTracker.cfg）
+  if (faceTracker) {
+    if (cfg.headGain) Object.assign(faceTracker.cfg.headGain, cfg.headGain);
+    if (cfg.headSign) Object.assign(faceTracker.cfg.headSign, cfg.headSign);
+    if (cfg.headLimitRad) Object.assign(faceTracker.cfg.headLimitRad, cfg.headLimitRad);
+    if (cfg.smoothing != null) faceTracker.cfg.smoothing = cfg.smoothing;
+    if (cfg.headSmoothing != null) faceTracker.cfg.headSmoothing = cfg.headSmoothing;
+    if (cfg.expressionGain != null) faceTracker.cfg.expressionGain = cfg.expressionGain;
+    return { headGain: faceTracker.cfg.headGain, headSign: faceTracker.cfg.headSign, smoothing: faceTracker.cfg.smoothing };
+  }
+  return { headGain: FACE_CFG.headGain, headSign: FACE_CFG.headSign, expressionGain: FACE_CFG.expressionGain };
+};
+// 身体姿态（Pose）调参：armGain 手臂增益、armSign 手臂方向（反了设 -1）、躯干捕捉比例、faceSmooth 平滑系数
+// z 方向会自校准（_zAutoCalib）并持久化到 localStorage，一般无需手动设
+// 校准值带版本号：坐标推导修过（flipX 修正 + Pose 置信度门控）之后，之前按旧推导校准出来的
+// zSign/xSign 已不可信，留着会让手臂方向一直反。版本不匹配就丢弃旧值，按新推导重新校准。
+// v4（2026-08-30）：_xAutoCalib 的左右先验曾写反（认为模型 left 在 -X，实测在 +X），
+//   于是把「完全正确」的外展方向判成 100% 朝内 → 翻转 xSign 并**持久化**到 localStorage。
+//   后果：用户只要抬过几次手，xSign 就被存成 -1，之后每次启动都读它 → 手臂方向一直反
+//   （即「怎么改都是反的」的真因）。必须升版本清空，否则修了代码、重启后照样反。
+// v5（2026-08-30）：MP world 的 x 实测是「真人自身右为正」，与旧推导「图像右为正」相反，
+//   故 xSign 默认值 1 → -1。旧校准值必须清掉，否则残留的 +1 会继续让手臂左右反。
+const POSE_CALIB_VER = '5';
+try {
+  const v = localStorage.getItem('naixi_pose_calib_ver');
+  if (v !== POSE_CALIB_VER) {
+    localStorage.removeItem('naixi_pose_zsign');
+    localStorage.removeItem('naixi_pose_xsign');
+    localStorage.setItem('naixi_pose_calib_ver', POSE_CALIB_VER);
+    console.log('[POSE-CHECK] 方向校准值版本过期（坐标推导已修正），已清空旧 zSign/xSign，本轮重新校准');
+  }
+} catch (e) {}
+try { const _zs = localStorage.getItem('naixi_pose_zsign'); if (_zs) POSE_DEFAULTS.zSign = parseInt(_zs, 10) || 1; } catch (e) {}
+try { const _xs = localStorage.getItem('naixi_pose_xsign'); if (_xs) POSE_DEFAULTS.xSign = parseInt(_xs, 10) || 1; } catch (e) {}
+console.log(`[POSE-CHECK] 当前方向符号 zSign=${POSE_DEFAULTS.zSign} xSign=${POSE_DEFAULTS.xSign}`);
+// ── 无头自验钩子：合成 Pose 注入 + 骨骼世界方向读回 ──
+// 用途：验证「真人抬左手 → 模型 left 臂真的朝 +X」这类方向问题，**不需要用户在镜头前**。
+// 设计要点：
+//  1) 走 _driveArmsFromPose 真实链路（含 poseArmDirections / 平滑 / 限幅 / rotateBoneWorldDir），
+//     绝不另写一套简化映射 —— 否则验证的是测试代码而不是产品代码。
+//  2) 注入多帧让球面插值收敛（平滑 tau=0.13，单帧只走 30%）。
+//  3) 读回的是**模型骨骼实际世界方向**，不是目标值 —— 目标反了模型会忠实执行，只比目标等于自欺。
+window.__vrmPoseInject = (pose, vis, frames = 30, dt = 1 / 60) => {
+  const armK = 1 - Math.exp(-Math.min(dt, 0.05) / ARM_SMOOTH_TAU);
+  let dirs = null;
+  for (let i = 0; i < frames; i++) dirs = _driveArmsFromPose(pose, vis, armK);
+  return {
+    xSign: POSE_DEFAULTS.xSign, zSign: POSE_DEFAULTS.zSign,
+    tgt: dirs ? { left: dirs.left.u, right: dirs.right.u, visL: dirs.left.visible, visR: dirs.right.visible } : null,
+  };
+};
+// 读回模型骨骼实际世界方向（肩→肘 / 肘→腕），以及各骨骼世界坐标（判定 left 到底在 +X 还是 -X）
+window.__vrmArmProbe = () => {
+  if (!vrm) return null;
+  const g = (n) => bone(n);
+  const dirOf = (a, b) => {
+    if (!a || !b) return null;
+    const d = worldPosOf(b).sub(worldPosOf(a));
+    if (d.lengthSq() < 1e-12) return null;
+    d.normalize();
+    return { x: +d.x.toFixed(3), y: +d.y.toFixed(3), z: +d.z.toFixed(3) };
+  };
+  return {
+    modelLeftXSign: MODEL_LEFT_X_SIGN,
+    worldX: {
+      leftUpperArm: +worldPosOf(g('leftUpperArm')).x.toFixed(3),
+      rightUpperArm: +worldPosOf(g('rightUpperArm')).x.toFixed(3),
+      leftHand: +worldPosOf(g('leftHand')).x.toFixed(3),
+      rightHand: +worldPosOf(g('rightHand')).x.toFixed(3),
+    },
+    left: { u: dirOf(g('leftUpperArm'), g('leftLowerArm')), l: dirOf(g('leftLowerArm'), g('leftHand')) },
+    right: { u: dirOf(g('rightUpperArm'), g('rightLowerArm')), l: dirOf(g('rightLowerArm'), g('rightHand')) },
+  };
+};
+window.__vrmPoseConfig = (cfg = {}) => {
+  if (cfg.armGain != null) POSE_DEFAULTS.armGain = cfg.armGain;
+  if (cfg.zSign != null) POSE_DEFAULTS.zSign = cfg.zSign;
+  if (cfg.chestYawGain != null) POSE_DEFAULTS.chestYawGain = cfg.chestYawGain;
+  if (cfg.chestPitchGain != null) POSE_DEFAULTS.chestPitchGain = cfg.chestPitchGain;
+  if (cfg.chestRollGain != null) POSE_DEFAULTS.chestRollGain = cfg.chestRollGain;
+  if (cfg.torsoGain != null) POSE_DEFAULTS.torsoGain = cfg.torsoGain;
+  if (cfg.torsoPitchGain != null) POSE_DEFAULTS.torsoPitchGain = cfg.torsoPitchGain;
+  if (cfg.torsoRollGain != null) POSE_DEFAULTS.torsoRollGain = cfg.torsoRollGain;
+  if (cfg.faceSmooth != null) FACE_SMOOTH_TAU = cfg.faceSmooth;
+  if (cfg.headTau != null) HEAD_SMOOTH_TAU = cfg.headTau;    // 头还想更稳就调大（0.13→0.2 更绵）
+  if (cfg.armTau != null) ARM_SMOOTH_TAU = cfg.armTau;       // 手臂仍抖就调大（0.13→0.2）
+  return POSE_DEFAULTS;
+};
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  if (vrm) fitCamera();
+});
+
+// ── 中性基准重校（模拟 VTS "Calibrate" 按钮）── 用户坐好点「重置面捕原点」→ 采当前姿态为原点
+window.__vrmRecenter = () => { _calibReset(); return 'recalibrating'; };
+window.__vrmGetCalib = () => ({ calib: _calib, buf: _recenterBuf ? _recenterN : 0, requested: _recenterRequested });
+// ── 无头自验专用：注入/清除合成 Pose、读 chest 实际旋转（默认无注入，不影响真机）──
+window.__vrmSetInjected = (pose, headEuler, vis, bs) => { window.__vrmInjected = { pose, headEuler, vis, bs: bs || {} }; };
+window.__vrmClearInjected = () => { window.__vrmInjected = null; };
+// 无头自验专用：读 head 实际旋转、表情权重（默认 jawOpen）。页面内可访问 vrm，绕开模块作用域限制。
+window.__vrmHeadProbe = () => {
+  if (!vrm || !vrm.humanoid) return null;
+  const h = vrm.humanoid.getNormalizedBoneNode('head');
+  return h ? { x: +h.rotation.x.toFixed(3), y: +h.rotation.y.toFixed(3), z: +h.rotation.z.toFixed(3) } : null;
+};
+window.__vrmExprProbe = (name = 'aa') => {
+  if (!vrm || !vrm.expressionManager) return null;
+  const em = vrm.expressionManager;
+  // arkitToVRM 把 jawOpen 映射成 VRM 表情名 'aa'/'oh'；getter 兼容不同 three-vrm 版本 getValue/getWeight
+  const v = em.getValue ? em.getValue(name) : (em.getWeight ? em.getWeight(name) : null);
+  return (v == null) ? null : +v.toFixed(3);
+};
+window.__vrmChestProbe = () => {
+  if (!vrm || !vrm.humanoid) return null;
+  const c = vrm.humanoid.getNormalizedBoneNode('upperChest') || vrm.humanoid.getNormalizedBoneNode('chest');
+  if (!c) return null;
+  return { x: +c.rotation.x.toFixed(3), y: +c.rotation.y.toFixed(3), z: +c.rotation.z.toFixed(3) };
+};
+console.log('[VRM] animate loop started');
+</script>
+</body>
+</html>

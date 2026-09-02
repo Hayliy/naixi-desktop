@@ -1,6 +1,7 @@
 """桌面端工具系统 — 工具注册表 + 执行器"""
-import asyncio, json, logging, os, re, shutil, subprocess, sys, tempfile, time, urllib.parse
+import asyncio, json, logging, os, shutil, subprocess, sys, tempfile, time, urllib.parse
 from datetime import datetime
+from desktop_core import html_util
 
 log = logging.getLogger("tools")
 
@@ -11,6 +12,67 @@ os.makedirs(WORKSPACE_DIR, exist_ok=True)
 # ── 高危工具（需上层完成用户确认后方可执行）──
 # run_local_command 为已合并入 bash 的旧名，保留以兼容旧引用
 HIGH_RISK_TOOLS = {"bash", "kill_process", "run_local_command"}
+
+
+# ── 正则替代辅助（零正则：html_util + 字符遍历 + 关键词黑名单）──
+ALLOWED_CALC_CHARS = set("0123456789 +-*/().,%")
+
+def _has_word(norm, kw):
+    """norm 已 lower；kw 作为独立词出现（按点/空白切分，覆盖 mkfs.ext4 这类连写）。"""
+    for part in norm.replace(".", " ").split():
+        if part == kw:
+            return True
+    return False
+
+_COMMAND_CHECKS = [
+    ("rm", lambda n: _has_word(n, "rm") and ("-rf" in n.split() or "-fr" in n.split() or "--no-preserve-root" in n) and ("/" in n or "~" in n)),
+    ("mkfs", lambda n: _has_word(n, "mkfs")),
+    ("dd", lambda n: _has_word(n, "dd") and "if=" in n),
+    ("shutdown", lambda n: any(_has_word(n, w) for w in ("shutdown", "reboot", "halt", "poweroff", "logoff"))),
+    ("init", lambda n: _has_word(n, "init") and "0" in n.split()),
+    ("format", lambda n: _has_word(n, "format") and any(":" in w for w in n.split())),
+    ("forkbomb", lambda n: ":()" in n and "{" in n and "|" in n and "&" in n and "}" in n),
+    (">/dev/sd", lambda n: ">" in n and "/dev/sd" in n),
+    ("chmod", lambda n: _has_word(n, "chmod") and "777" in n.split() and "/" in n),
+    ("del", lambda n: _has_word(n, "del") and "/s" in n and "/q" in n),
+    ("rd", lambda n: _has_word(n, "rd") and "/s" in n),
+]
+
+def _is_dangerous_command(norm):
+    """危险命令关键词/子串黑名单（子串匹配比正则更抗绕过）。norm 为已归一化命令。"""
+    return any(fn(norm) for _, fn in _COMMAND_CHECKS)
+
+def _escape_single_braces(s):
+    """把单个 {x} 转义为 {{x}}（引擎只认双大括号），已双写的保持。零正则。"""
+    out = []
+    n = len(s)
+    for i, ch in enumerate(s):
+        if ch == '{':
+            prev = s[i - 1] if i > 0 else ''
+            nxt = s[i + 1] if i + 1 < n else ''
+            out.append('{{' if prev != '{' and nxt != '{' else '{')
+        elif ch == '}':
+            prev = s[i - 1] if i > 0 else ''
+            nxt = s[i + 1] if i + 1 < n else ''
+            out.append('}}' if prev != '}' and nxt != '}' else '}')
+        else:
+            out.append(ch)
+    return ''.join(out)
+
+def _needs_brace_escape(s):
+    n = len(s)
+    for i, ch in enumerate(s):
+        if ch == '{':
+            prev = s[i - 1] if i > 0 else ''
+            nxt = s[i + 1] if i + 1 < n else ''
+            if prev != '{' and nxt != '{':
+                return True
+        elif ch == '}':
+            prev = s[i - 1] if i > 0 else ''
+            nxt = s[i + 1] if i + 1 < n else ''
+            if prev != '}' and nxt != '}':
+                return True
+    return False
 
 # ── 工具注册表 ──
 _registry = {}
@@ -188,8 +250,8 @@ async def _search_web(args, ctx):
             async with s.get(bing_url, headers=h, timeout=8) as r:
                 if r.status == 200:
                     html = await r.text()
-                    items = re.findall(r'<h2><a[^>]*href="([^"]*)"[^>]*>(.*?)</a>', html, re.DOTALL)
-                    lines = [f"- {re.sub(r'<[^>]+>', '', t)}: {u}" for u, t in items[:5]]
+                    items = html_util.extract_bing_results(html)[:5]
+                    lines = [f"- {title}: {url}" for url, title in items]
                     return "\n".join(lines) if lines else "未找到搜索结果"
         except:
             pass
@@ -207,10 +269,7 @@ async def _web_extractor(args, ctx):
                 if r.status != 200:
                     return f"抓取失败: HTTP {r.status}"
                 html = await r.text()
-                text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
-                text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
-                text = re.sub(r'<[^>]+>', ' ', text)
-                text = re.sub(r'\s+', ' ', text).strip()
+                text = html_util.strip_tags(html)
                 return text[:3000] if text else "页面无内容"
         except Exception as e:
             return f"抓取失败: {str(e)[:100]}"
@@ -227,8 +286,8 @@ async def _image_search(args, ctx):
             async with s.get(bing_url, headers=headers, timeout=8) as r:
                 if r.status == 200:
                     html = await r.text()
-                    urls = re.findall(r'<img[^>]*src="(https?://[^"]*)"[^>]*alt="([^"]*)"', html)
-                    lines = [f"- {alt}: {u}" for u, alt in urls[:8]]
+                    imgs = html_util.extract_images(html)[:8]
+                    lines = [f"- {alt}: {src}" for src, alt in imgs]
                     return "\n".join(lines) if lines else "未找到图片"
                 return f"搜索失败: HTTP {r.status}"
     except Exception as e:
@@ -243,9 +302,9 @@ async def _calculate(args, ctx):
     expr = args.get("expression", "")
     if not expr:
         return "缺少表达式"
-    safe = re.sub(r'[\d\s+\-*/().,%]', '', expr)
-    if safe:
-        return f"表达式包含非法字符: {safe}"
+    illegal = [c for c in expr if c not in ALLOWED_CALC_CHARS]
+    if illegal:
+        return f"表达式包含非法字符: {''.join(illegal)}"
     try:
         result = eval(expr, {"__builtins__": {}}, {})
         return f"{expr} = {result}"
@@ -415,8 +474,8 @@ async def _get_weather(args, ctx):
             async with s.get(bing_url, headers=h, timeout=8) as r:
                 if r.status == 200:
                     html = await r.text()
-                    snippets = re.findall(r'<p[^>]*class="b_lineclamp[^"]*"[^>]*>(.*?)</p>', html, re.DOTALL)
-                    lines = [re.sub(r'<[^>]+>', '', snip).strip() for snip in snippets if snip.strip()]
+                    snippets = html_util.extract_snippets(html)
+                    lines = [s for s in snippets if s]
                     return "\n".join(lines[:3]) if lines else f"未找到{city}天气信息"
                 return f"查询失败: HTTP {r.status}"
     except Exception as e:
@@ -432,26 +491,10 @@ async def _run_command(args, ctx):
         return "缺少要执行的命令"
     # 安全检查：先规范化命令（去引号/反引号、折叠空白、转小写），再用正则匹配危险模式，
     # 覆盖多空格、引号包裹、参数换序等常见绕过手法
-    _norm = re.sub(r"[\"'`]", "", command)
-    _norm = re.sub(r"\s+", " ", _norm).strip().lower()
-    dangerous_patterns = [
-        r"\brm\s+(?:-\S+\s+)*-?[rf]{1,2}\b[^|;&]*\s[/~]\*?\s*(?:$|[;|&])",  # rm -rf / 及变体（含 -fr、参数换序、根目录/家目录）
-        r"\brm\b[^|;&]*--no-preserve-root",                                  # rm --no-preserve-root
-        r"\bmkfs\b",                                                          # 格式化文件系统
-        r"\bdd\b[^|;&]*\bif=",                                                # dd if= 覆写磁盘
-        r"\b(?:shutdown|reboot|halt|poweroff|logoff)\b",                      # 关机/重启
-        r"\binit\s+0\b",                                                      # init 0
-        r"\bformat\s+[a-z]:",                                                 # windows format c:
-        r":\(\)\s*\{[^}]*:\s*\|\s*:[^}]*&[^}]*\}",                            # fork 炸弹
-        r">\s*/dev/sd[a-z]",                                                  # 写入原始磁盘设备
-        r"\bchmod\b[^|;&]*\b777\b[^|;&]*\s/\s*(?:$|[;|&])",                   # chmod 777 /
-        r"\bdel\b[^|;&]*\s/[sfq]\b",                                          # windows del /s /q
-        r"\brd\b[^|;&]*\s/s\b",                                               # windows rd /s
-    ]
-    for pat in dangerous_patterns:
-        if re.search(pat, _norm):
-            log.warning(f"[工具] 拒绝执行危险命令: {command[:100]}")
-            return "❌ 禁止执行危险命令"
+    _norm = " ".join(command.replace('"', '').replace("'", '').replace('`', '').split()).lower()
+    if _is_dangerous_command(_norm):
+        log.warning(f"[工具] 拒绝执行危险命令: {command[:100]}")
+        return "❌ 禁止执行危险命令"
     try:
         # ── 启动 .exe 程序：避免弹终端窗口 ──
         cmd_stripped = command.strip().strip("\"")
@@ -531,7 +574,6 @@ async def _edit_file(args, ctx):
     path = args.get("path", "")
     old_string = args.get("old_string", "")
     new_string = args.get("new_string", "")
-    use_regex = args.get("regex", False)
     replace_all = args.get("replace_all", False)
     if not path or not old_string:
         return "缺少文件路径或要替换的内容"
@@ -545,17 +587,13 @@ async def _edit_file(args, ctx):
         with open(full, "r", encoding="utf-8") as f:
             content = f.read()
         
-        if use_regex:
-            import re
-            new_content, count = re.subn(old_string, new_string, content, flags=re.DOTALL)
-        else:
-            count = content.count(old_string)
-            if count == 0:
-                return f"未找到要替换的内容: {old_string[:60]}"
-            if count > 1 and not replace_all:
-                return f"找到 {count} 处匹配。设置 replace_all=true 可全部替换，或提供更精确的上下文"
-            new_content = content.replace(old_string, new_string, -1 if replace_all else 1)
-            count = new_content.count(new_string) - content.count(new_string) + count if not replace_all else content.count(old_string)
+        count = content.count(old_string)
+        if count == 0:
+            return f"未找到要替换的内容: {old_string[:60]}"
+        if count > 1 and not replace_all:
+            return f"找到 {count} 处匹配。设置 replace_all=true 可全部替换，或提供更精确的上下文"
+        new_content = content.replace(old_string, new_string, -1 if replace_all else 1)
+        count = new_content.count(new_string) - content.count(new_string) + count if not replace_all else content.count(old_string)
         
         with open(full, "w", encoding="utf-8") as f:
             f.write(new_content)
@@ -856,14 +894,22 @@ async def _find_files(args, ctx):
         pass
     
     # ── 2. 常见安装目录搜索可执行程序 ──
-    search_paths = [
-        "D:\\Program Files", "D:\\Program Files (x86)",
-        "D:\\Games", "D:\\游戏",
-        "C:\\Program Files", "C:\\Program Files (x86)",
-        "D:\\软件", "D:\\应用", "D:\\Apps",
+    # 动态构造搜索根：优先用系统环境变量（ProgramFiles / ProgramFiles(x86) / SystemDrive），
+    # 不再写死 C:/D: 等具体盘符，保证换机/换盘符也能搜索。
+    sys_drive = os.environ.get("SystemDrive", "C:")
+    search_paths = []
+    for _pf in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)")):
+        if _pf:
+            search_paths.append(_pf)
+    for _d in (sys_drive, "D:"):
+        search_paths.extend([
+            os.path.join(_d, "Games"), os.path.join(_d, "游戏"),
+            os.path.join(_d, "软件"), os.path.join(_d, "应用"), os.path.join(_d, "Apps"),
+        ])
+    search_paths.extend([
         os.path.expanduser("~\\AppData\\Local"),
         os.path.expanduser("~\\AppData\\Roaming"),
-    ]
+    ])
     
     # 第一遍：深度2层内找 .exe 和目录名匹配
     for root in search_paths:
@@ -945,8 +991,7 @@ async def _find_files(args, ctx):
     for cn, ens in lang_map.items():
         if name_lower == cn or cn in name_lower:
             for en in ens:
-                for root in ["D:\\Program Files", "D:\\软件", "D:\\Games",
-                             "C:\\Program Files", "C:\\Program Files (x86)"]:
+                for root in search_paths:
                     if not os.path.isdir(root): continue
                     try:
                         for entry in os.listdir(root):
@@ -1029,12 +1074,11 @@ register("grep_search", "在文件中搜索关键词或模式，支持正则。�
     {"type": "object", "properties": {"pattern": {"type": "string", "description": "搜索关键词或模式"}, "path": {"type": "string", "description": "搜索的子目录（可选，默认全局搜索）"}}, "required": ["pattern"]},
     _grep_search)
 
-register("edit_file", "精确编辑文件内容。用 old_string 定位要修改的位置，替换为 new_string。支持正则模式和全部替换。支持绝对路径",
+register("edit_file", "精确编辑文件内容。用 old_string 定位要修改的位置，替换为 new_string。支持全部替换。支持绝对路径",
     {"type": "object", "properties": {
         "path": {"type": "string", "description": "文件路径（绝对路径或工作区相对路径）"},
-        "old_string": {"type": "string", "description": "要替换的原文（或正则模式）"},
+        "old_string": {"type": "string", "description": "要替换的原文"},
         "new_string": {"type": "string", "description": "替换后的新内容"},
-        "regex": {"type": "boolean", "description": "是否使用正则匹配（默认 false）"},
         "replace_all": {"type": "boolean", "description": "是否替换所有匹配处（默认 false，只替换第一处）"},
     }, "required": ["path", "old_string", "new_string"]},
     _edit_file)
@@ -1130,10 +1174,7 @@ async def _web_fetch(args, ctx):
                 if r.status != 200:
                     return f"抓取失败: HTTP {r.status}"
                 html = await r.text()
-                text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL|re.IGNORECASE)
-                text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL|re.IGNORECASE)
-                text = re.sub(r'<[^>]+>', ' ', text)
-                text = re.sub(r'\s+', ' ', text).strip()
+                text = html_util.strip_tags(html)
                 return text[:5000] if text else "页面无内容"
     except Exception as e:
         return f"抓取失败: {str(e)[:100]}"
@@ -1277,11 +1318,10 @@ async def _batch_edit(args, ctx):
     old_string = args.get("old_string", "")
     new_string = args.get("new_string", "")
     root = args.get("path", "")
-    use_regex = args.get("regex", False)
     if not pattern or not old_string:
         return "缺少文件匹配模式或要替换的内容"
     search_dir = os.path.normpath(root) if root and os.path.isabs(root) else WORKSPACE_DIR
-    import glob, re
+    import glob
     full_pattern = os.path.join(search_dir, pattern)
     files = glob.glob(full_pattern, recursive=True)
     if not files:
@@ -1294,13 +1334,10 @@ async def _batch_edit(args, ctx):
         try:
             with open(fpath, "r", encoding="utf-8") as f:
                 content = f.read()
-            if use_regex:
-                new_content, cnt = re.subn(old_string, new_string, content)
-            else:
-                cnt = content.count(old_string)
-                if cnt == 0:
-                    continue
-                new_content = content.replace(old_string, new_string)
+            cnt = content.count(old_string)
+            if cnt == 0:
+                continue
+            new_content = content.replace(old_string, new_string)
             if new_content != content:
                 with open(fpath, "w", encoding="utf-8") as f:
                     f.write(new_content)
@@ -1312,13 +1349,12 @@ async def _batch_edit(args, ctx):
         result += f"\n⚠ 以下文件出错: {', '.join(errors[:3])}"
     return result
 
-register("batch_edit", "在多个文件中批量搜索替换文本。支持 glob 模式匹配文件（如 **/*.py），支持正则",
+register("batch_edit", "在多个文件中批量搜索替换文本。支持 glob 模式匹配文件（如 **/*.py）",
     {"type": "object", "properties": {
         "pattern": {"type": "string", "description": "文件匹配模式，如 **/*.py"},
-        "old_string": {"type": "string", "description": "要替换的原文（或正则模式）"},
+        "old_string": {"type": "string", "description": "要替换的原文"},
         "new_string": {"type": "string", "description": "替换后的新内容"},
         "path": {"type": "string", "description": "搜索根目录（可选，默认工作区）"},
-        "regex": {"type": "boolean", "description": "是否使用正则匹配（默认 false）"},
     }, "required": ["pattern", "old_string", "new_string"]},
     _batch_edit)
 
@@ -1787,10 +1823,9 @@ def _validate_and_fix_workflow(nodes: list, edges: list) -> tuple:
 
         # 6. 单大括号语法兼容 {var} → {{var}}（引擎只认双大括号）
         if ntype not in ("code", "end"):
-            import re as _re
             for ck, cv in cfg.items():
-                if isinstance(cv, str) and _re.search(r'(?<!\{)\{(\w+)\}(?!\})', cv):
-                    new_v = _re.sub(r'(?<!\{)\{(\w+)\}(?!\})', r'{{\1}}', cv)
+                if isinstance(cv, str) and _needs_brace_escape(cv):
+                    new_v = _escape_single_braces(cv)
                     if new_v != cv:
                         cfg[ck] = new_v
                         fixes.append(f"{nid}.{ck}: {{var}}→{{{{var}}}} 语法兼容")

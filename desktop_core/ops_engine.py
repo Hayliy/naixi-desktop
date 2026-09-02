@@ -535,44 +535,120 @@ async def _restart_backend() -> tuple[bool, str]:
         return False, f"自愈失败：{e}"
 
 
+def _find_searxng_dir():
+    """从本文件位置向上遍历，定位含 'SearXNG for Windows.exe' 的 searxng 目录。
+
+    兼容两种布局（彻底消除打包态路径错位）：
+      - 开发态：desktop_core/ops_engine.py -> ../searxng/
+      - 打包态：resources/desktop_core/ops_engine.py -> ../searxng/
+                （build.rs 已把项目根 searxng/ 同步进 resources/searxng/）
+    向上最多 5 层，不写死盘符/用户名/项目名。
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    cur = here
+    for _ in range(5):
+        cand = os.path.join(cur, "searxng", "SearXNG for Windows.exe")
+        if os.path.exists(cand):
+            return os.path.join(cur, "searxng")
+        cur = os.path.dirname(cur)
+    return None
+
+
+async def _ensure_searxng() -> tuple[bool, str]:
+    """确保 SearXNG 在线：端口已监听则跳过，否则拉起。返回 (ok, msg)。
+
+    与 _restart_searxng 的区别：先探测再决策，避免对已运行实例重复 taskkill。
+    供「应用启动钩子」和「看门狗」共用，保证 SearXNG 随桌面端应用启动并持续在线。
+    """
+    try:
+        _, w = await asyncio.wait_for(
+            asyncio.open_connection("127.0.0.1", 8899), timeout=1.5
+        )
+        w.close()
+        try:
+            await w.wait_closed()
+        except Exception:
+            pass
+        return True, "SearXNG 已在运行（端口 8899 监听中）"
+    except Exception:
+        pass
+    return await _restart_searxng()
+
+
+async def _searxng_watchdog(interval: int = 60):
+    """SearXNG 看门狗：随应用持续运行，离线自动拉起。
+
+    与后端 self-heal 的「检测→重启」机制一致，但作为独立常驻循环：
+    每 interval 秒检测 8899 端口，离线则经 _ensure_searxng 自动拉起，
+    无需用户手动触发自愈。随桌面端应用启动而启动。
+    """
+    await asyncio.sleep(5)  # 启动后稍候，避免与启动钩子抢端口
+    while True:
+        try:
+            await asyncio.sleep(interval)
+            ok, msg = await _ensure_searxng()
+            if not ok:
+                log.warning(f"看门狗：SearXNG 离线，已尝试自动拉起：{msg}")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            log.error(f"看门狗异常：{e}")
+
+
 async def _restart_searxng() -> tuple[bool, str]:
     """尝试重启 SearXNG 搜索服务"""
     try:
-        # 检查 SearXNG 进程
-        result = subprocess.run(
-            ["powershell", "-NoProfile", "-Command",
-             "Get-Process -Name 'SearXNG*' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id"],
-            capture_output=True, text=True, timeout=5
-        )
-        pids = result.stdout.strip().split()
-        if pids:
-            for pid in pids:
-                subprocess.run(["taskkill", "/F", "/PID", pid], capture_output=True, timeout=3)
-            await asyncio.sleep(1)
+        # 清理旧实例：8899 端口占用者（webapp python）+ exe 壳，确保干净重启。
+        # 注：webapp 进程名是 python.exe，原 taskkill 'SearXNG*' 杀不到，必须按端口清理。
+        try:
+            subprocess.run(["powershell", "-NoProfile", "-Command",
+                "$p=Get-NetTCPConnection -LocalPort 8899 -State Listen -ErrorAction SilentlyContinue; "
+                "if($p){Stop-Process -Id $p.OwningProcess -Force -ErrorAction SilentlyContinue}; "
+                "Get-Process -Name 'SearXNG*' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue"],
+                capture_output=True, text=True, timeout=8,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        except Exception:
+            pass
+        await asyncio.sleep(1)
 
-        # 重新启动 SearXNG
-        import sys
-        searxng_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "searxng")
-        exe = os.path.join(searxng_dir, "SearXNG for Windows.exe")
-        if os.path.exists(exe):
-            startupinfo = None
-            if os.name == "nt":
-                startupinfo = subprocess.STARTUPINFO()
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            subprocess.Popen([exe], cwd=searxng_dir, stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL, startupinfo=startupinfo)
-            # 等待端口就绪
-            for i in range(15):
-                await asyncio.sleep(0.5)
-                try:
-                    import urllib.request
-                    urllib.request.urlopen("http://127.0.0.1:8899", timeout=2)
-                    return True, f"SearXNG 已重启 (端口 8899 就绪)"
-                except:
-                    continue
-            return False, "SearXNG 重启后端口未就绪"
+        # 定位 searxng 目录（多候选，兼容开发态/打包态）
+        searxng_dir = _find_searxng_dir()
+        if not searxng_dir:
+            return False, "SearXNG 目录不存在（已向上遍历项目根及上层 searxng 目录）"
+
+        # 启动：用自带 pythonw（无窗口子系统）直接跑 webapp.py——避免弹出可见控制台终端。
+        # 关键修复：必须显式传 SEARXNG_SETTINGS_PATH，否则 webapp 用内置默认配置监听 8888，
+        # 与 ops_engine 检测的 8899 不一致 → 看门狗永远检测失败 → 每 60s 重试弹窗循环。
+        # 注：SearXNG for Windows.exe 是损坏的壳（0xc000000be 无效镜像格式），
+        # 从不提供 HTTP 服务，已移除兜底路径避免启动时弹 Windows 错误对话框。
+        startupinfo = None
+        if os.name == "nt":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE  # 双保险隐藏窗口（pythonw 已无窗口，此为止损层）
+        py = os.path.join(searxng_dir, "python", "pythonw.exe")
+        webapp = os.path.join(searxng_dir, "python", "Lib", "site-packages", "searx", "webapp.py")
+        settings = os.path.join(searxng_dir, "config", "settings.yml")
+        if os.path.exists(py) and os.path.exists(webapp):
+            env = dict(os.environ)
+            if os.path.exists(settings):
+                env["SEARXNG_SETTINGS_PATH"] = settings
+            subprocess.Popen([py, webapp], cwd=searxng_dir, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, startupinfo=startupinfo, env=env)
         else:
-            return False, "SearXNG 可执行文件不存在"
+            return False, (f"SearXNG 启动器不存在：python={os.path.exists(py)}({py}), "
+                           f"webapp={os.path.exists(webapp)}({webapp}), searxng_dir={searxng_dir}")
+
+        # 等待端口就绪（webapp 冷启动较慢，给足 20s）
+        for i in range(40):
+            await asyncio.sleep(0.5)
+            try:
+                import urllib.request
+                urllib.request.urlopen("http://127.0.0.1:8899", timeout=2)
+                return True, "SearXNG 已启动（端口 8899 就绪）"
+            except Exception:
+                continue
+        return False, "SearXNG 启动后端口未就绪"
     except Exception as e:
         return False, f"SearXNG 自愈失败：{e}"
 

@@ -51,7 +51,29 @@ def main():
                 shutil.copy2(sp, prompt_dst / name)
         print(f"已暂存内置资源库（专家/Skill/专家团队）到 {prompt_dst}")
 
+    # 4. 安全收尾：剥离打包目录里的「个人/运行时」数据，确保安装包零私有信息。
+    #    resources/data 只保留内置 prompts；其余（个人数据库、日志、模型/语音缓存、
+    #    截图、知识库）一律删除，避免把用户的对话/记忆/密钥库随安装包发出去。
+    _scrub_bundled_personal_data(DST.parent)
     print(f"已暂存 {count} 个 .py 文件到 {DST}（仅代码，不含用户私有数据/模型/日志）")
+
+
+def _scrub_bundled_personal_data(resources_dir: pathlib.Path):
+    """删除 resources/data 与 resources/logs 中的个人/运行时产物，仅保留内置 prompts。"""
+    data_dir = resources_dir / "data"
+    if data_dir.is_dir():
+        for item in list(data_dir.iterdir()):
+            if item.name == "prompts":
+                continue  # 内置资源库，保留
+            if item.is_dir():
+                shutil.rmtree(item, ignore_errors=True)
+            else:
+                item.unlink(missing_ok=True)
+    logs_dir = resources_dir / "logs"
+    if logs_dir.is_dir():
+        for item in list(logs_dir.iterdir()):
+            if item.is_file():
+                item.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

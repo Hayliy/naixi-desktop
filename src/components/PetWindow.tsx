@@ -3,6 +3,7 @@ import { Minus, X } from "lucide-react";
 import {
   setMouth, applyEmotion, applyAction, applyParams, loadScript, sleep,
 } from "@/lib/avatarDriver";
+import { API_BASE } from "@/lib/api";
 
 const MODEL_KEY = "naixi_pet_model";
 
@@ -18,6 +19,7 @@ export default function PetWindow() {
   const [connected, setConnected] = useState(false);
   const [models, setModels] = useState<any[]>([]);
   const [currentModel, setCurrentModel] = useState<string>(() => localStorage.getItem(MODEL_KEY) || "");
+  const clickThroughRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [appReady, setAppReady] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -30,11 +32,38 @@ export default function PetWindow() {
 
   // 加载模型列表
   useEffect(() => {
-    fetch("/api/live2d-model-list")
+    fetch(`${API_BASE}/api/live2d-model-list`)
       .then(r => r.json())
       .then(d => { if (d.models) setModels(d.models); })
       .catch(() => {});
   }, []);
+
+  // 监听顶栏菜单的桌宠控制事件（切换模型 / 鼠标穿透）
+  useEffect(() => {
+    const onNextModel = () => {
+      if (!models.length) return;
+      const idx = models.findIndex(m => modelKey(m) === currentModel);
+      const next = models[(idx + 1) % models.length];
+      handleModelChange(modelKey(next));
+    };
+    const onToggleClickThrough = () => {
+      if (!isTauri) return;
+      (async () => {
+        try {
+          const { getCurrentWindow } = await import("@tauri-apps/api/window");
+          const w = getCurrentWindow();
+          clickThroughRef.current = !clickThroughRef.current;
+          await w.setIgnoreMouseEvents(clickThroughRef.current);
+        } catch {}
+      })();
+    };
+    window.addEventListener("naixi:pet:next-model", onNextModel);
+    window.addEventListener("naixi:pet:toggle-clickthrough", onToggleClickThrough);
+    return () => {
+      window.removeEventListener("naixi:pet:next-model", onNextModel);
+      window.removeEventListener("naixi:pet:toggle-clickthrough", onToggleClickThrough);
+    };
+  }, [models, currentModel, isTauri]);
 
   // 模型列表加载后，若无有效选择则自动选第一个（避免硬编码默认导致 404 白板）
   useEffect(() => {
@@ -96,7 +125,7 @@ export default function PetWindow() {
       if (cancelled) return;
       Config.MotionGroupIdle = "Idle";
       Config.MouseFollow = false;
-      const modelPath = `/api/live2d-model/${currentModel.split("/").map(encodeURIComponent).join("/")}`;
+      const modelPath = `${API_BASE}/api/live2d-model/${currentModel.split("/").map(encodeURIComponent).join("/")}`;
       try {
         const sprite = new Live2DSprite();
         await sprite.init({ modelPath, ticker: app.ticker });
@@ -122,7 +151,7 @@ export default function PetWindow() {
   // 若后端全局监听已激活（global_active=true），则跳过，避免双触发。
   const hotkeyCfgRef = useRef<{ global_active: boolean; hotkeys: any[] }>({ global_active: false, hotkeys: [] });
   useEffect(() => {
-    fetch("/api/hotkeys/config")
+    fetch(`${API_BASE}/api/hotkeys/config`)
       .then(r => r.json())
       .then(d => { hotkeyCfgRef.current = { global_active: !!d.global_active, hotkeys: d.hotkeys || [] }; })
       .catch(() => {});
@@ -167,12 +196,12 @@ export default function PetWindow() {
   // 替换通用种子，实现「模型文件里原本写的快捷键默认支持」；无内置动作则保留种子）。
   useEffect(() => {
     if (!currentModel) return;
-    fetch("/api/hotkeys/import-model", {
+    fetch(`${API_BASE}/api/hotkeys/import-model`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: currentModel, force: true }),
     })
-      .then(() => fetch("/api/hotkeys/config"))
+      .then(() => fetch(`${API_BASE}/api/hotkeys/config`))
       .then(r => r.json())
       .then(d => { hotkeyCfgRef.current = { global_active: !!d.global_active, hotkeys: d.hotkeys || [] }; })
       .catch(() => {});

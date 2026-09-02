@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <title>naixi face capture</title>
+  <style>html,body{margin:0;background:transparent;overflow:hidden}video{position:fixed;left:0;top:0;width:320px;height:240px;opacity:1;pointer-events:none;}</style>
+</head>
+<body>
+<!--
+  Live2D 面捕捕获页（离线）：复用 vendored FaceTracker（face_landmarker.task + wasm）。
+  仅做摄像头采集与推理，不做渲染；通过 window.__faceGet() 把最新 ARKit 混合形状/头部姿态回传给原生 Live2D 进程。
+  必须经 http(s) 打开（由 face_bridge.py 起本地服务），file:// 下浏览器会拦截 WASM/模型 fetch。
+-->
+<script type="module">
+  import { FaceTracker } from './face_tracker.js';
+
+  window.__faceTracker = null;
+  window.__faceResult = { detected: false, blendshapes: null, headEuler: null, facePos: null };
+  window.__faceErr = '';
+
+  // 统一回传打包：从 landmarks 算 VTS 风格 FacePosition（脸在画面中的归一化位置/远近）。
+  // 鼻尖归一化坐标：x 右为正、y 下为正、z 近为负（MediaPipe 深度约定）。
+  // 符号在 face_bridge 侧按 mirror/常量隔离，真机一次性核对即可（与头部符号同理）。
+  const __clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  function __packFace(r) {
+    if (!r || !r.detected) return { detected: false, blendshapes: null, headEuler: null, facePos: null, torsoPitch: null, cam: (r && r.cam) || null,
+      feedFps: (r && r.feedFps) || 0, inflight: (r && r.inflight) || 0, ageMax: (r && r.ageMax) || 0, ageAvg: (r && r.ageAvg) || 0 };
+    let facePos = null;
+    const lm = r.landmarks;
+    if (lm && lm.length > 1) {
+      const nose = lm[1];
+      if (nose && typeof nose.x === 'number') {
+        facePos = {
+          x: __clamp((nose.x - 0.5) * 2.2, -1, 1),   // +右
+          y: __clamp((0.5 - nose.y) * 2.2, -1, 1),   // +上
+          z: __clamp(-(nose.z || 0) * 4.0, -1, 1),   // +靠近相机（远=-）
+        };
+      }
+    }
+    // 真实躯干俯仰角（PoseLandmarker 肩-髋连线，worldLandmarks 米制 y 向上 z 向前）：
+    // 直立 ~0°；弯腰前倾 → 髋相对肩向前(vz>0) → 正角；后仰 → 负角。
+    // 这是「弯腰到坐直」动作的黄金信号（VTS BodyAngleY 同款），纯 FaceLandmarker 抓不到。
+    // 头 pitch 弯腰时几乎不变，故身体上下起伏必须靠它，而非 head 联动。
+    let torsoPitch = null;
+    const pose = r.pose;
+    if (pose && pose.length > 24 && pose[11] && pose[12] && pose[23] && pose[24]) {
+      const shY = (pose[11].y + pose[12].y) / 2, shZ = (pose[11].z + pose[12].z) / 2;
+      const hpY = (pose[23].y + pose[24].y) / 2, hpZ = (pose[23].z + pose[24].z) / 2;
+      const vy = hpY - shY, vz = hpZ - shZ;          // 肩→髋向量
+      torsoPitch = Math.atan2(vz, -vy) * 180 / Math.PI;
+    }
+    return { detected: true, blendshapes: r.blendshapes, headEuler: r.headEuler, facePos, torsoPitch,
+             fps: r.fps, inferMs: r.inferMs, cam: r.cam || null,
+             feedFps: r.feedFps || 0, inflight: r.inflight || 0, ageMax: r.ageMax || 0, ageAvg: r.ageAvg || 0 };
+  }
+
+  window.__faceStart = async (opts = {}) => {
+    try {
+      if (!window.__faceTracker) {
+        // 2D 桌宠面捕：重开 Pose（usePose:true）——身体上下起伏（弯腰到坐直）靠肩-髋连线
+        // pitch 驱动 body_y（VTS BodyAngleY 同款信号）。FaceLandmarker 无身体骨骼，纯脸信号
+        // 抓不到躯干动作。throttleMs 16：仅主线程 fallback 去重兜底；Worker 模式不节流。
+        window.__faceTracker = new FaceTracker({
+          mirror: true, expressionGain: 1.0, delegate: 'GPU',
+          usePose: true, throttleMs: 16, ...opts
+        });
+      }
+      // 阶段一（2026-09-01）：推理搬 Web Worker。tracker.start 内部优先起 Worker（与 video 回调
+      // 解耦 → detect 冲 ~30fps），失败自动回退主线程同步推理（detect ~14，功能不坏，风险最低）。
+      // tracker 在 Worker 模式下自己跑 rVFC 取帧喂 Worker，结果经 onResult 回传我们打包。
+      await window.__faceTracker.start(opts);
+      window.__faceTracker.onResult = (r) => { window.__faceResult = __packFace(r); };
+      window.__faceUseWorker = !!window.__faceTracker._useWorker;  // 供 Python 侧诊断是否真进 Worker 模式
+      window.__faceErr = '';
+      return true;
+    } catch (e) {
+      window.__faceErr = String(e && e.message || e);
+      console.error('[FaceCapture] 启动失败:', window.__faceErr);
+      return false;
+    }
+  };
+
+  window.__faceStop = () => {
+    if (window.__faceTracker) window.__faceTracker.stop();
+    window.__faceResult = { detected: false, blendshapes: null, headEuler: null, facePos: null };
+  };
+
+  // 预热：捕获页 load 后由 Python 侧静默调用，仅建 MediaPipe 模型（不取摄像头、不起检测循环）。
+  // 把 WASM 编译 + 模型 fetch 的 ~16s 从「用户点开面捕」挪到后台，用户点面捕时只差 getUserMedia（几百 ms）。
+  // 与 __faceStart 共用同一个 FaceTracker 实例与 onResult 通道，preload 后 start 的 init 因 landmarker 已建直接跳过。
+  window.__facePreload = async (opts = {}) => {
+    try {
+      if (!window.__faceTracker) {
+        window.__faceTracker = new FaceTracker({
+          mirror: true, expressionGain: 1.0, delegate: 'GPU',
+          usePose: true, throttleMs: 16, ...opts
+        });
+      }
+      await window.__faceTracker.preload();
+      window.__faceErr = '';
+      return true;
+    } catch (e) {
+      window.__faceErr = String(e && e.message || e);
+      console.error('[FaceCapture] 预热失败:', window.__faceErr);
+      return false;
+    }
+  };
+
+  window.__faceGet = () => window.__faceResult;
+
+  // 渲染循环(paintGL→poll→runJavaScript)每帧调本函数取最新结果。
+  // 2026-09-01 GPU 解耦后：本函数【只回传】已存的最新结果，不再触发 GPU 推理
+  //（推理由 __faceStart 内的独立 requestVideoFrameCallback 循环独占跑）。
+  // 若仍在此调 update()/detectForVideo，MediaPipe WebGL 推理会阻塞 L2D 原生 GL 渲染帧
+  // → detect 被挤回 16fps（facecap_perf.log 实证）。只读 = 渲染零推理开销关键。
+  window.__faceTick = () => {
+    const t = window.__faceTracker;
+    if (!t || !t.running) {
+      // 未启动 / 已停止 / 异常中断 = 没有数据。必须明确回传「未检出」，
+      // 否则上层会拿着最后一帧的旧结果一直当"检出中"，导致闭眼/歪头永久卡住。
+      window.__faceResult = { detected: false, blendshapes: null, headEuler: null, facePos: null };
+    }
+    return window.__faceResult;
+  };
+
+  window.__faceDiag = () => window.__faceTracker ? window.__faceTracker.getDiagnostics() : { running: false, reason: '未初始化', err: window.__faceErr };
+</script>
+</body>
+</html>

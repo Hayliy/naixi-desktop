@@ -1,18 +1,16 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   Cpu, Cat, Mic, Search, HardDrive, Server,
-  Palette, DatabaseBackup, ShieldCheck, Info, Check, X, Lock, Keyboard,
+  Palette, DatabaseBackup, ShieldCheck, Info, Check, X, Lock, Download,
 } from "lucide-react";
 import ProviderSettings from "./ProviderSettings";
 import ThemeSettings from "./ThemeSettings";
-import HotkeySettings from "./HotkeySettings";
 import { apiGet, apiPost } from "@/lib/api";
 import { INPUT, BTN, BTN_GHOST, Section, SettingRow, InfoRow, SaveBar } from "./settings/primitives";
 
 const TABS = [
   { key: "model",     label: "模型",       icon: Cpu },
   { key: "pet",       label: "桌宠",       icon: Cat },
-  { key: "hotkeys",   label: "快捷键",     icon: Keyboard },
   { key: "voice",     label: "语音",       icon: Mic },
   { key: "search",    label: "搜索",       icon: Search },
   { key: "storage",   label: "文件与存储", icon: HardDrive },
@@ -21,6 +19,7 @@ const TABS = [
   { key: "backup",    label: "备份与迁移", icon: DatabaseBackup },
   { key: "security",  label: "安全",       icon: ShieldCheck },
   { key: "about",     label: "关于",       icon: Info },
+  { key: "update",    label: "更新",       icon: Download },
 ];
 
 /* ── 全局 Toast（自定义，禁用浏览器原生弹窗）── */
@@ -72,7 +71,6 @@ export default function SettingsPage() {
         <div className="max-w-2xl">
           {tab === "model" && <SettingsModel />}
           {tab === "pet" && <SettingsPet show={show} />}
-          {tab === "hotkeys" && <HotkeySettings show={show} />}
           {tab === "voice" && <SettingsVoice show={show} />}
           {tab === "search" && <SettingsSearch show={show} />}
           {tab === "storage" && <SettingsStorage />}
@@ -85,6 +83,7 @@ export default function SettingsPage() {
           {tab === "backup" && <SettingsBackup show={show} />}
           {tab === "security" && <SettingsSecurity />}
           {tab === "about" && <SettingsAbout />}
+          {tab === "update" && <SettingsUpdate />}
         </div>
       </div>
       {node}
@@ -331,12 +330,68 @@ function SettingsAbout() {
       if (typeof d.tools === "number") setTools(d.tools);
     }).catch(() => setVer("无法获取"));
   }, []);
+  const openRepo = async () => {
+    // 开源仓库（GitHub）：代码托管 + 技术交流 + Issue/PR 主入口。
+    // GitHub Sponsors 在中国大陆不可用，故收款走下方微信/支付宝收款码。
+    const url = "https://github.com/Hayliy/naixi-desktop";
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("open_url", { url });
+    } catch { try { window.open(url); } catch {} }
+  };
   return (
+    <>
     <Section title="关于" desc="版本与运行环境信息">
       <InfoRow label="版本" value={ver} />
       <InfoRow label="已加载工具" value={tools === null ? "-" : `${tools} 个`} />
       <InfoRow label="技术栈" value="Python + React + Tauri + Godot" />
       <InfoRow label="项目" value="naixi_desktop" />
+      <SettingRow label="开源仓库" desc="GitHub：源码 / 技术交流 / 提交 Issue 与 PR（GitHub Sponsors 在中国大陆不可用，收款见下方赞助）">
+        <button onClick={openRepo} className={BTN_GHOST}>在 GitHub 查看 ↗</button>
+      </SettingRow>
+    </Section>
+    <Section title="赞助支持" desc="如果这个项目对你有帮助，欢迎赞助作者（微信 / 支付宝，国内最正规的个人收款方式）">
+      <div className="mt-1 rounded-lg border border-dashed border-sakura-200 bg-sakura-50/40 p-3">
+        <div className="mb-2 text-xs font-semibold text-sakura-500">扫码赞助（微信 / 支付宝）</div>
+        <div className="flex gap-4">
+          <div className="flex h-28 w-28 flex-col items-center justify-center rounded-lg border border-sakura-100 bg-white text-center text-[10px] text-sakura-300">微信收款码<br />（待添加）</div>
+          <div className="flex h-28 w-28 flex-col items-center justify-center rounded-lg border border-sakura-100 bg-white text-center text-[10px] text-sakura-300">支付宝收款码<br />（待添加）</div>
+        </div>
+        <p className="mt-2 text-[10px] text-sakura-400">收款人：<span className="font-semibold text-sakura-500">【待填写：你的微信 / 支付宝收款名】</span></p>
+        <p className="mt-1 text-[10px] text-amber-500">⚠️ 付款前请核对收款人姓名，与上方一致再支付。二维码可能被替换，姓名核对是最后一道防线。</p>
+      </div>
+      <p className="text-[10px] text-sakura-400 mt-2">把收款码图片（微信 / 支付宝，各一张或一张）和收款人实名发我，我会替换占位并硬编码收款人姓名做「图片 + 文字」双核对。GitHub Sponsors 在中国大陆不可用，故用微信 / 支付宝官方收款渠道作为正规赞助方式。</p>
+    </Section>
+    </>
+  );
+}
+
+/* ── 更新源 ── */
+function SettingsUpdate() {
+  const [src, setSrc] = useState("");
+  const [saving, setSaving] = useState(false);
+  const { show, node } = useToast();
+  useEffect(() => {
+    apiGet<any>("/api/desktop/config").then(d => {
+      if (d && typeof d.update_source === "string") setSrc(d.update_source);
+    }).catch(() => {});
+  }, []);
+  const save = async () => {
+    setSaving(true);
+    try {
+      await apiPost("/api/desktop/config", { update_source: src.trim() });
+      show("更新源已保存");
+    } catch { show("保存失败", "err"); }
+    finally { setSaving(false); }
+  };
+  return (
+    <Section title="版本更新源" desc="留空则默认从 GitHub Releases（Hayliy/naixi-desktop）检查更新；填写一个返回 {version, notes, url} 的 JSON 地址可覆盖默认源">
+      <SettingRow label="自定义更新源" desc="返回最新版本信息的 JSON 地址（可选）">
+        <input value={src} onChange={e => setSrc(e.target.value)} className={INPUT}
+          placeholder="https://example.com/update.json（留空=默认 GitHub）" />
+      </SettingRow>
+      <p className="text-[10px] text-sakura-400 mt-1">默认更新源：https://github.com/Hayliy/naixi-desktop/releases</p>
+      <SaveBar saving={saving} onSave={save} />
     </Section>
   );
 }

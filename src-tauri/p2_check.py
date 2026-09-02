@@ -69,7 +69,7 @@ bg = (253, 248, 250)
 cnt = sum(1 for y in range(212,238) for x in range(40,400) if abs(px[x,y][0]-bg[0])+abs(px[x,y][1]-bg[1])+abs(px[x,y][2]-bg[2]) > 40)
 print("is_p2:", is_p2(f"{OUT}/p2_check.png"), "P2 addr-box text pixels:", cnt)
 for fn in ["p2_dbg1.log", "p2_dbg2.log"]:
-    fp = f"C:/Users/21222/AppData/Local/Temp/{fn}"
+    fp = os.path.join(os.environ.get("TEMP", os.environ.get("TMP", "C:\\Temp")), fn)
     if os.path.exists(fp):
         print(fn, "=>", open(fp, encoding="utf-8", errors="ignore").read().strip())
 p.terminate()

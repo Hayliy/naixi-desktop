@@ -85,16 +85,22 @@ def _resample_int16(indata_bytes: bytes, src_sr: int, dst_sr: int = 16000) -> by
 class PetVoiceInput:
     """桌宠语音输入采集器。reactor 实现 on_heard / on_reply / on_state / on_error。"""
 
-    def __init__(self, reactor, device=None, sample_rate: int = 16000, input_gain: float = 1.0):
+    def __init__(self, reactor, device=None, sample_rate: int = 16000,
+                 input_gain: float = 1.0, vad_gate: bool = True):
         self.reactor = reactor              # PetWindow（实现下方四个回调）
         self.device = device                # 麦克风索引/名称；None=自动选物理麦
         self.sample_rate = sample_rate
         self.input_gain = input_gain        # 麦克风数字增益（1.0=不变；>1 放大，<1 衰减）
+        self.vad_gate = vad_gate            # 本地 VAD 门控（默认开；关=始终送 ASR，原行为）
+        self.vad_hold = 0.25                # 句末拖尾静音秒数，避免裁掉句子尾音
         self._thread = None
         self._stop = threading.Event()
         self._running = False
         self._api_key = ""
         self._reco = None
+        self._vad = None                    # 本地 VAD 实例（_run 内惰性创建，失败则 None=不门控）
+        self._last_voice_ts = 0.0           # 最近一次检测到语音的时间戳（拖尾用）
+        self._mstore = None                 # 分层记忆库（MemoryStore，惰性挂载；False=不可用）
         self._speaking = threading.Event()   # 播放 TTS 期间置位：麦帧全部丢弃，防扬声器回声被识别成说话
         self._history = []                  # 多轮对话上下文（最近若干轮 user/assistant）
         self._history_limit = 16            # 上下文最多保留条数（≈8 轮）
@@ -449,6 +455,20 @@ class PetVoiceInput:
         SR = self.sample_rate
         outer = self
 
+        # 本地 VAD 门控（可选）：检测到语音的麦帧才送 ASR，压低背景噪声误触发、
+        # 降低低信噪比下"纯能量门限失效"导致的无反应/误反应（蓝图 P0）。
+        # webrtcvad 不可用→能量兜底；整体失败→None=回退"始终发送"（原行为）。
+        self._vad = None
+        self._last_voice_ts = 0.0
+        if self.vad_gate:
+            try:
+                from desktop_core import vad_webrtc
+                self._vad = vad_webrtc.WebRTCVAD(aggressiveness=1, frame_ms=20)
+                log.info(f"[桌宠语音] 本地 VAD 已启用: {self._vad.engine}")
+            except Exception as e:
+                self._vad = None
+                log.warning(f"[桌宠语音] 本地 VAD 启用失败，回退始终发送: {e}")
+
         class CB(RecognitionCallback):
             def on_event(self, result):
                 if result is None:
@@ -519,7 +539,14 @@ class PetVoiceInput:
                 if outer.input_gain and outer.input_gain != 1.0:
                     af = af * outer.input_gain
                     raw = _np.clip(af, -32768, 32767).astype(_np.int16).tobytes()
-                q.put(raw)
+                # ── 本地 VAD 门控：仅语音帧（含句末拖尾静音）入队送 ASR ──
+                if outer._vad is not None:
+                    arr16 = _np.frombuffer(raw, dtype=_np.int16)
+                    if outer._vad_gate_decision(arr16, SR):
+                        q.put(raw)
+                    # else: 丢弃静音帧（不送 ASR）
+                else:
+                    q.put(raw)         # 无 VAD：回退原行为（始终发送）
 
             # 开流：优先 16000 单声道，失败回退设备默认率 + 多通道
             _stream = None
@@ -570,6 +597,15 @@ class PetVoiceInput:
             reply = self._llm_reply(text)
             audio_b64 = self._tts(reply) if reply else ""
             self.reactor.on_reply(reply, audio_b64)
+        # 写分层记忆（episodic 层）：记录本轮对话，让奶昔"记住你刚说的"
+        if reply:
+            ms = self._get_memory_store()
+            if ms:
+                try:
+                    ms.observe(f"用户：{text}", kind="user_say")
+                    ms.observe(f"奶昔：{reply}", kind="assistant_say")
+                except Exception:
+                    pass
         # 记忆抽取异步进行，不阻塞本轮回复与上下文写入
         if reply:
             threading.Thread(target=self._extract_memories,
@@ -585,6 +621,10 @@ class PetVoiceInput:
                            "用简短口语化中文回应，带情绪，不超过30字。")
             if mem:
                 sys_content += f"\n【你已知关于用户的事】\n{mem}"
+            # 叠加分层记忆库（memory_store）的近期对话 + 相关记忆，让奶昔"记住你刚说的"
+            recent_sec = self._build_recent_memory_section(text)
+            if recent_sec:
+                sys_content += "\n" + recent_sec
             messages = [{"role": "system", "content": sys_content}]
             # 注入多轮上下文（最近若干轮）
             for m in self._history[-self._history_limit:]:
@@ -604,30 +644,13 @@ class PetVoiceInput:
         return "嗯？我听到你说话啦~"
 
     def _tts(self, text: str) -> str:
-        """百炼 TTS（HTTP 直连，复刻后端已验证写法 cosyvoice-v3-flash）。
+        """桌宠语音回复朗读 — 统一走 tts_router 同步接口（CosyVoice 直连）。
         返回 base64 WAV；失败返回空串（桌宠仍会显示文字气泡）。"""
-        if not self._api_key or not text:
+        if not text:
             return ""
         try:
-            import requests
-            url = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"
-            hdr = {"Authorization": f"Bearer {self._api_key}",
-                   "Content-Type": "application/json"}
-            payload = {"model": "cosyvoice-v3-flash",
-                       "input": {"text": text, "voice": "longfeifei_v3",
-                                 "format": "wav", "sample_rate": 24000}}
-            r = requests.post(url, json=payload, headers=hdr, timeout=60)
-            if r.status_code == 200:
-                out = r.json().get("output", {})
-                u = out.get("audio", {}).get("url", "")
-                if u:
-                    ad = requests.get(u, timeout=30).content
-                    return base64.b64encode(ad).decode() if ad else ""
-                data = out.get("audio", {}).get("data") or out.get("data")
-                if data:
-                    return data if isinstance(data, str) else base64.b64encode(data).decode()
-            else:
-                log.warning(f"[桌宠语音] TTS HTTP {r.status_code}: {r.text[:160]}")
+            from desktop_core import tts_router
+            return tts_router.synthesize_b64(text)
         except Exception as e:
             log.warning(f"[桌宠语音] TTS 失败: {e}")
         return ""
@@ -653,6 +676,66 @@ class PetVoiceInput:
         except Exception as e:
             log.warning(f"[桌宠语音] 读记忆失败: {e}")
             return ""
+
+    # ───────────── 分层记忆库（memory_store，episodic + semantic） ─────────────
+    # 与后端 agent_memory（_load_memories）互补：后者是长期事实画像，本层是
+    # 时序情景记忆 + 语义召回，落本地 SQLite，让桌宠"记住你刚说的话"。
+    def _get_memory_store(self):
+        """惰性挂载分层记忆库到 data/ 目录（与 naixi_desktop.db 同目录）。"""
+        if self._mstore is not None:
+            return self._mstore or None
+        try:
+            from desktop_core import storage, memory_store
+            self._ensure_db(storage)
+            datadir = (os.path.dirname(storage.DB_PATH)
+                       if (storage.DB_PATH and os.path.exists(storage.DB_PATH))
+                       else os.getcwd())
+            path = os.path.join(datadir, "naixi_memory_store.db")
+            self._mstore = memory_store.MemoryStore(path)
+            log.info(f"[桌宠语音] 分层记忆库已挂载: {path}")
+        except Exception as e:
+            log.warning(f"[桌宠语音] 分层记忆库不可用: {e}")
+            self._mstore = False  # 标记不可用，避免反复尝试
+        return self._mstore or None
+
+    def _build_recent_memory_section(self, query: str) -> str:
+        """从分层记忆库拼出注入 LLM 上下文的"近期对话 + 相关记忆"段落。"""
+        ms = self._get_memory_store()
+        if not ms:
+            return ""
+        try:
+            parts = []
+            recent = ms.get_recent(6)
+            if recent:
+                lines = [r["text"] for r in reversed(recent)]  # 旧→新
+                parts.append("【近期对话】\n" + "\n".join(lines))
+            rel = ms.recall(query, limit=3)
+            if rel:
+                seen, rel_lines = set(), []
+                for x in rel:
+                    t = x.get("text", "")
+                    if t and t not in seen:
+                        seen.add(t)
+                        rel_lines.append(t)
+                if rel_lines:
+                    parts.append("【相关记忆】\n" + "\n".join(rel_lines))
+            return "\n".join(parts)
+        except Exception as e:
+            log.warning(f"[桌宠语音] 读取近期记忆失败: {e}")
+            return ""
+
+    def _vad_gate_decision(self, arr16: "np.ndarray", sr: int) -> bool:
+        """该麦帧是否应送 ASR（True=送）。语音帧或句末拖尾静音→True；纯静音→False。
+        麦帧回调调用；VAD 不可用(_vad is None)时调用方应直接发送，不走此方法。"""
+        now = time.time()
+        try:
+            voiced = self._vad.is_speech(arr16, sr)
+        except Exception:
+            voiced = True  # 判错时保守：当作语音，避免漏识别
+        if voiced:
+            self._last_voice_ts = now
+            return True
+        return (now - self._last_voice_ts) < self.vad_hold
 
     def _save_memory(self, content: str):
         """存一条稳定事实到 agent_memory（viewer=主人），mem_profile_set 自带去重。"""
@@ -684,6 +767,13 @@ class PetVoiceInput:
                 for item in arr:
                     if isinstance(item, str) and item.strip():
                         self._save_memory(item.strip())
+                        # 同步进分层记忆库语义层（去重由 MemoryStore.remember 的 UNIQUE 保证）
+                        ms = self._get_memory_store()
+                        if ms:
+                            try:
+                                ms.remember(item.strip(), item.strip(), importance=0.7)
+                            except Exception:
+                                pass
         except Exception as e:
             log.warning(f"[桌宠语音] 记忆抽取失败: {e}")
 

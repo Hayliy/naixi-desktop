@@ -7,7 +7,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build && C:/Users/21222/.workbuddy/binaries/python/versions/3.13.12/python.exe src-tauri/stage_core.py"
+    "beforeBuildCommand": "npm run build && node scripts/stage-core.cjs"
   },
   "app": {
     "windows": [
@@ -19,7 +19,10 @@
         "minWidth": 960,
         "minHeight": 640,
         "resizable": true,
-        "center": true
+        "center": true,
+        "decorations": false,
+        "devtools": true,
+        "visible": false
       },
       {
         "label": "pet",
@@ -62,6 +65,7 @@
     "resources": [
       "sidecar/*.py",
       "resources/desktop_core/**/*.py",
+      "resources/desktop_core/vrm_html/**/*",
       "resources/data/**/*",
       "resources/python-embed/**/*"
     ]

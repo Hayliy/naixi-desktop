@@ -13,9 +13,9 @@ print("setup exit code =", p.returncode, "elapsed = %.1fs" % (time.time() - t0),
 roots = [
     os.path.expandvars("%LOCALAPPDATA%"),
     os.path.expandvars("%APPDATA%"),
-    r"C:\Program Files",
-    r"C:\Program Files (x86)",
-    r"C:\Users\21222",
+    os.environ.get("ProgramFiles", r"C:\Program Files"),
+    os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+    os.path.expanduser("~"),
 ]
 hits = []
 for root in roots:
