@@ -3180,6 +3180,437 @@ async def api_ops_delete(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
+# ── 银狐应急哨兵（用户态痕迹检测，非内核查杀）──
+# 已知 IOC（来自 2026-04 Silver Fox/ValleyRAT Telegram 语言包案公开报告）
+_SILVERFOX_IOC_PROC = {
+    "designaccent.exe",      # ValleyRAT 二次载荷（计划任务）
+    "gjdluhqzmjsagyw.exe",   # 银狐链可疑进程名
+    "singmusice.exe",        # 银狐链可疑进程名
+    "khdzetmjqmsagyw.exe",   # 重命名的 zpaqfranz（Living-off-the-Land 下载器）
+    "issueaccentrequest",    # 恶意 MSI 内部名
+}
+_SILVERFOX_C2_NETS = ("118.107.40.",)  # CTG Server 子弹防托管网段（ValleyRAT C2）
+
+def _security_scan_core():
+    """应急哨兵核心（同步，供 HTTP 接口与后台「随时监测」哨兵线程复用）：
+    检测银狐类木马的【用户态可见痕迹】。注意：内核级 rootkit（BYOVD wnBios）用户态清不掉。"""
+    import platform, subprocess
+    result = {"ok": True, "platform": platform.system(), "risk": "unknown",
+              "checks": [], "note": ""}
+    if platform.system() != "Windows":
+        result["risk"] = "skipped"
+        result["note"] = "应急哨兵仅支持 Windows；当前非 Windows 平台已跳过。"
+        return result
+
+    def _ps(cmd, timeout=25):
+        try:
+            r = subprocess.run(["powershell", "-NoP", "-C", cmd],
+                               capture_output=True, text=True, timeout=timeout,
+                               **_win_hide_kwargs())
+            return r.stdout or "", (r.stderr or "").strip()
+        except Exception as e:
+            return "", f"检测失败: {e}"
+
+    checks = []
+    # 1. Defender 排除项被篡改（银狐常把 C:-F: 加入排除列表致盲杀软）
+    out, err = _ps("(Get-MpPreference).ExclusionPath,ExclusionProcess,ExclusionExtension | "
+                   "ForEach-Object { if($_){$_.GetEnumerator() | ForEach-Object {$_}} }")
+    excl = [l.strip() for l in out.splitlines() if l.strip()]
+    susp = [e for e in excl if e[:2].upper() in ("C:", "D:", "E:", "F:")]
+    checks.append({
+        "name": "Defender 排除项",
+        "level": "safe" if not susp else "warn",
+        "detail": ("发现可疑全盘排除（银狐常借此致盲杀软）: " + ", ".join(susp)) if susp
+                 else ("未发现可疑排除项" + (f"（注：{err}）" if err else "")),
+    })
+    # 2. 已知银狐 IOC 进程名
+    out, _ = _ps("Get-Process | Select-Object -ExpandProperty Name")
+    low = out.lower()
+    hits = [p for p in _SILVERFOX_IOC_PROC if p in low]
+    checks.append({
+        "name": "银狐 IOC 进程",
+        "level": "safe" if not hits else "danger",
+        "detail": ("发现已知银狐进程: " + ", ".join(hits)) if hits
+                 else "未发现已知银狐 IOC 进程名",
+    })
+    # 3. 可疑计划任务（Silver Fox 用 DesignAccent / Accent 命名）
+    out, _ = _ps("Get-ScheduledTask | Where-Object {$_.TaskName -match 'DesignAccent|Accent|zpaq'} "
+                 "| Select-Object -ExpandProperty TaskName")
+    hits = [l.strip() for l in out.splitlines() if l.strip()]
+    checks.append({
+        "name": "可疑计划任务",
+        "level": "safe" if not hits else "warn",
+        "detail": ("发现可疑计划任务: " + ", ".join(hits)) if hits
+                 else "未发现可疑计划任务",
+    })
+    # 4. 到已知银狐 C2 网段的外连（普通用户可能无权限，失败不报危险）
+    out, err = _ps("(Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue | "
+                   "Where-Object {$_.RemoteAddress -like '118.107.40.*'} "
+                   "| Select-Object -ExpandProperty RemoteAddress)")
+    hits = [l.strip() for l in out.splitlines() if l.strip()]
+    checks.append({
+        "name": "银狐 C2 外连",
+        "level": "safe" if not hits else "danger",
+        "detail": ("发现到银狐 C2 网段的外连: " + ", ".join(hits)) if hits
+                 else ("未发现到已知银狐 C2 网段的外连" + (f"（需管理员权限才能查全网连接：{err}）" if err else "")),
+    })
+
+    levels = [c["level"] for c in checks]
+    risk = "safe"
+    if "danger" in levels:
+        risk = "danger"
+    elif "warn" in levels:
+        risk = "warn"
+    elif levels and all(l == "error" for l in levels):
+        risk = "error"
+    result["checks"] = checks
+    result["risk"] = risk
+    result["note"] = ("用户态前哨：仅检测可见痕迹，无法清除内核级 rootkit（银狐 BYOVD 技术）。"
+                      "命中危险项请立即断网、修改密码，并进入安全模式用专业杀软全盘查杀。")
+    return result
+
+
+async def api_security_scan(request):
+    """应急哨兵：检测银狐类木马的【用户态可见痕迹】。"""
+    return web.json_response(_security_scan_core())
+
+
+def _ps_run(cmd, timeout=25):
+    """隐藏窗口运行 powershell，返回 (stdout, stderr)。供安全检测/处置复用。"""
+    try:
+        r = subprocess.run(["powershell", "-NoP", "-C", cmd],
+                           capture_output=True, text=True, timeout=timeout,
+                           **_win_hide_kwargs())
+        return (r.stdout or ""), (r.stderr or "").strip()
+    except Exception as e:
+        return "", f"执行失败: {e}"
+
+
+async def api_security_remediate(request):
+    """一键急救：移除已检测到的银狐【用户态】痕迹。
+    安全边界：① 仅处理服务端 IOC 目录内的已知项，绝不接收客户端任意路径/命令（防命令注入）；
+              ② 内核级 rootkit（BYOVD wnBios）用户态无法清除，仍需专业杀软 + 安全模式。
+    动作：结束已知 IOC 进程 / 删除可疑计划任务 / 恢复被篡改的 Defender 整盘排除项。"""
+    import re, platform
+    result = {"ok": True, "platform": platform.system(), "actions": []}
+    if platform.system() != "Windows":
+        result["ok"] = False
+        result["note"] = "一键急救仅支持 Windows 平台。"
+        return web.json_response(result)
+
+    def _act(kind, target, status, msg=""):
+        result["actions"].append({"kind": kind, "target": target,
+                                   "status": status, "msg": (msg or "")[:240]})
+
+    # 1) 已知 IOC 进程 → taskkill（进程名来自固定目录，无注入风险）
+    try:
+        out, _ = _ps_run("Get-Process | Select-Object -ExpandProperty Name")
+        low = out.lower()
+        for p in _SILVERFOX_IOC_PROC:
+            if p in low:
+                r = subprocess.run(["taskkill", "/F", "/IM", p],
+                                   capture_output=True, text=True, **_win_hide_kwargs())
+                _act("process", p, "done" if r.returncode == 0 else "failed",
+                     (r.stdout + r.stderr).strip())
+    except Exception as e:
+        _act("process", "*", "error", str(e))
+
+    # 2) 可疑计划任务 → Unregister-ScheduledTask（先校验任务名，仅放行安全字符，防命令注入）
+    try:
+        out, _ = _ps_run("Get-ScheduledTask | Where-Object {$_.TaskName -match 'DesignAccent|Accent|zpaq'} "
+                         "| Select-Object -ExpandProperty TaskName")
+        for name in [l.strip() for l in out.splitlines() if l.strip()]:
+            if not re.match(r'^[\w\-\. ]{1,120}$', name):
+                _act("task", name, "skipped", "任务名含非常规字符，已跳过以防误删")
+                continue
+            r = subprocess.run(["powershell", "-NoP", "-C",
+                                "Unregister-ScheduledTask -TaskName '%s' -Confirm:$false" % name],
+                               capture_output=True, text=True, **_win_hide_kwargs())
+            _act("task", name, "done" if r.returncode == 0 else "failed",
+                 (r.stdout + r.stderr).strip())
+    except Exception as e:
+        _act("task", "*", "error", str(e))
+
+    # 3) Defender 整盘排除（仅裸盘符根，零误杀；子路径排除不自动动，避免误删合法项）
+    try:
+        out, _ = _ps_run("(Get-MpPreference).ExclusionPath | ForEach-Object { if($_){$_} }")
+        for path in [l.strip() for l in out.splitlines() if l.strip()]:
+            if re.match(r'^[A-Fa-f]:\\?$', path):
+                r = subprocess.run(["powershell", "-NoP", "-C",
+                                    "Remove-MpPreference -ExclusionPath '%s'" % path],
+                                   capture_output=True, text=True, **_win_hide_kwargs())
+                _act("defender_exclusion", path, "done" if r.returncode == 0 else "failed",
+                     (r.stdout + r.stderr).strip())
+            else:
+                _act("defender_exclusion", path, "skipped",
+                     "非整盘排除，疑似低风险，建议手动在 Windows 安全中心确认")
+    except Exception as e:
+        _act("defender_exclusion", "*", "error", str(e))
+
+    done = [a for a in result["actions"] if a["status"] == "done"]
+    result["summary"] = ("已处理 %d 项用户态痕迹" % len(done)) if done else "未发现可移除的银狐用户态痕迹"
+    result["note"] = ("用户态急救完成。若仍不放心或怀疑内核级 rootkit（银狐 BYOVD 技术），"
+                      "请断网后用专业杀软（火绒 / 360）进安全模式全盘查杀——用户态程序清不掉内核层。")
+    return web.json_response(result)
+
+
+async def api_self_hash(request):
+    """返回本程序主 exe（naixi-desktop.exe）的 SHA-256，供用户与官方 sha256sums.txt 比对，
+    识别『伪造安装包 / 整包被替换』。注意：随包携带清单的比对无意义（攻击者连清单一起换），
+    故只暴露哈希让用户自行对照官方发布值。"""
+    import hashlib, os, platform
+    result = {"ok": True, "platform": platform.system(), "exe_path": "", "sha256": ""}
+    if platform.system() != "Windows":
+        result["ok"] = False
+        result["note"] = "仅 Windows 支持"
+        return web.json_response(result)
+    # 当前进程是 pythonw.exe，其父进程即 Tauri 主程序 naixi-desktop.exe
+    pid = os.getpid()
+    out, err = _ps_run("$p=(Get-Process -Id %d -ErrorAction SilentlyContinue).ParentProcessId; "
+                       "if($p){(Get-Process -Id $p -ErrorAction SilentlyContinue).Path}" % pid)
+    exe_path = (out or "").strip()
+    if not exe_path or not os.path.isfile(exe_path):
+        result["ok"] = False
+        result["note"] = "无法定位主程序路径（%s）" % (err or "未知")
+        return web.json_response(result)
+    try:
+        h = hashlib.sha256()
+        with open(exe_path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        result["exe_path"] = exe_path
+        result["sha256"] = h.hexdigest()
+    except Exception as e:
+        result["ok"] = False
+        result["note"] = "哈希计算失败: %s" % e
+    return web.json_response(result)
+
+
+# ── 360系统急救箱调用（官方正版 · 内核/rootkit 级强杀）+ 随时监测哨兵 ──
+
+import os as _os
+import re as _re
+import time as _time
+import tempfile as _tempfile
+import threading as _threading
+import zipfile as _zipfile
+import shutil as _shutil
+import hashlib as _hashlib
+import urllib.request as _ureq
+import urllib.error as _uerr
+
+_360BOX_OFFICIAL_PAGE = "https://weishi.360.cn/jijiuxiang/"
+_360BOX_TRUSTED_HOST = "dl.360safe.com"          # 仅接受此官方域名，防投毒包替换
+_360BOX_DIR = _os.path.join(_tempfile.gettempdir(), "naixi_360box")
+_SENTINEL = {"running": False, "last_scan": None, "risk": "unknown",
+             "findings": 0, "lock": _threading.Lock()}
+
+
+def _resolve_360box_url():
+    """从 360 官网动态提取最新 64 位急救箱直链（实现『随时更新』）。
+    仅接受官方可信域名 dl.360safe.com，避免被替换为第三方投毒包。"""
+    try:
+        req = _ureq.Request(_360BOX_OFFICIAL_PAGE, headers={"User-Agent": "Mozilla/5.0"})
+        with _ureq.urlopen(req, timeout=15) as resp:
+            html = resp.read().decode("utf-8", "ignore")
+        cands = _re.findall(r'https?://[^\s"\'<>]*?dl\.360safe\.com/360c0mpkill_\d+\.\d+\.\d+\.\d+-\d+\.zip', html)
+        if not cands:
+            return None, "官网未解析到下载链接"
+        best = None
+        for u in cands:
+            m = _re.search(r'360c0mpkill_(\d+\.\d+\.\d+\.\d+)-(\d+)\.zip', u)
+            if not m:
+                continue
+            ver = tuple(int(x) for x in m.group(1).split("."))
+            if best is None or ver > best[0]:
+                best = (ver, u)
+        return (best[1] if best else None), (None if best else "直链版本解析失败")
+    except Exception as e:
+        return None, "抓取官网失败: %s" % e
+
+
+def _verify_exe_signature(path):
+    """校验 exe 数字签名：Status=Valid 且 签名主体含 360/Qihoo。
+    关键安全闸门——即使下载域名被污染，未签名/非 360 签名的文件绝不运行。"""
+    try:
+        out, _ = _ps_run(
+            "$s=Get-AuthenticodeSignature -FilePath '%s'; "
+            "'$($s.Status)|'+$(if($s.SignerCertificate){$s.SignerCertificate.Subject}else'')"
+            % path.replace("'", "''"))
+        line = (out or "").strip()
+        if not line or "|" not in line:
+            return False, "无数字签名信息"
+        status, subj = line.split("|", 1)
+        if status.strip() != "Valid":
+            return False, "签名状态=%s（非有效签名）" % status.strip()
+        if not _re.search(r'360|Qihoo', subj, _re.I):
+            return False, "签名主体非 360/Qihoo: %s" % subj
+        return True, subj.strip()
+    except Exception as e:
+        return False, "签名校验异常: %s" % e
+
+
+def _find_360box_installed():
+    """检测本机是否已安装 360系统急救箱（注册表/常见路径）。"""
+    try:
+        out, _ = _ps_run(
+            "Get-ChildItem 'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall',"
+            "'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall' "
+            "-ErrorAction SilentlyContinue | ForEach-Object { "
+            "($_.GetValue('DisplayName')+'|'+$_.GetValue('InstallLocation')) } "
+            "| Where-Object { $_ -match '360' -and $_ -match '急救' }")
+        for line in (out or "").splitlines():
+            if "|" in line:
+                loc = line.split("|", 1)[1].strip()
+                p = _os.path.join(loc, "superkiller.exe")
+                if loc and _os.path.isfile(p):
+                    return p
+        for base in [r"C:\Program Files\360\360box", r"C:\Program Files (x86)\360\360box",
+                     r"C:\Program Files\360\超级急救箱", r"C:\Program Files (x86)\360\超级急救箱"]:
+            p = _os.path.join(base, "superkiller.exe")
+            if _os.path.isfile(p):
+                return p
+    except Exception:
+        pass
+    return None
+
+
+async def api_fetch_360box(request):
+    """下载并校验 360系统急救箱（官方正版）。仅从 dl.360safe.com 拉取，启动前校验数字签名。
+    返回：{ok, path, version, sha256, publisher, verified, fallback_url} 或 {ok:false, error, fallback_url}"""
+    import platform
+    result = {"ok": False, "platform": platform.system(), "fallback_url": _360BOX_OFFICIAL_PAGE}
+    if platform.system() != "Windows":
+        result["error"] = "仅 Windows 支持"
+        return web.json_response(result)
+    url, err = _resolve_360box_url()
+    if not url:
+        result["error"] = err or "无法获取官方下载地址"
+        return web.json_response(result)
+    try:
+        _os.makedirs(_360BOX_DIR, exist_ok=True)
+        zip_path = _os.path.join(_360BOX_DIR, "360box.zip")
+        req = _ureq.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with _ureq.urlopen(req, timeout=180) as resp:
+            data = resp.read()
+        with open(zip_path, "wb") as f:
+            f.write(data)
+        exe_path = None
+        with _zipfile.ZipFile(zip_path) as z:           # 安全解压（防 zip slip）
+            for name in z.namelist():
+                if name.startswith("/") or ".." in name.replace("\\", "/").split("/"):
+                    continue
+                if name.lower().endswith(".exe"):
+                    dest = _os.path.join(_360BOX_DIR, _os.path.basename(name))
+                    with z.open(name) as src, open(dest, "wb") as out:
+                        _shutil.copyfileobj(src, out)
+                    if name.lower().endswith("superkiller.exe"):
+                        exe_path = dest
+        if not exe_path:
+            for f in _os.listdir(_360BOX_DIR):
+                if f.lower().endswith(".exe"):
+                    exe_path = _os.path.join(_360BOX_DIR, f)
+                    break
+        if not exe_path or not _os.path.isfile(exe_path):
+            result["error"] = "解压后未找到急救箱主程序"
+            return web.json_response(result)
+        ok_sig, subj = _verify_exe_signature(exe_path)
+        if not ok_sig:
+            try:
+                _os.remove(exe_path)                    # 删除未签名文件，绝不保留可运行副本
+            except Exception:
+                pass
+            result["error"] = "数字签名校验未通过（%s），已删除以防投毒。请从官网手动下载。" % subj
+            return web.json_response(result)
+        h = _hashlib.sha256()
+        with open(exe_path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        result.update(ok=True, path=exe_path,
+                      version=_re.search(r'360c0mpkill_(\d+\.\d+\.\d+\.\d+)', url).group(1),
+                      sha256=h.hexdigest(), publisher=subj, verified=True)
+    except Exception as e:
+        result["error"] = "下载/解压失败: %s" % e
+    return web.json_response(result)
+
+
+async def api_run_360box(request):
+    """运行 360系统急救箱：优先启动本机已安装版；否则启动已下载且校验过的临时副本。"""
+    import platform
+    result = {"ok": False, "platform": platform.system(), "fallback_url": _360BOX_OFFICIAL_PAGE}
+    if platform.system() != "Windows":
+        result["error"] = "仅 Windows 支持"
+        return web.json_response(result)
+    body = {}
+    try:
+        body = await request.json() if request.can_read_body else {}
+    except Exception:
+        body = {}
+    installed = _find_360box_installed()
+    if installed:
+        try:
+            subprocess.Popen([installed])               # 可见启动 GUI，让用户操作
+            result.update(ok=True, launched=installed, source="installed")
+            return web.json_response(result)
+        except Exception as e:
+            result["error"] = "启动已安装急救箱失败: %s" % e
+            return web.json_response(result)
+    exe_path = (body.get("path") or "") if isinstance(body, dict) else ""
+    if not exe_path or not _os.path.isfile(exe_path):
+        for f in (_os.listdir(_360BOX_DIR) if _os.path.isdir(_360BOX_DIR) else []):
+            if f.lower().endswith(".exe"):
+                exe_path = _os.path.join(_360BOX_DIR, f)
+                break
+    if not exe_path or not _os.path.isfile(exe_path):
+        result["error"] = "本机未安装 360系统急救箱，且暂无已校验的下载副本。请先点『下载并校验 360急救箱』。"
+        return web.json_response(result)
+    ok_sig, subj = _verify_exe_signature(exe_path)
+    if not ok_sig:
+        result["error"] = "副本签名已失效（%s），请重新下载校验。" % subj
+        return web.json_response(result)
+    try:
+        subprocess.Popen([exe_path])                    # 可见启动
+        result.update(ok=True, launched=exe_path, source="downloaded")
+    except Exception as e:
+        result["error"] = "启动失败: %s" % e
+    return web.json_response(result)
+
+
+def _sentinel_once():
+    """单次自动监测扫描（同步，供后台线程调用）。"""
+    try:
+        data = _security_scan_core()
+        with _SENTINEL["lock"]:
+            _SENTINEL["last_scan"] = _time.strftime("%H:%M")
+            _SENTINEL["risk"] = data.get("risk", "unknown")
+            _SENTINEL["findings"] = sum(1 for c in data.get("checks", [])
+                                        if c.get("level") in ("danger", "warn"))
+    except Exception:
+        pass
+
+
+def _sentinel_loop(interval=600):
+    """『随时监测』后台哨兵：每 interval 秒扫描一次银狐用户态痕迹。"""
+    _sentinel_once()                                    # 启动即扫一次
+    while True:
+        try:
+            _sentinel_once()
+        except Exception:
+            pass
+        _threading.Event().wait(interval)
+
+
+async def api_sentinel_status(request):
+    """返回自动监测哨兵状态（前端轮询展示）。"""
+    with _SENTINEL["lock"]:
+        return web.json_response({
+            "running": _SENTINEL["running"],
+            "last_scan": _SENTINEL["last_scan"],
+            "risk": _SENTINEL["risk"],
+            "findings": _SENTINEL["findings"],
+        })
+
+
 # ── 路由注册 ──
 
 def setup_routes(app):
@@ -3207,6 +3638,19 @@ def setup_routes(app):
     app.router.add_post("/api/chat/stream", api_chat_stream)
     app.router.add_post("/api/agent/stream", api_chat_stream)
     app.router.add_get("/api/providers", api_providers)
+
+    # 银狐应急哨兵扫描（用户态痕迹检测 + 一键引导专业处置）
+    app.router.add_get("/api/security_scan", api_security_scan)
+    # 一键急救（移除用户态已知银狐痕迹）/ 本程序哈希自检（防伪造安装包）
+    app.router.add_post("/api/security_remediate", api_security_remediate)
+    app.router.add_get("/api/self_hash", api_self_hash)
+    # 360系统急救箱调用（官方正版 · 内核/rootkit 级强杀）+ 随时监测哨兵
+    app.router.add_post("/api/fetch_360box", api_fetch_360box)
+    app.router.add_post("/api/run_360box", api_run_360box)
+    app.router.add_get("/api/sentinel_status", api_sentinel_status)
+    # 启动『随时监测』后台哨兵线程（每 10 分钟扫描银狐用户态痕迹）
+    _SENTINEL["running"] = True
+    _threading.Thread(target=_sentinel_loop, daemon=True).start()
 
     # 对话历史
     app.router.add_get("/api/conversations", api_conversations_list)
