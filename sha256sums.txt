@@ -1,12 +1,15 @@
 # 奶昔 发布完整性哈希清单（SHA-256）
-# 生成时间：2026-09-02T17:02:17.906Z
+# 生成时间：2026-09-03T02:59:02.093Z
 #
 # 【怎么校验】清单一律用纯文件名，把它和下载到的安装包放在同一个目录里用。
+# 【文件名说明】GitHub Releases 会把资产名里的非 ASCII 字符删掉，
+#   所以安装包在 GitHub 上的名字是 naixi-desktop_0.2.0_*.msi / .exe（不是「奶昔_」开头）。
+#   本清单就用这个实际下载名，下载后文件名可直接对上、无需改名。
 #   1) 安装包 —— 下载后立刻验，确认你下载到的就是官方文件：
 #        sha256sum -c --ignore-missing sha256sums.txt
 #      （--ignore-missing 用于跳过下面[主程序]那一行——它不在下载目录里）
 #      Windows PowerShell：
-#        Get-FileHash 奶昔_0.2.0_x64-setup.exe -Algorithm SHA256
+#        Get-FileHash naixi-desktop_0.2.0_x64-setup.exe -Algorithm SHA256
 #   2) 主程序 —— 装完后验，确认安装目录里的程序没被替换：
 #      方式 A（推荐）：应用内打开「设置 → 安全 → 安装包完整性 · 本程序哈希」，
 #                     一键复制页面显示的 SHA-256，与下方[主程序]段的值比对。
@@ -18,9 +21,9 @@
 #   攻击者会连清单一起换，所以本程序内只暴露哈希、不内置清单做自动比对。
 #
 # ── 安装包（下载后校验）──
-f4c4592c0619ae2df4af78245773d5ffe411f34c69416254f991292eef8a8b56  奶昔_0.1.0_x64_zh-CN.msi
-06b6e0bdd117004281995dd34fcac25d87b9bf8207bed5b2cc2fde994371ec94  奶昔_0.2.0_x64_zh-CN.msi
-446791a9b0ff65d52bb2a2503073629589609cee63b24cfc54480c72b28e2370  奶昔_0.1.0_x64-setup.exe
-19e2e15ddb549a21a2b6debf0a80aa35454636ec974d7505991ecdb2422472e1  奶昔_0.2.0_x64-setup.exe
+f4c4592c0619ae2df4af78245773d5ffe411f34c69416254f991292eef8a8b56  naixi-desktop_0.1.0_x64_zh-CN.msi
+06b6e0bdd117004281995dd34fcac25d87b9bf8207bed5b2cc2fde994371ec94  naixi-desktop_0.2.0_x64_zh-CN.msi
+446791a9b0ff65d52bb2a2503073629589609cee63b24cfc54480c72b28e2370  naixi-desktop_0.1.0_x64-setup.exe
+19e2e15ddb549a21a2b6debf0a80aa35454636ec974d7505991ecdb2422472e1  naixi-desktop_0.2.0_x64-setup.exe
 # ── 主程序（安装后校验）──
 a6cff80291f01d691afa7e7e3c6eb46193f3f3e0ba05ffb986bed586671cfb97  naixi-desktop.exe

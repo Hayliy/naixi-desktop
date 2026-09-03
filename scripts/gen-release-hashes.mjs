@@ -49,12 +49,22 @@ if (!files.length) { console.error("[err] 未找到安装包产物"); process.ex
 
 // 清单用【纯文件名】：用户把 sha256sums.txt 与下载到的安装包放在同一目录校验，
 // 带 msi/ nsis/ 目录前缀在用户侧是无效路径（历史版本就踩过这个坑）。
+// ★ GitHub Releases 资产名会被服务端强制清洗成 ASCII（非 ASCII 字符被直接删除）：
+//   实测上传 ?name=奶昔_0.2.0_x64_zh-CN.msi → 存下来是 _0.2.0_x64_zh-CN.msi（中文前缀被删）；
+//   ?name=奶昔测试.txt → 存下来是 default.txt。
+//   所以清单里的文件名必须用「清洗后」的 ASCII 名，否则用户下载到的文件名与清单对不上，
+//   `sha256sum -c` 会全部 FAILED。这里主动按同一规则归一化，保证两边一致。
+function asciiName(name) {
+  return name.replace(/奶昔/g, "naixi-desktop").replace(/[^\x20-\x7E]/g, "");
+}
+
 const pkgLines = [];
 for (const f of files.sort()) {
   const rel = posix(relative(bundleDir, f));
   const h = sha256(f);
-  pkgLines.push(`${h}  ${posix(basename(f))}`);
-  console.log(`[pkg] ${rel}  ${h.slice(0, 16)}...`);
+  const out = asciiName(basename(f));
+  pkgLines.push(`${h}  ${out}`);
+  console.log(`[pkg] ${rel}  -> ${out}  ${h.slice(0, 16)}...`);
 }
 
 // ── 主程序 ──（安装后的 naixi-desktop.exe，应用内卡片显示的就是它）
@@ -74,11 +84,14 @@ const header = [
   `# 生成时间：${stamp}`,
   "#",
   "# 【怎么校验】清单一律用纯文件名，把它和下载到的安装包放在同一个目录里用。",
+  "# 【文件名说明】GitHub Releases 会把资产名里的非 ASCII 字符删掉，",
+  "#   所以安装包在 GitHub 上的名字是 naixi-desktop_0.2.0_*.msi / .exe（不是「奶昔_」开头）。",
+  "#   本清单就用这个实际下载名，下载后文件名可直接对上、无需改名。",
   "#   1) 安装包 —— 下载后立刻验，确认你下载到的就是官方文件：",
   "#        sha256sum -c --ignore-missing sha256sums.txt",
   "#      （--ignore-missing 用于跳过下面[主程序]那一行——它不在下载目录里）",
   "#      Windows PowerShell：",
-  "#        Get-FileHash 奶昔_0.2.0_x64-setup.exe -Algorithm SHA256",
+  "#        Get-FileHash naixi-desktop_0.2.0_x64-setup.exe -Algorithm SHA256",
   "#   2) 主程序 —— 装完后验，确认安装目录里的程序没被替换：",
   "#      方式 A（推荐）：应用内打开「设置 → 安全 → 安装包完整性 · 本程序哈希」，",
   "#                     一键复制页面显示的 SHA-256，与下方[主程序]段的值比对。",
