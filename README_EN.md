@@ -265,11 +265,9 @@ Released under the [Apache License 2.0](LICENSE). Third-party component licenses
 
 ## Author
 
-Built and maintained independently by **naixi** — AI application engineer focused on LLM
-applications, desktop agents and multimodal systems.
+Built and maintained independently by the **naixi** project — focused on LLM applications, desktop agents and multimodal systems.
 
 - GitHub: [@Hayliy](https://github.com/Hayliy)
-- Email: noreply@users.noreply.github.com
 - Open to **fully remote** roles (UTC+8).
 
 If this project is useful to you, a star or a sponsorship is always welcome.
