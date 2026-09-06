@@ -1,12 +1,74 @@
 # 奶昔 · 桌面智能体 (Naixi Desktop)
 
-一款**本地优先**的桌面 AI 智能体。基于 Tauri 2 构建，常驻系统托盘，把「对话、桌宠、直播互动、工作流、自动化、本地搜索、知识库、记忆」整合进一个随开随用的桌面应用。所有 AI 推理所需的模型调用、本地搜索、语音处理都在本机或你自己的账号下完成，数据留在本地。
+[English](README_EN.md) | 简体中文
+
+![Platform](https://img.shields.io/badge/Platform-Windows%2010%2B-0078D6?logo=windows)
+![Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20React%2019%20%C2%B7%20Python%203.13-1F4E79)
+![License](https://img.shields.io/badge/License-Apache%202.0-green)
+![Release](https://img.shields.io/badge/Release-v0.2.0-blue)
+![Commits](https://img.shields.io/badge/Commits-502-orange)
+![LOC](https://img.shields.io/badge/LOC-48k-blueviolet)
+
+> 一款**本地优先**的桌面 AI 智能体。基于 Tauri 2 构建，常驻系统托盘，把「对话、桌宠、直播互动、工作流、自动化、本地搜索、知识库、记忆」整合进一个随开随用的桌面应用。所有 AI 推理所需的模型调用、本地搜索、语音处理都在本机或你自己的账号下完成，**数据留在本地**。
+
+**项目规模**：第一方代码约 **4.8 万行**（Python 33,508 / 前端 14,208 / Rust 467）· **52** 个 Python 模块 · **35** 个前端组件 · **176** 个 REST API · **27** 张 SQLite 表 · **502** 次提交 · Apache-2.0
 
 - 宿主：Tauri 2（Rust）+ 系统托盘常驻
 - 前端：React 19 + Vite + Tailwind CSS
 - 后端：Python sidecar（aiohttp，默认 `http://127.0.0.1:9845`）
 - 桌宠：PySide6（Qt）驱动 Live2D / VRM 形象，支持摄像头面捕
 - 搜索：内置 SearXNG 便携版，可降级到公共引擎
+
+## 界面一览
+
+桌面端的几个核心视图（更详细的功能拆解见 [功能一览](#功能一览)）：
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/01-live-pet.png" alt="桌宠 + 直播互动"><br><sub><b>桌宠 · 直播互动</b> — Qt + Live2D 看板娘 + 弹幕 / 场景 / Agent 调度</sub></td>
+    <td width="50%"><img src="docs/screenshots/02-dashboard.png" alt="仪表盘"><br><sub><b>仪表盘</b> — 工具 / 记忆 / 供应商 / 数据库 / 系统资源一屏概览</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/03-workflow-editor.png" alt="可视化工作流编辑器"><br><sub><b>可视化工作流</b> — DAG 节点拖拽，25 种节点 · 含 LLM / 条件 / 人工输入</sub></td>
+    <td width="50%"><img src="docs/screenshots/04-platform-connections.png" alt="19 平台接入"><br><sub><b>19 平台接入</b> — QQ / 微信 / 飞书 / 钉钉 / 公众号 / Telegram / Discord / Slack / LINE…</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/05-chat.png" alt="智能对话"><br><sub><b>智能对话</b> — 流式 / Agent / 快捷问答 / 工具调用可观测</sub></td>
+    <td width="50%"><img src="docs/screenshots/06-memory.png" alt="记忆系统"><br><sub><b>分层记忆系统</b> — 短期上下文 + 长期画像 + 反思提炼</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/07-automation.png" alt="自动化"><br><sub><b>自动化</b> — 定时 / Webhook / 工作流触发，零人工干预</sub></td>
+    <td width="50%"><img src="docs/screenshots/08-ops-health.png" alt="运维与自检"><br><sub><b>运维与自检</b> — 健康评分 / 可用率 / 评分趋势 / 巡检处置</sub></td>
+  </tr>
+</table>
+
+---
+
+## 目录
+
+- [工程亮点](#工程亮点)（想快速判断技术含量，先看这节）
+- [功能一览](#功能一览)
+- [技术架构](#技术架构)
+- [目录结构](#目录结构)
+- [快速开始](#快速开始安装包)
+- [从源码构建](#从源码构建)
+- [资源自备说明](#资源自备说明)
+- [配置](#配置)
+- [常见问题](#常见问题faq)
+- [安全与完整性](#安全与完整性)
+- [赞助支持](#赞助支持)
+- [许可证](#许可证)
+
+---
+
+## 工程亮点
+
+1. **双进程解耦架构**：Tauri 2（Rust）宿主只负责窗口、托盘与子进程生命周期；Python sidecar 承载全部 AI 能力。Rust 侧实现端口预检、进程树回收与 embed 运行时定位，前后端可独立热更新、异常自愈。
+2. **四级渲染后端抽象**：一个 `AvatarBackend` 接口（`send_expression` / `send_motion` / `send_parameters`）统一自研 Live2D、VTube Studio 连接池、VMC 协议 OSC、插件扩展四种实现，同时驱动 Live2D / VRM / Pixi.js 三套管线与 Godot 3D 渲染。
+3. **系统级 Windows 疑难攻克**：透明置顶悬浮窗 + `WM_NCHITTEST` 像素级鼠标穿透；解决 DWM 合成层导致对话框不可见的问题（18 轮真机迭代，可见率 0.8172 一次通过）。
+4. **LLM 应用工程**：按任务类型（文本 / 视觉 / 视频 / 代码 / 语音）路由模型并遵守并发上限；分层记忆 + 三级上下文压缩 + 46 处工具调用 + MCP 客户端；TTS 三层故障转移（CosyVoice → Edge-TTS → 离线 kokoro-onnx）。
+5. **游戏操控 Agent（Cradle 范式）**：截图输入 + 键鼠输出，不读游戏内存、不连服务器，只操控用户自己的当前窗口；含执行后反思纠偏（帧差判断卡墙并强制脱困）。
+6. **用户态安全前哨**：银狐木马应急防护（IOC 哨兵扫描 / 一键急救 / 安装包 SHA-256 自检 / 周期巡检），并**明确公示能力边界**——不处理内核级 rootkit，不做安全误导。
 
 ---
 
@@ -29,7 +91,7 @@
 ### 3. 直播互动引擎（Live2D / VRM）
 - 弹幕接入、语音播报、麦克风上麦（真人语音闭环：ASR → 自动上麦）、场景切换、直播测试。
 - VTube Studio 多实例同框（每角色独立端口），VTS 全局热键管理（`/api/hotkeys`）。
-- QQ 机器人接入状态（`/api/napcat/status`）、连接凭证一键获取（`/api/live/connect_credentials`）。
+- QQ 多智能体接入状态（`/api/napcat/status`）、连接凭证一键获取（`/api/live/connect_credentials`）。
 - 直播记忆层：角色能记住观众画像与事件流（`/api/live/memory`），用于更有连续性的互动。
 
 ### 4. 语音
