@@ -30,6 +30,8 @@ export default function PetWindow() {
   const speakingRef = useRef(false);
   const idleTimerRef = useRef<number | null>(null);
   const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  // 共享 AudioContext：用于播放弹幕 TTS 音频，绕过浏览器自动播放策略（需用户手势解锁一次）
+  const audioCtxRef = useRef<AudioContext | null>(null);
 
   // 加载模型列表
   useEffect(() => {
@@ -38,6 +40,52 @@ export default function PetWindow() {
       .then(d => { if (d.models) setModels(d.models); })
       .catch(() => {});
   }, []);
+
+  // 首次任意用户手势解锁 AudioContext（浏览器自动播放策略要求）；解锁后弹幕语音即可播放
+  useEffect(() => {
+    const unlock = () => {
+      try {
+        const AC = window.AudioContext || (window as any).webkitAudioContext;
+        if (!AC) return;
+        const ctx = audioCtxRef.current || new AC();
+        audioCtxRef.current = ctx;
+        if (ctx.state === "suspended") ctx.resume().catch(() => {});
+      } catch {}
+    };
+    window.addEventListener("pointerdown", unlock);
+    window.addEventListener("keydown", unlock);
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, []);
+
+  // 播放 wav base64 音频：用 AudioContext 而非 new Audio().play()（后者无手势时被自动播放策略静默拦截）
+  const playWavB64 = async (b64: string) => {
+    try {
+      const AC = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AC) throw new Error("no AudioContext");
+      const ctx = audioCtxRef.current || new AC();
+      audioCtxRef.current = ctx;
+      if (ctx.state === "suspended") await ctx.resume();
+      const bin = atob(b64);
+      const buf = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+      const audioBuf = await ctx.decodeAudioData(buf.buffer.slice(0));
+      const src = ctx.createBufferSource();
+      src.buffer = audioBuf;
+      src.connect(ctx.destination);
+      src.start(0);
+    } catch (e) {
+      // 兜底：极少数 AudioContext 不可用，退回 <audio> 再试
+      try {
+        const a = new Audio(`data:audio/wav;base64,${b64}`);
+        a.play().catch((err) => console.error("[语音] 播放失败", err));
+      } catch (e2) {
+        console.error("[语音] 播放失败", e2);
+      }
+    }
+  };
 
   // 监听顶栏菜单的桌宠控制事件（切换模型 / 鼠标穿透）
   useEffect(() => {
@@ -255,8 +303,7 @@ export default function PetWindow() {
           speakingRef.current = false;
         } else if (data.type === "audio") {
           if (data.audio) {
-            const a = new Audio(`data:audio/wav;base64,${data.audio}`);
-            a.play().catch((e) => console.error("[语音] 播放失败", e));
+            playWavB64(data.audio);
           }
         } else if (data.type === "avatar_expression") {
           // 后端 SelfRenderBackend：情绪 → 表情模糊匹配
