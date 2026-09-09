@@ -35,11 +35,11 @@ os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = _flags
 
 from OpenGL.GL import glViewport, GL_RGBA8, glReadPixels, GL_ALPHA, GL_UNSIGNED_BYTE
 import numpy as np  # alpha 扫描矢量化（替代 8 万次 ctypes 双层循环，单帧 28ms→<2ms）
-from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer, QPropertyAnimation, QSize, QRect
+from PySide6.QtCore import Qt, QPoint, QTimerEvent, QTimer, QPropertyAnimation, QSize, QRect, QEvent, QObject
 from PySide6.QtGui import QGuiApplication, QMouseEvent, QSurfaceFormat, QPainter, QColor, QFont, QPainterPath, QImage, QCursor, QBitmap, QRegion
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (QApplication, QMenu, QFileDialog, QWidget, QLineEdit,
-                                QLabel, QDialog, QSlider, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox)
+                                QLabel, QDialog, QSlider, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox, QScrollArea)
 
 from desktop_core.motion_engine import PoseEngine
 from desktop_core.idle_engine import IdleEngine
@@ -47,6 +47,10 @@ from desktop_core.engine.ecs import World
 from desktop_core.voice_input import PetVoiceInput
 from desktop_core.engine.transform import Transform
 from desktop_core.engine.skeleton import build_skeleton, set_pose, get_bone_angles, SkeletalAnimator, WalkCycle, WalkSystem, _collect_all
+
+# 日志路径唯一来源：不再用 __file__ 拼（dev 模式加载的是 src-tauri/resources 副本，
+# __file__ 会指向副本，日志就写进副本目录，项目根找不到）。
+from desktop_core.log_paths import log_dir, log_file
 
 from live2d import v3 as live2d
 
@@ -375,9 +379,7 @@ class PetWindow(QWidget):
         live2d.glInit()
         live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
         # 诊断日志写到应用目录下的 logs/，不散落到系统盘根目录，也不写死绝对路径。
-        _log_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs"
-        )
+        _log_dir = log_dir()
         try:
             os.makedirs(_log_dir, exist_ok=True)
             with open(os.path.join(_log_dir, "pet_init.log"), "a") as f:
@@ -636,7 +638,7 @@ class PetWindow(QWidget):
             except Exception as e:
                 try:
                     import os as _os, time as _t, traceback as _tb
-                    _ef = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "facecap_init_err.log")
+                    _ef = log_file("facecap_init_err.log")
                     with open(_ef, "a", encoding="utf-8") as _fh:
                         _fh.write(_t.strftime("%Y-%m-%d %H:%M:%S") + " [INIT_FAIL] " + repr(e) + "\n" + _tb.format_exc() + "\n")
                 except Exception:
@@ -1524,7 +1526,7 @@ class PetWindow(QWidget):
     def _on_chat_response(self, emotion: str, reply: str):
         self._bubble.show_text(f"[{emotion}] {reply}", 4000)
 
-    DEBUG_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pet_debug.log")
+    DEBUG_LOG = log_file("pet_debug.log")
 
     @classmethod
     def _log(cls, msg):
@@ -1843,7 +1845,9 @@ class PetWindow(QWidget):
         import websocket
         while self._running:
             try:
-                self._ws = websocket.create_connection("ws://127.0.0.1:9845/api/live/live2d-stream", timeout=5)
+                # client=qt：向后端声明身份为独立 Qt 桌宠（语音优先出口）；
+                # 避免与 app 内宠物/舞台窗同时播同一段音频导致叠音。
+                self._ws = websocket.create_connection("ws://127.0.0.1:9845/api/live/live2d-stream?client=qt", timeout=5)
                 # recv 超时设为 5 分钟，避免无消息时频繁断线
                 self._ws.settimeout(300)
                 while self._running:
@@ -1861,7 +1865,9 @@ class PetWindow(QWidget):
                         action = d.get("action", "")
                         self._ws_queue.put({"type":"speak","text":txt,"emotion":d.get("emotion",""),"motion_group":mg,"motion_index":mi,"action":action,"mouth":mouth,"frame_ms":ms})
                     elif d.get("type") == "audio":
-                        self._ws_queue.put({"type": "audio", "audio": d.get("audio", "")})
+                        # audio_id 一并透传：播出去之后要回执，否则后端会兜底再播一遍=双声
+                        self._ws_queue.put({"type": "audio", "audio": d.get("audio", ""),
+                                            "audio_id": d.get("audio_id", "")})
             except:
                 self._ws = None
                 if self._running:
@@ -1877,7 +1883,7 @@ class PetWindow(QWidget):
             try:
                 msg = self._ws_queue.get_nowait()
                 if msg.get("type") == "audio":
-                    self._play_audio_b64(msg.get("audio", ""))
+                    self._play_audio_b64(msg.get("audio", ""), msg.get("audio_id", ""))
                     continue
                 if msg.get("type") == "speak":
                     txt = msg.get("text", "")
@@ -2285,7 +2291,7 @@ class PetWindow(QWidget):
         dlg.setWindowFlags(Qt.Window | Qt.WindowTitleHint | Qt.WindowCloseButtonHint | Qt.WindowStaysOnTopHint)
         dlg.setWindowTitle("面捕灵敏度")
         dlg.setMinimumWidth(380)
-        dlg.resize(420, 560)
+        dlg.resize(420, 600)
         dlg.setAttribute(Qt.WA_DeleteOnClose, True)  # close() 真销毁并触发 destroyed（清引用+恢复桌宠）
         # 强制不透明背景：绝不继承桌宠窗的透明合成属性（否则又变成"自绘制有、桌面没有"）
         dlg.setAttribute(Qt.WA_TranslucentBackground, False)
@@ -2300,25 +2306,52 @@ class PetWindow(QWidget):
             "QSlider::handle:horizontal{background:#9b7bd8;width:14px;margin:-5px 0;border-radius:7px;}"
             "QPushButton{background:#3a3a55;color:#e6e6e6;padding:6px 14px;border-radius:6px;}"
             "QPushButton:hover{background:#4a4a70;}")
-        layout = QVBoxLayout(dlg)
+        # 滚动区：13 个滑块 + 复选框 + 按钮内容超长（长中文标签换行后累计远超窗口高度），
+        # 必须用 QScrollArea 承载，否则底部「表情幅度微调」6 滑块与按钮被裁到可视区外、无滚动够不着。
+        _scroll = QScrollArea()
+        _scroll.setWidgetResizable(True)
+        _scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        _scroll.setStyleSheet("QScrollArea{background:#1e1e2e;border:none;}")
+        _content = QWidget()
+        _content.setStyleSheet("background:#1e1e2e;")
+        layout = QVBoxLayout(_content)
         layout.setContentsMargins(10, 8, 10, 10)
+        _scroll.setWidget(_content)
+        # 滚轮冲突修复（2026-09-07）：QSlider 默认吞滚轮改数值，与滚动区翻页打架 →
+        # 用事件过滤器拦截滚轮事件，统一改为滚动对话框，滑块数值只能靠拖拽/方向键改，消除误触。
+        class _WheelScrollFilter(QObject):
+            def __init__(self, scroll):
+                super().__init__()
+                self._scroll = scroll
+            def eventFilter(self, obj, event):
+                if event.type() == QEvent.Type.Wheel:
+                    sb = self._scroll.verticalScrollBar()
+                    sb.setValue(sb.value() - event.angleDelta().y())
+                    return True  # 已处理：不再下发给滑块，避免数值误变
+                return super().eventFilter(obj, event)
+        _wheel_filter = _WheelScrollFilter(_scroll)
+        _content.installEventFilter(_wheel_filter)
+        _outer = QVBoxLayout(dlg)
+        _outer.addWidget(_scroll)
         # 原生标题栏已自带标题/关闭按钮/拖动 → 不再自绘标题栏、不再自写拖拽 hack（第 17 轮内嵌遗留）
         _title = QLabel("面捕灵敏度")
         _title.setStyleSheet("font-weight:bold;font-size:14px;color:#e6e6e6;padding:2px 0 6px;")
         layout.addWidget(_title)
 
-        def _row(label, key, default, lo, hi, dec=2):
+        def _row(label, key, default, lo, hi, dec=2, mult=100):
+            # mult：滑块整数精度倍率（默认 100=两位小数；blinkCloseTau 用 1000=三位小数）
             layout.addWidget(QLabel(label))
             s = QSlider(Qt.Orientation.Horizontal)
-            s.setRange(int(lo * 100), int(hi * 100))
+            s.setRange(int(lo * mult), int(hi * mult))
             raw = float(cfg.get(key, default) or default)
-            s.setValue(int(raw * 100))
+            s.setValue(int(raw * mult))
             val = QLabel(f"{raw:.{dec}f}")
-            s.valueChanged.connect(lambda v: val.setText(f"{v / 100:.{dec}f}"))
+            s.valueChanged.connect(lambda v, m=mult, d=dec: val.setText(f"{v / m:.{d}f}"))
             h = QHBoxLayout()
             h.addWidget(s)
             h.addWidget(val)
             layout.addLayout(h)
+            s.setProperty("mult", mult)
             return s
 
         # 代码默认值（唯一真源：滑块初值与「恢复默认」都引用同一份，消除散落字面量）
@@ -2330,9 +2363,15 @@ class PetWindow(QWidget):
             # 动作呈「一步一跳」的阶梯感，这就是「流畅度不如 VTS」的观感来源。
             # 正确取值应 ≈ 检测间隔的 1.0~1.5 倍（71~107ms）→ 默认 0.09。
             "smooth": 0.09,
+            # 表情幅度微调（2026-09-07 补进 Qt 对话框，与网页设置页 /facecap_settings 一致）
+            # 数值对齐 face_bridge.py 的 DEFAULT_BLINK_IN / DEFAULT_MOUTH_IN / DEFAULT_BLINK_CLOSE_TAU / DEFAULT_BLINK_HOLD
+            "blinkInLo": 0.20, "blinkInHi": 0.60,
+            "mouthInLo": 0.03, "mouthInHi": 0.30,
+            "blinkCloseTau": 0.02, "blinkHold": 0.15,
         }
         MIR_DEF = False   # 镜像默认关
         AC_DEF = True     # 自动校准默认开
+        LINKBLINK_DEF = True  # 眨眼联动默认开（关掉可单眼眨 wink），与 HTML 设置页 CK 第三项一致
         sliders = {}
         sliders["masterGain"] = _row("总灵敏度 masterGain", "masterGain", DEFAULTS["masterGain"], 0.2, 3.0)
         sliders["headGain"] = _row("头部增益 headGain（动作幅度）", "headGain", DEFAULTS["headGain"], 0.3, 2.5)
@@ -2342,19 +2381,37 @@ class PetWindow(QWidget):
         sliders["expressionGain"] = _row("表情增益 expressionGain", "expressionGain", DEFAULTS["expressionGain"], 0.3, 2.0)
         sliders["smooth"] = _row("平滑 smooth（越大越顺滑，推荐 0.08~0.12）", "smooth", DEFAULTS["smooth"], 0.01, 0.3)
 
+        # ── 表情幅度微调（2026-09-07 补：闭不上眼 / 嘴型变化小 根治项的用户可调入口）──
+        _grp = QLabel("表情幅度微调（眨眼 / 张嘴 阈值与顺滑）")
+        _grp.setStyleSheet("font-weight:bold;color:#9b7bd8;padding:6px 0 2px;")
+        layout.addWidget(_grp)
+        sliders["blinkInLo"] = _row("眨眼·睁眼阈值 blinkInLo（低于即全睁）", "blinkInLo", DEFAULTS["blinkInLo"], 0.05, 0.50)
+        sliders["blinkInHi"] = _row("眨眼·全闭阈值 blinkInHi（达到即全闭）", "blinkInHi", DEFAULTS["blinkInHi"], 0.30, 0.95)
+        sliders["mouthInLo"] = _row("张嘴·闭嘴阈值 mouthInLo（低于即闭嘴）", "mouthInLo", DEFAULTS["mouthInLo"], 0.0, 0.20)
+        sliders["mouthInHi"] = _row("张嘴·全开阈值 mouthInHi（达到即全开）", "mouthInHi", DEFAULTS["mouthInHi"], 0.10, 0.70)
+        sliders["blinkCloseTau"] = _row("眨眼闭合顺滑τ blinkCloseTau（秒，越大越柔）", "blinkCloseTau", DEFAULTS["blinkCloseTau"], 0.005, 0.15, dec=3, mult=1000)
+        sliders["blinkHold"] = _row("眨眼峰值保持 blinkHold（秒，防漏采）", "blinkHold", DEFAULTS["blinkHold"], 0.0, 0.40)
+
         mir_cb = QCheckBox("面捕镜像（左右翻转，照镜子）")
         mir_cb.setChecked(bool(cfg.get("mirror", False)))
         layout.addWidget(mir_cb)
         ac_cb = QCheckBox("面捕自动校准（首次稳定即采中性基准）")
         ac_cb.setChecked(bool(cfg.get("autoCalibrate", True)))
         layout.addWidget(ac_cb)
+        link_cb = QCheckBox("眨眼联动（关掉可单眼眨 wink）")
+        link_cb.setChecked(bool(cfg.get("linkBlink", True)))
+        layout.addWidget(link_cb)
 
         layout.addSpacing(8)
 
         def _write():
-            out = {k: s.value() / 100.0 for k, s in sliders.items()}
+            out = {}
+            for k, s in sliders.items():
+                m = s.property("mult") or 100
+                out[k] = s.value() / m
             out["mirror"] = mir_cb.isChecked()
             out["autoCalibrate"] = ac_cb.isChecked()
+            out["linkBlink"] = link_cb.isChecked()
             try:
                 with open(cfg_path, "w", encoding="utf-8") as f:
                     json.dump(out, f, ensure_ascii=False, indent=2)
@@ -2369,9 +2426,11 @@ class PetWindow(QWidget):
         def _reset_defaults():
             """把所有参数拉回代码默认值并立即落盘生效（无需重开摄像头）。"""
             for k, s in sliders.items():
-                s.setValue(int(DEFAULTS[k] * 100))
+                m = s.property("mult") or 100
+                s.setValue(int(DEFAULTS[k] * m))
             mir_cb.setChecked(MIR_DEF)
             ac_cb.setChecked(AC_DEF)
+            link_cb.setChecked(LINKBLINK_DEF)
             _write()
             self._bubble.show_text("已恢复面捕灵敏度默认值", 1600)
 
@@ -2651,8 +2710,11 @@ class PetWindow(QWidget):
             except Exception:
                 pass
 
-    def _play_audio_b64(self, b64: str):
+    def _play_audio_b64(self, b64: str, audio_id: str = ""):
         """在 Qt 桌宠自身进程播放 base64 WAV（语音从桌宠本体发出，不依赖后端进程音频输出）。
+
+        audio_id: 后端为这段音频分配的标识；播放真正开始后回 audio_ack，
+        让后端取消兜底补播（否则后端会以为客户端哑火，再播一遍 = 双声）。
 
         播放期间若语音输入处于活动状态，会挂起麦克风采集（PetVoiceInput._speaking 置位），
         避免扬声器播出的 TTS 被麦克风回收形成回声回路；播完留 0.5s 余量吸收房间反射尾音。
@@ -2714,6 +2776,12 @@ class PetWindow(QWidget):
                         sd.play(np.column_stack((mono, mono)), dev_rate, device=out_dev)
                     else:
                         sd.play(mono, dev_rate, device=out_dev)
+                    # 播放已真正开始 → 上报回执，取消后端兜底补播（避免后端再播一遍 = 双声）
+                    if audio_id:
+                        try:
+                            self._ws_send(json.dumps({"type": "audio_ack", "audio_id": audio_id}))
+                        except Exception:
+                            pass
                     sd.wait()
                 except Exception as e:
                     _vlog.error(f"[桌宠语音] 播放异常: {e}")
@@ -2756,7 +2824,7 @@ def run_pet(model_path: str = ""):
         import traceback
         log.error(f"[桌宠] 启动失败: {e}\n{traceback.format_exc()}")
         # 写入文件方便排查
-        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "pet_error.log"), "w") as f:
+        with open(log_file("pet_error.log"), "w") as f:
             f.write(traceback.format_exc())
         sys.exit(1)
 

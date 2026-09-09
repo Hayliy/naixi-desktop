@@ -90,7 +90,18 @@ export default function StageWindow() {
   }, []);
 
   // 播放 wav base64 音频：用 AudioContext 而非 new Audio().play()（后者无手势时被自动播放策略静默拦截）
-  const playWavB64 = async (b64: string) => {
+  const playWavB64 = async (b64: string, audioId?: string) => {
+    // 播放回执：告知后端「这段音频我已开始播放」，后端据此取消兜底补播，避免双声。
+    // 播不出来就不回执 —— 后端超时后会自己兜底出声，不会彻底失声。
+    const ack = () => {
+      if (!audioId) return;
+      try {
+        const ws = wsRef.current;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "audio_ack", audio_id: audioId }));
+        }
+      } catch {}
+    };
     try {
       const AC = window.AudioContext || (window as any).webkitAudioContext;
       if (!AC) throw new Error("no AudioContext");
@@ -105,10 +116,12 @@ export default function StageWindow() {
       src.buffer = audioBuf;
       src.connect(ctx.destination);
       src.start(0);
+      ack();
     } catch (e) {
       try {
         const a = new Audio(`data:audio/wav;base64,${b64}`);
-        a.play().catch((err) => console.error("[语音] 播放失败", err));
+        await a.play();
+        ack();
       } catch (e2) {
         console.error("[语音] 播放失败", e2);
       }
@@ -225,6 +238,13 @@ export default function StageWindow() {
       try {
         const data = JSON.parse(e.data);
         const actor = resolveActor(data.agent_id);
+        // 语音优先且不依赖渲染：actor 尚未就绪（模型未加载）时也必须能出声。
+        // 此前排在 `if (!actor) return;` 之后，模型没渲染出来会连带把弹幕语音一起吞掉
+        // —— 表现就是「字幕/口型都有，就是没声音」。
+        if (data.type === "audio") {
+          if (data.audio) playWavB64(data.audio, data.audio_id);
+          return;
+        }
         if (!actor) return;
         if (data.type === "speak") {
           const { mouth, frame_ms, emotion, action } = data;
@@ -240,10 +260,6 @@ export default function StageWindow() {
           }
           setMouth(actor.sprite, 0);
           actor.speaking = false;
-        } else if (data.type === "audio") {
-          if (data.audio) {
-            playWavB64(data.audio);
-          }
         } else if (data.type === "avatar_expression") {
           applyEmotion(actor.sprite, actor.expressions, data.emotion);
         } else if (data.type === "avatar_motion") {

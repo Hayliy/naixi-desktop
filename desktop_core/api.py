@@ -4,6 +4,10 @@ from aiohttp import web
 from datetime import datetime
 from desktop_core import html_util
 
+# 日志路径唯一来源：不再用 __file__ 拼（dev 模式加载的是 src-tauri/resources 副本，
+# 否则 api.py 会算到 src-tauri/logs/ 而与 sidecar 的项目根/logs/ 打架）。
+from desktop_core.log_paths import log_file
+
 # 项目根目录（兼容直接 import 和通过 sidecar 运行）
 _DESKTOP_DIR = os.environ.get("DESKTOP_DIR") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -1346,7 +1350,9 @@ async def api_avatar_prefill(request):
         import aiohttp, os, time, re
         from desktop_core.storage import avatar_get, avatar_set
         # 头像本地存储目录
-        avatar_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "avatars")
+        # 必须与读取端共用同一解析器：否则 dev/release 下会写到
+        # resources/data/avatars（副本目录），读取端却在项目根 → 新头像永远显示不出来。
+        avatar_dir = _resolve_avatar_dir()
         os.makedirs(avatar_dir, exist_ok=True)
         for i in range(need):
             seed = f"avatar-{i}"
@@ -1421,13 +1427,58 @@ async def api_avatar_stats(request):
     return web.json_response({"ok": True, "total": avatar_count()})
 
 
+def _resolve_avatar_dir() -> str:
+    """解析头像存储目录——**不能**用 dirname(dirname(__file__)) 硬拼。
+
+    历史根因（2026-09-09）：dev 运行时 __file__ 位于
+    `src-tauri/resources/desktop_core/api.py`，两级上溯只到 `resources/`，
+    拼出的 `resources/data/avatars` 并不存在 → DB 里 50 条头像记录、磁盘 50 个
+    PNG 都在，接口却全返回 404，用户「一张都看不到」。release 同理
+    （拼到 target/release/resources/data/avatars）。
+    正确做法：候选清单 + 沿 __file__ 向上多级回溯，命中真实存在的那个目录。
+    """
+    import os
+    cands = []
+    try:                                    # 开发树 / 安装态项目根
+        cands.append(os.path.join(_DESKTOP_DIR, "data", "avatars"))
+    except Exception:
+        pass
+    try:                                    # 沿 __file__ 逐级上溯（兼容各种副本位置）
+        d = os.path.dirname(os.path.abspath(__file__))
+        for _ in range(6):
+            cands.append(os.path.join(d, "data", "avatars"))
+            nd = os.path.dirname(d)
+            if nd == d:
+                break
+            d = nd
+    except Exception:
+        pass
+    try:
+        cands.append(os.path.join(os.getcwd(), "data", "avatars"))
+    except Exception:
+        pass
+    try:                                    # 安装态：%APPDATA%/奶昔/data/avatars
+        appdata = os.environ.get("APPDATA", "")
+        if appdata:
+            cands.append(os.path.join(appdata, "奶昔", "data", "avatars"))
+    except Exception:
+        pass
+    for c in cands:
+        try:
+            if os.path.isdir(c):
+                return c
+        except Exception:
+            continue
+    return cands[0] if cands else os.path.join(os.getcwd(), "data", "avatars")
+
+
 async def api_avatar_file(request):
     """提供本地存储的头像文件"""
     import os
     filename = request.match_info.get("filename", "")
     if not filename or ".." in filename or "/" in filename:
         return web.json_response({"error": "无效文件名"}, status=400)
-    avatar_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "avatars")
+    avatar_dir = _resolve_avatar_dir()
     fpath = os.path.join(avatar_dir, filename)
     if not os.path.exists(fpath):
         return web.json_response({"error": "文件不存在"}, status=404)
@@ -1778,17 +1829,29 @@ async def api_chat_stream(request):
         decrypt_config(cfg)  # 解密 api_key
         providers = cfg.get("api_providers", {})
 
-        # 根据 model 找对应的 provider
+        # 找供应商：① 精确匹配 model 名；② model 为 auto/default/空 或未匹配到时，
+        # 回退到「第一个 key 有效的 chat 供应商」，并把【实际请求模型】改为该供应商配置的模型。
+        # 历史 Bug 两连：
+        #   ① `or not provider_id` 会错选 dict 第一个 provider（常是 key 为空的 image 供应商）→ 400；
+        #   ② 前端"自动路由"传 model="auto"，后端把 "auto" 当模型名直接发给 LLM → 404 →
+        #      桌宠只能回默认话术。用户在配置页填的对话模型因此永远"没调用"。
+        wanted = (model or "").strip()
+        if wanted in ("", "auto", "default"):
+            wanted = ""
         provider_id = None
         api_key = ""
         api_url = ""
         for pid, pcfg in providers.items():
-            if pcfg.get("model") == model or not provider_id:
-                provider_id = pid
-                api_key = pcfg.get("api_key", "")
-                api_url = pcfg.get("api_url", "")
-            if pcfg.get("model") == model:
+            if wanted and pcfg.get("model") == wanted and pcfg.get("api_key"):
+                provider_id, api_key, api_url = pid, pcfg.get("api_key", ""), pcfg.get("api_url", "")
+                model = pcfg.get("model") or wanted
                 break
+        if not api_key:
+            for pid, pcfg in providers.items():
+                if pcfg.get("type", "chat") in ("chat", "default") and pcfg.get("api_key"):
+                    provider_id, api_key, api_url = pid, pcfg["api_key"], pcfg.get("api_url", "")
+                    model = pcfg.get("model") or wanted
+                    break
 
         if not api_key or not api_url:
             return web.json_response({"error": "未找到匹配的 API 配置"}, status=400)
@@ -3898,9 +3961,13 @@ def setup_routes(app):
     app.router.add_post("/api/live/start", api_live_start)
     app.router.add_post("/api/live/stop", api_live_stop)
     app.router.add_get("/api/live/danmaku", api_live_danmaku)
+    app.router.add_post("/api/live/inject-danmaku", api_live_inject_danmaku)
     app.router.add_post("/api/live/connect", api_live_connect)
     app.router.add_post("/api/live/disconnect", api_live_disconnect)
     app.router.add_post("/api/live/test-tts", api_live_test_tts)
+    app.router.add_post("/api/live/test-config", api_live_test_config)
+    app.router.add_post("/api/config/auto-detect", api_config_auto_detect)
+    app.router.add_get("/api/tts/voices", api_tts_voices)
     app.router.add_post("/api/live/start-stream", api_live_start_stream)
     app.router.add_post("/api/live/stop-stream", api_live_stop_stream)
     app.router.add_route("GET", "/api/live/config", api_live_config)
@@ -4135,12 +4202,365 @@ async def api_live_danmaku(request):
     from desktop_core.live_engine import engine
     return web.json_response({"danmaku": engine.danmaku_list})
 
+async def api_live_inject_danmaku(request):
+    """[调试] 注入一条测试弹幕，走真实 _dispatch_danmaku 链路（验证延迟/接话，非正式功能）。"""
+    from desktop_core.live_engine import engine
+    if engine is None:
+        return web.json_response({"error": "直播引擎未运行"}, status=503)
+    body = {}
+    try:
+        body = await request.json() or {}
+    except Exception:
+        body = {}
+    text = (body.get("text") or "").strip()
+    if not text:
+        return web.json_response({"error": "text required"}, status=400)
+    await engine._dispatch_danmaku({"text": text, "user": body.get("user", "测试观众")})
+    return web.json_response({"ok": True, "dispatched": text})
+
 async def api_live_test_tts(request):
-    """测试 TTS API Key 是否可用"""
+    """测试 TTS API Key 是否可用。
+
+    关键：测试必须用【前端输入框当前的值】，不能只读已存配置——
+    否则用户「打字→点测试」测的其实是默认模型，造成“我换了模型还 403”的假象。
+    _load_config() 会把 self._tts_model 重置为库里已存值（可能为空），
+    故把输入框的 tts_model/tts_api_url 作为 override 传入，优先于已存值。
+    """
     from desktop_core.live_engine import engine
     engine._load_config()
-    err = await engine.test_tts()
-    return web.json_response({"ok": not err, "error": err or ""})
+    body = {}
+    try:
+        body = await request.json() or {}
+    except Exception:
+        body = {}
+    override_model = (body.get("tts_model") or "").strip()
+    override_url = (body.get("tts_api_url") or "").strip()
+    override_voice = (body.get("tts_voice") or "").strip()
+    # Key 也要能用输入框当前值测（用户"换个 key 试试"时必须立刻生效）
+    override_key = (body.get("tts_key") or body.get("dashscope_api_key") or "").strip()
+    # 掩码回显保护：输入框未改动时回显的是掩码（sk-2****），当作未改动回退引擎真 key
+    if "****" in override_key:
+        override_key = ""
+    err = await engine.test_tts(override_model=override_model or None,
+                                override_url=override_url or None,
+                                override_voice=override_voice or None,
+                                override_key=override_key or None)
+    diag = getattr(engine, "_last_tts_diag", {}) or {}
+    return web.json_response({"ok": not err, "error": err or "", "diag": diag})
+
+
+async def api_config_auto_detect(request):
+    """配置自动检测：对【空着】的可发现字段，用已有凭证真实打一次发现并回填。
+
+    幂等——只填空的，绝不覆盖用户已显式填写的值（force=true 除外）。
+    存在的意义：解决"刚打开一片空白、得逐个手点测试"的问题。只要手里有可用
+    的 API Key，对话模型 / 直播模型 / 视觉模型 / TTS 音色都能自己补齐。
+    返回 filled（本次补齐）/ skipped（本就有值，跳过）/ errors（无凭证或发现失败）。
+    """
+    from desktop_core.live_engine import engine
+    from desktop_core import tts_router
+    filled, skipped, errors = {}, [], {}
+    body = {}
+    try:
+        body = await request.json() or {}
+    except Exception:
+        body = {}
+    force = bool(body.get("force"))
+
+    try:
+        from desktop_core.storage import meta_get, meta_set
+
+        try:
+            raw_lc = meta_get("live_config")
+            cfg = json.loads(raw_lc) if raw_lc else {}
+        except Exception:
+            cfg = {}
+
+        async def _pick_chat(prefer_light=False):
+            """对话类模型发现。返回 (model, error)。"""
+            try:
+                base = (engine._resolve_live_chat_config() if prefer_light
+                        else engine._resolve_chat_config()) or {}
+            except Exception:
+                base = {}
+            key = (base.get("api_key", "")
+                   or getattr(engine, "_dashscope_api_key", "") or "")
+            if not key:
+                return None, "无可用 API Key"
+            d = await tts_router.discover_chat_model(
+                key, base.get("api_url", ""), prefer_light=prefer_light)
+            if d.get("model"):
+                return d["model"], ""
+            return None, (d.get("diag") or {}).get("error") or "未找到可用模型"
+
+        # ① 对话页 / 桌宠语音共用的文本模型
+        try:
+            base = {}
+            try:
+                base = engine._resolve_chat_config() or {}
+            except Exception:
+                pass
+            effective = (base.get("model") or "").strip() or (cfg.get("chat_model") or "").strip()
+            if effective and not force:
+                skipped.append("chat_model")
+            else:
+                m, err = await _pick_chat(False)
+                if m:
+                    engine.save_config(chat_model=m)
+                    filled["chat_model"] = m
+                else:
+                    errors["chat_model"] = err
+        except Exception as e:
+            errors["chat_model"] = str(e)
+
+        # ② 直播弹幕模型（与对话页分离，轻量优先省 token）
+        try:
+            have = (getattr(engine, "_live_chat_model", "") or "").strip()
+            if have and not force:
+                skipped.append("live_chat_model")
+            else:
+                m, err = await _pick_chat(True)
+                if m:
+                    engine.save_config(live_chat_model=m)
+                    filled["live_chat_model"] = m
+                else:
+                    errors["live_chat_model"] = err
+        except Exception as e:
+            errors["live_chat_model"] = str(e)
+
+        # ③ 视觉模型
+        try:
+            have_v = (cfg.get("vision_model") or "").strip()
+            if have_v and not force:
+                skipped.append("vision_model")
+            else:
+                vbase = {}
+                try:
+                    vbase = engine._resolve_vision_config() or {}
+                except Exception:
+                    vbase = {}
+                vkey = vbase.get("api_key", "")
+                if not vkey:
+                    errors["vision_model"] = "无可用视觉 API Key"
+                else:
+                    d = await tts_router.discover_vision_model(vkey, vbase.get("api_url", ""))
+                    if d.get("model"):
+                        engine.save_config(vision_model=d["model"])
+                        filled["vision_model"] = d["model"]
+                    else:
+                        errors["vision_model"] = ((d.get("diag") or {}).get("error")
+                                                  or "未找到可用视觉模型")
+        except Exception as e:
+            errors["vision_model"] = str(e)
+
+        # ④ TTS 音色：按当前 TTS 模型所属家族挑一个真能用的预设音色
+        try:
+            have_voice = (cfg.get("tts_voice") or "").strip()
+            if have_voice and not force:
+                skipped.append("tts_voice")
+            else:
+                tts_base = {}
+                try:
+                    tts_base = engine._resolve_tts_config() or {}
+                except Exception:
+                    tts_base = {}
+                tkey = (tts_base.get("api_key", "")
+                        or getattr(engine, "_dashscope_api_key", "") or "")
+                tmodel = (cfg.get("tts_model") or tts_base.get("model") or "").strip()
+                if not tkey:
+                    errors["tts_voice"] = "无可用 TTS API Key"
+                else:
+                    info = await tts_router.list_tts_voices(tkey)
+                    kw = ("qwen" if "qwen" in tmodel.lower()
+                          else ("cosy" if "cosy" in tmodel.lower() else ""))
+                    picked = ""
+                    for g in (info.get("groups") or []):
+                        vs = g.get("voices") or []
+                        if not vs:
+                            continue
+                        fam = (g.get("family") or "").lower()
+                        if kw and kw not in fam:
+                            continue
+                        first = vs[0]
+                        picked = (first if isinstance(first, str)
+                                  else (first.get("id") or first.get("voice") or ""))
+                        if picked:
+                            break
+                    if picked:
+                        engine.save_config(tts_voice=picked)
+                        filled["tts_voice"] = picked
+                    else:
+                        errors["tts_voice"] = "未取得可选音色"
+        except Exception as e:
+            errors["tts_voice"] = str(e)
+
+        # ⑤ 对话页模型（desktop_config 里的 chat 供应商）与 ① 保持一致，
+        #    否则"直播页有模型、对话页仍显示空"。
+        try:
+            m = filled.get("chat_model")
+            if m:
+                raw_dc = meta_get("desktop_config")
+                dc = json.loads(raw_dc) if raw_dc else {}
+                changed = False
+                for _pid, _pc in (dc.get("api_providers") or {}).items():
+                    if _pc.get("type") == "chat" and not (_pc.get("model") or "").strip():
+                        _pc["model"] = m
+                        changed = True
+                if changed:
+                    meta_set("desktop_config", json.dumps(dc, ensure_ascii=False))
+                    filled["desktop_chat_model"] = m
+        except Exception as e:
+            errors["desktop_chat_model"] = str(e)
+
+        return web.json_response({"ok": True, "filled": filled,
+                                  "skipped": skipped, "errors": errors})
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e),
+                                  "filled": filled, "errors": errors})
+
+
+async def api_live_test_config(request):
+    """通用配置连通性测试：用【前端输入框当前的值】真实调一次，返回结构化结果。
+
+    kind = tts | chat | vision
+    存在的意义：用户每改一个字段（key/模型名/接口地址/嗓音）都能立刻验证，
+    而不是"保存后靠猜"。所有值优先用传入的 override，绝不只读已存配置。
+    """
+    from desktop_core.live_engine import engine
+    body = {}
+    try:
+        body = await request.json() or {}
+    except Exception:
+        body = {}
+    kind = (body.get("kind") or "").strip()
+    api_key = (body.get("api_key") or "").strip()
+    api_url = (body.get("api_url") or "").strip()
+    model = (body.get("model") or "").strip()
+    voice = (body.get("voice") or "").strip()
+    # 掩码回显保护：GET /api/live/config 回显的 key 是掩码（如 sk-2****），输入框未改动时
+    # 点测试会把掩码当真 key 发出去 → 401 InvalidApiKey。含掩码 = 用户未改 → 回退引擎已存真 key。
+    if "****" in api_key:
+        api_key = ""
+
+    if kind == "tts":
+        err = await engine.test_tts(override_model=model or None,
+                                    override_url=api_url or None,
+                                    override_voice=voice or None,
+                                    override_key=api_key or None)
+        return web.json_response({"ok": not err, "error": err or "",
+                                  "diag": getattr(engine, "_last_tts_diag", {}) or {}})
+
+    # chat / live_chat / vision：对端点发一次最小 chat completion，验证 key+url+model 组合。
+    # 语义：只覆盖用户【填了】的字段，其余沿用已存配置——这样"只改模型名"也能单独测。
+    # live_chat = 直播弹幕专用模型（与对话页 chat 分离，自动发现优先轻量模型省 token）。
+    try:
+        if kind == "chat":
+            base = engine._resolve_chat_config()
+        elif kind == "live_chat":
+            base = engine._resolve_live_chat_config()
+        else:
+            base = engine._resolve_vision_config() or {}
+    except Exception:
+        base = {}
+    base = base or {}
+    eff_key = api_key or base.get("api_key", "") or engine._dashscope_api_key or ""
+    eff_url = api_url or base.get("api_url", "")
+    eff_model = model or base.get("model", "")
+    if not eff_key:
+        return web.json_response({"ok": False, "error": "未配置 API Key"})
+    if not eff_url:
+        return web.json_response({"ok": False, "error": "缺少接口地址"})
+    # 端点归一化：用户填 base(如 .../v1) 自动补 /chat/completions，填完整端点则原样用
+    u = eff_url.rstrip("/")
+    if not u.lower().endswith("/chat/completions"):
+        u = u + "/chat/completions"
+    vision = (kind == "vision")
+    diag = {"endpoint": u, "model": eff_model or "(空)"}
+    force_discover = bool(body.get("force_discover"))
+    # 直播弹幕模型：独立字段未配置且用户没填 → 强制自动发现（轻量优先）。
+    # 否则会因"回退到对话模型"被误判成已配置，导致直播与对话共用同一模型（违背分离要求）。
+    if kind == "live_chat" and not model and not (getattr(engine, "_live_chat_model", "") or "").strip():
+        force_discover = True
+    if not eff_model or force_discover:
+        # 模型名留空 / 显式强制 → 自动发现（与 TTS 同策略：列表候选 + 真实请求逐个测）
+        from desktop_core import tts_router
+        disc = await (tts_router.discover_vision_model(eff_key, eff_url) if vision
+                      else tts_router.discover_chat_model(eff_key, eff_url,
+                                                          prefer_light=(kind == "live_chat")))
+        diag.update(disc.get("diag") or {})
+        if disc.get("model"):
+            try:
+                if vision:
+                    engine.save_config(vision_model=disc["model"])
+                elif kind == "live_chat":
+                    engine.save_config(live_chat_model=disc["model"])
+                else:
+                    engine.save_config(chat_model=disc["model"])
+            except Exception:
+                pass
+            diag["auto_model"] = disc["model"]
+            return web.json_response({"ok": True, "error": "", "diag": diag})
+        return web.json_response({"ok": False,
+                                  "error": f"自动发现失败：{diag.get('error')}", "diag": diag})
+    status, txt = 0, ""
+    try:
+        import aiohttp
+        content = None
+        if vision:
+            from desktop_core.tts_router import _VISION_PING_IMG
+            content = [{"type": "image_url", "image_url": {"url": _VISION_PING_IMG}},
+                       {"type": "text", "text": "describe in one word"}]
+        payload = {"model": eff_model, "max_tokens": 8,
+                   "messages": [{"role": "user", "content": content or "ping"}]}
+        headers = {"Authorization": f"Bearer {eff_key}", "Content-Type": "application/json"}
+        async with aiohttp.ClientSession() as s:
+            async with s.post(u, json=payload, headers=headers,
+                              timeout=aiohttp.ClientTimeout(total=30)) as r:
+                status, txt = r.status, (await r.text())[:200]
+    except Exception as e:
+        return web.json_response({"ok": False, "error": f"请求失败: {e}", "diag": diag})
+    if status == 200:
+        return web.json_response({"ok": True, "error": "", "diag": diag})
+    # 模型名无效（配置里存了该 key 不支持的模型）→ 自动发现可用模型并自动修正
+    if "model_not_supported" in txt or "Unsupported model" in txt or "model does not exist" in txt.lower():
+        from desktop_core import tts_router
+        disc = await (tts_router.discover_vision_model(eff_key, eff_url) if vision
+                      else tts_router.discover_chat_model(eff_key, eff_url,
+                                                          prefer_light=(kind == "live_chat")))
+        diag.update(disc.get("diag") or {})
+        if disc.get("model"):
+            try:
+                if vision:
+                    engine.save_config(vision_model=disc["model"])
+                elif kind == "live_chat":
+                    engine.save_config(live_chat_model=disc["model"])
+                else:
+                    engine.save_config(chat_model=disc["model"])
+            except Exception:
+                pass
+            diag["auto_model"] = disc["model"]
+            diag["replaced_model"] = eff_model
+            return web.json_response({"ok": True, "error": "", "diag": diag})
+        return web.json_response({"ok": False,
+                                  "error": (f"模型「{eff_model}」不被支持（{status}: {txt[:120]}）；"
+                                            f"自动发现也失败：{diag.get('error')}"),
+                                  "diag": diag})
+    return web.json_response({"ok": False, "error": f"{status}: {txt}", "diag": diag})
+
+
+async def api_tts_voices(request):
+    """返回可选音色清单：内置预置音色（按模型家族分组）+ 此 key 已复刻的音色（真实拉取）。
+
+    供前端「TTS 嗓音」下拉选择；用户仍可自由输入任意音色名——清单是选项不是限制。
+    """
+    from desktop_core.live_engine import engine
+    from desktop_core import tts_router
+    key = (request.query.get("api_key") or "").strip()
+    if not key or "****" in key:
+        key = engine._dashscope_api_key or ""
+    data = await tts_router.list_tts_voices(key)
+    return web.json_response(data)
+
 
 async def api_live_connectors(request):
     """列出当前在台的角色（奶昔 + 已接入的外部 agent）"""
@@ -4568,6 +4988,8 @@ async def api_live_config(request):
             "rtmp_url": engine._rtmp_url,
             "dashscope_api_key": engine._dashscope_api_key[:4]+"****" if engine._dashscope_api_key else "",
             "chat_model": (engine._resolve_chat_config() or {}).get("model", ""),
+            # 直播弹幕专用模型（与对话页模型分离，独立回显/独立测试）
+            "live_chat_model": engine._live_chat_model,
             "live_prompt": engine._live_prompt,
             # 视觉模型（从 api_providers[vision] 读出，供 B站 配置页回显）
             "vision_model": (engine._resolve_vision_config() or {}).get("model", ""),
@@ -4578,6 +5000,10 @@ async def api_live_config(request):
             "model_path": mp,
             "render_mode": engine._render_mode,
             "tts_engine": engine._tts_engine,
+            # TTS 语音模型名 / 接口地址 / 嗓音（直播页自由切换，供 B站 配置页回显）
+            "tts_model": engine._tts_model,
+            "tts_api_url": engine._tts_api_url,
+            "tts_voice": engine._tts_voice,
         })
     body = await request.json()
     ok = engine.save_config(**body)
@@ -4602,6 +5028,12 @@ async def api_live2d_stream(request):
     await ws.prepare(request)
     engine._live2d_ws = ws
     engine._live2d_clients.add(ws)  # 多窗口并存（桌宠 + 舞台），广播集合
+    # 客户端身份：?client=qt = PySide6 独立桌宠（语音优先出口），缺省 web 窗口。
+    # 多窗口并存时据此把语音只投递给唯一出口，避免同一句话被各窗口各播一遍叠在一起。
+    try:
+        ws["client_role"] = (request.rel_url.query.get("client") or "web").strip().lower()
+    except Exception:
+        pass
     try:
         async for msg in ws:
             if msg.type == web.WSMsgType.CLOSED:
@@ -4609,6 +5041,10 @@ async def api_live2d_stream(request):
             if msg.type == web.WSMsgType.TEXT:
                 try:
                     data = json.loads(msg.data)
+                    # 客户端播放回执：收到即取消后端兜底补播，保证同一段音频只出一声
+                    if data.get("type") == "audio_ack":
+                        engine.mark_audio_played(str(data.get("audio_id") or ""))
+                        continue
                     if data.get("type") == "chat":
                         text = data.get("text", "")
                         # viewer_id="主人"：桌面对话按主人为维度持久化记忆（区别于弹幕按观众 uname），
@@ -4713,11 +5149,16 @@ async def api_live_chat_test(request):
         })
     except:
         pass
-    # 触发 TTS 语音播放
+    # 触发 TTS 语音播放（与 _vts_speak 同源：客户端在线就只广播、不后端播，避免双声叠一起）
     try:
         audio = await engine._synthesize(reply)
         if audio:
-            engine.play_audio(audio)
+            audio_b64 = engine._to_wav_base64(audio) or ""
+            if audio_b64:
+                if engine._live2d_clients:
+                    await engine.live2d_broadcast({"type": "audio", "audio": audio_b64, "agent_id": "naixi"})
+                else:
+                    engine.play_audio(audio)
     except:
         pass
     return web.json_response(result)
@@ -5404,7 +5845,7 @@ async def api_logs(request):
             log_path = bf
             break
     if not log_path:
-        log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "logs", "naixi_desktop.log")
+        log_path = log_file("naixi_desktop.log")
     try:
         with open(log_path, "r", encoding="utf-8") as f:
             lines = f.readlines()

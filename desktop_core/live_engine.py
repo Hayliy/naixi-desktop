@@ -58,6 +58,29 @@ log = logging.getLogger("live_engine")
 # ── 常量 ──────────────────────────────────────────────────────────────────
 
 OPEN_LIVE_API = "https://api-live.bilibili.com"
+
+# 默认模型名（仅当配置为空时回退用；用户随时可在前端覆盖，业务代码不再散落字面量）
+DEFAULT_CHAT_MODEL = "qwen-plus"
+DEFAULT_VISION_MODEL = "qwen-vl-plus"
+
+
+def normalize_chat_endpoint(url: str) -> str:
+    """把用户填的 chat/vision 接口地址归一化为可直投的 /chat/completions 端点。
+
+    历史 Bug：旧代码用 `url.rstrip("chat/completions")` —— rstrip 是按【字符集合】剥离，
+    会把末尾所有 c/h/a/t/o/m/p/l/e/i/n/s 字符吃光。实测
+    `.../aigc/text-generation/generation` 被破坏成 `.../text-generation/gener/chat/completions`。
+    这里改为按【子串】判断：已经是 /chat/completions 结尾就原样用，否则补上。
+
+    同时删掉旧的 `is_dashscope = "dashscope" in url` 域名分支——两个分支做的事完全一样，
+    按域名分流只会让"换个服务商"失效。
+    """
+    u = (url or "").strip().rstrip("/")
+    if not u:
+        return ""
+    if u.lower().endswith("/chat/completions"):
+        return u
+    return u + "/chat/completions"
 HEARTBEAT_INTERVAL = 20       # B站心跳间隔（秒）
 QUEUE_TIMEOUT = 2             # 队列等待超时（秒）
 MAX_DANMAKU = 200             # 弹幕缓存上限
@@ -105,6 +128,14 @@ class LiveEngine:
         self._rtmp_url = ""
         self._game_id = ""
         self._dashscope_api_key = ""
+        # TTS 语音模型名 / 接口地址 / 嗓音：直播页可自由切换，绝不写死（零容忍硬编码）
+        self._tts_model = ""
+        self._tts_api_url = ""
+        self._tts_voice = ""
+        # 直播弹幕专用模型（与对话页模型强制分离，避免上下文污染/token 爆炸）
+        self._live_chat_model = ""
+        # 最近一次 TTS 诊断（端点/协议/嗓音/各协议失败原因），供前端逐项展示
+        self._last_tts_diag = {}
         self._bili_config_saved = False
 
         # B站连接
@@ -144,6 +175,7 @@ class LiveEngine:
         self._vts_base_port: int = 8001     # 端口公式：实例 i 监听 8001 + i
         self._vts_by_model: dict[str, int] = {}   # modelID(GUID) -> instance_index（枚举后反查路由）
         self._vts_by_agent: dict[str, int] = {}   # agent_id -> instance_index（角色→实例）
+        self._http = None                          # 持久 aiohttp session（复用，避免每次 LLM 握手）
 
         # 渲染后端适配器层（AvatarBackend）：agent_id -> kind（"vts"|"vmc"|"self"）
         # 默认 "vts"（存量 VTS 实例池即第1级后端，不平移不重写）；
@@ -163,6 +195,10 @@ class LiveEngine:
         # 桌宠 WebSocket（前端 Live2D 窗口）；_live2d_clients 支持多窗口（桌宠+舞台）同时在线
         self._live2d_ws: Optional[aiohttp.WebSocketResponse] = None
         self._live2d_clients: set = set()
+        # 语音播放回执：audio_id -> asyncio.Event。广播音频后等待客户端回执，
+        # 超时未回执说明客户端哑火（未解锁/僵尸连接/sprite 未加载），由后端兜底出声。
+        self._audio_acks: dict = {}
+        self._audio_seq: int = 0
         # 桌宠子进程（PySide6 独立窗口）
         self._pet_proc: Optional[subprocess.Popen] = None
         # 场景历史（本次会话工作缓冲，过长时压缩）
@@ -207,6 +243,23 @@ class LiveEngine:
         self._load_model_bindings()
         self._load_backend_kinds()
         self._register_builtin_connectors()
+
+    def _ensure_http(self):
+        """复用持久 aiohttp ClientSession —— 避免每次 LLM/TTS 调用重做 DNS+TCP+TLS 握手
+        （实测每次新建 session 会让首调用多花数百 ms~1s 冷启动）。
+        loop 安全：session 绑死创建时的 loop，loop 变更则重建，杜绝跨 loop 报错。"""
+        import aiohttp
+        loop = asyncio.get_event_loop()
+        s = self._http
+        if s is not None and not s.closed and getattr(s, "_loop", None) is loop:
+            return s
+        if s is not None and not s.closed:
+            try:
+                asyncio.ensure_future(s.close())
+            except Exception:
+                pass
+        self._http = aiohttp.ClientSession()
+        return self._http
 
     @staticmethod
     def _guard_mem_get(key: str) -> str:
@@ -1126,6 +1179,7 @@ class LiveEngine:
 
     async def _dispatch_danmaku(self, danmaku: dict):
         """把一条（或一批）弹幕分发给在台角色。含 @路由 则定向，否则全体判断是否接。"""
+        self._danmaku_t0 = time.monotonic()  # [延迟诊断] 弹幕进入起点
         target, cleaned = self._match_mention(danmaku.get("text", ""))
         if target is not None:
             danmaku = {**danmaku, "text": cleaned}
@@ -1269,6 +1323,10 @@ class LiveEngine:
                 self._room_id = cfg.get("room_id", "")
                 self._rtmp_url = cfg.get("rtmp_url", "")
                 self._dashscope_api_key = cfg.get("dashscope_api_key", "")
+                self._tts_model = cfg.get("tts_model", "") or ""
+                self._tts_api_url = cfg.get("tts_api_url", "") or ""
+                self._tts_voice = cfg.get("tts_voice", "") or ""
+                self._live_chat_model = cfg.get("live_chat_model", "") or ""
                 self._live_prompt = cfg.get("live_prompt") or DEFAULT_LIVE_PROMPT
                 self._audio_out_device = cfg.get("audio_out_device", "")
                 self._audio_in_device = cfg.get("audio_in_device", "")
@@ -1315,6 +1373,12 @@ class LiveEngine:
                 "model_path": kwargs.get("model_path", base.get("model_path", self._model_path)),
                 "render_mode": kwargs.get("render_mode", base.get("render_mode", self._render_mode)),
                 "tts_engine": kwargs.get("tts_engine", base.get("tts_engine", self._tts_engine)),
+                # TTS 语音模型名 / 接口地址 / 嗓音：直播页自由切换，写库持久化，绝不写死
+                "tts_model": kwargs.get("tts_model", base.get("tts_model", self._tts_model)),
+                "tts_api_url": kwargs.get("tts_api_url", base.get("tts_api_url", self._tts_api_url)),
+                "tts_voice": kwargs.get("tts_voice", base.get("tts_voice", self._tts_voice)),
+                # 直播弹幕专用模型（与对话页模型分离，独立持久化）
+                "live_chat_model": kwargs.get("live_chat_model", base.get("live_chat_model", self._live_chat_model)),
                 # 层3 真人语音闭环配置
                 "asr_model": kwargs.get("asr_model", base.get("asr_model", self._asr_model)),
                 "asr_device": kwargs.get("asr_device", base.get("asr_device", self._asr_device)),
@@ -1399,6 +1463,10 @@ class LiveEngine:
             self._model_path = cfg["model_path"]
             self._render_mode = cfg["render_mode"]
             self._tts_engine = cfg["tts_engine"]
+            self._tts_model = cfg.get("tts_model", "") or ""
+            self._tts_api_url = cfg.get("tts_api_url", "") or ""
+            self._tts_voice = cfg.get("tts_voice", "") or ""
+            self._live_chat_model = cfg.get("live_chat_model", "") or ""
             # ── 渲染模式运行时切换（2D/3D）：render_mode 变化且桌宠正在运行 → 重启 pet 进程立即生效 ──
             _old_mode = base.get("render_mode") or "live2d"
             if cfg["render_mode"] != _old_mode and self._pet_proc and self._pet_proc.poll() is None:
@@ -1499,8 +1567,26 @@ class LiveEngine:
         if not ok:
             log.warning(f"[直播] B站 连接失败: {self._last_error}")
 
+        # [延迟优化] 预热 LLM+TTS 连接，消除首条弹幕冷启动握手延迟
+        asyncio.create_task(self._warmup())
+
         log.info("[直播] 引擎已启动")
         return True
+
+    async def _warmup(self):
+        """[延迟优化] 引擎启动后异步预热 LLM + TTS 连接：
+        直播刚开播第一条弹幕往往要额外承受 TCP+TLS 冷启动，预热可把这段摊到开播前。
+        record=False 避免预热 ping 污染对话历史。"""
+        await asyncio.sleep(2)
+        try:
+            await asyncio.wait_for(self._call_llm("ping", viewer_id="__warmup__", record=False), timeout=12)
+        except Exception:
+            pass
+        try:
+            await asyncio.wait_for(self._synthesize("预热"), timeout=15)
+        except Exception:
+            pass
+        log.info("[直播延迟][预热] LLM+TTS 预热完成")
 
     async def stop(self):
         """停止所有 Agent 和连接，保存统计数据"""
@@ -2013,6 +2099,25 @@ class LiveEngine:
         self._chat_cfg_ts = now
         return cfg
 
+    def _resolve_live_chat_config(self) -> dict:
+        """【直播弹幕专用】LLM 配置——与对话页模型强制分离。
+
+        用户明确要求：直播页与对话页必须用不同模型，否则轻则上下文污染、重则 token 爆炸。
+        （弹幕高频、上下文长，用对话页的大模型会迅速吃掉 token 配额。）
+
+        实现：复用 chat 供应商的 Key/接口地址（同一把 key 即可），但**模型名取独立的
+        `live_config.live_chat_model`**；未配置时回退到 chat 供应商的模型（只回退"用哪个模型"，
+        绝不反过来改对话页的配置）。
+        """
+        base = self._resolve_chat_config()
+        # 未显式配 live_chat_model 时回退到 chat 供应商模型（与对话页一致）。
+        # 注意：弹幕延迟的大头是 LLM 端点往返(~5s，网络/服务端波动大，qwen-turbo 实测反而更慢 9s)，
+        # 不是模型算力；想进一步压低请在前端单独设一个轻量 flash 模型到 live_chat_model。
+        cfg = {"api_key": base.get("api_key", ""),
+               "api_url": base.get("api_url", ""),
+               "model": (self._live_chat_model or "").strip() or base.get("model", "")}
+        return cfg
+
     def _resolve_vision_config(self) -> Optional[dict]:
         """解析视觉模型供应商（api_providers 中 type=vision），供桌宠"看"画面。
         未配置 vision 类型时，回退到 chat 供应商里 model 含 'vl' 的（qwen-vl 等也走 chat 兼容接口）。
@@ -2058,15 +2163,19 @@ class LiveEngine:
         self._vision_cfg_ts = now
         return cfg
 
-    async def _call_llm(self, prompt: str, viewer_id: str = "") -> Optional[str]:
-        """调用配置的聊天 LLM，返回回复文本。viewer_id 用于长期记忆按观众隔离。"""
-        cfg = self._resolve_chat_config()
+    async def _call_llm(self, prompt: str, viewer_id: str = "", record: bool = True) -> Optional[str]:
+        """调用配置的聊天 LLM，返回回复文本。viewer_id 用于长期记忆按观众隔离。
+
+        注意：这是**直播弹幕/直播互动**链路，走 `_resolve_live_chat_config()`（直播专用模型），
+        与对话页模型强制分离——避免高频弹幕污染对话上下文、并防止大模型被高频调用烧 token。
+        """
+        cfg = self._resolve_live_chat_config()
         if not cfg["api_key"] or not cfg["api_url"]:
             return None
+        t0 = time.monotonic()
         try:
-            from aiohttp import ClientSession
+            import aiohttp
             import json as _json
-            is_dashscope = "dashscope" in cfg["api_url"] or ("aliyuncs" in cfg["api_url"] and "compatible-mode" not in cfg["api_url"])
             messages = [{"role": "system", "content": self._live_prompt}]
             # 长期记忆摘要：画像 + 当日直播优先 + 语义召回相关往事。
             # 解决「一整天直播记忆断了」：重连/隔天开播不再只看到最近20条，
@@ -2088,27 +2197,28 @@ class LiveEngine:
                 messages.append({"role": h["role"], "content": h["content"]})
             messages.append({"role": "user", "content": prompt})
 
-            if is_dashscope:
-                url = cfg["api_url"].rstrip("chat/completions").rstrip("/") + "/chat/completions"
-            else:
-                url = cfg["api_url"].rstrip("/") + ("/chat/completions" if "/chat/completions" not in cfg["api_url"] else "")
+            url = normalize_chat_endpoint(cfg["api_url"])
             headers = {"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"}
-            payload = {"model": cfg["model"] or "qwen-plus", "messages": messages,
+            payload = {"model": cfg["model"] or DEFAULT_CHAT_MODEL, "messages": messages,
                        "max_tokens": 100, "temperature": 0.8}
 
-            async with ClientSession() as s:
-                async with s.post(url, json=payload, headers=headers, timeout=10) as r:
-                    if r.status != 200:
-                        return None
-                    data = await r.json()
-                    reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                    if reply:
+            s = self._ensure_http()
+            async with s.post(url, json=payload, headers=headers,
+                             timeout=aiohttp.ClientTimeout(total=8)) as r:
+                if r.status != 200:
+                    return None
+                data = await r.json()
+                reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                if reply:
+                    if record:
                         # 记录到上下文（不限量，_call_llm 内部会压缩）
                         self._scene_history.append({"role": "user", "content": prompt})
                         self._scene_history.append({"role": "assistant", "content": reply})
-                        return reply.strip()
+                    return reply.strip()
         except:
             pass
+        finally:
+            log.info(f"[直播延迟][LLM] _call_llm 耗时 {time.monotonic()-t0:.2f}s viewer={viewer_id}")
         return None
 
     async def _raw_llm_call(self, messages: list) -> Optional[str]:
@@ -2118,13 +2228,9 @@ class LiveEngine:
             return None
         try:
             from aiohttp import ClientSession
-            is_dashscope = "dashscope" in cfg["api_url"] or ("aliyuncs" in cfg["api_url"] and "compatible-mode" not in cfg["api_url"])
-            if is_dashscope:
-                url = cfg["api_url"].rstrip("chat/completions").rstrip("/") + "/chat/completions"
-            else:
-                url = cfg["api_url"].rstrip("/") + ("/chat/completions" if "/chat/completions" not in cfg["api_url"] else "")
+            url = normalize_chat_endpoint(cfg["api_url"])
             headers = {"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"}
-            payload = {"model": cfg["model"] or "qwen-plus", "messages": messages,
+            payload = {"model": cfg["model"] or DEFAULT_CHAT_MODEL, "messages": messages,
                        "max_tokens": 300, "temperature": 0.4}
             async with ClientSession() as s:
                 async with s.post(url, json=payload, headers=headers, timeout=15) as r:
@@ -2256,15 +2362,11 @@ class LiveEngine:
                 img_b64 = base64.b64encode(f.read()).decode("utf-8")
             api_url = vis.get("api_url", "")
             api_key = vis.get("api_key", "")
-            model = vis.get("model", "qwen-vl-plus")
+            model = vis.get("model", DEFAULT_VISION_MODEL) or DEFAULT_VISION_MODEL
             if not api_url or not api_key:
                 return ""
-            # 与 _call_llm 一致：dashscope 兼容接口需补 /chat/completions 后缀
-            is_dashscope = "dashscope" in api_url or ("aliyuncs" in api_url and "compatible-mode" in api_url)
-            if is_dashscope:
-                api_url = api_url.rstrip("chat/completions").rstrip("/") + "/chat/completions"
-            else:
-                api_url = api_url.rstrip("/") + ("/chat/completions" if "/chat/completions" not in api_url else "")
+            # 与 _call_llm 一致：统一端点归一化（不再按域名分流，也不再 rstrip 字符集）
+            api_url = normalize_chat_endpoint(api_url)
             headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
             payload = {
                 "model": model,
@@ -2765,7 +2867,7 @@ class LiveEngine:
         import aiohttp
         inst = self._vts_instances.get(index)
         if inst is None:
-            inst = VtsInstance(index, self._vts_host, self._vts_base_port + index)
+            inst = self.VtsInstance(index, self._vts_host, self._vts_base_port + index)
             self._vts_instances[index] = inst
         if inst.ws and not inst.ws.closed:
             return True
@@ -3122,10 +3224,78 @@ class LiveEngine:
             mouth_values.append(mouth)
         return mouth_values if mouth_values else [0.0]
 
+    def _pick_audio_targets(self) -> list:
+        """挑选唯一的语音出口：优先 Qt 桌宠（client_role=qt，具备音量/输出设备控制），
+        否则退回首个在线窗口。保证同一段音频只被播放一次。"""
+        alive = [w for w in list(self._live2d_clients) if not getattr(w, "closed", False)]
+        if not alive:
+            return []
+        qt = []
+        for w in alive:
+            try:
+                if w.get("client_role") == "qt":
+                    qt.append(w)
+            except Exception:
+                continue
+        return qt[:1] if qt else alive[:1]
+
+    # 等待客户端播放回执的超时（秒）：超时未回执即判定该出口哑火，由后端兜底出声
+    AUDIO_ACK_TIMEOUT: float = 1.5
+
+    @staticmethod
+    def _role_of(ws) -> str:
+        """读取 ws 客户端身份（qt=独立桌宠 / web=浏览器窗口），仅用于日志定位。"""
+        try:
+            return str(ws.get("client_role") or "web")
+        except Exception:
+            return "?"
+
+    async def _wait_audio_ack(self, audio_id: str, audio_bytes: bytes, text: str = ""):
+        """等待客户端播放回执；超时未回执则后端兜底出声。
+
+        客户端是首选语音出口（语音从桌宠本体发出），但可能因浏览器自动播放策略未解锁、
+        sprite 未加载、僵尸连接等原因哑火。回执制把「完全失声」降级为「后端兜底出声」，
+        同时客户端正常出声时会回执，后端不再补播 → 不会双声。
+        """
+        evt = self._audio_acks.get(audio_id)
+        if evt is None:
+            return
+        try:
+            await asyncio.wait_for(evt.wait(), timeout=self.AUDIO_ACK_TIMEOUT)
+            log.info(f"[语音回执] 客户端已出声 audio_id={audio_id}")
+        except asyncio.TimeoutError:
+            log.warning(f"[语音回执] 超时 {self.AUDIO_ACK_TIMEOUT}s 未收到播放回执 → "
+                        f"后端兜底出声 text={text[:18]!r}")
+            try:
+                self.play_audio(audio_bytes)
+            except Exception:
+                log.exception("[语音回执] 后端兜底播放失败")
+        except Exception:
+            log.exception("[语音回执] 等待回执异常")
+        finally:
+            self._audio_acks.pop(audio_id, None)
+
+    def mark_audio_played(self, audio_id: str):
+        """客户端上报「这段音频我已开始播放」→ 取消后端兜底，保证只出一声。"""
+        if not audio_id:
+            return
+        evt = self._audio_acks.get(audio_id)
+        if evt is not None and not evt.is_set():
+            evt.set()
+
     async def live2d_broadcast(self, payload: dict):
-        """向所有前端 Live2D 客户端（桌宠 + 舞台等多窗口）广播消息，静默清理死连接。"""
+        """向 Live2D 客户端广播消息（桌宠 + 舞台等多窗口），静默清理死连接。
+
+        语音去重（2026-09-09）：此前对含 audio 的消息也是全员广播，于是 Qt 桌宠与
+        app 内宠物/舞台窗各自播放同一段音频 —— 用户听到「一次回复说了两遍还叠在一起」。
+        现在带 audio 的消息只投递给唯一语音出口（见 _pick_audio_targets），
+        其余窗口照常收 speak 做口型 / 动作 / 字幕，不会失声退出剧组。
+        """
         dead = []
-        for ws in list(self._live2d_clients):
+        targets = list(self._live2d_clients)
+        if payload.get("audio"):
+            targets = self._pick_audio_targets()
+        for ws in targets:
             if ws.closed:
                 dead.append(ws)
                 continue
@@ -3151,14 +3321,36 @@ class LiveEngine:
         mouth_data = self._audio_to_mouth_data(audio_bytes)
         if not mouth_data:
             return
-        # ── 治本：音频同时推给桌宠本体播放，不再依赖后端 sounddevice ──
-        # 桌宠 embed python 自带 sounddevice 能自播；后端进程(managed python)缺
-        # sounddevice 时仍走 play_audio 兜底（成功则双端都出声也无妨）。
+        # ── 治本双声（2026-09-09）：同一段音频只出一声，绝不双端齐发 ──
+        # 凡有客户端（桌宠 Qt / 浏览器宠物 / 舞台）在线，就把音频广播给它播放，
+        # 后端不再 play_audio；仅当无任何客户端连入时才由后端兜底出声。
+        # 此前后端 play_audio 与客户端广播同时出声，用户听到「一次回复说了两遍还叠一起」。
         audio_b64 = self._to_wav_base64(audio_bytes) or ""
         if audio_b64:
-            await self.live2d_broadcast({"type": "audio", "audio": audio_b64,
-                                          "agent_id": agent_id or ""})
-        self.play_audio(audio_bytes)
+            targets = self._pick_audio_targets()
+            if targets:
+                # ── 语音出口「回执制」（2026-09-09 二次修复，取代「只广播、绝不兜底」）──
+                # 旧逻辑：只要有客户端就只广播给它，后端一律不播。一旦被选中的出口哑火
+                # （浏览器自动播放策略未解锁 / sprite 未加载被 return 吞掉 / 僵尸 ws 连接 /
+                # 进程已死但 ws 未标记 closed），音频石沉大海且无回退 → 「回话了但没声音」。
+                # 新逻辑：广播时带 audio_id 并等待客户端播放回执；超时未回执则后端兜底出声。
+                # 客户端正常时会回执 → 后端不动，仍然只有一声（不会双声）。
+                self._audio_seq += 1
+                audio_id = f"a{self._audio_seq}"
+                evt = asyncio.Event()
+                self._audio_acks[audio_id] = evt
+                await self.live2d_broadcast({"type": "audio", "audio": audio_b64,
+                                              "audio_id": audio_id,
+                                              "agent_id": agent_id or ""})
+                dt = time.monotonic() - getattr(self, "_danmaku_t0", 0.0)
+                if 0 < dt < 120:  # 仅统计真实弹幕链路（排除 chat-test 等历史调用）
+                    log.info(f"[直播延迟][END] 弹幕→客户端首声 总耗时 {dt:.2f}s text={text[:18]!r}")
+                log.info(f"[语音出口] 音频已投递 role={self._role_of(targets[0])} "
+                         f"等待回执 {self.AUDIO_ACK_TIMEOUT}s audio_id={audio_id}")
+                asyncio.create_task(self._wait_audio_ack(audio_id, audio_bytes, text))
+            else:
+                # 无客户端在线（桌宠/舞台都没连）→ 后端兜底出声，避免失声
+                self.play_audio(audio_bytes)
         await self.live2d_broadcast({
             "type": "speak", "mouth": mouth_data,
             "frame_ms": 80, "text": text, "emotion": emotion, "action": action,
@@ -3221,15 +3413,46 @@ class LiveEngine:
                 # 无论合成成功与否都必须释放麦位，否则占麦仲裁会永久卡死
                 await self._after_speak(action, spoken)
 
-    def _resolve_tts_config(self) -> dict:
-        """解析 TTS 配置（api_key/api_url/model），优先对话页 audio 供应商里的【真密钥】。
+    # TTS 默认值（仅当用户未在直播页指定时回退用，绝不在业务逻辑里再写死模型名/嗓音）
+    # 默认端点与 tts_router._DEFAULT_TTS_ENDPOINT 保持同值（SpeechSynthesizer）；
+    # 旧值 .../aigc/text2audio/cosyvoice 实测报 "url error" 已废。
+    DEFAULT_TTS_MODEL = "cosyvoice-v3-flash"
+    DEFAULT_TTS_VOICE = "longfeifei_v3"
+    DEFAULT_COSYVOICE_URL = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"
 
-        关键：api_providers 里的 audio 供应商若其密钥是掩码/空（常见——用户没在「模型供应商」
-        页单独配语音，只在 B站页填了 dashscope_api_key），绝不能让它把 self._dashscope_api_key
-        （B站页填的、用户真正用于 TTS 的 Key）盖掉，否则永远拿掩码去请求必败、降级 Edge-TTS。
-        故：audio 供应商密钥为空或掩码时跳过，回退到 self._dashscope_api_key / 环境变量。
+    @staticmethod
+    def _default_voice_for_model(model: str) -> str:
+        """按模型家族给能出声的默认嗓音（用户留空 tts_voice 时回退用，可随时被覆盖）。
+
+        实测（真实 key）：cosyvoice 家族用 longfeifei_v3；qwen-audio 家族（qwen-audio-3.0-tts-flash 等）
+        共用 dashscope SpeechSynthesizer 端点，但必须喂 qwen 系嗓音（如 longanhuan_v3.6），
+        喂 longfeifei_v3 会 400/411 引擎错误。故按模型名前缀自适应，保证「填了模型名就出声」。
         """
-        cfg = {"api_key": "", "api_url": "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2audio/cosyvoice", "model": "cosyvoice-v3-flash"}
+        m = (model or "").lower()
+        if m.startswith("qwen-audio"):
+            return "longanhuan_v3.6"
+        if m.startswith("cosyvoice"):
+            return "longfeifei_v3"
+        return "longfeifei_v3"
+
+    def _resolve_tts_config(self) -> dict:
+        """解析 TTS 配置（api_key/api_url/model）。
+
+        优先级：直播页显式指定的 tts_model/tts_api_url > desktop_config 里 type=audio 供应商
+        （模型供应商页）> 模块默认常量。模型名绝不在代码里写死，用户可在 B站 配置页自由切换。
+
+        关键：audio 供应商密钥为掩码/空时跳过，避免把 B站页真密钥(self._dashscope_api_key)盖掉。
+        """
+        user_model = (self._tts_model or "").strip()
+        user_url = (self._tts_api_url or "").strip()
+        user_voice = (self._tts_voice or "").strip()
+        cfg = {
+            "api_key": "",
+            "api_url": user_url or self.DEFAULT_COSYVOICE_URL,
+            "model": user_model or self.DEFAULT_TTS_MODEL,
+            # 用户填了 tts_voice 按其值；否则按模型家族给能出声的默认嗓音
+            "voice": user_voice or self._default_voice_for_model(user_model or self.DEFAULT_TTS_MODEL),
+        }
         try:
             from desktop_core.storage import meta_get, decrypt_api_key, _KEY_MASK
             raw = meta_get("desktop_config")
@@ -3239,13 +3462,18 @@ class LiveEngine:
                     if pcfg.get("type", "chat") == "audio":
                         raw_key = pcfg.get("api_key", "")
                         key = decrypt_api_key(raw_key) if isinstance(raw_key, str) and raw_key.startswith("enc:") else raw_key
-                        # 密钥为空或掩码（用户实际没在供应商页配语音，Key 在 B站页）→ 跳过，走下方回退
+                        # 密钥为空或掩码（用户没在供应商页配语音，Key 在 B站页）→ 仅当其有真实 model 时作为次级默认
                         if key and key != _KEY_MASK:
                             cfg["api_key"] = key
                             if pcfg.get("api_url"):
                                 cfg["api_url"] = pcfg["api_url"]
-                            if pcfg.get("model"):
+                            # 用户已在直播页显式指定 → 优先用用户值，不被供应商 model 覆盖
+                            if not user_model and pcfg.get("model"):
                                 cfg["model"] = pcfg["model"]
+                            if not user_url and pcfg.get("api_url"):
+                                cfg["api_url"] = pcfg["api_url"]
+                            if not user_voice and pcfg.get("voice"):
+                                cfg["voice"] = pcfg["voice"]
                             return cfg
         except:
             pass
@@ -3256,90 +3484,162 @@ class LiveEngine:
         return cfg
 
     async def _cosyvoice_request(self, text: str, timeout: int = 60) -> Optional[bytes]:
-        """调用用户的语音模型（bailian_audio / 任意 type=audio 供应商）合成语音，返回音频 bytes。
+        """调用用户配置的语音模型合成语音，返回音频 bytes（失败/未配置返回 None，交由降级链兜底）。
 
-        统一走 dashscope aigc/text2audio 兼容 HTTP 端点（与 api_generate_voice 的语音供应商分支
-        【完全一致】），不再用 tts_v2 的 SpeechSynthesizer SDK —— 该 SDK 不支持 cosyvoice-v3-flash
-        这类模型，会静默抛错被 except 吞掉 → _synthesize 误降级到 Edge-TTS（Xiaoxiao 嗓音），
-        表现为“Qt 语音不走我的语音模型”。改用 HTTP 端点后，桌宠与聊天朗读共用同一套合成逻辑。
-        返回 wav bytes（payload 指定 format=wav）；失败/未配置返回 None（交由 _synthesize 降级）。
+        走 tts_router 通用适配层：端点归一化 + 协议自适应重试 + 通用响应解析。
+        端点/协议/嗓音/模型名全部由配置驱动（用户填什么用什么），绝不按模型名或域名做硬路由。
         """
+        from desktop_core import tts_router
         tts = self._resolve_tts_config()
         if not tts["api_key"]:
             return None
-        api_key = tts["api_key"]
-        api_url = tts["api_url"]
-        model = tts["model"]
-        is_dashscope = "dashscope" in api_url or "aliyuncs" in api_url
-        try:
-            import aiohttp
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            if is_dashscope:
-                # 百炼 TTS 端点（cosyvoice-v3-flash 等模型经此服务），与聊天朗读接口同构
-                tts_url = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"
-                payload = {"model": model, "input": {"text": text, "voice": "longfeifei_v3",
-                                                      "format": "wav", "sample_rate": 24000}}
-                async with aiohttp.ClientSession(headers=headers) as session:
-                    async with session.post(tts_url, json=payload,
-                                            timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
-                        if resp.status == 200:
-                            result = await resp.json()
-                            output = result.get("output", {})
-                            audio_url = output.get("audio", {}).get("url", "")
-                            if audio_url:
-                                # 部分端点返回临时下载 URL，拉取后返回原始 bytes
-                                async with aiohttp.ClientSession() as dl:
-                                    async with dl.get(audio_url, timeout=aiohttp.ClientTimeout(total=30)) as ar:
-                                        if ar.status == 200:
-                                            return await ar.read()
-                            else:
-                                # 部分端点直接内联 base64
-                                data = output.get("audio", {}).get("data") or output.get("data")
-                                if data:
-                                    import base64
-                                    return base64.b64decode(data)
-            else:
-                # OpenAI 兼容 TTS：HTTP 直接返回音频字节
-                tts_url = api_url.rstrip("/") + "/audio/speech"
-                payload = {"model": model, "input": text, "voice": "alloy", "response_format": "wav"}
-                async with aiohttp.ClientSession(headers=headers) as s:
-                    async with s.post(tts_url, json=payload, timeout=aiohttp.ClientTimeout(total=timeout)) as r:
-                        if r.status == 200:
-                            return await r.read()
-        except Exception as e:
-            log.warning(f"[语音合成] 配置供应商合成失败: {e}")
-        return None
+        user_voice = (self._tts_voice or "").strip()
+        return await tts_router.cloud_tts_synth(
+            api_key=tts["api_key"], api_url=tts.get("api_url", ""),
+            model=tts.get("model", ""), voice=user_voice or tts.get("voice", ""),
+            text=text, timeout=timeout)
 
-    async def test_tts(self) -> str:
-        """测试 TTS 配置是否可用"""
-        tts = self._resolve_tts_config()
-        if not tts["api_key"]:
+    async def _probe_primary_tts(self, override_model=None, override_url=None,
+                                  override_voice=None, override_key=None) -> str:
+        """探测云端主模型（用测试时传入的覆盖值），返回精确错误串（成功返回空串）。
+
+        走 tts_router 通用适配层**真实合成一次**（端点归一化 + 协议自适应重试），
+        完整诊断存到 self._last_tts_diag，供前端逐项展示（哪个协议、什么状态码、什么错）。
+        override_*：前端输入框当前值，优先于已存配置，避免“打字→点测试”测到默认模型/嗓音。
+        """
+        from desktop_core import tts_router
+        # 掩码兜底：任何调用路径漏传了回显掩码（sk-2****）都视作未改动
+        if override_key and "****" in override_key:
+            override_key = None
+        if override_model or override_url or override_voice or override_key:
+            api_key = override_key or self._dashscope_api_key or os.environ.get("DASHSCOPE_API_KEY", "")
+            api_url = override_url or (self._tts_api_url or "").strip() or self.DEFAULT_COSYVOICE_URL
+            model = override_model or self.DEFAULT_TTS_MODEL
+            voice = override_voice or (self._tts_voice or "").strip()
+        else:
+            tts = self._resolve_tts_config()
+            api_key = tts["api_key"]
+            api_url = tts["api_url"]
+            model = tts["model"]
+            voice = (self._tts_voice or "").strip() or tts.get("voice", "")
+        if not api_key:
+            self._last_tts_diag = {"error": "未配置 API Key", "tried": []}
             return "未配置 API Key"
-        is_dashscope = "dashscope" in tts["api_url"] or "aliyuncs" in tts["api_url"]
-        try:
-            from aiohttp import ClientSession
-            headers = {"Authorization": f"Bearer {tts['api_key']}", "Content-Type": "application/json"}
-            if is_dashscope:
-                url = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"
-                payload = {"model": tts["model"], "input": {"text": "测试", "voice": "longfeifei_v3", "format": "wav", "sample_rate": 24000}}
-            else:
-                url = tts["api_url"].rstrip("/") + "/audio/speech"
-                payload = {"model": tts["model"], "input": "测试", "voice": "alloy", "response_format": "wav"}
-            async with ClientSession() as s:
-                async with s.post(url, json=payload, headers=headers, timeout=10) as r:
-                    if r.status == 200:
+        audio, diag = await tts_router.cloud_tts_synth(
+            api_key=api_key, api_url=api_url, model=model, voice=voice,
+            text="测试", timeout=20, return_diag=True)
+        self._last_tts_diag = diag
+        if audio:
+            return ""
+        parts = [f"[{t['protocol']}] {t['status']} {t['error']}" for t in (diag.get("tried") or [])]
+        return " | ".join(parts) or diag.get("error") or "未知失败"
+
+    async def test_tts(self, override_model=None, override_url=None,
+                       override_voice=None, override_key=None) -> str:
+        """测试 TTS 配置（走真实降级链，如实区分「云端额度耗尽」与「彻底失败」）。
+
+        旧实现只裸调 dashscope 端点，配额耗尽(403 FreeTierOnly)就原样报「TTS 失败」，
+        但真实直播合成(_synthesize)走 tts_router 降级链(cosyvoice→edge_tts→kokoro)，
+        仍可由 Edge-TTS 兜底出声。故测试必须走同一条链，避免误导用户以为 TTS 全坏。
+        返回空串=成功；非空串=问题说明（前端据此显示 ok=false）。
+
+        override_model/override_url/override_voice：前端输入框当前值（点测试时传入），优先于已存配置。
+        """
+        # 0) 掩码兜底（输入框未改动的回显值）+ 模型名留空时自动发现能出声的模型
+        if override_key and "****" in override_key:
+            override_key = None
+        if not (override_model or (self._tts_model or "").strip()):
+            eff_key = override_key or self._dashscope_api_key or os.environ.get("DASHSCOPE_API_KEY", "")
+            if eff_key and "****" not in eff_key:
+                from desktop_core import tts_router as _tr
+                disc = await _tr.discover_tts_model(eff_key, override_url or "")
+                self._last_tts_diag = disc.get("diag") or {}
+                if disc.get("model"):
+                    # 命中即自动保存：用户刷新页面就能在「TTS 语音模型名」框看到它
+                    self._tts_model = disc["model"]
+                    try:
+                        self.save_config(tts_model=disc["model"])
+                    except Exception:
+                        pass
+                    audio, d = await _tr.cloud_tts_synth(
+                        api_key=eff_key, api_url=override_url or (self._tts_api_url or ""),
+                        model=disc["model"], voice=disc.get("voice", ""),
+                        text="测试", timeout=20, return_diag=True)
+                    self._last_tts_diag.update({
+                        "endpoint": (d or {}).get("endpoint"), "protocol": (d or {}).get("protocol"),
+                        "voice": (d or {}).get("voice"), "voice_source": "auto",
+                        "auto_model": disc["model"]})
+                    if audio:
                         return ""
-                    txt = (await r.text())[:100]
-                    return f"API 返回 {r.status}: {txt}"
+                elif (disc.get("diag") or {}).get("error"):
+                    return f"自动发现失败：{disc['diag']['error']}"
+        # 1) 探主模型（云端）精确错误（用覆盖值）
+        primary_err = await self._probe_primary_tts(override_model=override_model,
+                                                    override_url=override_url,
+                                                    override_voice=override_voice,
+                                                    override_key=override_key)
+        tested_model = (override_model or self._tts_model or self.DEFAULT_TTS_MODEL)
+        tested_voice = (override_voice or self._tts_voice or self._default_voice_for_model(tested_model))
+        # 2) 走真实降级链，验证端到端能否出声（与 _synthesize 同一条路）
+        from desktop_core import tts_router
+        fb_engine = ""
+        fb_err = ""
+        try:
+            # 走真实降级链时也要用上用户输入（未保存）的模型/嗓音，否则“打字→测试”测的是默认模型
+            res = await tts_router.asynthesize("测试",
+                                               model=override_model or None,
+                                               voice=override_voice or None,
+                                               timeout=30)
+            if res and res.audio:
+                fb_engine = res.engine
         except Exception as e:
-            return f"请求失败: {e}"
+            fb_err = f"{e}"
+        # 3) 组合结论
+        # 用户显式填了 Key → 结论只以主探测为准：降级链用的是【已保存的真 key】，
+        # 它成功不能替用户的新 key 背书（否则坏 key 会被误报"连接成功"）。
+        if override_key and primary_err:
+            return (f"你填的 API Key 测试失败：{primary_err}。"
+                    f"请检查：sk- 开头且复制完整（无空格/换行）、是百炼平台的 Key、账号已开通模型服务。"
+                    f"直播暂不受影响（继续用已保存的 Key）。")
+        if fb_engine:
+            # 主模型探测成功 → 直接判可用（哪怕降级链偶然命中兜底引擎）
+            if fb_engine == "cosyvoice" or not primary_err:
+                return ""
+            # 兜底引擎出声：区分云端是否真失败
+            if primary_err:
+                fb_name = "Edge-TTS" if fb_engine == "edge_tts" else "本地 Kokoro"
+                if not (override_model or self._tts_model):
+                    # 用户根本没配模型 → 戳破“我换了还不行”的错觉：实际用的是默认无额度模型
+                    return (f"云端 TTS 模型请求失败（{primary_err}）—— 已自动降级到 {fb_name} 兜底，直播正常出声。"
+                            f"诊断：当前未配置「TTS 语音模型名」（用的是默认 {self.DEFAULT_TTS_MODEL}，此 key 无额度）。"
+                            f"请在 B站 配置页填入你有额度的模型+接口地址+嗓音后点「保存」再点测试；TTS 与对话/视觉额度互不相通，无需充值。")
+                diag = getattr(self, "_last_tts_diag", {}) or {}
+                ep = diag.get("endpoint", "")
+                return (f"云端 TTS「{tested_model}」(voice={tested_voice}) 失败 —— 已降级到 {fb_name} 兜底，直播仍出声。"
+                        f"已试端点：{ep}；失败明细：{primary_err}。"
+                        f"排查：401=Key 无效；403=该模型无额度/需付费资源包；404=接口地址路径不对（请填完整端点）；"
+                        f"400=模型名或嗓音不被接受（换模型名，或在「TTS 嗓音」填该模型支持的嗓音）。")
+            return f"TTS 正常（当前由{'Edge-TTS' if fb_engine == 'edge_tts' else '本地 Kokoro'}兜底）"
+        # 兜底也没出声 → 真失败
+        if primary_err and fb_err:
+            return f"TTS 失败：云端返回 {primary_err}；降级链也失败：{fb_err}"
+        if primary_err:
+            return f"TTS 失败：云端返回 {primary_err}（无可用降级引擎）"
+        return f"TTS 失败：降级链无可用引擎（{fb_err or '未知'}）"
 
     async def _synthesize(self, text: str) -> Optional[bytes]:
-        """语音合成 — 统一走 tts_router（CosyVoice 主 + Edge-TTS 兜底 + 故障转移）。
+        """语音合成 — 统一走 tts_router（用户配置模型主 + Edge-TTS 兜底 + 故障转移）。
         返回音频 bytes（wav/mp3），全失败返回 None。
-        原 _cosyvoice_request / _resolve_tts_config 保留，供 test_tts 等方法使用。"""
+        用户配置的 tts_model 作为主尝试（显式传入，确保“切换模型名即时生效”而非永远回退默认）。"""
         from desktop_core import tts_router
-        res = await tts_router.asynthesize(text)
+        # 直接传用户配置的裸模型名（如 qwen-audio-3.0-tts-flash / cosyvoice-v3-flash），
+        # 由 tts_router 按模型家族自适应端点与默认嗓音；不再硬拼 "cosyvoice/" 前缀。
+        # 未配置时 model=None，router 走 resolve_tts_config 读到的默认值。
+        user_model = (self._tts_model or "").strip()
+        model_arg = user_model or None
+        t0 = time.monotonic()
+        res = await tts_router.asynthesize(text, model=model_arg, timeout=15)
+        log.info(f"[直播延迟][TTS] _synthesize 耗时 {time.monotonic()-t0:.2f}s model={model_arg}")
         return res.audio if res else None
 
     # ═══════════════════════════════════════════════════════════════════════
