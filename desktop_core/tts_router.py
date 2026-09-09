@@ -45,6 +45,32 @@ DEFAULT_FALLBACK = ["cosyvoice", "edge_tts", "kokoro"]
 COSYVOICE_VOICE = "longfeifei_v3"
 EDGE_TTS_VOICE = "zh-CN-XiaoxiaoNeural"
 COSYVOICE_SR = 24000
+# TTS 默认值（仅当用户未在直播页指定时回退用，绝不在业务逻辑里再写死模型名/嗓音）
+# 唯一默认端点：dashscope SpeechSynthesizer（实测对 cosyvoice 与 qwen-audio 家族都可用）。
+# 旧默认 .../aigc/text2audio/cosyvoice 实测报 "url error"，且曾被 normalize_tts_endpoint
+# 误判成 base 再补 /audio/speech（打出不存在的 .../text2audio/cosyvoice/audio/speech），已废。
+_DEFAULT_TTS_ENDPOINT = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"
+DEFAULT_COSYVOICE_URL = _DEFAULT_TTS_ENDPOINT
+DEFAULT_TTS_MODEL = "cosyvoice-v3-flash"
+DEFAULT_TTS_VOICE = "longfeifei_v3"
+
+
+def _default_voice_for_model(model: str) -> str:
+    """按模型家族给一个「能出声」的默认嗓音（仅当用户未显式填 tts_voice 时回退用）。
+
+    关键事实（已用真实 key 实测，非假设）：
+    - cosyvoice 家族（cosyvoice-v3-flash 等）走 dashscope SpeechSynthesizer，默认嗓音 longfeifei_v3；
+    - qwen-audio 家族（qwen-audio-3.0-tts-flash 等）共用同一 SpeechSynthesizer 端点，但默认嗓音
+      必须是 qwen 系（如 longanhuan_v3.6），喂 cosyvoice 的 longfeifei_v3 会 400/411 引擎错误。
+    故按模型名前缀自适应默认嗓音：用户留空也能「填了模型名就出声」，同时 tts_voice 始终可覆盖。
+    这不是写死用户配置——只在用户未指定时才生效，且随时可被 tts_voice 输入框覆盖。
+    """
+    m = (model or "").lower()
+    if m.startswith("qwen-audio"):
+        return "longanhuan_v3.6"
+    if m.startswith("cosyvoice"):
+        return COSYVOICE_VOICE
+    return DEFAULT_TTS_VOICE
 
 # ───────────────────────── 本地 TTS（kokoro-onnx）配置 ─────────────────────────
 # 模型缓存默认放在「应用根目录/naixi_tts_models」下，随安装包便携移动，
@@ -155,14 +181,28 @@ def resolve_tts_config() -> dict:
     """解析 TTS 配置（api_key / api_url / model）。
 
     逻辑复刻 live_engine._resolve_tts_config：
-    - 优先 desktop_config 里 type=audio 的真密钥供应商；
-    - 但其密钥为空或掩码(_KEY_MASK)时**跳过**，回退到 dashscope_api_key / 环境变量，
+    - 优先【直播页显式指定的 tts_model/tts_api_url】（用户在 B站 配置页自由切换）；
+    - 其次 desktop_config 里 type=audio 的真密钥供应商（模型供应商页），仅当其 model 非空且用户未指定时生效；
+    - 最后回退到模块默认常量；
+    - audio 供应商密钥为空或掩码(_KEY_MASK)时**跳过**，回退到 dashscope_api_key / 环境变量，
       绝不能让掩码把真密钥盖掉。
     """
+    user_model = ""
+    user_url = ""
+    user_voice = ""
+    try:
+        from desktop_core.live_engine import engine as _eng
+        user_model = (getattr(_eng, "_tts_model", "") or "").strip()
+        user_url = (getattr(_eng, "_tts_api_url", "") or "").strip()
+        user_voice = (getattr(_eng, "_tts_voice", "") or "").strip()
+    except Exception:
+        pass
     cfg = {
         "api_key": "",
-        "api_url": "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2audio/cosyvoice",
-        "model": "cosyvoice-v3-flash",
+        "api_url": user_url or DEFAULT_COSYVOICE_URL,
+        "model": user_model or DEFAULT_TTS_MODEL,
+        # 用户填了 tts_voice 就按其值；否则按模型家族给能出声的默认嗓音（qwen-audio→longanhuan_v3.6）
+        "voice": user_voice or _default_voice_for_model(user_model or DEFAULT_TTS_MODEL),
     }
     try:
         from desktop_core.storage import meta_get, decrypt_api_key, _KEY_MASK
@@ -177,8 +217,13 @@ def resolve_tts_config() -> dict:
                         cfg["api_key"] = key
                         if pcfg.get("api_url"):
                             cfg["api_url"] = pcfg["api_url"]
-                        if pcfg.get("model"):
+                        # 用户已在直播页显式指定 → 优先用用户值，不被供应商 model/voice 覆盖
+                        if not user_model and pcfg.get("model"):
                             cfg["model"] = pcfg["model"]
+                        if not user_url and pcfg.get("api_url"):
+                            cfg["api_url"] = pcfg["api_url"]
+                        if not user_voice and pcfg.get("voice"):
+                            cfg["voice"] = pcfg["voice"]
                         return cfg
     except Exception:
         pass
@@ -189,14 +234,494 @@ def resolve_tts_config() -> dict:
         except Exception:
             pass
     if not cfg["api_key"]:
+        # 对齐 Qt voice_input._load_key：audio 供应商无真密钥时，回退读
+        # live_config.dashscope_api_key 原始值。该 key 是有效百炼 Key（sk-... 35位），
+        # 否则后端云端会 401 → 静默降级 edge_tts，而 Qt 因直接读此字段能出真声，
+        # 造成「Qt 出真 TTS、弹幕/对话却用浏览器 TTS 保底」的分裂（2026-09-09 复现）。
+        try:
+            from desktop_core import storage
+            _lc_raw = storage.meta_get("live_config")
+            if _lc_raw:
+                _lc = json.loads(_lc_raw)
+                _k = _lc.get("dashscope_api_key", "")
+                if _k and _k != _KEY_MASK:
+                    cfg["api_key"] = _k
+        except Exception:
+            pass
+    if not cfg["api_key"]:
         cfg["api_key"] = os.environ.get("DASHSCOPE_API_KEY", "")
     return cfg
+
+
+# ───────── 通用云端 TTS 适配层（端点/协议/嗓音全配置驱动，零写死） ─────────
+# 针对历史缺陷"换个名字/换个 key/换个端点就废"而重写，四条铁律：
+#   1. 端点：用户填什么用什么。已带具体端点路径(如 /audio/speech、/SpeechSynthesizer)→原样用，
+#      **不再无脑拼 /audio/speech**（旧代码会把完整端点拼成 .../audio/speech/audio/speech）；
+#      只填 base(如 https://host/v1)→按 OpenAI 兼容惯例补 /audio/speech；留空→默认端点。
+#   2. 协议：按端点路径"猜"优先协议，但**不是白名单**——首选失败会依次重试其余协议。
+#      不同服务商 payload 形态确实不同（嵌套 input / 扁平 input / 多模态），必须探测才能通用。
+#   3. 响应：裸音频字节 / JSON(url) / JSON(base64) 三种形态统一解析，不绑死某家结构。
+#   4. 模型名：原样透传，**绝不按模型名做路由、加前缀或查白名单**——换任何名字都直接生效。
+
+# 端点路径片段 → 优先协议（仅用于排序，命中也允许重试其它）
+_ENDPOINT_PROTOCOL_HINTS = (
+    ("/audio/tts/speechsynthesizer", "dashscope_nested"),
+    ("/text2audio", "dashscope_nested"),
+    ("/multimodal-generation/generation", "dashscope_mm"),
+    ("/audio/speech", "openai_flat"),
+    ("/synthesize", "openai_flat"),
+    ("/tts", "openai_flat"),
+)
+# 视作"已是完整端点"的路径片段（避免重复拼接）
+_ENDPOINT_PATH_SEGS = tuple(seg for seg, _ in _ENDPOINT_PROTOCOL_HINTS)
+# 协议全集（首选之外全部兜底重试）
+PROTOCOL_ORDER = ("dashscope_nested", "openai_flat", "dashscope_mm")
+
+
+def _guess_protocol(url: str) -> str:
+    u = (url or "").lower()
+    for seg, proto in _ENDPOINT_PROTOCOL_HINTS:
+        if seg in u:
+            return proto
+    return "dashscope_nested"
+
+
+def normalize_tts_endpoint(url: str) -> str:
+    """归一化用户填的 TTS 接口地址为可直投端点（见设计要点 1）。"""
+    u = (url or "").strip().rstrip("/")
+    if not u:
+        return _DEFAULT_TTS_ENDPOINT
+    # dashscope 旧语音端点 /text2audio/* 实测报 "url error"（该服务早已并到 SpeechSynthesizer），
+    # 纠正到唯一可用端点，避免老配置/老默认值打废
+    if "/text2audio/" in u and ("dashscope" in u or "aliyuncs" in u):
+        return _DEFAULT_TTS_ENDPOINT
+    for seg in _ENDPOINT_PATH_SEGS:
+        if u.lower().endswith(seg):
+            return u
+    return u + "/audio/speech"
+
+
+def _protocol_order_for(url: str) -> tuple:
+    """该端点的协议尝试顺序：猜测协议优先，其余兜底。"""
+    first = _guess_protocol(url)
+    return (first,) + tuple(p for p in PROTOCOL_ORDER if p != first)
+
+
+def build_tts_payload(protocol: str, model: str, text: str, voice: str) -> dict:
+    """按协议构造请求体。
+
+    嗓音：OpenAI 兼容系可省略（让服务商用默认）；dashscope 系**必须**带
+    （实测省略会 400/411），故由调用方保证非空（用户值 > 供应商配置 > 家族默认）。
+    """
+    if protocol == "openai_flat":
+        p = {"model": model, "input": text, "response_format": "wav"}
+        if voice:
+            p["voice"] = voice
+        return p
+    if protocol == "dashscope_mm":
+        params = {"response_format": "wav"}
+        if voice:
+            params["voice"] = voice
+        return {"model": model,
+                "input": {"messages": [{"role": "user",
+                                        "content": [{"type": "text", "text": text}]}]},
+                "parameters": params}
+    # dashscope_nested
+    inp = {"text": text, "format": "wav", "sample_rate": COSYVOICE_SR}
+    if voice:
+        inp["voice"] = voice
+    return {"model": model, "input": inp}
+
+
+def _find_audio_ref(obj, depth: int = 0):
+    """从任意 JSON 结构递归找音频引用，返回 (kind, value)，kind ∈ url/b64。"""
+    if depth > 6:
+        return None
+    if isinstance(obj, dict):
+        out = obj.get("output")
+        if isinstance(out, dict):
+            au = out.get("audio")
+            if isinstance(au, dict):
+                if isinstance(au.get("url"), str) and au["url"]:
+                    return ("url", au["url"])
+                if isinstance(au.get("data"), str) and au["data"]:
+                    return ("b64", au["data"])
+            if isinstance(out.get("url"), str) and out["url"]:
+                return ("url", out["url"])
+        for k in ("url", "audio_url", "audio", "data", "audio_data", "result", "b64"):
+            v = obj.get(k)
+            if isinstance(v, str) and v:
+                if v.startswith(("http://", "https://")):
+                    return ("url", v)
+                if len(v) > 200:  # 疑似 base64 音频
+                    return ("b64", v)
+        for v in obj.values():
+            r = _find_audio_ref(v, depth + 1)
+            if r:
+                return r
+    elif isinstance(obj, list):
+        for v in obj:
+            r = _find_audio_ref(v, depth + 1)
+            if r:
+                return r
+    return None
+
+
+async def _read_audio_async(resp) -> Optional[bytes]:
+    """通用响应解析：裸音频字节 / JSON(url) / JSON(base64)。"""
+    ctype = (resp.headers.get("Content-Type") or "").lower()
+    if "json" not in ctype:
+        data = await resp.read()
+        return data or None
+    try:
+        j = await resp.json(content_type=None)
+    except Exception:
+        return await resp.read() or None
+    ref = _find_audio_ref(j)
+    if not ref:
+        return None
+    kind, val = ref
+    if kind == "b64":
+        try:
+            return base64.b64decode(val)
+        except Exception:
+            return None
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as dl:
+            async with dl.get(val, timeout=aiohttp.ClientTimeout(total=30)) as ar:
+                if ar.status == 200:
+                    return await ar.read()
+    except Exception:
+        pass
+    return None
+
+
+_SESSION = None
+
+def _get_session():
+    """复用持久 aiohttp ClientSession（避免每次 TTS 合成重做 TCP+TLS 握手）。
+    loop 安全：session 绑死创建时的 loop，变更则重建，杜绝跨 loop 报错。"""
+    import aiohttp, asyncio
+    loop = asyncio.get_event_loop()
+    global _SESSION
+    s = _SESSION
+    if s is not None and not s.closed and getattr(s, "_loop", None) is loop:
+        return s
+    if s is not None and not s.closed:
+        try:
+            asyncio.ensure_future(s.close())
+        except Exception:
+            pass
+    _SESSION = aiohttp.ClientSession()
+    return _SESSION
+
+
+async def cloud_tts_synth(api_key: str, api_url: str, model: str, voice: str, text: str,
+                          timeout: int = 60, return_diag: bool = False):
+    """通用云端 TTS 合成（异步）：端点归一化 + 协议自适应重试 + 通用响应解析。
+
+    返回 bytes（失败 None）；return_diag=True 时返回 (bytes|None, diag)，
+    diag 含实际端点/协议/嗓音与每个协议的失败原因（供前端逐项诊断展示）。
+    """
+    if not api_key:
+        return (None, {"error": "未配置 API Key"}) if return_diag else None
+    endpoint = normalize_tts_endpoint(api_url)
+    eff_voice = voice or _default_voice_for_model(model)
+    diag = {"endpoint": endpoint, "model": model, "voice": eff_voice,
+            "voice_source": "user" if voice else "auto", "tried": []}
+    try:
+        import aiohttp
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        for proto in _protocol_order_for(endpoint):
+            payload = build_tts_payload(proto, model, text, eff_voice)
+            entry = {"protocol": proto, "status": 0, "error": ""}
+            try:
+                s = _get_session()
+                async with s.post(endpoint, json=payload, headers=headers,
+                                  timeout=aiohttp.ClientTimeout(total=timeout)) as r:
+                        entry["status"] = r.status
+                        if r.status == 200:
+                            audio = await _read_audio_async(r)
+                            if audio:
+                                diag["protocol"] = proto
+                                return (audio, diag) if return_diag else audio
+                            entry["error"] = "HTTP 200 但响应里没解析出音频"
+                        else:
+                            entry["error"] = (await r.text())[:200]
+            except Exception as e:
+                entry["error"] = str(e)[:200]
+            diag["tried"].append(entry)
+    except Exception as e:
+        log.warning(f"[tts_router] 云端 TTS 合成失败: {e}")
+    return (None, diag) if return_diag else None
+
+
+def cloud_tts_synth_sync(api_key: str, api_url: str, model: str, voice: str, text: str,
+                         timeout: int = 60, return_diag: bool = False):
+    """通用云端 TTS 合成（同步，requests），供纯同步上下文使用。逻辑同 cloud_tts_synth。"""
+    if not api_key:
+        return (None, {"error": "未配置 API Key"}) if return_diag else None
+    endpoint = normalize_tts_endpoint(api_url)
+    eff_voice = voice or _default_voice_for_model(model)
+    diag = {"endpoint": endpoint, "model": model, "voice": eff_voice,
+            "voice_source": "user" if voice else "auto", "tried": []}
+    try:
+        import requests
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        for proto in _protocol_order_for(endpoint):
+            payload = build_tts_payload(proto, model, text, eff_voice)
+            entry = {"protocol": proto, "status": 0, "error": ""}
+            try:
+                r = requests.post(endpoint, json=payload, headers=headers, timeout=timeout)
+                entry["status"] = r.status_code
+                if r.status_code == 200:
+                    ctype = (r.headers.get("Content-Type") or "").lower()
+                    audio = None
+                    if "json" in ctype:
+                        ref = _find_audio_ref(r.json())
+                        if ref:
+                            kind, val = ref
+                            if kind == "b64":
+                                audio = base64.b64decode(val)
+                            else:
+                                ad = requests.get(val, timeout=30).content
+                                audio = ad or None
+                    else:
+                        audio = r.content or None
+                    if audio:
+                        diag["protocol"] = proto
+                        return (audio, diag) if return_diag else audio
+                    entry["error"] = "HTTP 200 但响应里没解析出音频"
+                else:
+                    entry["error"] = (r.text or "")[:200]
+            except Exception as e:
+                entry["error"] = str(e)[:200]
+            diag["tried"].append(entry)
+    except Exception as e:
+        log.warning(f"[tts_router] 云端 TTS 同步合成失败: {e}")
+    return (None, diag) if return_diag else None
+
+
+def _models_list_url(api_url: str) -> str:
+    """从 TTS 端点推导该服务商的模型列表 URL。dashscope 固定 compatible-mode/v1/models。"""
+    u = (api_url or "").strip()
+    if not u or "dashscope" in u or "aliyuncs" in u:
+        return "https://dashscope.aliyuncs.com/compatible-mode/v1/models"
+    u = u.rstrip("/")
+    for seg in _ENDPOINT_PATH_SEGS:
+        if u.lower().endswith(seg):
+            u = u[: -len(seg)].rstrip("/")
+            break
+    return u + "/models"
+
+
+def _tts_candidates_from_models(models: list) -> list:
+    """从 key 的模型列表派生 TTS 候选（含同族变体推导），排除非合成端点。
+
+    注意：模型列表 ≠ 可用模型（实测 key 列表里有 qwen3-tts-* 但 403 无额度，而
+    qwen-audio-3.0-tts-flash 不在列表里却能出声）——所以候选必须逐个【真实试合成】，
+    出声才算数。这里只负责生成"有希望的候选"并排序。
+    """
+    import re
+    ids = [m.get("id") for m in models if isinstance(m, dict) and m.get("id")]
+    cands = []
+    def add(x):
+        if x and x not in cands:
+            cands.append(x)
+    # 1) 同族变体推导（最可能可用）：qwen-audio-3.0-asr-flash → qwen-audio-3.0-tts-flash/-plus
+    for i in ids:
+        m = re.match(r"^(qwen-audio-[\d.]+)-asr", i or "")
+        if m:
+            add(f"{m.group(1)}-tts-flash")
+            add(f"{m.group(1)}-tts-plus")
+    # 2) 列表里明确的 TTS 模型（排除 asr/realtime/vc/vd 等非一次合成端点）
+    bad = ("asr", "realtime", "-vc", "-vd")
+    for i in ids:
+        low = (i or "").lower()
+        if ("tts" in low or "cosyvoice" in low) and not any(b in low for b in bad):
+            add(i)
+    return cands[:8]
+
+
+async def _fetch_models(api_key: str, api_url: str = "") -> tuple:
+    """拉该 key 的模型列表（OpenAI 兼容 /models）。返回 (list|None, error)。"""
+    try:
+        import aiohttp
+        url = _models_list_url(api_url)
+        async with aiohttp.ClientSession() as s:
+            async with s.get(url, headers={"Authorization": f"Bearer {api_key}"},
+                             timeout=aiohttp.ClientTimeout(total=15)) as r:
+                if r.status != 200:
+                    return None, f"{r.status}: {(await r.text())[:120]}"
+                j = await r.json(content_type=None)
+                return j.get("data") or [], ""
+    except Exception as e:
+        return None, str(e)[:160]
+
+
+async def discover_tts_model(api_key: str, api_url: str = "", text: str = "你好") -> dict:
+    """模型名留空时的自动发现：拉该 key 的模型列表 → 派生 TTS 候选 → 逐个真实试合成。
+
+    实现「换个 key 就能用」：key 有效 → 自动找到能出声的模型并返回；
+    key 无效 → models 请求即 401，error 如实返回。
+    返回 {model, voice, diag}；未发现时 model=None。
+    """
+    diag = {"candidates": [], "tried": [], "discover": True}
+    if not api_key:
+        diag["error"] = "未配置 API Key"
+        return {"model": None, "diag": diag}
+    models, err = await _fetch_models(api_key, api_url)
+    if models is None:
+        diag["error"] = f"模型列表请求失败 {err}"
+        return {"model": None, "diag": diag}
+    cands = _tts_candidates_from_models(models)
+    diag["candidates"] = cands
+    for cand in cands:
+        audio, d = await cloud_tts_synth(api_key, "", cand, "", text,
+                                         timeout=15, return_diag=True)
+        status = (d.get("tried") or [{}])[0].get("status")
+        diag["tried"].append({"model": cand, "status": status})
+        if audio:
+            return {"model": cand, "voice": _default_voice_for_model(cand), "diag": diag}
+    diag.setdefault("error", "该 key 下候选模型均无法出声（全部无额度/不支持）")
+    return {"model": None, "diag": diag}
+
+
+def _vision_candidates_from_models(models: list) -> list:
+    """筛视觉对话候选：vl/vision 系，排除非多模态对话模型（i2v/t2i/tts/asr/ocr 等）。"""
+    ids = [m.get("id") for m in models if isinstance(m, dict) and m.get("id")]
+    bad = ("i2v", "t2i", "tts", "asr", "embed", "rerank", "realtime",
+           "omni", "ocr", "video", "wan", "qvq")
+    cands = []
+    for i in ids:
+        low = (i or "").lower()
+        if ("vl" in low or "vision" in low) and not any(b in low for b in bad):
+            if i not in cands:
+                cands.append(i)
+    return cands[:8]
+
+
+def _chat_candidates_from_models(models: list, prefer_light: bool = False) -> list:
+    """筛纯文本对话候选：排除多模态/语音/视觉/向量/**代码模型**，通用对话模型排前。
+
+    教训：kimi-k2.7-code 这类代码模型曾被当成桌宠对话模型（对闲聊人设提示词响应
+    不当，用户感知"桌宠还是回复默认"）——代码模型必须排除，通用对话模型排前。
+    """
+    ids = [m.get("id") for m in models if isinstance(m, dict) and m.get("id")]
+    bad = ("vl", "vision", "tts", "asr", "embed", "rerank", "realtime",
+           "omni", "ocr", "video", "audio", "i2v", "t2i", "wan", "qvq",
+           "guard", "judge", "math", "-code", "coder", "clampe")
+    cands = []
+    for i in ids:
+        low = (i or "").lower()
+        if any(b in low for b in bad):
+            continue
+        if i and i not in cands:
+            cands.append(i)
+    def _rank(name: str) -> int:
+        low = name.lower()
+        if prefer_light:
+            # 直播弹幕高频调用：轻量/便宜模型优先，大模型排后，避免 token 爆炸
+            for kw, score in (("flash", 0), ("turbo", 0), ("lite", 0), ("mini", 0),
+                              ("8b", 1), ("7b", 1), ("4b", 1), ("14b", 2), ("32b", 3),
+                              ("plus", 4), ("max", 5), ("72b", 6), ("235b", 7), ("671b", 8)):
+                if kw in low:
+                    return score
+            return 2
+        for kw, score in (("qwen-plus", 0), ("qwen3", 1), ("qwen-max", 1), ("qwen-flash", 1),
+                          ("deepseek-chat", 1), ("deepseek-v3", 1), ("qwen-turbo", 2),
+                          ("glm", 2), ("kimi", 3)):
+            if kw in low:
+                return score
+        return 5
+    return sorted(cands, key=_rank)[:8]
+
+
+_VISION_PING_IMG = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+                    "AAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+
+
+async def _probe_chat_completion(api_key: str, chat_url: str, model: str,
+                                 vision: bool = False, timeout: int = 20) -> tuple:
+    """发一次最小 chat/vision 请求。返回 (status, text)。"""
+    try:
+        import aiohttp
+        u = (chat_url or "").strip().rstrip("/")
+        # 端点为空时用 dashscope 默认（否则拼出 "/chat/completions" 相对路径必炸）
+        if not u or not u.startswith(("http://", "https://")):
+            u = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+        elif not u.lower().endswith("/chat/completions"):
+            u = u + "/chat/completions"
+        content = [{"type": "image_url", "image_url": {"url": _VISION_PING_IMG}},
+                   {"type": "text", "text": "describe in one word"}] if vision \
+            else "ping"
+        payload = {"model": model, "messages": [{"role": "user", "content": content}],
+                   "max_tokens": 8}
+        async with aiohttp.ClientSession() as s:
+            async with s.post(u, json=payload, headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=timeout)) as r:
+                return r.status, (await r.text())[:200]
+    except Exception as e:
+        return 0, str(e)[:160]
+
+
+async def discover_vision_model(api_key: str, api_url: str = "") -> dict:
+    """视觉模型自动发现：与 discover_tts_model 同思路，逐个发最小 vision 请求真实测。"""
+    diag = {"candidates": [], "tried": [], "discover": True}
+    if not api_key:
+        diag["error"] = "未配置 API Key"
+        return {"model": None, "diag": diag}
+    models, err = await _fetch_models(api_key, api_url)
+    if models is None:
+        diag["error"] = f"模型列表请求失败 {err}"
+        return {"model": None, "diag": diag}
+    cands = _vision_candidates_from_models(models)
+    diag["candidates"] = cands
+    for cand in cands:
+        status, _txt = await _probe_chat_completion(api_key, api_url, cand, vision=True)
+        diag["tried"].append({"model": cand, "status": status})
+        if status == 200:
+            return {"model": cand, "diag": diag}
+    diag.setdefault("error", "该 key 下视觉候选全部不可用（无额度/不支持）")
+    return {"model": None, "diag": diag}
+
+
+async def discover_chat_model(api_key: str, api_url: str = "",
+                              prefer_light: bool = False) -> dict:
+    """对话模型自动发现：逐个发最小 chat 请求真实测。
+
+    prefer_light=True 用于【直播弹幕模型】：轻量/便宜模型优先排序，避免高频调用烧 token。
+    """
+    diag = {"candidates": [], "tried": [], "discover": True}
+    if not api_key:
+        diag["error"] = "未配置 API Key"
+        return {"model": None, "diag": diag}
+    models, err = await _fetch_models(api_key, api_url)
+    if models is None:
+        diag["error"] = f"模型列表请求失败 {err}"
+        return {"model": None, "diag": diag}
+    cands = _chat_candidates_from_models(models, prefer_light=prefer_light)
+    diag["candidates"] = cands
+    for cand in cands:
+        status, _txt = await _probe_chat_completion(api_key, api_url, cand, vision=False)
+        diag["tried"].append({"model": cand, "status": status})
+        if status == 200:
+            return {"model": cand, "diag": diag}
+    diag.setdefault("error", "该 key 下对话候选全部不可用（无额度/不支持）")
+    return {"model": None, "diag": diag}
 
 
 # ───────────────────────── 引擎实现 ─────────────────────────
 
 class CosyVoiceEngine:
-    """阿里云百炼 CosyVoice（dashscope 端点 / OpenAI 兼容端点）。"""
+    """云端 TTS 引擎（通用适配层驱动）。
+
+    名字沿用 cosyvoice（历史原因），但它不再是"只认阿里云 cosyvoice"：
+    端点、协议、模型名、嗓音全部来自配置，可指向任何兼容服务商。
+    """
 
     name = "cosyvoice"
 
@@ -208,71 +733,23 @@ class CosyVoiceEngine:
             return False
 
     async def asynth(self, text: str, model: str, voice: str, timeout: int = 60) -> Optional[bytes]:
+        # 全部走通用适配层：端点/协议/嗓音由配置驱动，模型名原样透传（零路由、零前缀）。
+        # voice 原样透传（留空由 cloud_tts_synth 按本次 model 家族给默认）——
+        # 不得用配置里的嗓音兜底：override 场景本次 model 可能与配置模型不同族，
+        # 拿配置嗓音（如 longfeifei_v3）喂 qwen 模型会 403/411。
         tts = resolve_tts_config()
-        if not tts["api_key"]:
-            return None
-        api_key, api_url = tts["api_key"], tts["api_url"]
-        is_dashscope = "dashscope" in api_url or "aliyuncs" in api_url
-        try:
-            import aiohttp
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            if is_dashscope:
-                tts_url = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"
-                payload = {"model": model, "input": {"text": text, "voice": voice or COSYVOICE_VOICE,
-                                                      "format": "wav", "sample_rate": COSYVOICE_SR}}
-                async with aiohttp.ClientSession(headers=headers) as session:
-                    async with session.post(tts_url, json=payload, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
-                        if resp.status == 200:
-                            result = await resp.json()
-                            output = result.get("output", {})
-                            audio_url = output.get("audio", {}).get("url", "")
-                            if audio_url:
-                                async with aiohttp.ClientSession() as dl:
-                                    async with dl.get(audio_url, timeout=aiohttp.ClientTimeout(total=30)) as ar:
-                                        if ar.status == 200:
-                                            return await ar.read()
-                            else:
-                                data = output.get("audio", {}).get("data") or output.get("data")
-                                if data:
-                                    return base64.b64decode(data)
-            else:
-                tts_url = api_url.rstrip("/") + "/audio/speech"
-                payload = {"model": model, "input": text, "voice": voice or "alloy", "response_format": "wav"}
-                async with aiohttp.ClientSession(headers=headers) as s:
-                    async with s.post(tts_url, json=payload, timeout=aiohttp.ClientTimeout(total=timeout)) as r:
-                        if r.status == 200:
-                            return await r.read()
-        except Exception as e:
-            log.warning(f"[tts_router] CosyVoice 合成失败: {e}")
-        return None
+        return await cloud_tts_synth(
+            api_key=tts.get("api_key", ""), api_url=tts.get("api_url", ""),
+            model=model or tts.get("model", ""), voice=voice or "",
+            text=text, timeout=timeout)
 
     def synth_sync(self, text: str, model: str, voice: str, timeout: int = 60) -> Optional[bytes]:
-        """同步实现（requests），供纯同步上下文（如 voice_input）使用。"""
+        """同步实现（requests），供纯同步上下文（如 voice_input）使用。同样走通用适配层。"""
         tts = resolve_tts_config()
-        if not tts["api_key"]:
-            return None
-        api_key, api_url = tts["api_key"], tts["api_url"]
-        try:
-            import requests
-            url = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"
-            hdr = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            payload = {"model": model, "input": {"text": text, "voice": voice or COSYVOICE_VOICE,
-                                                  "format": "wav", "sample_rate": COSYVOICE_SR}}
-            r = requests.post(url, json=payload, headers=hdr, timeout=timeout)
-            if r.status_code == 200:
-                out = r.json().get("output", {})
-                u = out.get("audio", {}).get("url", "")
-                if u:
-                    ad = requests.get(u, timeout=30).content
-                    return ad or None
-                data = out.get("audio", {}).get("data") or out.get("data")
-                if data:
-                    return base64.b64decode(data) if isinstance(data, str) else data
-            else:
-                log.warning(f"[tts_router] CosyVoice HTTP {r.status_code}: {r.text[:160]}")
-        except Exception as e:
-            log.warning(f"[tts_router] CosyVoice 同步合成失败: {e}")
-        return None
+        return cloud_tts_synth_sync(
+            api_key=tts.get("api_key", ""), api_url=tts.get("api_url", ""),
+            model=model or tts.get("model", ""), voice=voice or "",
+            text=text, timeout=timeout)
 
 
 class EdgeTTSEngine:
@@ -468,17 +945,24 @@ async def asynthesize(text: str, model: Optional[str] = None, voice: Optional[st
 
     # 1) 显式指定 provider/model
     provider, model_id = _parse_model(model)
+    raw_model = None
     if provider:
         eng = reg.get(provider)
         if eng is None:
-            log.warning(f"[tts_router] 未知/不可用引擎 {provider}，走 fallback")
+            # 未知 provider（用户直接填的裸模型名，如 qwen-audio-3.0-tts-flash，无 '/' 前缀）
+            # → 当 raw model 走 cosyvoice 引擎做协议自适应（qwen-audio 与 cosyvoice 共用 SpeechSynthesizer 端点）
+            if model and "/" not in model:
+                raw_model = model
+                log.info(f"[tts_router] 裸模型名 {model} 按 cloud TTS 引擎处理")
+            else:
+                log.warning(f"[tts_router] 未知/不可用引擎 {provider}，走 fallback")
         else:
             model_id = model_id or _default_model_for(provider)
             fmt = "wav" if provider in ("cosyvoice", "kokoro") else "mp3"
             audio = await eng.asynth(text, model_id, voice or "", timeout=timeout)
             if audio:
                 return TTSResult(audio=audio, format=fmt, engine=provider, model=f"{provider}/{model_id}",
-                                  voice=voice or _default_model_for(provider) if provider == "edge_tts" else (voice or COSYVOICE_VOICE))
+                                  voice=voice or _default_model_for(provider) if provider == "edge_tts" else (voice or _default_voice_for_model(model_id)))
             log.warning(f"[tts_router] 引擎 {provider} 合成失败，尝试 fallback")
 
     # 2) fallback 链
@@ -486,12 +970,18 @@ async def asynthesize(text: str, model: Optional[str] = None, voice: Optional[st
         eng = reg.get(prov)
         if eng is None:
             continue
-        mid = _default_model_for(prov)
+        # 裸模型名（如 qwen-audio-3.0-tts-flash）只在 cloud TTS 引擎上生效，否则用该引擎默认模型
+        mid = raw_model if (raw_model and prov == "cosyvoice") else _default_model_for(prov)
         fmt = "wav" if prov in ("cosyvoice", "kokoro") else "mp3"
-        audio = await eng.asynth(text, mid, voice or "", timeout=timeout)
+        try:
+            audio = await eng.asynth(text, mid, voice or "", timeout=timeout)
+        except Exception as e:
+            # 单引擎异常（如配置解析 NameError）绝不能炸掉整条降级链
+            log.warning(f"[tts_router] 引擎 {prov} 抛异常，跳过: {e}")
+            continue
         if audio:
             return TTSResult(audio=audio, format=fmt, engine=prov, model=f"{prov}/{mid}",
-                              voice=voice or (EDGE_TTS_VOICE if prov == "edge_tts" else COSYVOICE_VOICE))
+                              voice=voice or (EDGE_TTS_VOICE if prov == "edge_tts" else _default_voice_for_model(mid)))
     log.error("[tts_router] 所有引擎均失败")
     return None
 
@@ -537,3 +1027,48 @@ def synthesize_b64(text: str, model: Optional[str] = None, voice: Optional[str] 
     if res and res.audio:
         return base64.b64encode(res.audio).decode()
     return ""
+
+
+# ───────── 音色清单：内置预置音色 + 该 key 的复刻音色（供前端下拉选择） ─────────
+# dashscope 没有"预置音色查询 API"（官方只有复刻音色的 list_voice），故预置音色
+# 采用内置清单（来自官方音色表，用户仍可自由输入任意音色名——清单只是选项，不是限制）。
+PRESET_VOICES = {
+    "cosyvoice 系（cosyvoice-v2/v3 及 plus）": [
+        "longfeifei_v3", "longshu_v3", "longhua_v3", "longwen_v3", "longxing_v3",
+        "longxiaochun", "longxiaoxia", "longyuan", "longwan", "longjielidou",
+        "loongbella", "loongstella", "longanrou", "longqiang", "longshu",
+    ],
+    "qwen-audio 系（qwen-audio-3.0-tts-flash/plus）": [
+        "longanhuan_v3.6", "longwan_v3.6", "longxiaochun_v3.6", "longyuan_v3.6",
+        "longfeifei_v3.6", "longshu_v3.6",
+    ],
+}
+
+
+async def list_tts_voices(api_key: str) -> dict:
+    """返回可选音色清单：内置预置音色（按模型家族分组）+ 该 key 已复刻的音色（真实拉取）。"""
+    groups = [{"family": k, "voices": list(v)} for k, v in PRESET_VOICES.items()]
+    cloned = []
+    if api_key:
+        try:
+            import aiohttp
+            url = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization"
+            payload = {"model": "voice-enrollment",
+                       "input": {"action": "list_voice", "prefix": "",
+                                 "page_index": 0, "page_size": 50}}
+            async with aiohttp.ClientSession() as s:
+                async with s.post(url, json=payload, headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json"},
+                        timeout=aiohttp.ClientTimeout(total=15)) as r:
+                    if r.status == 200:
+                        out = ((await r.json(content_type=None)) or {}).get("output") or {}
+                        for it in out.get("voice_list") or []:
+                            vid = it.get("voice_id") or it.get("voice")
+                            if vid:
+                                cloned.append(vid)
+        except Exception as e:
+            log.warning(f"[tts_router] 复刻音色列表拉取失败（忽略）: {e}")
+    if cloned:
+        groups.append({"family": "我的复刻音色（此 key）", "voices": cloned})
+    return {"groups": groups}
