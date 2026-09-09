@@ -58,36 +58,56 @@ function waitUntilVisible(timeoutMs = 30000): Promise<void> {
   });
 }
 
+// 自愈重试：网络错误 / AbortError(超时) / 5xx / 429 指数退避重试；4xx 业务错误不重试。
+// 防「配置页在后端未就绪/偶发抖动时挂载→一次性 fetch 失败→字段永久空白不自愈」（15:32 根因，曾因白屏回滚丢失，本次恢复）。
+async function fetchWithRetry<T>(path: string, init: RequestInit, timeoutMs: number): Promise<T> {
+  const delays = [500, 1500, 4000];
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      let res: Response;
+      try {
+        res = await fetch(`${API_BASE}${path}`, { ...init, mode: "cors", signal: ctrl.signal });
+      } finally {
+        clearTimeout(timer);
+      }
+      if (res.ok) return (await res.json()) as T;
+      // 4xx 业务错误：不重试，直接抛出（避免掩盖真实业务错误）
+      if (res.status >= 400 && res.status < 500) {
+        throw new Error(`API ${res.status}: ${res.statusText}`);
+      }
+      // 5xx / 429：落到 catch 走重试
+      lastErr = new Error(`API ${res.status}: ${res.statusText}`);
+    } catch (e) {
+      // 4xx 已在上面显式抛出，这里捕获的是网络错误 / 超时(AbortError) / 5xx，全部可重试
+      if (e instanceof Error && /^API 4\d\d:/.test(e.message)) throw e;
+      lastErr = e;
+    }
+    if (attempt < delays.length) {
+      await new Promise((r) => setTimeout(r, delays[attempt]));
+    }
+  }
+  throw lastErr;
+}
+
 export async function apiGet<T>(path: string, timeoutMs = 10000): Promise<T> {
   await waitUntilVisible();
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const res = await fetch(`${API_BASE}${path}`, { mode: "cors", signal: ctrl.signal });
-    if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
-    return res.json();
-  } finally {
-    clearTimeout(timer);
-  }
+  return fetchWithRetry<T>(path, {}, timeoutMs);
 }
 
 export async function apiPost<T>(path: string, body: unknown, timeoutMs = 30000): Promise<T> {
   await waitUntilVisible();
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const res = await fetch(`${API_BASE}${path}`, {
+  return fetchWithRetry<T>(
+    path,
+    {
       method: "POST",
-      mode: "cors",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-      signal: ctrl.signal,
-    });
-    if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
-    return res.json();
-  } finally {
-    clearTimeout(timer);
-  }
+    },
+    timeoutMs,
+  );
 }
 
 export interface StatusData {
