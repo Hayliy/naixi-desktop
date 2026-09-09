@@ -1936,6 +1936,9 @@ function LivePage() {
   const [roomId, setRoomId] = useState('');
   const [rtmpUrl, setRtmpUrl] = useState('');
   const [dashscopeKey, setDashscopeKey] = useState('');
+  const [ttsModel, setTtsModel] = useState('');
+  const [ttsVoice, setTtsVoice] = useState('');
+  const [ttsApiUrl, setTtsApiUrl] = useState('');
   const [chatModel, setChatModel] = useState('');
   const [livePrompt, setLivePrompt] = useState('');
   // 视觉模型（桌宠"看"视频/游戏的眼睛，写进 api_providers[vision]）
@@ -2091,7 +2094,7 @@ function LivePage() {
   const loadConfig = useCallback(async () => {
     try { const cfg = await apiGet<any>('/api/live/config');
       setAccessKeyId(cfg.access_key_id||'');setAccessKeySecret(cfg.access_key_secret||'');
-      setAppId(cfg.app_id||'');setCode(cfg.code||'');setRoomId(cfg.room_id||'');setRtmpUrl(cfg.rtmp_url||'');setDashscopeKey(cfg.dashscope_api_key||'');setChatModel(cfg.chat_model||'');setLivePrompt(cfg.live_prompt||'');
+      setAppId(cfg.app_id||'');setCode(cfg.code||'');setRoomId(cfg.room_id||'');setRtmpUrl(cfg.rtmp_url||'');setDashscopeKey(cfg.dashscope_api_key||'');setChatModel(cfg.chat_model||'');setLivePrompt(cfg.live_prompt||'');setTtsModel(cfg.tts_model||'');setTtsVoice(cfg.tts_voice||'');setTtsApiUrl(cfg.tts_api_url||'');
       setVisionModel(cfg.vision_model||'');setVisionApiKey(cfg.vision_api_key||'');setVisionApiUrl(cfg.vision_api_url||'');
     } catch {}
   }, []);
@@ -2111,7 +2114,7 @@ function LivePage() {
   }, [status?.connected]);
 
   const saveCfg = async () => {
-    try { const r = await apiPost('/api/live/save-config', {access_key_id:accessKeyId,access_key_secret:accessKeySecret,app_id:appId,code:code,room_id:roomId,dashscope_api_key:dashscopeKey,chat_model:chatModel,live_prompt:livePrompt,vision_model:visionModel,vision_api_key:visionApiKey,vision_api_url:visionApiUrl}); if (r) notify('配置已保存', 'success'); else notify('保存失败', 'error'); } catch { notify('保存失败', 'error'); }
+    try { const r = await apiPost('/api/live/save-config', {access_key_id:accessKeyId,access_key_secret:accessKeySecret,app_id:appId,code:code,room_id:roomId,dashscope_api_key:dashscopeKey,chat_model:chatModel,live_prompt:livePrompt,vision_model:visionModel,vision_api_key:visionApiKey,vision_api_url:visionApiUrl,tts_model:ttsModel,tts_voice:ttsVoice,tts_api_url:ttsApiUrl}); if (r) notify('配置已保存', 'success'); else notify('保存失败', 'error'); } catch { notify('保存失败', 'error'); }
   };
 
   const act = async (url: string, body?: any, okMsg?: string) => {
@@ -2327,8 +2330,20 @@ function LivePage() {
                 <label className="block text-[10px] text-sakura-500 font-medium mb-1">语言模型 API Key（TTS 语音用）</label>
                 <div className="flex gap-1.5">
                   <input value={dashscopeKey} onChange={e=>setDashscopeKey(e.target.value)} type="password" className="flex-1 px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="留空则用对话页面的音频供应商或 Edge-TTS" />
-                  <button onClick={async ()=>{ try { const r: any = await apiPost('/api/live/test-tts',{}); notify(r.ok?'TTS 连接成功':'TTS 失败: '+r.error, r.ok?'success':'error'); } catch { notify('请求失败','error'); }}} disabled={!dashscopeKey} className="px-3 py-2 rounded-lg text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-40 transition-colors shrink-0">测试</button>
+                  <button onClick={async ()=>{ try { const r: any = await apiPost('/api/live/test-tts',{tts_model:ttsModel,tts_voice:ttsVoice,tts_api_url:ttsApiUrl,dashscope_api_key:dashscopeKey}); notify(r.ok?'TTS 连接成功':'TTS 失败: '+r.error, r.ok?'success':'error'); } catch { notify('请求失败','error'); }}} disabled={!dashscopeKey && !ttsModel} className="px-3 py-2 rounded-lg text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-40 transition-colors shrink-0">测试</button>
                 </div>
+              </div>
+              <div>
+                <label className="block text-[10px] text-sakura-500 font-medium mb-1">语音模型名（如 cosyvoice-v3-flash / qwen-audio-3.0-tts-flash）</label>
+                <input value={ttsModel} onChange={e=>setTtsModel(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="留空=默认 cosyvoice-v3-flash" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-sakura-500 font-medium mb-1">音色（如 longfeifei_v3 / longanhuan_v3.6）</label>
+                <input value={ttsVoice} onChange={e=>setTtsVoice(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="留空=按模型家族自动选默认音色" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-sakura-500 font-medium mb-1">语音 API 地址（可留空用默认）</label>
+                <input value={ttsApiUrl} onChange={e=>setTtsApiUrl(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="留空=百炼默认语音合成端点" />
               </div>
               <div>
                 <label className="block text-[10px] text-sakura-500 font-medium mb-1">桌宠对话模型（填了即生效，写入模型供应商设置）</label>
