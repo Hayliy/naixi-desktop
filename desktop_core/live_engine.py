@@ -3639,6 +3639,16 @@ class LiveEngine:
         model_arg = user_model or None
         t0 = time.monotonic()
         res = await tts_router.asynthesize(text, model=model_arg, timeout=15)
+        # ★可观测性（2026-09-09 踩坑）：云端主模型失败时 tts_router 会静默降级到
+        # edge_tts / kokoro，音色与配置完全不同（听感像"浏览器的 TTS"）。这里只打
+        # "请求的 model" 会让日志看起来配置生效了，实际是兜底引擎在出声。
+        eng = (getattr(res, "engine", "") or "").strip()
+        if eng in ("edge_tts", "kokoro"):
+            log.warning(f"[TTS降级] 请求模型 {model_arg!r} 未生效，实际由 {eng} 兜底出声 "
+                        f"(voice={getattr(res, 'voice', '')}) —— 云端 401=audio 供应商未填 Key；"
+                        f"403=该模型无额度；400=模型名与嗓音不匹配。去「模型供应商 → 语音」栏检查。")
+        elif eng:
+            log.info(f"[TTS引擎] 云端合成成功 engine={eng} voice={getattr(res, 'voice', '')}")
         log.info(f"[直播延迟][TTS] _synthesize 耗时 {time.monotonic()-t0:.2f}s model={model_arg}")
         return res.audio if res else None
 
