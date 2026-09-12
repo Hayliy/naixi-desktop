@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from desktop_core.storage import _get_conn, DB_PATH
+from desktop_core.log_paths import log_dir as _log_dir_resolver
 
 log = logging.getLogger("ops")
 
@@ -664,7 +665,7 @@ async def _cleanup_disk(threshold: int = 85) -> tuple[bool, str]:
             return True, f"磁盘使用率 {used_pct}%，无需清理"
 
         # 清理日志文件
-        log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
+        log_dir = _log_dir_resolver()
         freed = 0
         if os.path.exists(log_dir):
             for f in os.listdir(log_dir):
@@ -966,9 +967,7 @@ async def run_maintenance(actions: list[str] | None = None) -> dict:
     for action in actions:
         try:
             if action == "log_cleanup":
-                log_dir = os.path.join(
-                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs"
-                )
+                log_dir = _log_dir_resolver()
                 freed = 0
                 kept = 0
                 if os.path.exists(log_dir):

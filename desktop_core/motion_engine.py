@@ -6,8 +6,11 @@
 import json, logging, time, threading, os, re
 from typing import Optional
 
+# 日志路径唯一来源：不再用 __file__ 拼（dev 模式加载的是 src-tauri/resources 副本）
+from desktop_core.log_paths import log_file
+
 log = logging.getLogger("pose_engine")
-_DEBUG_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pet_debug.log")
+_DEBUG_LOG = log_file("pet_debug.log")
 
 def _dbg(msg):
     try:

@@ -54,18 +54,25 @@ self.onmessage = async (e) => {
         }
       }
       if (!ok) { self.postMessage({ type: 'inited', delegate: 'FAIL', err: 'face 模型加载失败: ' + lastErr }); return; }
-      self.postMessage({ type: 'log', msg: 'FACELM_OK delegate=' + delegateUsed });      if (usePose) {
+      self.postMessage({ type: 'log', msg: 'FACELM_OK delegate=' + delegateUsed });
+      // face 已就绪就立即回 inited，不等 Pose（2026-09-07 真机根因修复）：
+      // Pose 模型 5.7MB + GPU shader 编译常超过主线程 15s 超时，旧写法等 Pose 完才发 inited
+      // ⇒ 主线程判定 FAIL_TIMEOUT ⇒ 整体回退主线程推理，且用户点开面捕要白等 15s 才有反应。
+      // 改为后台异步加载：frame 处理里本来就有 `usePose && poseLM` 判断，Pose 晚到即晚生效，
+      // 不影响面部捕获，主线程也无需任何配合。
+      self.postMessage({ type: 'inited', delegate: delegateUsed });
+      if (usePose) {
         try {
           poseLM = await PoseLandmarker.createFromOptions(fileset, {
             baseOptions: { modelAssetPath: cfg.poseModelPath, delegate: delegateUsed },
             runningMode: 'VIDEO', numPoses: 1,
           });
+          self.postMessage({ type: 'log', msg: 'POSELM_OK' });
         } catch (err) {
           self.postMessage({ type: 'log', msg: 'Pose 加载失败（仅面部）: ' + err.message });
           poseLM = null;
         }
       }
-      self.postMessage({ type: 'inited', delegate: delegateUsed });
     } catch (err) {
       self.postMessage({ type: 'inited', delegate: 'FAIL', err: String(err && err.message || err) });
     }

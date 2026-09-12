@@ -11,6 +11,7 @@
 - 密钥与 TTS 与桌面端「语音模型」页共用同一百炼 Key（live_config.dashscope_api_key）。
 """
 import os, json, logging, threading, queue, time, base64
+from desktop_core.log_paths import log_dir
 log = logging.getLogger("pet_voice")
 
 
@@ -25,26 +26,9 @@ def _setup_pet_voice_log():
     if lg.handlers:
         return
     try:
-        # 日志根目录推导：优先环境变量（启动器可注入），否则从本文件向上找
-        # 项目根（含 src-tauri/sidecar/naixi_api.py 或 logs/ 或 data/naixi_desktop.db），
-        # 最后回退 cwd。避免副本运行（cwd=src-tauri/resources）把日志写进 resources/logs 导致找不到。
-        root = os.environ.get("NAIXI_DESKTOP_ROOT") or ""
-        if not (root and os.path.isdir(root)):
-            root = os.path.dirname(os.path.abspath(__file__))
-            for _ in range(8):
-                if (os.path.isdir(os.path.join(root, "logs")) or
-                        os.path.exists(os.path.join(root, "src-tauri", "sidecar", "naixi_api.py")) or
-                        os.path.exists(os.path.join(root, "data", "naixi_desktop.db"))):
-                    if os.path.exists(os.path.join(root, "src-tauri", "sidecar", "naixi_api.py")):
-                        root = os.path.dirname(root)
-                    break
-                root = os.path.dirname(root)
-            # dev 态 cwd 兜底：cwd 下有 data/naixi_desktop.db 或 logs 时优先用 cwd
-            _cwd = os.getcwd()
-            if (os.path.exists(os.path.join(_cwd, "data", "naixi_desktop.db")) or
-                    os.path.isdir(os.path.join(_cwd, "logs"))):
-                root = _cwd
-        logdir = os.path.join(root, "logs")
+        # 日志目录统一走 log_paths：dev/副本/安装态都能解析到正确位置，且保留
+        # NAIXI_LOG_DIR / NAIXI_DESKTOP_ROOT 环境变量覆盖能力（详见 desktop_core/log_paths.py）
+        logdir = log_dir()
         os.makedirs(logdir, exist_ok=True)
         fh = logging.FileHandler(os.path.join(logdir, "pet_voice.log"),
                                  encoding="utf-8")
@@ -92,7 +76,10 @@ class PetVoiceInput:
         self.sample_rate = sample_rate
         self.input_gain = input_gain        # 麦克风数字增益（1.0=不变；>1 放大，<1 衰减）
         self.vad_gate = vad_gate            # 本地 VAD 门控（默认开；关=始终送 ASR，原行为）
-        self.vad_hold = 0.25                # 句末拖尾静音秒数，避免裁掉句子尾音
+        # 句末拖尾静音秒数。关键：本地 VAD 会丢静音帧，云端 paraformer 必须
+        # 收到足够长的句末静音才会判 sentence_end 并吐字。设 0.25s 时实测
+        # "说完→出句"要 ~14s；放宽到 0.6s 让云端能及时判句末。
+        self.vad_hold = 0.6
         self._thread = None
         self._stop = threading.Event()
         self._running = False
@@ -611,11 +598,87 @@ class PetVoiceInput:
             threading.Thread(target=self._extract_memories,
                              args=(text, reply), daemon=True).start()
 
-    def _llm_reply(self, text: str) -> str:
+    # ───────────────── 对话模型：读用户配置，零写死 ─────────────────
+    def _resolve_chat_config(self):
+        """读用户在『对话模型』页配置的 chat 供应商（model / api_url / api_key）。
+
+        铁则：绝不硬编码模型名。用户在配置页填什么模型就用什么模型——此前此处
+        写死 qwen-turbo，导致"配了 qwen-plus 却仍是默认回复"的现象。
+        用户没填模型但已有可用 key 时，自动挑一个该 key 下真能用的并记住。
+        """
+        key, model, base_url = "", "", ""
         try:
-            import dashscope
-            from dashscope import Generation
-            dashscope.api_key = self._api_key  # 独立设置，不依赖 _run 时序
+            from desktop_core import storage
+            from desktop_core.storage import _KEY_MASK
+            self._ensure_db(storage)
+            raw = storage.meta_get("desktop_config")
+            if raw:
+                dc = json.loads(raw)
+                for _pid, _pc in (dc.get("api_providers") or {}).items():
+                    if _pc.get("type") != "chat":
+                        continue
+                    rk = _pc.get("api_key", "")
+                    if isinstance(rk, str) and rk.startswith("enc:"):
+                        rk = storage.decrypt_api_key(rk)
+                    if rk and rk != _KEY_MASK:
+                        key = rk
+                        model = _pc.get("model") or ""
+                        base_url = _pc.get("api_url") or ""
+                        break
+        except Exception as e:
+            log.warning(f"[桌宠语音] 读对话配置失败: {e}")
+        # 兜底：chat 供应商没真 key 时，退回共用的百炼 key
+        if not key:
+            key = self._api_key or ""
+            base_url = base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        # 有 key 但没选模型 → 自动发现一个真能用的（避免"配了却不生效"）
+        if key and not model:
+            try:
+                from desktop_core import tts_router
+                model = tts_router.discover_chat_model(key, api_url=base_url) or ""
+                if model:
+                    log.info(f"[桌宠语音] 自动发现对话模型: {model}")
+            except Exception as e:
+                log.warning(f"[桌宠语音] 对话模型自动发现失败: {e}")
+        if not (key and model):
+            return None
+        return {"model": model, "api_url": base_url, "api_key": key}
+
+    def _chat_reply(self, cfg, messages, timeout: float = 30.0):
+        """OpenAI 兼容协议调任意 chat 端点。全兼容：dashscope compatible-mode /
+        智谱 / 本地网关都走这一处，不写死域名与模型。失败返回空串。"""
+        if not cfg or not cfg.get("model") or not cfg.get("api_key"):
+            return ""
+        import requests
+        url = (cfg.get("api_url") or "").strip()
+        if not url:
+            url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        # 只按子串判断，不用 rstrip(字符集)——后者会吃掉 URL 末尾合法字符（历史坑）
+        if "/chat/completions" not in url:
+            url = url.rstrip("/") + "/chat/completions"
+        try:
+            r = requests.post(
+                url,
+                headers={"Authorization": f"Bearer {cfg['api_key']}",
+                         "Content-Type": "application/json"},
+                json={"model": cfg["model"], "messages": messages},
+                timeout=timeout)
+            if r.status_code != 200:
+                log.error(f"[桌宠语音] LLM HTTP {r.status_code}: {r.text[:300]}")
+                return ""
+            data = r.json()
+            choices = data.get("choices") or []
+            if not choices:
+                log.error(f"[桌宠语音] LLM 返回无 choices: {str(data)[:300]}")
+                return ""
+            return (choices[0].get("message", {}).get("content") or "").strip()
+        except Exception as e:
+            log.error(f"[桌宠语音] LLM 请求异常: {type(e).__name__}: {e}")
+            return ""
+
+    def _llm_reply(self, text: str) -> str:
+        _t_mem0 = time.time()          # 分段计时：记忆召回起点
+        try:
             mem = self._load_memories(text)    # 按当前话题语义召回相关记忆
             sys_content = ("你是桌宠奶昔，一个可爱贴心的桌面伙伴。"
                            "用简短口语化中文回应，带情绪，不超过30字。")
@@ -630,17 +693,22 @@ class PetVoiceInput:
             for m in self._history[-self._history_limit:]:
                 messages.append(m)
             messages.append({"role": "user", "content": text})
-            r = Generation.call(model="qwen-turbo", messages=messages,
-                                result_format="message")
-            if r.status_code == 200:
-                ans = r.output.choices[0].message.content.strip()
+            cfg = self._resolve_chat_config()
+            _t_llm0 = time.time()
+            ans = self._chat_reply(cfg, messages)
+            _t_llm1 = time.time()
+            log.info(f"[桌宠语音] 耗时 记忆={int((_t_llm0 - _t_mem0) * 1000)}ms "
+                     f"LLM={int((_t_llm1 - _t_llm0) * 1000)}ms "
+                     f"模型={(cfg or {}).get('model') or '未配置'}")
+            if ans:
                 self._history.append({"role": "user", "content": text})
                 self._history.append({"role": "assistant", "content": ans})
                 if len(self._history) > self._history_limit:
                     self._history = self._history[-self._history_limit:]
                 return ans
+            log.error("[桌宠语音] LLM 返回为空——对话模型可能不可用（详见上方报错）")
         except Exception as e:
-            log.warning(f"[桌宠语音] LLM 失败: {e}")
+            log.error(f"[桌宠语音] LLM 失败: {type(e).__name__}: {e}", exc_info=True)
         return "嗯？我听到你说话啦~"
 
     def _tts(self, text: str) -> str:
@@ -756,12 +824,10 @@ class PetVoiceInput:
                       "（偏好、身份、习惯、重要信息）。只输出 JSON 数组，"
                       "元素为简短中文事实字符串；没有则输出 []，不要其他内容。\n"
                       f"用户：{text}\n桌宠：{reply}")
-            r = Generation.call(model="qwen-turbo",
-                                messages=[{"role": "user", "content": prompt}],
-                                result_format="message")
-            if r.status_code != 200:
+            cfg = self._resolve_chat_config()
+            raw = self._chat_reply(cfg, [{"role": "user", "content": prompt}])
+            if not raw:
                 return
-            raw = r.output.choices[0].message.content.strip()
             arr = _json.loads(raw)
             if isinstance(arr, list):
                 for item in arr:

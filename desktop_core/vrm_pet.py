@@ -28,7 +28,15 @@ from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-LOG_DIR = os.path.join(ROOT, "logs")
+# 日志目录统一走 log_paths：dev/副本/安装态都能解析到正确位置（详见 desktop_core/log_paths.py）。
+# embedded python 的 sys.path 不含脚本目录（受 python._pth 约束），且不保证 desktop_core 包在路径上，
+# 故显式把本模块所在目录插入 sys.path，再按裸名 import log_paths（log_paths.py 与 vrm_pet.py 同目录、必同步）。
+import os as _lp_os, sys as _lp_sys
+_LP_HERE = _lp_os.path.dirname(_lp_os.path.abspath(__file__))
+if _LP_HERE not in _lp_sys.path:
+    _lp_sys.path.insert(0, _LP_HERE)
+from log_paths import log_dir
+LOG_DIR = log_dir()
 os.makedirs(LOG_DIR, exist_ok=True)
 VRM_LOG = os.path.join(LOG_DIR, "pet_vrm.log")
 HTML_PATH = os.path.join(HERE, "vrm_html", "index.html")

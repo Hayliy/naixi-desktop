@@ -24,6 +24,7 @@ import math
 import time
 import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from desktop_core.log_paths import log_file
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 VRM_HTML_DIR = os.path.join(ROOT, "vrm_html")
@@ -42,7 +43,7 @@ def _proj_root():
     return os.path.dirname(ROOT)
 
 # 性能日志路径可经环境变量重定向（自测隔离用，避免污染真机实时日志）；默认落到项目根（脱敏，不再硬编码本机路径）。
-PERF_LOG = os.environ.get("NAIXI_FACECAP_PERFLOG", os.path.join(_proj_root(), "facecap_perf.log"))
+PERF_LOG = os.environ.get("NAIXI_FACECAP_PERFLOG", log_file("facecap_perf.log"))
 
 # 面捕驱动的「参数用途」→ 中性值（丢失人脸时回落目标）。
 # 用用途而非参数名，是因为参数名因模型而异（见 _build_param_map）。
@@ -78,6 +79,41 @@ USE_NEUTRAL = {
 HEAD_USES = ("angle_x", "angle_y", "angle_z")
 # 身体用途（来自 FacePosition，中性 0，走 body_gain）
 BODY_USES = ("body_x", "body_y", "body_z")
+# 眨眼用途：需要「瞬时闭合 + 峰值保持」特殊处理（见 apply_to_l2d）
+BLINK_USES = ("eye_l_open", "eye_r_open")
+
+# ── ARKit 原始分区间重映射（2026-09-07 实锤根因：闭不上眼 / 嘴只张开一条缝）──
+# MediaPipe 输出的 blendshape 分量程非常保守：用力闭眼 eyeBlinkLeft 才 ~0.6（不是 1.0），
+# 说话/张嘴 jawOpen 通常只有 0.1~0.3。旧代码把这些原值直接当 0..1 写进 Cubism 参数
+# （ParamEyeLOpen / ParamMouthOpenY 量程就是 0..1）⇒ 眼睛永远只闭到三四成、嘴只开一条缝。
+# 正确做法：把「实用区间」线性拉伸到 0..1 再写入。区间可在 facecap_config.json 覆盖。
+DEFAULT_BLINK_IN = (0.20, 0.60)   # eyeBlink：低于 0.20 视为睁眼，0.60 及以上视为全闭
+DEFAULT_MOUTH_IN = (0.03, 0.30)   # jawOpen：低于 0.03 视为闭嘴，0.30 及以上视为全开
+DEFAULT_BLINK_CLOSE_TAU = 0.02    # 闭眼方向的平滑时间常数（秒）：眨眼必须瞬时，不能用常规 tau
+DEFAULT_BLINK_HOLD = 0.15         # 眨眼峰值保持窗口（秒）：0 = 关闭
+# 设置页 GET 的有效默认（文件缺失/无该键时用此；须与上面 DEFAULT_* 保持一致）
+SETTINGS_DEFAULTS = {
+    "masterGain": 1.0, "headGain": 1.2, "expressionGain": 1.0, "smooth": 0.05,
+    "mirror": False, "autoCalibrate": True, "linkBlink": True,
+    "blinkInLo": DEFAULT_BLINK_IN[0], "blinkInHi": DEFAULT_BLINK_IN[1],
+    "mouthInLo": DEFAULT_MOUTH_IN[0], "mouthInHi": DEFAULT_MOUTH_IN[1],
+    "blinkCloseTau": DEFAULT_BLINK_CLOSE_TAU, "blinkHold": DEFAULT_BLINK_HOLD,
+}
+
+
+def _remap01(v, lo, hi):
+    """把 [lo, hi] 线性拉伸到 [0,1] 并夹紧；区间非法时退化为简单夹紧。"""
+    try:
+        v = float(v)
+    except Exception:
+        return 0.0
+    if hi <= lo:
+        return 0.0 if v <= lo else 1.0
+    if v <= lo:
+        return 0.0
+    if v >= hi:
+        return 1.0
+    return (v - lo) / (hi - lo)
 
 # idle_engine 的 hints 对部分模型匹配不到（如 ParamBrowLY/ParamBrowRY 分左右），此处补充。
 # 合并顺序：补充 hints 在前，先精确后模糊，保证 BrowY 优先于 BrowLY。
@@ -196,6 +232,7 @@ label{display:block;font-size:13px;margin-bottom:4px;}
 input[type=range]{width:100%;accent-color:#9b7bd8;}
 .cb{font-size:13px;margin:8px 0;}
 .hint{font-size:11px;color:#888;margin-top:14px;line-height:1.6;}
+.grp{font-size:12px;color:#7fd1c9;margin:16px 0 6px;padding-top:10px;border-top:1px solid #3a3a4a;}
 </style>
 </head>
 <body>
@@ -210,13 +247,22 @@ const ITEMS=[
  {k:'bodyPitchLink',t:'躯干·俯仰 bodyPitchLink',lo:0,hi:1.5,step:0.05},
  {k:'bodyRollLink',t:'躯干·歪头 bodyRollLink',lo:0,hi:1.5,step:0.05},
  {k:'expressionGain',t:'表情增益 expressionGain',lo:0.3,hi:2,step:0.05},
- {k:'smooth',t:'平滑 smooth（越小越跟手）',lo:0.01,hi:0.3,step:0.01}
+ {k:'smooth',t:'平滑 smooth（越小越跟手）',lo:0.01,hi:0.3,step:0.01},
+ // ── 表情幅度微调（2026-09-07「闭不上眼/嘴型小」根治项的运行时可调）──
+ {k:'blinkInLo',t:'眨眼·睁眼阈值(低于即全睁)',lo:0.05,hi:0.50,step:0.01,grp:'表情幅度微调'},
+ {k:'blinkInHi',t:'眨眼·全闭阈值(达到即全闭)',lo:0.30,hi:0.95,step:0.01,grp:'表情幅度微调'},
+ {k:'mouthInLo',t:'张嘴·闭嘴阈值(低于即闭嘴)',lo:0.0,hi:0.20,step:0.01,grp:'表情幅度微调'},
+ {k:'mouthInHi',t:'张嘴·全开阈值(达到即全开)',lo:0.10,hi:0.70,step:0.01,grp:'表情幅度微调'},
+ {k:'blinkCloseTau',t:'眨眼闭合顺滑τ(秒,越大越柔)',lo:0.005,hi:0.15,step:0.005,grp:'表情幅度微调'},
+ {k:'blinkHold',t:'眨眼峰值保持(秒,防漏采)',lo:0.0,hi:0.40,step:0.01,grp:'表情幅度微调'}
 ];
-const CK=[{k:'mirror',t:'面捕镜像（左右翻转，照镜子）'},{k:'autoCalibrate',t:'面捕自动校准（首次稳定即采中性基准）'}];
+const CK=[{k:'mirror',t:'面捕镜像（左右翻转，照镜子）'},{k:'autoCalibrate',t:'面捕自动校准（首次稳定即采中性基准）'},{k:'linkBlink',t:'眨眼联动（关掉可单眼眨 wink）'}];
 function el(id){return document.getElementById(id);}
 function setv(k,v){var o={};o[k]=v;fetch('/facecap_set',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});}
 var rows=el('rows');
+var lastGrp=null;
 ITEMS.forEach(function(it){
+ if(it.grp && it.grp!==lastGrp){lastGrp=it.grp;var g=document.createElement('div');g.className='grp';g.textContent=it.grp;rows.appendChild(g);}
  var d=document.createElement('div');d.className='row';
  var lab=document.createElement('label');var span=document.createElement('span');span.className='v';span.id='v_'+it.k;
  lab.appendChild(document.createTextNode(it.t+' '));lab.appendChild(span);
@@ -317,7 +363,8 @@ def _build_param_map(all_ids):
 VTS_HEAD_SIGN = {"x": 1.0, "y": 1.0, "z": -1.0}
 
 
-def arkit_to_vts_facedata(bs: dict, head_euler: dict | None = None) -> dict:
+def arkit_to_vts_facedata(bs: dict, head_euler: dict | None = None,
+                          blink_in=DEFAULT_BLINK_IN, mouth_in=DEFAULT_MOUTH_IN) -> dict:
     """ARKit 52 混合形状 + MediaPipe 头部欧拉(弧度, x=pitch y=yaw z=roll)
     → 规范 VTS FaceData（字段名/单位严格对齐 VTS Plugin API）。
 
@@ -342,8 +389,10 @@ def arkit_to_vts_facedata(bs: dict, head_euler: dict | None = None) -> dict:
 
     fd = {}
     # 眼：ARKit eyeBlink=1 闭 → VTS EyeOpen=1-闭（0=闭 1=开）
-    fd["EyeOpenLeft"] = 1.0 - min(1.0, g("eyeBlinkLeft"))
-    fd["EyeOpenRight"] = 1.0 - min(1.0, g("eyeBlinkRight"))
+    # 2026-09-07：闭眼分量先做区间重映射再反转。原值直接用的话，用力闭眼 eyeBlink 也只有 ~0.6
+    # ⇒ EyeOpen 停在 0.4，「怎么用力都闭不上」。把 [0.20, 0.60] 拉到 [0,1] 后才闭得实。
+    fd["EyeOpenLeft"] = 1.0 - _remap01(g("eyeBlinkLeft"), blink_in[0], blink_in[1])
+    fd["EyeOpenRight"] = 1.0 - _remap01(g("eyeBlinkRight"), blink_in[0], blink_in[1])
 
     # 眉：InnerUp/OuterUp 上扬(+)，Down 下压(-)，左右合并为上下两路
     brow_up = (g("browInnerUp") + g("browOuterUpLeft") + g("browOuterUpRight")) / 3.0
@@ -367,7 +416,9 @@ def arkit_to_vts_facedata(bs: dict, head_euler: dict | None = None) -> dict:
         fd["FaceAngleZ"] = float(head_euler.get("z", 0.0)) * DEG * VTS_HEAD_SIGN["z"]   # roll → 歪头
 
     # 嘴：原值交给调用方与 TTS 合并（VTS MouthOpen 0..1）
-    fd["MouthOpen"] = min(1.0, g("jawOpen"))
+    # 2026-09-07：张嘴同样要重映射。说话时 jawOpen 只有 0.1~0.3，直写 ParamMouthOpenY
+    # ⇒ 嘴只张开一条缝。「实用区间 → 0..1」后才与模型量程对齐。
+    fd["MouthOpen"] = _remap01(g("jawOpen"), mouth_in[0], mouth_in[1])
     # 眯眼笑（VTS EyeSmile 0..1）：ARKit eyeSquintLeft/Right（眯眼/笑眼）。
     # 笑容的真实感一半在眼不在嘴——只动嘴角不动眼，看起来就是「假笑」。
     fd["EyeSmileLeft"] = max(0.0, min(1.0, g("eyeSquintLeft")))
@@ -425,7 +476,8 @@ def vts_facedata_to_l2d(fd: dict) -> dict:
 
 
 # ── 映射：ARKit 52 混合形状 → 参数用途（纯函数，可单测）──
-def arkit_to_l2d(bs: dict, head_euler: dict | None = None) -> dict:
+def arkit_to_l2d(bs: dict, head_euler: dict | None = None,
+                 blink_in=DEFAULT_BLINK_IN, mouth_in=DEFAULT_MOUTH_IN) -> dict:
     """纯函数：ARKit blendshape + 头部欧拉角(弧度) → {用途: 值}。
 
     内部先转规范 VTS FaceData（arkit_to_vts_facedata），再映射到 Cubism 用途
@@ -433,7 +485,7 @@ def arkit_to_l2d(bs: dict, head_euler: dict | None = None) -> dict:
     返回键是「用途」而非模型参数名（参数名由 _build_param_map 在运行时解析）。
     head 用途(angle_x/y/z) 为头部角度（度，未减中性基准，由调用方减）。
     """
-    fd = arkit_to_vts_facedata(bs, head_euler)
+    fd = arkit_to_vts_facedata(bs, head_euler, blink_in=blink_in, mouth_in=mouth_in)
     return vts_facedata_to_l2d(fd)
 
 
@@ -537,6 +589,7 @@ class FaceBridge:
         self._vel = {}         # 各参数速度（单位/秒）
         self._detect_t = None  # 上次检测帧时间（用于估速度）
         self._sample_dt = 0.0  # 实测采样间隔 EMA（秒）。自适应平滑下限的输入：tau 必须跨过采样间隔，否则"跳一下停一下"=卡顿
+        self._blink_hold_st = {}  # 眨眼峰值保持状态 {用途: (时间戳, 最深闭眼值)}
         self._last_ts = 0.0    # _last 最近更新时间（_on_result 写入，判定新检测帧）
         self._applied_ts = 0.0 # 已处理进 _target 的检测时间戳
         self._load_gain()
@@ -579,21 +632,40 @@ class FaceBridge:
         self.mirror = bool(cfg.get("mirror", False))
         # 联动眨眼：VTS 默认开，两眼睁开度同步为平均（关掉才允许 wink 单眼眨）
         self.link_blink = bool(cfg.get("linkBlink", True))
+        # ── 眨眼/张嘴重映射区间（2026-09-07「闭不上眼 / 嘴型变化小」根治项）──
+        # 读不到就用模块默认；区间非法（hi<=lo 或非数字）自动回退默认，避免配置写错导致面瘫。
+        try:
+            _blo = float(cfg.get("blinkInLo", DEFAULT_BLINK_IN[0]))
+            _bhi = float(cfg.get("blinkInHi", DEFAULT_BLINK_IN[1]))
+            self.blink_in = (_blo, _bhi) if _bhi > _blo else DEFAULT_BLINK_IN
+        except Exception:
+            self.blink_in = DEFAULT_BLINK_IN
+        try:
+            _mlo = float(cfg.get("mouthInLo", DEFAULT_MOUTH_IN[0]))
+            _mhi = float(cfg.get("mouthInHi", DEFAULT_MOUTH_IN[1]))
+            self.mouth_in = (_mlo, _mhi) if _mhi > _mlo else DEFAULT_MOUTH_IN
+        except Exception:
+            self.mouth_in = DEFAULT_MOUTH_IN
+        self.blink_close_tau = max(0.005, float(cfg.get("blinkCloseTau", DEFAULT_BLINK_CLOSE_TAU) or DEFAULT_BLINK_CLOSE_TAU))
+        self.blink_hold = max(0.0, float(cfg.get("blinkHold", DEFAULT_BLINK_HOLD) or 0.0))
 
     def reload_gain(self):
         """灵敏度对话框保存后调用，热更新增益（无需重开摄像头）。"""
         self._load_gain()
 
     def get_gain_dict(self):
-        """网页设置页 GET /facecap_get 取当前增益（原始 json，未乘 masterGain）。"""
+        """网页设置页 GET /facecap_get 取当前增益（文件覆盖默认；返回有效默认合并值，未乘 masterGain）。"""
         p = os.path.join(ROOT, "facecap_config.json")
+        cfg = {}
         try:
             if os.path.isfile(p):
                 with open(p, "r", encoding="utf-8") as f:
-                    return json.load(f) or {}
+                    cfg = json.load(f) or {}
         except Exception:
             pass
-        return {}
+        merged = dict(SETTINGS_DEFAULTS)
+        merged.update(cfg)
+        return merged
 
     def apply_gain_dict(self, d):
         """网页设置页 POST /facecap_set 调用：合并写 facecap_config.json 后热更新（无需重开摄像头）。"""
@@ -607,7 +679,8 @@ class FaceBridge:
             cfg = {}
         keys = ("masterGain", "headGain", "headYawGain", "headPitchGain", "headRollGain",
                 "bodyGain", "bodyYawLink", "bodyPitchLink", "bodyRollLink", "bodyPosGain",
-                "expressionGain", "smooth", "mirror", "autoCalibrate", "linkBlink")
+                "expressionGain", "smooth", "mirror", "autoCalibrate", "linkBlink",
+                "blinkInLo", "blinkInHi", "mouthInLo", "mouthInHi", "blinkCloseTau", "blinkHold")
         for k in keys:
             if k in d and d[k] is not None:
                 cfg[k] = d[k]
@@ -658,7 +731,7 @@ class FaceBridge:
                 "window.__faceStart ? window.__faceStart() : false", self._on_start_result)
         except Exception as e:
             try:
-                with open(os.path.join(_proj_root(), "facecap_start_err.log"), "a", encoding="utf-8") as f:
+                with open(log_file("facecap_start_err.log"), "a", encoding="utf-8") as f:
                     f.write("[START_ERR] runJavaScript 失败: %s\n" % e)
             except Exception:
                 pass
@@ -687,7 +760,7 @@ class FaceBridge:
             self._use_worker = bool(d.get("useWorker"))
             err = d.get("err") or ""
             if err:
-                with open(os.path.join(_proj_root(), "facecap_start_err.log"), "a", encoding="utf-8") as f:
+                with open(log_file("facecap_start_err.log"), "a", encoding="utf-8") as f:
                     f.write("[START_ERR] %s\n" % err)
         except Exception:
             pass
@@ -885,7 +958,7 @@ class FaceBridge:
                         continue
             self._prange = ranges
             import os as _os
-            with open(os.path.join(_proj_root(), "facecap_param_range.log"), "w", encoding="utf-8") as f:
+            with open(log_file("facecap_param_range.log"), "w", encoding="utf-8") as f:
                 for _use, _names in (self._pmap or {}).items():
                     for _pid in _names:
                         _r = ranges.get(_pid)
@@ -932,13 +1005,13 @@ class FaceBridge:
 
         # 目标值：检出 → 面捕值；丢失 → 中性值（先等 LOST_DELAY，避免偶发丢帧就回弹）
         if got:
-            mapped = arkit_to_l2d(bs, head)
+            mapped = arkit_to_l2d(bs, head, blink_in=self.blink_in, mouth_in=self.mouth_in)
             # ── 一次性真机诊断：定位"只有头能动/镜像无效"根因，写出后不影响运行 ──
             if not getattr(self, "_diag_done", False):
                 self._diag_done = True
                 try:
                     import os as _os
-                    _df = _os.path.join(ROOT, "facecap_blend_diag.log")
+                    _df = log_file("facecap_blend_diag.log")
                     with open(_df, "w", encoding="utf-8") as _fh:
                         _fh.write("PMAP:\n" + json.dumps(self._pmap, ensure_ascii=False) + "\n\n")
                         _fh.write("BS_SAMPLE(前40):\n" + json.dumps(dict(list((bs or {}).items())[:40]), ensure_ascii=False) + "\n\n")
@@ -1085,15 +1158,32 @@ class FaceBridge:
         if _sd > 0:
             tau = max(tau, min(0.30, 1.6 * _sd))
         kf = 1.0 - math.exp(-dt / tau) if (dt > 0 and tau > 0) else 1.0
+        # 眨眼峰值保持（2026-09-07）：检测仅 16fps（62.5ms/帧），眨眼全程 100~150ms 只能采到
+        # 1~2 帧，随机相位极易错过峰值 ⇒ 「明明眨了、模型只闭一点」。
+        # 在 hold 窗口内保持最深闭眼值即可根治；代价是最多延迟 hold 秒睁眼（默认 0.15s，无感）。
+        if self.blink_hold > 0:
+            for _u in BLINK_USES:
+                _tv = self._target.get(_u)
+                if _tv is None:
+                    continue
+                _h = self._blink_hold_st.get(_u)
+                if _h is None or _tv <= _h[1] or (now - _h[0]) > self.blink_hold:
+                    self._blink_hold_st[_u] = (now, _tv)
+                else:
+                    self._target[_u] = _h[1]
         for use, tv in self._target.items():
             cur = self._out.get(use, USE_NEUTRAL.get(use, 0.0))
-            self._out[use] = cur + (tv - cur) * kf
+            # 眨眼非对称平滑：闭眼方向（值下降）用极小 tau 瞬时闭合，睁眼方向仍用常规 tau 保持柔和。
+            # 统一用大 tau 会把 100ms 的眨眼削成半闭 —— 这是「闭不上眼」的第二层原因。
+            _tau = self.blink_close_tau if (use in BLINK_USES and tv < cur) else tau
+            _kf = 1.0 - math.exp(-dt / _tau) if (dt > 0 and _tau > 0) else 1.0
+            self._out[use] = cur + (tv - cur) * _kf
             self._write(model, use, self._out[use], 1.0)
         # 一次性诊断：确认"躯干不动"是否已根治（头部真实角度 + body 实际写入值）
         if got and not getattr(self, "_diag_body_done", False):
             self._diag_body_done = True
             try:
-                _df = os.path.join(ROOT, "facecap_blend_diag.log")
+                _df = log_file("facecap_blend_diag.log")
                 with open(_df, "a", encoding="utf-8") as _fh:
                     _fh.write("HEAD_DEG(度): " + json.dumps({u: round(float(head_deg.get(u, 0.0)), 2) for u in HEAD_USES}, ensure_ascii=False) + "\n")
                     _fh.write("BODY_OUT(写模型值): " + json.dumps({u: round(float(self._out.get(u, 0.0)), 3) for u in BODY_USES}, ensure_ascii=False) + "\n")
@@ -1106,7 +1196,9 @@ class FaceBridge:
         """返回最新一帧的张口度 0..1（无人脸时为 0），供调用方与 TTS 嘴型合并。"""
         if not self._last or not self._last.get("detected"):
             return 0.0
-        return jaw_open(self._last.get("blendshapes") or {})
+        # 与眼同一套重映射：说话/张嘴时 jawOpen 通常只有 0.1~0.3，不拉伸就只开一条缝。
+        lo, hi = getattr(self, "mouth_in", DEFAULT_MOUTH_IN)
+        return _remap01(jaw_open(self._last.get("blendshapes") or {}), lo, hi)
 
     def diagnostics(self):
         return {
@@ -1119,5 +1211,7 @@ class FaceBridge:
                      "head_roll": self.head_roll_gain, "body": self.body_gain,
                      "body_yaw_link": self.body_yaw_link, "body_pitch_link": self.body_pitch_link,
                      "body_roll_link": self.body_roll_link, "body_pos_gain": self.body_pos_gain,
-                     "mirror": self.mirror, "link_blink": self.link_blink, "auto_calibrate": self.auto_calibrate},
+                     "mirror": self.mirror, "link_blink": self.link_blink, "auto_calibrate": self.auto_calibrate,
+                     "blink_in": self.blink_in, "mouth_in": self.mouth_in,
+                     "blink_close_tau": self.blink_close_tau, "blink_hold": self.blink_hold},
         }

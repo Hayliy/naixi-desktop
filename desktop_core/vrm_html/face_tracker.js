@@ -121,6 +121,14 @@ export class FaceTracker {
 
   /** 初始化：优先 Web Worker（推理不阻塞主线程 video 帧），失败回退主线程同步推理 */
   async init() {
+    // 自愈（2026-09-07 实锤根因修复）：stop() 曾把 this.worker 置 null 却未清 _useWorker，
+    // 于是再次 start() 时下面这行直接 return、worker 永不重建；喂帧循环仍每帧 postMessage 到 null，
+    // 表现为「摄像头正常打开、feed>0 有帧、但 detected 恒 False、firstDet=None、err=postMessage null」。
+    // 故先校正标志与实例的一致性强校验：标志为真但实例不存在 ⇒ 归位，强制走重建分支。
+    if (this._useWorker && !this.worker) {
+      this._useWorker = false;
+      this._workerErrs.push('worker 实例丢失(null)，已重置标志并重建');
+    }
     if (this.landmarker || this._useWorker) return true;
     // Worker 模式已真正实现（face_worker.js，classic worker）。默认启用（FACE_DEFAULTS.useWorker=true）：
     // 主线程只从摄像头 track 直拉帧喂 Worker，detect 在 Worker 跑 -> 主线程不阻塞 -> 吃满 30fps（对齐 VTS）。
@@ -298,6 +306,7 @@ export class FaceTracker {
       console.log('[FaceTracker] gUM 协商: ' + this._videoW + 'x' + this._videoH + ' @' + this._negotiatedFps + 'fps');
     } catch (e) { this.lastError = 'getSettings 失败: ' + e.message; }
     this.running = true;
+    this._pumpAbort = false;   // 每次 start 重置停泵标志（上次异常停泵不影响本次）
     this._fpsTs = performance.now();
     this._fpsCount = 0;
     this._startTs = performance.now();
@@ -348,7 +357,7 @@ export class FaceTracker {
       if (v.readyState >= 2 && v.currentTime !== this.lastVideoTime) {
         this.lastVideoTime = v.currentTime;
         const ts = performance.now();
-        if (!busy) {
+        if (!busy && this.worker) {
           busy = true;
           createImageBitmap(v).then((bmp) => {
             try {
@@ -393,7 +402,7 @@ export class FaceTracker {
     this._inflight = 0;
     const loop = async () => {
       if (!this.running || !this._trackReader) return;
-      while (this.running && this._trackReader) {
+      while (this.running && this._trackReader && !this._pumpAbort) {
         while (this._inflight >= MAX_INFLIGHT) { await new Promise((r) => setTimeout(r, 1)); }
         let frame, done;
         try { ({ value: frame, done } = await this._trackReader.read()); }
@@ -409,6 +418,14 @@ export class FaceTracker {
           const _cdt = performance.now() - _c0;
           this._createSum += _cdt; this._createN++;
           try {
+            if (!this.worker) {
+              // worker 实例已不存在（被 stop/terminate 或重建前空窗）：立即停泵。
+              // 否则每帧都往 null 上 postMessage，刷同一个错、白烧 CPU，且用户看不到任何人脸数据。
+              this._inflight--;
+              this._pumpAbort = true;
+              this.lastError = 'worker 已销毁，停止喂帧（需重新 start 以重建 worker）';
+              return;
+            }
             this.worker.postMessage({ type: 'frame', bitmap: bmp, ts }, [bmp]);
             this._rvfcCount++;
             this._feedCount++;
@@ -928,6 +945,9 @@ export class FaceTracker {
     if (this._rvfcTimer) { clearInterval(this._rvfcTimer); this._rvfcTimer = null; }
     if (this._poseTimer) { clearInterval(this._poseTimer); this._poseTimer = null; }
     if (this.worker) { try { this.worker.terminate(); } catch (e) {} this.worker = null; }
+    // worker 已销毁，标志必须同步归位。否则下次 start()->init() 会因 _useWorker 仍为 true 而跳过重建，
+    // 喂帧循环把帧 postMessage 给 null ⇒ 面捕静默失效（2026-09-07 真机根因）。
+    this._useWorker = false;
     if (this._trackTimer) { clearTimeout(this._trackTimer); this._trackTimer = null; }
     if (this._trackReader) { try { this._trackReader.cancel(); } catch (e) {} this._trackReader = null; }
     if (this.stream) { this.stream.getTracks().forEach((t) => t.stop()); this.stream = null; }
