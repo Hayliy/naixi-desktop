@@ -98,6 +98,7 @@ LoadLanguageFile "${NSISDIR}\Contrib\Language files\SimpChinese.nlf"
 !define CLR_INPUT_BG    0xFDF8FA
 !define CLR_INPUT_TEXT  0x444444
 !define CLR_CLOSE       0x555555
+!define CLR_SUCCESS     0x0033AA33  ; 组件完成态（绿）
 
 !ifndef WM_NCLBUTTONDOWN
   !define WM_NCLBUTTONDOWN 0x00A1
@@ -198,6 +199,21 @@ Var hStepTxt2
 Var hStepTxt3
 Var hFooterBg
 Var unProg
+
+; 安装组件明细（两栏：左栏组件列表 + 右栏当前详情）
+Var hCompTitle
+Var hC1
+Var hC2
+Var hC3
+Var hC4
+Var hC5
+Var hC6
+Var hC7
+Var hC8
+Var hCurName
+Var hCurPct
+Var hCurDetail
+Var BatchTmp2
 
 Name "奶昔 · 桌面智能体"
 BrandingText " "
@@ -531,6 +547,18 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   ${EndIf}
 !macroend
 
+; ─── 安装组件状态宏（两栏明细用）───
+; MODE: 1=进行中(粉●) 2=完成(绿✓)
+!macro SetComp IDX MODE NAME
+  ${If} ${MODE} == 1
+    SetCtlColors $hC${IDX} "${CLR_PINK}" "${CLR_BG}"
+    ${NSD_SetText} $hC${IDX} "● ${NAME}"
+  ${ElseIf} ${MODE} == 2
+    SetCtlColors $hC${IDX} "${CLR_SUCCESS}" "${CLR_BG}"
+    ${NSD_SetText} $hC${IDX} "✓ ${NAME}"
+  ${EndIf}
+!macroend
+
 ; ─── 进入 GUI 即把默认窗口改为无边框自定义窗口 ───
 Function .onGUIInit
   !insertmacro MakeBorderless
@@ -698,7 +726,7 @@ Function fn_ProgressPage
 
   ; 进度条：原生 msctls_progress32（与卸载 P2 / test_flow P3 同机制）
   ; 修复此前用 Label + SetWindowPos 模拟导致的“看不到进度/无样式/突兀长条”
-  System::Call "user32::CreateWindowEx(i 0, t 'msctls_progress32', i 0, i 0x50000001, i 30, i 246, i 480, i 8, i $Dialog, i 0, i 0, i 0) i .r1"
+  System::Call "user32::CreateWindowEx(i 0, t 'msctls_progress32', i 0, i 0x50000001, i 30, i 240, i 480, i 8, i $Dialog, i 0, i 0, i 0) i .r1"
   StrCpy $hProgressFill $1
   System::Call "uxtheme::SetWindowTheme(i $hProgressFill, w \"\", w \"\")"
   SendMessage $hProgressFill ${PBM_SETRANGE} 0 0x00640000
@@ -707,51 +735,97 @@ Function fn_ProgressPage
   System::Call "gdi32::CreateRoundRectRgn(i 0, i 0, i 480, i 8, i 4, i 4) i .r2"
   System::Call "user32::SetWindowRgn(i $hProgressFill, i r2, i 1)"
 
-  ${NSD_CreateLabel} 30 260 480 18 ""
+  ${NSD_CreateLabel} 30 252 480 18 ""
   Pop $hProgressStatus
   SetCtlColors $hProgressStatus "${CLR_TEXT_MUTED}" "${CLR_BG}"
   !insertmacro ApplyFont $hProgressStatus $hFontTiny
 
-  ; 安装明细列表：对标其他安装包的「正在安装/解压 xxx」滚动明细。
-  ; 原生 LISTBOX（WS_CHILD|WS_VISIBLE|WS_VSCROLL|WS_BORDER|LBS_NOINTEGRALHEIGHT），
-  ; 随分批写入逐行追加路径，并自动滚到最新一行（LB_SETTOPINDEX）。
-  System::Call "user32::CreateWindowEx(i 0, t 'LISTBOX', i 0, i 0x50A00100, i 30, i 284, i 480, i 74, i $Dialog, i 0, i 0, i 0) i .r1"
-  StrCpy $hDetails $1
-  System::Call "uxtheme::SetWindowTheme(i $hDetails, w \"\", w \"\")"
-  SetCtlColors $hDetails "${CLR_TEXT_MUTED}" "${CLR_INPUT_BG}"
-  !insertmacro ApplyFont $hDetails $hFontTiny
+  ; ── 安装组件明细：两栏（左栏组件列表分两列 + 右栏当前详情）──
+  ; 重排：原单列 8 行 pitch 10 导致行间重叠、末行溢出页脚；现两列 4 行 pitch 20、行高 16，
+  ; 组件区 272..366 完整落于页脚(368)之上，不再重叠/溢出。
+  ${NSD_CreateLabel} 30 272 200 16 "安装组件"
+  Pop $hCompTitle
+  SetCtlColors $hCompTitle "${CLR_DARK_PINK}" "${CLR_BG}"
+  !insertmacro ApplyFont $hCompTitle $hFontBody
+
+  ; 左列（x=30）
+  ${NSD_CreateLabel} 30 290 130 16 "○ 主程序"
+  Pop $hC1
+  SetCtlColors $hC1 "${CLR_TEXT_MUTED}" "${CLR_BG}"
+  !insertmacro ApplyFont $hC1 $hFontTiny
+  ${NSD_CreateLabel} 30 310 130 16 "○ Python 运行时"
+  Pop $hC3
+  SetCtlColors $hC3 "${CLR_TEXT_MUTED}" "${CLR_BG}"
+  !insertmacro ApplyFont $hC3 $hFontTiny
+  ${NSD_CreateLabel} 30 330 130 16 "○ 依赖运行库"
+  Pop $hC5
+  SetCtlColors $hC5 "${CLR_TEXT_MUTED}" "${CLR_BG}"
+  !insertmacro ApplyFont $hC5 $hFontTiny
+  ${NSD_CreateLabel} 30 350 130 16 "○ 注册表信息"
+  Pop $hC7
+  SetCtlColors $hC7 "${CLR_TEXT_MUTED}" "${CLR_BG}"
+  !insertmacro ApplyFont $hC7 $hFontTiny
+
+  ; 右列（x=165）
+  ${NSD_CreateLabel} 165 290 145 16 "○ 核心资源"
+  Pop $hC2
+  SetCtlColors $hC2 "${CLR_TEXT_MUTED}" "${CLR_BG}"
+  !insertmacro ApplyFont $hC2 $hFontTiny
+  ${NSD_CreateLabel} 165 310 145 16 "○ SearXNG 搜索引擎"
+  Pop $hC4
+  SetCtlColors $hC4 "${CLR_TEXT_MUTED}" "${CLR_BG}"
+  !insertmacro ApplyFont $hC4 $hFontTiny
+  ${NSD_CreateLabel} 165 330 145 16 "○ 卸载程序"
+  Pop $hC6
+  SetCtlColors $hC6 "${CLR_TEXT_MUTED}" "${CLR_BG}"
+  !insertmacro ApplyFont $hC6 $hFontTiny
+  ${NSD_CreateLabel} 165 350 145 16 "○ 开始菜单快捷方式"
+  Pop $hC8
+  SetCtlColors $hC8 "${CLR_TEXT_MUTED}" "${CLR_BG}"
+  !insertmacro ApplyFont $hC8 $hFontTiny
+
+  ; 右栏：当前组件详情（标题 + 当前组件名(大) + 进度%）
+  ${NSD_CreateLabel} 320 272 190 16 "当前安装"
+  Pop $hCurDetail
+  SetCtlColors $hCurDetail "${CLR_DARK_PINK}" "${CLR_BG}"
+  !insertmacro ApplyFont $hCurDetail $hFontBody
+  ${NSD_CreateLabel} 320 296 190 24 ""
+  Pop $hCurName
+  SetCtlColors $hCurName "${CLR_DARK_PINK}" "${CLR_BG}"
+  !insertmacro ApplyFont $hCurName $hFontBody
+  ${NSD_CreateLabel} 320 328 190 32 ""
+  Pop $hCurPct
+  SetCtlColors $hCurPct "${CLR_PINK}" "${CLR_BG}"
+  !insertmacro ApplyFont $hCurPct $hFontTitle
 
   !insertmacro CreateFooter 3 "$PLUGINSDIR\btn_installing.bmp" 1 0 fn_PrevClick fn_NextClick
 
   StrCpy $InstallDone 0
   StrCpy $InstallStage 0
 
-  ; 一次性检测程序是否占用（不在 timer 内，避免循环弹窗）
-  !if "${INSTALLMODE}" == "currentUser"
-    nsis_tauri_utils::FindProcessCurrentUser "${MAINBINARYNAME}.exe"
-  !else
-    nsis_tauri_utils::FindProcess "${MAINBINARYNAME}.exe"
-  !endif
+  ; ── 覆盖安装修复 ──
+  ; 1) 杀整棵进程树（主程序 + Python 子进程），释放文件锁，避免覆盖写失败。
+  ;    对齐卸载逻辑（un.Progress 用 taskkill /F /T 杀树，比插件单进程 KillProcess 彻底）。
+  ; 覆盖安装：杀旧进程树（改用 nsExec 隐藏控制台窗口，不再弹黑窗）
+  nsExec::Exec 'taskkill /F /T /IM "${MAINBINARYNAME}.exe"'
   Pop $R0
-  ${If} $R0 = 0
-    MessageBox MB_OKCANCEL "奶昔正在运行，建议先关闭后再安装。$\n点击「确定」自动关闭，或「取消」退出安装。" IDOK kill_i IDCANCEL quit_i
-    kill_i:
-      !if "${INSTALLMODE}" == "currentUser"
-        nsis_tauri_utils::KillProcessCurrentUser "${MAINBINARYNAME}.exe"
-      !else
-        nsis_tauri_utils::KillProcess "${MAINBINARYNAME}.exe"
-      !endif
-      Pop $R0
+  nsExec::Exec 'taskkill /F /IM pythonw.exe'
+  Pop $R0
+  nsExec::Exec 'taskkill /F /IM python.exe'
+  Pop $R0
+  Sleep 800
+  ; 2) 检测已安装 → 升级模式：先静默卸旧版，再装（干净的覆盖安装）。
+  ReadRegStr $R2 SHCTX "${UNINSTKEY}" "InstallLocation"
+  ${If} $R2 != ""
+    IfFileExists "$R2\${MAINBINARYNAME}.exe" 0 +2
+      ${NSD_SetText} $hProgressStatus "检测到旧版本，正在卸载..."
+      ExecWait '"$R2\uninstall.exe" /S _?=$R2' $R1
       Sleep 500
-      ${If} $R0 != 0
-      ${AndIf} $R0 != 2
-        MessageBox MB_OK "无法自动关闭奶昔，请手动关闭后重试安装。"
-        Quit
-      ${EndIf}
-      Goto app_checked_i
-    quit_i:
-      Quit
   ${EndIf}
+  ; 3) 再杀一次（卸旧可能拉起残留进程锁文件）
+  nsExec::Exec 'taskkill /F /T /IM "${MAINBINARYNAME}.exe"'
+  Pop $R0
+  Sleep 300
   app_checked_i:
 
   ${NSD_CreateTimer} fn_InstallTick 100
@@ -1299,81 +1373,111 @@ Function fn_DoInstall
   ${EndIf}
   ${If} $InstallStage == 1
     ${NSD_SetText} $hProgressStatus "写入主程序..."
+    ${NSD_SetText} $hCurName "主程序"
+    ${NSD_SetText} $hCurPct "0%"
+    !insertmacro SetComp 1 1 "主程序"
     !insertmacro SetProgressWidth 25
     File "${MAINBINARYSRCPATH}"
     File "D:\naixi_desktop\src-tauri\icons\icon.ico"
-    SendMessage $hDetails ${LB_ADDSTRING} 0 "STR:${MAINBINARYNAME}.exe"
-    SendMessage $hDetails ${LB_ADDSTRING} 0 "STR:icon.ico"
+    !insertmacro SetComp 1 2 "主程序"
     IntOp $InstallStage $InstallStage + 1
     Return
   ${EndIf}
   ${If} $InstallStage == 2
-    ; 分批写入资源：每个 timer tick 只写 ${RES_BATCH_SIZE} 个文件，
-    ; 写完 Return 让 UI 消息泵刷新，避免上万个文件一次性同步 File 写入把 UI 冻住（#1/#6）。
+    ; 资源聚合包（7z）单次解压：根治上万散文件逐个写盘造成的 UI 冻结（#1/#6）。
+    ; 安装包内资源仅含 app_res.7z + 7z.exe + 7z.dll（+ sidecar），由 build.rs 预先打包。
     ${If} $ResBatch == 0
       ${NSD_SetText} $hProgressStatus "创建资源目录..."
       !insertmacro SetProgressWidth 40
-      SendMessage $hDetails ${LB_ADDSTRING} 0 "STR:创建资源目录结构"
+      !insertmacro SetComp 2 1 "核心资源 (desktop_core)"
+      !insertmacro SetComp 3 1 "Python 运行时"
+      !insertmacro SetComp 4 1 "SearXNG 搜索引擎"
+      ${NSD_SetText} $hCurName "核心资源"
+      ${NSD_SetText} $hCurPct "0%"
       {{#each resources_dirs}}
         CreateDirectory "$INSTDIR\\{{this}}"
       {{/each}}
-    ${EndIf}
-    ${NSD_SetText} $hProgressStatus "写入资源文件..."
-    ; 计算本批文件区间 [BatchStart, BatchEnd)
-    IntOp $BatchStart $ResBatch * ${RES_BATCH_SIZE}
-    IntOp $BatchEnd $BatchStart + ${RES_BATCH_SIZE}
-    StrCpy $ResIdx 0
-    ; File 为编译期嵌入 + 运行期解压，包在 ${If} 内即“按批条件解压”，跳过项不做磁盘 I/O；
-    ; 明细行同样只在批内追加，避免每 tick 付出上万次调用。
-    {{#each resources}}
-      ${If} $ResIdx >= $BatchStart
-      ${AndIf} $ResIdx < $BatchEnd
+      ${NSD_SetText} $hProgressStatus "写入安装包资源..."
+      {{#each resources}}
         File /a "/oname={{this.[1]}}" "{{no-escape @key}}"
-        SendMessage $hDetails ${LB_ADDSTRING} 0 "STR:{{this.[1]}}"
+      {{/each}}
+      ${NSD_SetText} $hProgressStatus "解压核心资源（后台进行中）..."
+      ; 异步启动 7z（隐藏窗口 SW_HIDE），不阻塞 UI 线程，根治“程序未响应”。
+      ; 完成由 cmd 写 $PLUGINSDIR\res_done.flag，fn_DoInstall 下一 tick 检测到即收尾。
+      ExecShell "open" "cmd.exe" '/c $\"$INSTDIR\resources\_bundle\7z.exe$\" x -y -o$\"$INSTDIR\resources$\" $\"$INSTDIR\resources\_bundle\app_res.7z$\" && echo done > $\"$PLUGINSDIR\res_done.flag$\"' SW_HIDE
+      StrCpy $BatchTmp2 0
+      IntOp $ResBatch $ResBatch + 1
+      Return
+    ${EndIf}
+    ${If} $ResBatch == 1
+      IntOp $BatchTmp2 $BatchTmp2 + 1
+      ; 轮询完成标志（每个 tick 检查一次，tick 之间 UI 消息泵正常处理，窗口保持响应）
+      ${If} ${FileExists} "$PLUGINSDIR\res_done.flag"
+        Delete "$PLUGINSDIR\res_done.flag"
+        ${IfNot} ${FileExists} "$INSTDIR\resources\desktop_core\api.py"
+          ${NSD_SetText} $hProgressStatus "警告：核心资源缺失，安装可能不完整"
+        ${EndIf}
+        ; 清理临时解压工具与压缩包，释放空间（已解压出的资源保留在 $INSTDIR\resources）
+        Delete "$INSTDIR\resources\_bundle\app_res.7z"
+        Delete "$INSTDIR\resources\_bundle\7z.exe"
+        Delete "$INSTDIR\resources\_bundle\7z.dll"
+        RMDir "$INSTDIR\resources\_bundle"
+        !insertmacro SetComp 2 2 "核心资源 (desktop_core)"
+        !insertmacro SetComp 3 2 "Python 运行时"
+        !insertmacro SetComp 4 2 "SearXNG 搜索引擎"
+        ${NSD_SetText} $hCurPct "100%"
+        !insertmacro SetProgressWidth 68
+        IntOp $InstallStage $InstallStage + 1
+        Return
+      ${ElseIf} $BatchTmp2 > 800
+        ; 超时兜底（~96s）：解压可能异常，强制收尾并提示，避免永久卡在安装页
+        ${NSD_SetText} $hProgressStatus "警告：资源解压超时，安装可能不完整"
+        Delete "$INSTDIR\resources\_bundle\app_res.7z"
+        Delete "$INSTDIR\resources\_bundle\7z.exe"
+        Delete "$INSTDIR\resources\_bundle\7z.dll"
+        RMDir "$INSTDIR\resources\_bundle"
+        !insertmacro SetComp 2 2 "核心资源 (desktop_core)"
+        !insertmacro SetComp 3 2 "Python 运行时"
+        !insertmacro SetComp 4 2 "SearXNG 搜索引擎"
+        ${NSD_SetText} $hCurPct "100%"
+        !insertmacro SetProgressWidth 68
+        IntOp $InstallStage $InstallStage + 1
+        Return
       ${EndIf}
-      IntOp $ResIdx $ResIdx + 1
-    {{/each}}
-    ; 明细自动滚到本批起始行，保证最新写入始终可见
-    SendMessage $hDetails ${LB_SETTOPINDEX} $BatchStart 0
-    ; 循环结束后 $ResIdx = 资源文件总数；进度按已写比例在 40→68% 间推进
-    IntOp $BatchTmp $BatchEnd * 28
-    IntOp $BatchTmp $BatchTmp / $ResIdx
-    IntOp $BatchTmp $BatchTmp + 40
-    ${If} $BatchTmp > 68
-      StrCpy $BatchTmp 68
+      ; 未完成：保持状态，等待下一 tick（不阻塞 UI）
+      Return
     ${EndIf}
-    !insertmacro SetProgressWidth $BatchTmp
-    ${NSD_SetText} $hProgressStatus "写入资源文件... $BatchEnd / $ResIdx"
-    IntOp $ResBatch $ResBatch + 1
-    ${If} $BatchEnd >= $ResIdx
-      ; 全部资源写完，进入下一阶段
-      IntOp $InstallStage $InstallStage + 1
-    ${EndIf}
-    Return
   ${EndIf}
   ${If} $InstallStage == 3
     ${NSD_SetText} $hProgressStatus "写入依赖文件..."
+    ${NSD_SetText} $hCurName "依赖运行库"
+    ${NSD_SetText} $hCurPct "0%"
+    !insertmacro SetComp 5 1 "依赖运行库"
     !insertmacro SetProgressWidth 70
-    SendMessage $hDetails ${LB_ADDSTRING} 0 "STR:写入依赖运行库"
     {{#each binaries}}
       File /a "/oname={{this}}" "{{no-escape @key}}"
-      SendMessage $hDetails ${LB_ADDSTRING} 0 "STR:{{this}}"
     {{/each}}
+    !insertmacro SetComp 5 2 "依赖运行库"
     IntOp $InstallStage $InstallStage + 1
     Return
   ${EndIf}
   ${If} $InstallStage == 4
     ${NSD_SetText} $hProgressStatus "写入卸载程序..."
+    ${NSD_SetText} $hCurName "卸载程序"
+    ${NSD_SetText} $hCurPct "0%"
+    !insertmacro SetComp 6 1 "卸载程序"
     !insertmacro SetProgressWidth 82
     WriteUninstaller "$INSTDIR\uninstall.exe"
-    SendMessage $hDetails ${LB_ADDSTRING} 0 "STR:uninstall.exe"
+    !insertmacro SetComp 6 2 "卸载程序"
     IntOp $InstallStage $InstallStage + 1
     Return
   ${EndIf}
   ${If} $InstallStage == 5
     ${NSD_SetText} $hProgressStatus "注册安装信息..."
+    ${NSD_SetText} $hCurName "注册表信息"
+    ${NSD_SetText} $hCurPct "0%"
+    !insertmacro SetComp 7 1 "注册表信息"
     !insertmacro SetProgressWidth 90
-    SendMessage $hDetails ${LB_ADDSTRING} 0 "STR:写入注册表安装信息（版本 ${VERSION}）"
     WriteRegStr SHCTX "${MANUPRODUCTKEY}" "" $INSTDIR
     WriteRegStr SHCTX "${UNINSTKEY}" "MainBinaryName" "${MAINBINARYNAME}.exe"
     WriteRegStr SHCTX "${UNINSTKEY}" "DisplayName" "${PRODUCTNAME}"
@@ -1387,21 +1491,27 @@ Function fn_DoInstall
     !if "${HOMEPAGE}" != ""
       WriteRegStr SHCTX "${UNINSTKEY}" "URLInfoAbout" "${HOMEPAGE}"
     !endif
+    !insertmacro SetComp 7 2 "注册表信息"
     IntOp $InstallStage $InstallStage + 1
     Return
   ${EndIf}
   ; 最后阶段：创建快捷方式并收尾
   ${NSD_SetText} $hProgressStatus "创建快捷方式..."
+  ${NSD_SetText} $hCurName "开始菜单快捷方式"
+  ${NSD_SetText} $hCurPct "0%"
+  !insertmacro SetComp 8 1 "开始菜单快捷方式"
   !insertmacro SetProgressWidth 100
   CreateDirectory "$SMPROGRAMS\${PRODUCTNAME}"
   CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}\奶昔.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\icon.ico" 0
-  SendMessage $hDetails ${LB_ADDSTRING} 0 "STR:创建开始菜单快捷方式"
   !ifmacrodef NSIS_HOOK_POSTINSTALL
     !insertmacro NSIS_HOOK_POSTINSTALL
   !endif
+  !insertmacro SetComp 8 2 "开始菜单快捷方式"
   StrCpy $InstallDone 1
   ${NSD_SetBitmap} $hNextBmp "$PLUGINSDIR\btn_finish.bmp" $R0
   ${NSD_SetText} $hProgressStatus "安装完成。"
+  ${NSD_SetText} $hCurName "安装完成"
+  ${NSD_SetText} $hCurPct "100%"
   EnableWindow $hNextBtn 1
 FunctionEnd
 

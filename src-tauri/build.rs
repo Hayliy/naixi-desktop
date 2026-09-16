@@ -115,6 +115,96 @@ fn warm_read_retry(dir: &Path) {
     }
 }
 
+/// 把散文件资源聚合成单个 7z，根治 NSIS 逐个 File 解压上万文件造成的安装卡顿（#1/#6）。
+/// 打包 src-tauri/resources 下的 desktop_core / data / python-embed / searxng 到
+/// resources/_bundle/app_res.7z，并把 7z.exe/7z.dll 一并拷入 _bundle 作为安装器解压工具。
+fn pack_resources_7z() {
+    let manifest_dir = PathBuf::from(
+        std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set by cargo"),
+    );
+    let resources = manifest_dir.join("resources");
+    let bundle = resources.join("_bundle");
+    let _ = fs::create_dir_all(&bundle);
+
+    // 定位 7z 命令行工具（本机常见安装路径 + PATH 回退）
+    let seven_zip = ["D:\\软件\\7-Zip\\7z.exe", "C:\\Program Files\\7-Zip\\7z.exe",
+                     "C:\\Program Files (x86)\\7-Zip\\7z.exe"]
+        .iter()
+        .find(|p| Path::new(p).is_file())
+        .map(|p| p.to_string())
+        .or_else(|| {
+            std::process::Command::new("where")
+                .arg("7z.exe")
+                .output()
+                .ok()
+                .and_then(|o| {
+                    let s = String::from_utf8_lossy(&o.stdout);
+                    s.lines().next().map(|l| l.trim().to_string())
+                })
+        });
+
+    let seven_zip = match seven_zip {
+        Some(p) => p,
+        None => {
+            eprintln!("error: 未找到 7z.exe，无法打包资源聚合包；请安装 7-Zip 或调整 build.rs 中的路径");
+            std::process::exit(1);
+        }
+    };
+
+    // 待打包的子目录（与 tauri.conf.json 原 bundle.resources 对应，避免漏打运行时必需资源）
+    let dirs = ["desktop_core", "data", "python-embed", "searxng"];
+    if !dirs.iter().any(|d| resources.join(d).is_dir()) {
+        eprintln!("warn: resources 下无可打包目录，跳过 7z 打包");
+        return;
+    }
+
+    // 清掉旧包，避免残留
+    let _ = fs::remove_file(bundle.join("app_res.7z"));
+
+    // 在 resources 目录下打包，使归档内路径为 desktop_core/... 等，
+    // 安装器解压到 $INSTDIR/resources 即得正确布局（与旧逐文件 File 一致）。
+    let mut cmd = std::process::Command::new(&seven_zip);
+    cmd.current_dir(&resources)
+        .arg("a")
+        .arg("-t7z")
+        .arg("-mx=7")
+        .arg("-mmt=on")
+        .arg("-bsp0") // 安静，不向 stderr 吐进度
+        .arg(bundle.join("app_res.7z").to_string_lossy().as_ref());
+    for d in dirs.iter() {
+        cmd.arg(d);
+    }
+    eprintln!("info: 打包资源聚合包 (7z) ...");
+    match cmd.status() {
+        Ok(s) if s.success() => {}
+        Ok(s) => {
+            eprintln!("error: 7z 打包失败（{:?}），终止构建", s);
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("error: 无法启动 7z（{e}），终止构建");
+            std::process::exit(1);
+        }
+    }
+
+    // 拷贝 7z 解压工具（7z.exe 依赖同目录 7z.dll）
+    let seven_dir = Path::new(&seven_zip).parent().unwrap();
+    for f in ["7z.exe", "7z.dll"] {
+        let src = seven_dir.join(f);
+        let dst = bundle.join(f);
+        if src.is_file() {
+            if let Err(e) = fs::copy(&src, &dst) {
+                eprintln!("error: 拷贝 {f} 失败: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+    eprintln!(
+        "info: 资源聚合包已生成：{}",
+        bundle.join("app_res.7z").display()
+    );
+}
+
 #[allow(dead_code)]
 fn main() {
     // 声明依赖：desktop_core / searxng 任一文件变化都必须重跑本 build script。
@@ -122,6 +212,12 @@ fn main() {
     // （曾出现改完 api.py 后打包副本仍是旧版、接口 404）。
     println!("cargo:rerun-if-changed=../desktop_core");
     println!("cargo:rerun-if-changed=../searxng");
+    // 资源聚合包依赖这些目录的内容；任一项变化都需重打包，否则安装包拿到旧 7z。
+    println!("cargo:rerun-if-changed=resources/desktop_core");
+    println!("cargo:rerun-if-changed=resources/data");
+    println!("cargo:rerun-if-changed=resources/python-embed");
+    println!("cargo:rerun-if-changed=resources/searxng");
+    println!("cargo:rerun-if-changed=sidecar");
 
     let manifest_dir = PathBuf::from(
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set by cargo"),
@@ -160,6 +256,11 @@ fn main() {
             searx_src.display()
         );
     }
+
+    // 先把散文件资源聚合成单个 7z（+ 拷入 7z 解压工具），再交给 tauri_build。
+    // 注意：tauri.conf.json 的 bundle.resources 已改为只收 resources/_bundle/*，
+    // 故此处必须先生成 _bundle，否则 glob 空匹配 → tauri_build 直接失败。
+    pack_resources_7z();
 
     tauri_build::build();
 

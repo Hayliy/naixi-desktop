@@ -65,17 +65,10 @@
       "digestAlgorithm": "sha256"
     },
     "resources": [
-      "sidecar/*.py",
-      "resources/desktop_core/**/*.py",
-      "resources/desktop_core/vrm_html/**/*",
-      "resources/desktop_core/version.json",
-      "resources/desktop_core/platforms.json",
-      "resources/desktop_core/mc_bridge.js",
-      "resources/desktop_core/mc_bridge.cjs",
-      "resources/desktop_core/mc_observer.cjs",
-      "resources/data/**/*",
-      "resources/python-embed/**/*",
-      "resources/searxng/**/*"
+      "resources/_bundle/app_res.7z",
+      "resources/_bundle/7z.exe",
+      "resources/_bundle/7z.dll",
+      "sidecar/*.py"
     ]
   },
   "plugins": {
