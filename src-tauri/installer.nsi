@@ -73,11 +73,17 @@ LoadLanguageFile "${NSISDIR}\Contrib\Language files\SimpChinese.nlf"
 !define ESTIMATEDSIZE "{{estimated_size}}"
 !define STARTMENUFOLDER "{{start_menu_folder}}"
 
-; 每批写入/删除的资源文件数：过大→单 tick 磁盘 I/O 阻塞 UI；过小→总耗时增加。
-; 1000 约 40MB/批，单 tick 远低于 Windows 判定“未响应”的 5s 阈值。
+; 每批写入/删除的资源文件数：过大→单 tick 磁盘 I/O 阻塞 UI（表现为窗口「卡住/假死」）；
+; 过小→tick 次数与整表扫描次数增加，总耗时略升。
+; 实测资源主体是 resources/python-embed（约 1.1 万个碎小文件，占 11060 条中的 10956 条），
+; 瓶颈不是字节数而是「每文件创建+关闭 + Defender 逐文件实时扫描」的固定开销：
+; 1000 个/批实测单 tick 可冻结 UI 数秒（超过 Windows 判定「未响应」的 5s 阈值），
+; 与旧注释「1000 约 40MB/批、远低于 5s」的前提不符（那是按大文件估的）。
+; 降到 100 后单 tick 只写 ~100 个碎文件，阻塞降到亚秒级；总 tick 数约 110，
+; 每 tick 的 11060 项条件扫描开销（~十几 ms）可忽略。
 ; 必须定义在卸载函数之前（NSIS 预处理器按源顺序展开 !define），
 ; 否则卸载 stage 里宏为空 → IntOp 操作数为空 → 删除卡死在“正在删除资源文件”。
-!define RES_BATCH_SIZE 1000
+!define RES_BATCH_SIZE 100
 
 ; ── 配色（SetCtlColors 使用 RGB；GDI SendMessage 使用 BGR）──
 !define CLR_PINK        0xD4537E
@@ -129,6 +135,14 @@ LoadLanguageFile "${NSISDIR}\Contrib\Language files\SimpChinese.nlf"
   !define PBM_SETBKCOLOR 0x040D
 !endif
 
+; 明细列表（LISTBOX）消息常量
+!ifndef LB_ADDSTRING
+  !define LB_ADDSTRING 0x0180
+!endif
+!ifndef LB_SETTOPINDEX
+  !define LB_SETTOPINDEX 0x0197
+!endif
+
 ; ── 窗口尺寸（与 mockup.html 一致）──
 !define WIN_W   540
 !define WIN_H   430
@@ -154,6 +168,7 @@ Var hFontSmall
 Var hFontTiny
 Var hFontBtn
 Var hProgressStatus
+Var hDetails
 Var hProgressBar
 Var hProgressFill
 Var hNextBtn
@@ -230,10 +245,21 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   !include MultiUser.nsh
 !endif
 
-; ── 无边框自定义窗口 ──
-!macro MakeBorderless
+; ── 无边框样式 + 圆角（绝对不动窗口坐标）──
+; 页面切换时只重新套用样式与圆角。此前页面函数直接调 MakeBorderless（内含按屏幕中心
+; SetWindowPos），导致用户把窗口拖到别处后一翻页就被拉回屏幕正中。故此处剥离定位职责。
+!macro ApplyBorderless
   System::Call "user32::SetWindowLong(i $HWNDPARENT, i ${GWL_STYLE}, i 0x92000000)"
   System::Call "user32::SetWindowLong(i $HWNDPARENT, i ${GWL_EXSTYLE}, i 0)"
+  System::Call "gdi32::CreateRoundRectRgn(i 0, i 0, i ${WIN_W}, i ${WIN_H}, i 12, i 12) i .r0"
+  System::Call "user32::SetWindowRgn(i $HWNDPARENT, i r0, i 1)"
+!macroend
+
+; ── 无边框 + 首次居中 ──
+; 仅在 .onGUIInit 调用一次：此时窗口还没被用户拖过，居中与需求一致。
+; 各页面函数一律改用 ApplyBorderless，避免翻页重置位置。
+!macro MakeBorderless
+  !insertmacro ApplyBorderless
   System::Call "user32::GetSystemMetrics(i 0) i .r0"
   System::Call "user32::GetSystemMetrics(i 1) i .r1"
   IntOp $2 $0 - ${WIN_W}
@@ -241,8 +267,6 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   IntOp $3 $1 - ${WIN_H}
   IntOp $3 $3 / 2
   System::Call "user32::SetWindowPos(i $HWNDPARENT, i 0, i r2, i r3, i ${WIN_W}, i ${WIN_H}, i 0x34)"
-  System::Call "gdi32::CreateRoundRectRgn(i 0, i 0, i ${WIN_W}, i ${WIN_H}, i 12, i 12) i .r0"
-  System::Call "user32::SetWindowRgn(i $HWNDPARENT, i r0, i 1)"
 !macroend
 
 ; ── 把 nsDialogs 内容对话框放大铺满整个无边框窗口 ──
@@ -554,7 +578,7 @@ Function fn_Welcome
   nsDialogs::Create 1018
   Pop $Dialog
   StrCpy $CurPage 1
-  !insertmacro MakeBorderless
+  !insertmacro ApplyBorderless
   !insertmacro FillPage
   !insertmacro HideWizardChrome
   SetCtlColors $Dialog "" "${CLR_BG}"
@@ -589,7 +613,7 @@ Function fn_DirPage
   nsDialogs::Create 1018
   Pop $Dialog
   StrCpy $CurPage 2
-  !insertmacro MakeBorderless
+  !insertmacro ApplyBorderless
   !insertmacro FillPage
   !insertmacro HideWizardChrome
   SetCtlColors $Dialog "" "${CLR_BG}"
@@ -655,7 +679,7 @@ Function fn_ProgressPage
   nsDialogs::Create 1018
   Pop $Dialog
   StrCpy $CurPage 3
-  !insertmacro MakeBorderless
+  !insertmacro ApplyBorderless
   !insertmacro FillPage
   !insertmacro HideWizardChrome
   SetCtlColors $Dialog "" "${CLR_BG}"
@@ -687,6 +711,15 @@ Function fn_ProgressPage
   Pop $hProgressStatus
   SetCtlColors $hProgressStatus "${CLR_TEXT_MUTED}" "${CLR_BG}"
   !insertmacro ApplyFont $hProgressStatus $hFontTiny
+
+  ; 安装明细列表：对标其他安装包的「正在安装/解压 xxx」滚动明细。
+  ; 原生 LISTBOX（WS_CHILD|WS_VISIBLE|WS_VSCROLL|WS_BORDER|LBS_NOINTEGRALHEIGHT），
+  ; 随分批写入逐行追加路径，并自动滚到最新一行（LB_SETTOPINDEX）。
+  System::Call "user32::CreateWindowEx(i 0, t 'LISTBOX', i 0, i 0x50A00100, i 30, i 284, i 480, i 74, i $Dialog, i 0, i 0, i 0) i .r1"
+  StrCpy $hDetails $1
+  System::Call "uxtheme::SetWindowTheme(i $hDetails, w \"\", w \"\")"
+  SetCtlColors $hDetails "${CLR_TEXT_MUTED}" "${CLR_INPUT_BG}"
+  !insertmacro ApplyFont $hDetails $hFontTiny
 
   !insertmacro CreateFooter 3 "$PLUGINSDIR\btn_installing.bmp" 1 0 fn_PrevClick fn_NextClick
 
@@ -755,7 +788,7 @@ Function fn_Finish
   nsDialogs::Create 1018
   Pop $Dialog
   StrCpy $CurPage 4
-  !insertmacro MakeBorderless
+  !insertmacro ApplyBorderless
   !insertmacro FillPage
   !insertmacro HideWizardChrome
   SetCtlColors $Dialog "" "${CLR_BG}"
@@ -896,7 +929,7 @@ Function un.Confirm
   nsDialogs::Create 1018
   Pop $Dialog
   StrCpy $unCurPage 1
-  !insertmacro MakeBorderless
+  !insertmacro ApplyBorderless
   !insertmacro FillPage
   !insertmacro HideWizardChrome
   SetCtlColors $Dialog "" "${CLR_BG}"
@@ -992,7 +1025,7 @@ Function un.Progress
   nsDialogs::Create 1018
   Pop $Dialog
   StrCpy $unCurPage 2
-  !insertmacro MakeBorderless
+  !insertmacro ApplyBorderless
   !insertmacro FillPage
   !insertmacro HideWizardChrome
   SetCtlColors $Dialog "" "${CLR_BG}"
@@ -1066,7 +1099,7 @@ Function un.Done
   nsDialogs::Create 1018
   Pop $Dialog
   StrCpy $unCurPage 3
-  !insertmacro MakeBorderless
+  !insertmacro ApplyBorderless
   !insertmacro FillPage
   !insertmacro HideWizardChrome
   SetCtlColors $Dialog "" "${CLR_BG}"
@@ -1269,15 +1302,18 @@ Function fn_DoInstall
     !insertmacro SetProgressWidth 25
     File "${MAINBINARYSRCPATH}"
     File "D:\naixi_desktop\src-tauri\icons\icon.ico"
+    SendMessage $hDetails ${LB_ADDSTRING} 0 "STR:${MAINBINARYNAME}.exe"
+    SendMessage $hDetails ${LB_ADDSTRING} 0 "STR:icon.ico"
     IntOp $InstallStage $InstallStage + 1
     Return
   ${EndIf}
   ${If} $InstallStage == 2
     ; 分批写入资源：每个 timer tick 只写 ${RES_BATCH_SIZE} 个文件，
-    ; 写完 Return 让 UI 消息泵刷新，避免 15000+ 文件一次性同步 File 写入卡死（#1/#6）。
+    ; 写完 Return 让 UI 消息泵刷新，避免上万个文件一次性同步 File 写入把 UI 冻住（#1/#6）。
     ${If} $ResBatch == 0
       ${NSD_SetText} $hProgressStatus "创建资源目录..."
       !insertmacro SetProgressWidth 40
+      SendMessage $hDetails ${LB_ADDSTRING} 0 "STR:创建资源目录结构"
       {{#each resources_dirs}}
         CreateDirectory "$INSTDIR\\{{this}}"
       {{/each}}
@@ -1287,14 +1323,18 @@ Function fn_DoInstall
     IntOp $BatchStart $ResBatch * ${RES_BATCH_SIZE}
     IntOp $BatchEnd $BatchStart + ${RES_BATCH_SIZE}
     StrCpy $ResIdx 0
-    ; File 为编译期嵌入 + 运行期解压，包在 ${If} 内即“按批条件解压”，跳过项不做磁盘 I/O
+    ; File 为编译期嵌入 + 运行期解压，包在 ${If} 内即“按批条件解压”，跳过项不做磁盘 I/O；
+    ; 明细行同样只在批内追加，避免每 tick 付出上万次调用。
     {{#each resources}}
       ${If} $ResIdx >= $BatchStart
       ${AndIf} $ResIdx < $BatchEnd
         File /a "/oname={{this.[1]}}" "{{no-escape @key}}"
+        SendMessage $hDetails ${LB_ADDSTRING} 0 "STR:{{this.[1]}}"
       ${EndIf}
       IntOp $ResIdx $ResIdx + 1
     {{/each}}
+    ; 明细自动滚到本批起始行，保证最新写入始终可见
+    SendMessage $hDetails ${LB_SETTOPINDEX} $BatchStart 0
     ; 循环结束后 $ResIdx = 资源文件总数；进度按已写比例在 40→68% 间推进
     IntOp $BatchTmp $BatchEnd * 28
     IntOp $BatchTmp $BatchTmp / $ResIdx
@@ -1303,6 +1343,7 @@ Function fn_DoInstall
       StrCpy $BatchTmp 68
     ${EndIf}
     !insertmacro SetProgressWidth $BatchTmp
+    ${NSD_SetText} $hProgressStatus "写入资源文件... $BatchEnd / $ResIdx"
     IntOp $ResBatch $ResBatch + 1
     ${If} $BatchEnd >= $ResIdx
       ; 全部资源写完，进入下一阶段
@@ -1313,8 +1354,10 @@ Function fn_DoInstall
   ${If} $InstallStage == 3
     ${NSD_SetText} $hProgressStatus "写入依赖文件..."
     !insertmacro SetProgressWidth 70
+    SendMessage $hDetails ${LB_ADDSTRING} 0 "STR:写入依赖运行库"
     {{#each binaries}}
       File /a "/oname={{this}}" "{{no-escape @key}}"
+      SendMessage $hDetails ${LB_ADDSTRING} 0 "STR:{{this}}"
     {{/each}}
     IntOp $InstallStage $InstallStage + 1
     Return
@@ -1323,12 +1366,14 @@ Function fn_DoInstall
     ${NSD_SetText} $hProgressStatus "写入卸载程序..."
     !insertmacro SetProgressWidth 82
     WriteUninstaller "$INSTDIR\uninstall.exe"
+    SendMessage $hDetails ${LB_ADDSTRING} 0 "STR:uninstall.exe"
     IntOp $InstallStage $InstallStage + 1
     Return
   ${EndIf}
   ${If} $InstallStage == 5
     ${NSD_SetText} $hProgressStatus "注册安装信息..."
     !insertmacro SetProgressWidth 90
+    SendMessage $hDetails ${LB_ADDSTRING} 0 "STR:写入注册表安装信息（版本 ${VERSION}）"
     WriteRegStr SHCTX "${MANUPRODUCTKEY}" "" $INSTDIR
     WriteRegStr SHCTX "${UNINSTKEY}" "MainBinaryName" "${MAINBINARYNAME}.exe"
     WriteRegStr SHCTX "${UNINSTKEY}" "DisplayName" "${PRODUCTNAME}"
@@ -1350,6 +1395,7 @@ Function fn_DoInstall
   !insertmacro SetProgressWidth 100
   CreateDirectory "$SMPROGRAMS\${PRODUCTNAME}"
   CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}\奶昔.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\icon.ico" 0
+  SendMessage $hDetails ${LB_ADDSTRING} 0 "STR:创建开始菜单快捷方式"
   !ifmacrodef NSIS_HOOK_POSTINSTALL
     !insertmacro NSIS_HOOK_POSTINSTALL
   !endif

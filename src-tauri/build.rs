@@ -78,6 +78,44 @@ fn sync_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// 预热读取：以只读方式逐个打开文件（带重试），逼 Windows Defender 在
+/// tauri_build 枚举 resources/ 之前把这些新拷入的文件扫完，避免 tauri_build
+/// 内部读文件时撞上 Defender 的瞬时共享锁（os error 32）。
+fn warm_read_retry(dir: &Path) {
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let entries = match fs::read_dir(&d) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                stack.push(p);
+                continue;
+            }
+            for attempt in 0..12 {
+                match fs::File::open(&p) {
+                    Ok(mut f) => {
+                        let mut buf = [0u8; 4096];
+                        let _ = std::io::Read::read(&mut f, &mut buf);
+                        break;
+                    }
+                    Err(e) => {
+                        let raw = e.raw_os_error().unwrap_or(0);
+                        if raw == 32 || raw == 33 {
+                            thread::sleep(Duration::from_millis(150 * (attempt + 1)));
+                            continue;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[allow(dead_code)]
 fn main() {
     // 声明依赖：desktop_core / searxng 任一文件变化都必须重跑本 build script。
     // 否则 cargo 会缓存跳过 build script，导致"改了 python 却没同步进运行态副本"的漂移
@@ -99,25 +137,35 @@ fn main() {
         }
     }
 
-    // 关键修复：searxng 自带一整套 Python 环境（含大量 .pyd）。
-    // tauri_build::build() 会遍历 resources/ 并嵌入——读 _brotli.cp311-win_amd64.pyd 时
-    // 常被 Windows Defender 实时防护的瞬时共享锁挡住（os error 32），导致构建偶发失败。
-    // 治本：构建前把 resources/searxng 整个移出，让 tauri_build 根本不碰它；
-    // tauri_build 完成后再把 searxng 拷回（拷贝带重试，绕开 Defender）。
-    let searx_dst = resources.join("searxng");
-    remove_dir_retry(&searx_dst);
-
-    // 此时 resources/ 内无 searxng → tauri_build 不会读 .pyd → 不再 os error 32
-    tauri_build::build();
-
-    // tauri_build 完成，把 searxng 拷回资源目录（运行态/打包都需要），拷贝带重试。
+    // searxng 必须先落到 resources/searxng 再调 tauri_build::build()。
+    //
+    // 历史坑（本次修复）：旧实现是「构建前把 resources/searxng 整个移走 → tauri_build::build()
+    // → 之后再拷回」，本意是躲开 Defender 对 .pyd 的瞬时共享锁（os error 32）。
+    // 但 tauri_build 会校验 bundle.resources 里每个 glob 至少匹配到一个文件，
+    // 此时 searxng 恰好不在资源目录里，于是直接报
+    //   glob pattern resources/searxng/**/* path not found or didn't match any files
+    // 并中止构建；更糟的是报错后「拷回 searxng」的代码永不执行，资源目录被清空。
+    // 正解：先把 searxng 同步好，再让 tauri_build 看到完整资源；防锁改用预热读取。
     let searx_src = manifest_dir.join("..").join("searxng");
+    let searx_dst = resources.join("searxng");
     if searx_src.is_dir() {
         if let Err(e) = sync_dir(&searx_src, &searx_dst) {
-            eprintln!("warn: failed to restore searxng into resources: {e}");
+            eprintln!("warn: failed to sync searxng into resources: {e}");
         }
-        // 同时直接补一份到 target/release/resources（--no-bundle 运行态读取位置），
-        // 防止 tauri CLI 资源同步阶段未覆盖 searxng 导致运行态搜索不可用。
+        warm_read_retry(&searx_dst);
+    } else {
+        // 缺少 searxng 会让 glob 空匹配 → tauri_build 直接失败，故此处明确报错提示。
+        eprintln!(
+            "warn: 未找到 {}（内置 SearXNG 缺席，安装包将缺少离线搜索）",
+            searx_src.display()
+        );
+    }
+
+    tauri_build::build();
+
+    // tauri_build 完成，再补一份到 target/release/resources（--no-bundle 运行态读取位置），
+    // 防止 tauri CLI 资源同步阶段未覆盖 searxng 导致运行态搜索不可用。
+    if searx_src.is_dir() {
         let release_res = manifest_dir
             .join("..")
             .join("target")
