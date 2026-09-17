@@ -814,11 +814,46 @@ Function fn_ProgressPage
   nsDialogs::Show
 FunctionEnd
 
-!macro SetProgressWidth PERCENT
+; 进度推进的唯一入口：进度条 + 右下角「百分比数字」必须同源同值。
+; 修 #170 缺陷：此前 $hCurPct 只在各阶段开头被设成 "0%"、结尾设成 "100%"，
+; 中间从不更新 ⇒ 用户全程只看到 0% 和 100%（进度条动了、数字没动）。
+; 旧宏 SetProgressWidth 只动条不动数字（正是该缺陷的温床），已删除；
+; 今后任何进度推进一律走本宏，禁止再出现第二个写法。
+!macro SetInstallProgress PERCENT
   SendMessage $hProgressFill ${PBM_SETPOS} ${PERCENT} 0
+  ${NSD_SetText} $hCurPct "${PERCENT}%"
   ; 立即重绘父窗口（含进度条），避免大文件写入阻塞 UI 线程时进度条“假死”
   System::Call "user32::UpdateWindow(i $HWNDPARENT)"
 !macroend
+
+; 后台隐藏解压某一卷，并把成功/失败写进标记文件供 timer 轮询。
+;
+; ★★ 这里是 2026-09-17 真机验证挖出的真凶，别再改回原样 ★★
+; 原写法是 ExecShell '/c "7z.exe" x -y -o"..." "part.7z" && echo done > "flag"'，
+; 但 cmd.exe 对 `/c` 后**以引号开头**的命令行有特殊规则：它会剥掉**首尾各一个**引号，
+; 于是「给 7z.exe 加的那个引号」被当成整串的边界 ⇒ 命令被拆坏。
+; 真机实测后果（VM 内对照实验，可复现）：
+;   A 原样写法  → cmd 退出码 1、7z 根本没运行、目标目录零产物、标记文件永不出现；
+;   B 整串加引号 → 退出码 0、正常解压、标记文件正常写出。
+; 而 A 的后果就是用户看到的两个症状：
+;   「卡在 正在解压核心资源... (1/N)」+「百分比只有开头和 100%」——
+;   因为标记永不出现 ⇒ 安装器空等约 10 分钟超时兜底 ⇒ 进度从 40% 直接跳到 100%，
+;   而资源其实根本没被解压出来（装完是残缺的）。
+; 所以：整条命令必须**用一对引号整体包起来**交给 cmd /c（B 写法），
+; 且用 &&/|| 把成功失败都写进标记，杜绝“解压失败被静默吞掉”。
+!macro StartPartExtract PARTINDEX
+  ExecShell "open" "cmd.exe" '/c "$\"$INSTDIR\resources\_bundle\7z.exe$\" x -y -o$\"$INSTDIR\resources$\" $\"$INSTDIR\resources\_bundle\res_part_${PARTINDEX}.7z$\" > nul 2>&1 && echo OK > $\"$PLUGINSDIR\res_done.flag$\" || echo FAIL > $\"$PLUGINSDIR\res_done.flag$\""' SW_HIDE
+!macroend
+
+; 资源解压期间的心跳计数（每 tick +1，满 10 ≈ 1 秒，用于刷新"已用 N 秒"）
+Var TickSec
+Var TickSecN
+; 资源解压的完成标记内容（OK/FAIL）与「是否有卷解压失败」，用于把失败如实报出来
+Var FlagTxt
+Var ResFlag
+Var ResFail
+; 清理临时解压目录的重试计数
+Var CleanTry
 
 Function fn_InstallTick
   ; 先杀掉当前计时器再重建，避免每次 tick 都新增一个计时器造成泄漏累积（曾导致 UI 卡顿/转圈）。
@@ -1339,7 +1374,7 @@ FunctionEnd
 Function fn_DoInstall
   ${If} $InstallStage == 0
     ${NSD_SetText} $hProgressStatus "准备安装..."
-    !insertmacro SetProgressWidth 8
+    !insertmacro SetInstallProgress 8
     StrCpy $ResBatch 0
     ; ── 覆盖安装修复（移到此处：对话框已显示，避免「灰白空窗」#1）──
     ; 1) 杀整棵进程树（主程序 + Python 子进程），释放文件锁
@@ -1374,9 +1409,8 @@ Function fn_DoInstall
   ${If} $InstallStage == 1
     ${NSD_SetText} $hProgressStatus "写入主程序..."
     ${NSD_SetText} $hCurName "主程序"
-    ${NSD_SetText} $hCurPct "0%"
     !insertmacro SetComp 1 1 "主程序"
-    !insertmacro SetProgressWidth 25
+    !insertmacro SetInstallProgress 25
     File "${MAINBINARYSRCPATH}"
     File "D:\naixi_desktop\src-tauri\icons\icon.ico"
     !insertmacro SetComp 1 2 "主程序"
@@ -1388,12 +1422,11 @@ Function fn_DoInstall
     ; 根治「只有 0%→100% 跳变」（build.rs 打 res_part_*.7z；part_count.txt 记录卷数）。
     ${If} $ResBatch == 0
       ${NSD_SetText} $hProgressStatus "创建资源目录..."
-      !insertmacro SetProgressWidth 40
+      !insertmacro SetInstallProgress 40
       !insertmacro SetComp 2 1 "核心资源 (desktop_core)"
       !insertmacro SetComp 3 1 "Python 运行时"
       !insertmacro SetComp 4 1 "SearXNG 搜索引擎"
       ${NSD_SetText} $hCurName "核心资源"
-      ${NSD_SetText} $hCurPct "0%"
       {{#each resources_dirs}}
         CreateDirectory "$INSTDIR\\{{this}}"
       {{/each}}
@@ -1416,33 +1449,52 @@ Function fn_DoInstall
       ${EndIf}
       StrCpy $CurPart 1
       StrCpy $BatchTmp2 0
+      StrCpy $ResFail 0
       ${NSD_SetText} $hProgressStatus "正在解压核心资源... (1/$PartTotal)"
       IntFmt $R7 "%02d" $CurPart
-      ExecShell "open" "cmd.exe" '/c $\"$INSTDIR\resources\_bundle\7z.exe$\" x -y -o$\"$INSTDIR\resources$\" $\"$INSTDIR\resources\_bundle\res_part_$R7.7z$\" && echo done > $\"$PLUGINSDIR\res_done.flag$\"' SW_HIDE
+      !insertmacro StartPartExtract $R7
       IntOp $ResBatch $ResBatch + 1
       Return
     ${EndIf}
     ${If} $ResBatch == 1
       IntOp $BatchTmp2 $BatchTmp2 + 1
+      ; 心跳：每约 1 秒刷新一次状态行（"已用 N 秒"），
+      ; 避免单卷较大、解压较久时观感像卡死（#170 的伴生问题）
+      IntOp $TickSec $TickSec + 1
+      ${If} $TickSec >= 10
+        StrCpy $TickSec 0
+        IntOp $TickSecN $BatchTmp2 / 10
+        ${NSD_SetText} $hProgressStatus "正在解压核心资源... ($CurPart/$PartTotal)，已用 $TickSecN 秒"
+      ${EndIf}
       ${If} ${FileExists} "$PLUGINSDIR\res_done.flag"
+        ; 标记文件内容 = OK / FAIL（由解压命令按退出码写入），失败不再被静默吞掉
+        FileOpen $FlagTxt "$PLUGINSDIR\res_done.flag" r
+        FileRead $FlagTxt $ResFlag
+        FileClose $FlagTxt
         Delete "$PLUGINSDIR\res_done.flag"
+        StrCpy $ResFlag $ResFlag 4
+        ${If} $ResFlag == "FAIL"
+          StrCpy $ResFail 1
+        ${EndIf}
         ; 本卷完成：按已完成卷数推进总进度（stage2 占 40→68）
         IntOp $R8 $CurPart * 28
         IntOp $R8 $R8 / $PartTotal
         IntOp $R8 $R8 + 40
-        !insertmacro SetProgressWidth $R8
+        !insertmacro SetInstallProgress $R8
         ${If} $CurPart < $PartTotal
           IntOp $CurPart $CurPart + 1
-          ${NSD_SetText} $hProgressStatus "正在解压核心资源... ($CurPart/$PartTotal)"
-          ${NSD_SetText} $hCurPct "$CurPart/$PartTotal"
+          ; 每卷重置计时：既让"已用秒数"从 0 起算，也让超时判断按"单卷"而非全程累计
+          StrCpy $BatchTmp2 0
+          StrCpy $TickSec 0
+          ${NSD_SetText} $hProgressStatus "正在解压核心资源... ($CurPart/$PartTotal)，已用 0 秒"
           IntFmt $R7 "%02d" $CurPart
-          ExecShell "open" "cmd.exe" '/c $\"$INSTDIR\resources\_bundle\7z.exe$\" x -y -o$\"$INSTDIR\resources$\" $\"$INSTDIR\resources\_bundle\res_part_$R7.7z$\" && echo done > $\"$PLUGINSDIR\res_done.flag$\"' SW_HIDE
+          !insertmacro StartPartExtract $R7
           Return
         ${Else}
           Goto res_verify
         ${EndIf}
-      ${ElseIf} $BatchTmp2 > 5000
-        ; 超时兜底（~10 分钟）：不删归档，直接校验；缺失则明确报错（#3）
+      ${ElseIf} $BatchTmp2 > 3000
+        ; 超时兜底（约 6 分钟）：不删归档，直接校验；缺失则明确报错（#3）
         ${NSD_SetText} $hProgressStatus "警告：资源解压超时，正在校验完整性..."
         Goto res_verify
       ${EndIf}
@@ -1453,9 +1505,8 @@ Function fn_DoInstall
   ${If} $InstallStage == 3
     ${NSD_SetText} $hProgressStatus "写入依赖文件..."
     ${NSD_SetText} $hCurName "依赖运行库"
-    ${NSD_SetText} $hCurPct "0%"
     !insertmacro SetComp 5 1 "依赖运行库"
-    !insertmacro SetProgressWidth 70
+    !insertmacro SetInstallProgress 70
     {{#each binaries}}
       File /a "/oname={{this}}" "{{no-escape @key}}"
     {{/each}}
@@ -1466,9 +1517,8 @@ Function fn_DoInstall
   ${If} $InstallStage == 4
     ${NSD_SetText} $hProgressStatus "写入卸载程序..."
     ${NSD_SetText} $hCurName "卸载程序"
-    ${NSD_SetText} $hCurPct "0%"
     !insertmacro SetComp 6 1 "卸载程序"
-    !insertmacro SetProgressWidth 82
+    !insertmacro SetInstallProgress 82
     WriteUninstaller "$INSTDIR\uninstall.exe"
     !insertmacro SetComp 6 2 "卸载程序"
     IntOp $InstallStage $InstallStage + 1
@@ -1477,9 +1527,8 @@ Function fn_DoInstall
   ${If} $InstallStage == 5
     ${NSD_SetText} $hProgressStatus "注册安装信息..."
     ${NSD_SetText} $hCurName "注册表信息"
-    ${NSD_SetText} $hCurPct "0%"
     !insertmacro SetComp 7 1 "注册表信息"
-    !insertmacro SetProgressWidth 90
+    !insertmacro SetInstallProgress 90
     WriteRegStr SHCTX "${MANUPRODUCTKEY}" "" $INSTDIR
     WriteRegStr SHCTX "${UNINSTKEY}" "MainBinaryName" "${MAINBINARYNAME}.exe"
     WriteRegStr SHCTX "${UNINSTKEY}" "DisplayName" "${PRODUCTNAME}"
@@ -1500,9 +1549,8 @@ Function fn_DoInstall
   ; 最后阶段：创建快捷方式并收尾
   ${NSD_SetText} $hProgressStatus "创建快捷方式..."
   ${NSD_SetText} $hCurName "开始菜单快捷方式"
-  ${NSD_SetText} $hCurPct "0%"
   !insertmacro SetComp 8 1 "开始菜单快捷方式"
-  !insertmacro SetProgressWidth 100
+  !insertmacro SetInstallProgress 100
   CreateDirectory "$SMPROGRAMS\${PRODUCTNAME}"
   CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}\奶昔.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\icon.ico" 0
   !ifmacrodef NSIS_HOOK_POSTINSTALL
@@ -1513,17 +1561,21 @@ Function fn_DoInstall
   ${NSD_SetBitmap} $hNextBmp "$PLUGINSDIR\btn_finish.bmp" $R0
   ${NSD_SetText} $hProgressStatus "安装完成。"
   ${NSD_SetText} $hCurName "安装完成"
-  ${NSD_SetText} $hCurPct "100%"
   EnableWindow $hNextBtn 1
   Return
 
   ; ── 资源完整性校验（多卷解压完成后或超时兜底时进入）──
   res_verify:
+    ; 先看解压过程中有没有卷报 FAIL：有就如实告知，不要再摆出一副“安装成功”的样子
+    ${If} $ResFail == 1
+      ${NSD_SetText} $hProgressStatus "警告：部分资源分卷解压失败，安装可能不完整"
+      Goto res_finish
+    ${EndIf}
     ${IfNot} ${FileExists} "$INSTDIR\resources\desktop_core\api.py"
       ${NSD_SetText} $hProgressStatus "警告：核心资源缺失 (desktop_core/api.py)，安装可能不完整"
       Goto res_finish
     ${EndIf}
-    ${IfNot} ${FileExists} "$INSTDIR\resources\python-embed\python\pythonw.exe"
+    ${IfNot} ${FileExists} "$INSTDIR\resources\python-embed\pythonw.exe"
       ${NSD_SetText} $hProgressStatus "警告：Python 运行时缺失，安装可能不完整"
       Goto res_finish
     ${EndIf}
@@ -1534,16 +1586,27 @@ Function fn_DoInstall
     !insertmacro SetComp 2 2 "核心资源 (desktop_core)"
     !insertmacro SetComp 3 2 "Python 运行时"
     !insertmacro SetComp 4 2 "SearXNG 搜索引擎"
-    ${NSD_SetText} $hCurPct "100%"
-    !insertmacro SetProgressWidth 68
+    !insertmacro SetInstallProgress 68
     Goto res_finish
   res_finish:
-    ; 清理临时解压工具与压缩包（已解压资源保留在 $INSTDIR\resources）
-    Delete "$INSTDIR\resources\_bundle\res_part_*.7z"
-    Delete "$INSTDIR\resources\_bundle\part_count.txt"
-    Delete "$INSTDIR\resources\_bundle\7z.exe"
-    Delete "$INSTDIR\resources\_bundle\7z.dll"
-    RMDir "$INSTDIR\resources\_bundle"
+    ; 清理临时解压工具与压缩包（已解压资源保留在 $INSTDIR\resources）。
+    ; ⚠ 实测（v0.2.4 真机验证）：刚写出的分卷会**被杀软/索引器占用数秒到数十秒**，
+    ; 此时 NSIS 的 Delete/RMDir 会**静默失败**并留下垃圾（现场两次分别留下
+    ; 7z.exe / 7z.dll / res_part_14.7z、以及 res_part_15.7z / res_part_16.7z，
+    ; 而事后手动删又能删掉 ⇒ 确认是瞬时占用，不是路径写错）。
+    ; 策略：先重试 6 次（每次间隔 600ms）；仍失败则挂到下次重启删除，保证最终不留垃圾。
+    StrCpy $CleanTry 0
+  res_clean:
+    RMDir /r "$INSTDIR\resources\_bundle"
+    ${If} ${FileExists} "$INSTDIR\resources\_bundle\*.*"
+      IntOp $CleanTry $CleanTry + 1
+      ${If} $CleanTry < 6
+        Sleep 600
+        Goto res_clean
+      ${EndIf}
+      Delete /REBOOTOK "$INSTDIR\resources\_bundle\*.*"
+      RMDir /REBOOTOK "$INSTDIR\resources\_bundle"
+    ${EndIf}
     IntOp $InstallStage $InstallStage + 1
     Return
 FunctionEnd
