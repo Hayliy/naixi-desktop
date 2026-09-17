@@ -599,23 +599,55 @@ async def _searxng_watchdog(interval: int = 60):
 async def _restart_searxng() -> tuple[bool, str]:
     """尝试重启 SearXNG 搜索服务"""
     try:
-        # 清理旧实例：8899 端口占用者（webapp python）+ exe 壳，确保干净重启。
-        # 注：webapp 进程名是 python.exe，原 taskkill 'SearXNG*' 杀不到，必须按端口清理。
+        # 若端口已在监听（如刚被其他实例拉起），直接视为就绪，避免重复 taskkill。
         try:
-            subprocess.run(["powershell", "-NoProfile", "-Command",
-                "$p=Get-NetTCPConnection -LocalPort 8899 -State Listen -ErrorAction SilentlyContinue; "
-                "if($p){Stop-Process -Id $p.OwningProcess -Force -ErrorAction SilentlyContinue}; "
-                "Get-Process -Name 'SearXNG*' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue"],
-                capture_output=True, text=True, timeout=8,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+            _, w = await asyncio.wait_for(
+                asyncio.open_connection("127.0.0.1", 8899), timeout=1.0
+            )
+            w.close()
+            try:
+                await w.wait_closed()
+            except Exception:
+                pass
+            return True, "SearXNG 已在运行（端口 8899 监听中）"
         except Exception:
             pass
-        await asyncio.sleep(1)
+
+        # 端口未被占用（冷启动常见路径）：无需 PowerShell 清理，直接进入启动，
+        # 省下约 0.5~8s 的进程探测开销（#4）。仅在确有进程占用时才按端口清理。
+        _port_held = False
+        try:
+            _, w = await asyncio.wait_for(
+                asyncio.open_connection("127.0.0.1", 8899), timeout=0.5
+            )
+            _port_held = True
+            w.close()
+            try:
+                await w.wait_closed()
+            except Exception:
+                pass
+        except Exception:
+            _port_held = False
+        if _port_held:
+            try:
+                subprocess.run(["powershell", "-NoProfile", "-Command",
+                    "$p=Get-NetTCPConnection -LocalPort 8899 -State Listen -ErrorAction SilentlyContinue; "
+                    "if($p){Stop-Process -Id $p.OwningProcess -Force -ErrorAction SilentlyContinue}; "
+                    "Get-Process -Name 'SearXNG*' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue"],
+                    capture_output=True, text=True, timeout=8,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+            except Exception:
+                pass
+            await asyncio.sleep(1)
 
         # 定位 searxng 目录（多候选，兼容开发态/打包态）
         searxng_dir = _find_searxng_dir()
         if not searxng_dir:
-            return False, "SearXNG 目录不存在（已向上遍历项目根及上层 searxng 目录）"
+            msg = "SearXNG 目录不存在（已向上遍历项目根及上层 searxng 目录）"
+            log.error(f"[SearXNG] {msg} — 内置离线搜索不可用，应用将降级到公共引擎。")
+            return False, msg
+
+        log.info("[SearXNG] 正在拉起 SearXNG（webapp.py，冷启动加载依赖约需数十秒）...")
 
         # 启动：用自带 pythonw（无窗口子系统）直接跑 webapp.py——避免弹出可见控制台终端。
         # 关键修复：必须显式传 SEARXNG_SETTINGS_PATH，否则 webapp 用内置默认配置监听 8888，
@@ -637,19 +669,36 @@ async def _restart_searxng() -> tuple[bool, str]:
             subprocess.Popen([py, webapp], cwd=searxng_dir, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, startupinfo=startupinfo, env=env)
         else:
-            return False, (f"SearXNG 启动器不存在：python={os.path.exists(py)}({py}), "
-                           f"webapp={os.path.exists(webapp)}({webapp}), searxng_dir={searxng_dir}")
+            msg = (f"SearXNG 启动器不存在：python={os.path.exists(py)}({py}), "
+                   f"webapp={os.path.exists(webapp)}({webapp}), searxng_dir={searxng_dir}")
+            log.error(f"[SearXNG] {msg}")
+            return False, msg
 
-        # 等待端口就绪（webapp 冷启动较慢，给足 20s）
-        for i in range(40):
+        # 等待端口就绪（裸 socket 探测，毫秒级、无 HTTP 开销）。
+        # 注意：webapp 冷启动在嵌入式 Python 上可能长达 40+ 秒（Flask 依赖全量导入）。
+        # 旧实现只等 20s 就超时返回「失败」，但 SearXNG 子进程仍在后台继续启动，
+        # 造成「明明在跑却报检测不到」的假阴性（#3）。这里给足 80s，并按 5s 节奏打日志，
+        # 让等待可观测、不再像卡死（#4）。
+        for i in range(160):
             await asyncio.sleep(0.5)
             try:
-                import urllib.request
-                urllib.request.urlopen("http://127.0.0.1:8899", timeout=2)
+                _, w = await asyncio.wait_for(
+                    asyncio.open_connection("127.0.0.1", 8899), timeout=1.0
+                )
+                w.close()
+                try:
+                    await w.wait_closed()
+                except Exception:
+                    pass
+                log.info("[SearXNG] 已就绪（端口 8899 监听）")
                 return True, "SearXNG 已启动（端口 8899 就绪）"
             except Exception:
+                if (i + 1) % 10 == 0:
+                    log.info(f"[SearXNG] 仍在加载依赖（已等待 {(i + 1) // 2} 秒），请稍候...")
                 continue
-        return False, "SearXNG 启动后端口未就绪"
+        msg = "SearXNG 启动后端口未就绪（可能 webapp 崩溃，请查看 searxng 日志）"
+        log.error(f"[SearXNG] {msg}")
+        return False, msg
     except Exception as e:
         return False, f"SearXNG 自愈失败：{e}"
 

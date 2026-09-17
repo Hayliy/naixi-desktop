@@ -15,6 +15,7 @@ const liveCoreVer = path.join(root, 'desktop_core/version.json');
 const snapCoreVer = path.join(root, 'src-tauri/resources/desktop_core/version.json');
 const releaseCoreVer = path.join(root, 'src-tauri/target/release/resources/desktop_core/version.json');
 const tsPath = path.join(root, 'src/lib/version.ts');
+const readmePath = path.join(root, 'README.md');
 
 function readVersion() {
   const conf = JSON.parse(fs.readFileSync(confPath, 'utf8'));
@@ -56,7 +57,35 @@ fs.writeFileSync(tsPath,
   `export const APP_VERSION = ${JSON.stringify(version)};\n` +
   `export const APP_FALLBACK_VERSION = ${JSON.stringify(version)};\n`);
 
+// 5) README 徽章 + 快速开始下载文件名（避免发版后 README 仍写旧版本号，#5）
+if (fs.existsSync(readmePath)) {
+  let readme = fs.readFileSync(readmePath, 'utf8');
+  let changed = false;
+  // 徽章：![Release](https://img.shields.io/badge/Release-vX.Y.Z-blue)
+  const newBadge = `![Release](https://img.shields.io/badge/Release-v${version}-blue)`;
+  readme = readme.replace(/!\[Release\]\(https:\/\/img\.shields\.io\/badge\/Release-v[0-9]+\.[0-9]+\.[0-9]+-blue\)/, (m) => {
+    if (m !== newBadge) changed = true;
+    return newBadge;
+  });
+  // 快速开始下载名：naixi-desktop_X.Y.Z_x64-setup.exe
+  // 注意：必须与 GitHub Release 实际上传的资产名一致（历史均用 naixi-desktop_*，
+  // 且资产名须 ASCII，故不能用中文 productName 前缀 奶昔_*，否则 README 下载链接 404）。
+  const newDl = `naixi-desktop_${version}_x64-setup.exe`;
+  readme = readme.replace(/naixi-desktop_[0-9]+\.[0-9]+\.[0-9]+_x64-setup\.exe/g, (m) => {
+    if (m !== newDl) changed = true;
+    return newDl;
+  });
+  // 代码签名说明段里的版本号（「当前 X.Y.Z 安装包尚未做代码签名」）
+  readme = readme.replace(/当前 [0-9]+\.[0-9]+\.[0-9]+ 安装包尚未做代码签名/, (m) => {
+    const want = `当前 ${version} 安装包尚未做代码签名`;
+    if (m !== want) changed = true;
+    return want;
+  });
+  if (changed) fs.writeFileSync(readmePath, readme);
+}
+
 console.log(`[sync-version] 已同步版本 -> ${version}`);
 console.log('  来源: src-tauri/tauri.conf.json');
 console.log('  已写: src-tauri/Cargo.toml / package.json / desktop_core/version.json(x3) / src/lib/version.ts');
+console.log('  已同步: README.md 徽章 / 快速开始下载名 / 代码签名说明段');
 console.log('  前端运行时仍优先用 getVersion() 读 tauri.conf.json，以上仅为兜底/构建期注入。');

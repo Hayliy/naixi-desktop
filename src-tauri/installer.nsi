@@ -214,6 +214,8 @@ Var hCurName
 Var hCurPct
 Var hCurDetail
 Var BatchTmp2
+Var CurPart
+Var PartTotal
 
 Name "奶昔 · 桌面智能体"
 BrandingText " "
@@ -803,30 +805,8 @@ Function fn_ProgressPage
   StrCpy $InstallDone 0
   StrCpy $InstallStage 0
 
-  ; ── 覆盖安装修复 ──
-  ; 1) 杀整棵进程树（主程序 + Python 子进程），释放文件锁，避免覆盖写失败。
-  ;    对齐卸载逻辑（un.Progress 用 taskkill /F /T 杀树，比插件单进程 KillProcess 彻底）。
-  ; 覆盖安装：杀旧进程树（改用 nsExec 隐藏控制台窗口，不再弹黑窗）
-  nsExec::Exec 'taskkill /F /T /IM "${MAINBINARYNAME}.exe"'
-  Pop $R0
-  nsExec::Exec 'taskkill /F /IM pythonw.exe'
-  Pop $R0
-  nsExec::Exec 'taskkill /F /IM python.exe'
-  Pop $R0
-  Sleep 800
-  ; 2) 检测已安装 → 升级模式：先静默卸旧版，再装（干净的覆盖安装）。
-  ReadRegStr $R2 SHCTX "${UNINSTKEY}" "InstallLocation"
-  ${If} $R2 != ""
-    IfFileExists "$R2\${MAINBINARYNAME}.exe" 0 +2
-      ${NSD_SetText} $hProgressStatus "检测到旧版本，正在卸载..."
-      ExecWait '"$R2\uninstall.exe" /S _?=$R2' $R1
-      Sleep 500
-  ${EndIf}
-  ; 3) 再杀一次（卸旧可能拉起残留进程锁文件）
-  nsExec::Exec 'taskkill /F /T /IM "${MAINBINARYNAME}.exe"'
-  Pop $R0
-  Sleep 300
-  app_checked_i:
+  ; 关闭运行中的程序 / 卸载旧版等重活在 fn_DoInstall 首阶段（对话框已显示后）执行，
+  ; 避免 nsDialogs::Show 前同步阻塞导致「灰白空窗」闪现（#1）。
 
   ${NSD_CreateTimer} fn_InstallTick 100
 
@@ -1361,8 +1341,28 @@ Function fn_DoInstall
     ${NSD_SetText} $hProgressStatus "准备安装..."
     !insertmacro SetProgressWidth 8
     StrCpy $ResBatch 0
+    ; ── 覆盖安装修复（移到此处：对话框已显示，避免「灰白空窗」#1）──
+    ; 1) 杀整棵进程树（主程序 + Python 子进程），释放文件锁
+    ${NSD_SetText} $hProgressStatus "正在关闭运行中的奶昔..."
+    nsExec::Exec 'taskkill /F /T /IM "${MAINBINARYNAME}.exe"'
+    Pop $R0
+    nsExec::Exec 'taskkill /F /IM pythonw.exe'
+    Pop $R0
+    nsExec::Exec 'taskkill /F /IM python.exe'
+    Pop $R0
+    Sleep 800
+    ; 2) 升级模式：先静默卸旧版，再装（干净覆盖安装）
+    ReadRegStr $R2 SHCTX "${UNINSTKEY}" "InstallLocation"
+    ${If} $R2 != ""
+      IfFileExists "$R2\${MAINBINARYNAME}.exe" 0 +2
+        ${NSD_SetText} $hProgressStatus "检测到旧版本，正在卸载..."
+        ExecWait '"$R2\uninstall.exe" /S _?=$R2' $R1
+        Sleep 500
+    ${EndIf}
+    nsExec::Exec 'taskkill /F /T /IM "${MAINBINARYNAME}.exe"'
+    Pop $R0
+    Sleep 300
     ; 安装前确保 WebView2 运行时存在（干净机器缺它会起不来）。
-    ; stage 0 仅执行一次（执行后 InstallStage 置 1），故此处只跑一次。
     Call InstallWebView2
     SetOutPath $INSTDIR
     !ifmacrodef NSIS_HOOK_PREINSTALL
@@ -1384,8 +1384,8 @@ Function fn_DoInstall
     Return
   ${EndIf}
   ${If} $InstallStage == 2
-    ; 资源聚合包（7z）单次解压：根治上万散文件逐个写盘造成的 UI 冻结（#1/#6）。
-    ; 安装包内资源仅含 app_res.7z + 7z.exe + 7z.dll（+ sidecar），由 build.rs 预先打包。
+    ; 资源聚合包（多卷 7z）：按体积均分 N 卷，逐卷后台解压，每卷完成推进进度条(40→68)，
+    ; 根治「只有 0%→100% 跳变」（build.rs 打 res_part_*.7z；part_count.txt 记录卷数）。
     ${If} $ResBatch == 0
       ${NSD_SetText} $hProgressStatus "创建资源目录..."
       !insertmacro SetProgressWidth 40
@@ -1401,48 +1401,50 @@ Function fn_DoInstall
       {{#each resources}}
         File /a "/oname={{this.[1]}}" "{{no-escape @key}}"
       {{/each}}
-      ${NSD_SetText} $hProgressStatus "解压核心资源（后台进行中）..."
-      ; 异步启动 7z（隐藏窗口 SW_HIDE），不阻塞 UI 线程，根治“程序未响应”。
-      ; 完成由 cmd 写 $PLUGINSDIR\res_done.flag，fn_DoInstall 下一 tick 检测到即收尾。
-      ExecShell "open" "cmd.exe" '/c $\"$INSTDIR\resources\_bundle\7z.exe$\" x -y -o$\"$INSTDIR\resources$\" $\"$INSTDIR\resources\_bundle\app_res.7z$\" && echo done > $\"$PLUGINSDIR\res_done.flag$\"' SW_HIDE
+      ; 读取分卷总数（build.rs 生成，纯整数、无换行）
+      StrCpy $PartTotal 1
+      ${If} ${FileExists} "$INSTDIR\resources\_bundle\part_count.txt"
+        FileOpen $R5 "$INSTDIR\resources\_bundle\part_count.txt" r
+        FileRead $R5 $R6
+        FileClose $R5
+        ${If} $R6 != ""
+          StrCpy $PartTotal $R6
+        ${EndIf}
+      ${EndIf}
+      ${If} $PartTotal <= 0
+        StrCpy $PartTotal 1
+      ${EndIf}
+      StrCpy $CurPart 1
       StrCpy $BatchTmp2 0
+      ${NSD_SetText} $hProgressStatus "正在解压核心资源... (1/$PartTotal)"
+      IntFmt $R7 "%02d" $CurPart
+      ExecShell "open" "cmd.exe" '/c $\"$INSTDIR\resources\_bundle\7z.exe$\" x -y -o$\"$INSTDIR\resources$\" $\"$INSTDIR\resources\_bundle\res_part_$R7.7z$\" && echo done > $\"$PLUGINSDIR\res_done.flag$\"' SW_HIDE
       IntOp $ResBatch $ResBatch + 1
       Return
     ${EndIf}
     ${If} $ResBatch == 1
       IntOp $BatchTmp2 $BatchTmp2 + 1
-      ; 轮询完成标志（每个 tick 检查一次，tick 之间 UI 消息泵正常处理，窗口保持响应）
       ${If} ${FileExists} "$PLUGINSDIR\res_done.flag"
         Delete "$PLUGINSDIR\res_done.flag"
-        ${IfNot} ${FileExists} "$INSTDIR\resources\desktop_core\api.py"
-          ${NSD_SetText} $hProgressStatus "警告：核心资源缺失，安装可能不完整"
+        ; 本卷完成：按已完成卷数推进总进度（stage2 占 40→68）
+        IntOp $R8 $CurPart * 28
+        IntOp $R8 $R8 / $PartTotal
+        IntOp $R8 $R8 + 40
+        !insertmacro SetProgressWidth $R8
+        ${If} $CurPart < $PartTotal
+          IntOp $CurPart $CurPart + 1
+          ${NSD_SetText} $hProgressStatus "正在解压核心资源... ($CurPart/$PartTotal)"
+          ${NSD_SetText} $hCurPct "$CurPart/$PartTotal"
+          IntFmt $R7 "%02d" $CurPart
+          ExecShell "open" "cmd.exe" '/c $\"$INSTDIR\resources\_bundle\7z.exe$\" x -y -o$\"$INSTDIR\resources$\" $\"$INSTDIR\resources\_bundle\res_part_$R7.7z$\" && echo done > $\"$PLUGINSDIR\res_done.flag$\"' SW_HIDE
+          Return
+        ${Else}
+          Goto res_verify
         ${EndIf}
-        ; 清理临时解压工具与压缩包，释放空间（已解压出的资源保留在 $INSTDIR\resources）
-        Delete "$INSTDIR\resources\_bundle\app_res.7z"
-        Delete "$INSTDIR\resources\_bundle\7z.exe"
-        Delete "$INSTDIR\resources\_bundle\7z.dll"
-        RMDir "$INSTDIR\resources\_bundle"
-        !insertmacro SetComp 2 2 "核心资源 (desktop_core)"
-        !insertmacro SetComp 3 2 "Python 运行时"
-        !insertmacro SetComp 4 2 "SearXNG 搜索引擎"
-        ${NSD_SetText} $hCurPct "100%"
-        !insertmacro SetProgressWidth 68
-        IntOp $InstallStage $InstallStage + 1
-        Return
-      ${ElseIf} $BatchTmp2 > 800
-        ; 超时兜底（~96s）：解压可能异常，强制收尾并提示，避免永久卡在安装页
-        ${NSD_SetText} $hProgressStatus "警告：资源解压超时，安装可能不完整"
-        Delete "$INSTDIR\resources\_bundle\app_res.7z"
-        Delete "$INSTDIR\resources\_bundle\7z.exe"
-        Delete "$INSTDIR\resources\_bundle\7z.dll"
-        RMDir "$INSTDIR\resources\_bundle"
-        !insertmacro SetComp 2 2 "核心资源 (desktop_core)"
-        !insertmacro SetComp 3 2 "Python 运行时"
-        !insertmacro SetComp 4 2 "SearXNG 搜索引擎"
-        ${NSD_SetText} $hCurPct "100%"
-        !insertmacro SetProgressWidth 68
-        IntOp $InstallStage $InstallStage + 1
-        Return
+      ${ElseIf} $BatchTmp2 > 5000
+        ; 超时兜底（~10 分钟）：不删归档，直接校验；缺失则明确报错（#3）
+        ${NSD_SetText} $hProgressStatus "警告：资源解压超时，正在校验完整性..."
+        Goto res_verify
       ${EndIf}
       ; 未完成：保持状态，等待下一 tick（不阻塞 UI）
       Return
@@ -1513,6 +1515,37 @@ Function fn_DoInstall
   ${NSD_SetText} $hCurName "安装完成"
   ${NSD_SetText} $hCurPct "100%"
   EnableWindow $hNextBtn 1
+  Return
+
+  ; ── 资源完整性校验（多卷解压完成后或超时兜底时进入）──
+  res_verify:
+    ${IfNot} ${FileExists} "$INSTDIR\resources\desktop_core\api.py"
+      ${NSD_SetText} $hProgressStatus "警告：核心资源缺失 (desktop_core/api.py)，安装可能不完整"
+      Goto res_finish
+    ${EndIf}
+    ${IfNot} ${FileExists} "$INSTDIR\resources\python-embed\python\pythonw.exe"
+      ${NSD_SetText} $hProgressStatus "警告：Python 运行时缺失，安装可能不完整"
+      Goto res_finish
+    ${EndIf}
+    ${IfNot} ${FileExists} "$INSTDIR\resources\searxng\SearXNG for Windows.exe"
+      ${NSD_SetText} $hProgressStatus "警告：SearXNG 缺失，离线搜索可能不可用"
+      Goto res_finish
+    ${EndIf}
+    !insertmacro SetComp 2 2 "核心资源 (desktop_core)"
+    !insertmacro SetComp 3 2 "Python 运行时"
+    !insertmacro SetComp 4 2 "SearXNG 搜索引擎"
+    ${NSD_SetText} $hCurPct "100%"
+    !insertmacro SetProgressWidth 68
+    Goto res_finish
+  res_finish:
+    ; 清理临时解压工具与压缩包（已解压资源保留在 $INSTDIR\resources）
+    Delete "$INSTDIR\resources\_bundle\res_part_*.7z"
+    Delete "$INSTDIR\resources\_bundle\part_count.txt"
+    Delete "$INSTDIR\resources\_bundle\7z.exe"
+    Delete "$INSTDIR\resources\_bundle\7z.dll"
+    RMDir "$INSTDIR\resources\_bundle"
+    IntOp $InstallStage $InstallStage + 1
+    Return
 FunctionEnd
 
 Section Uninstall

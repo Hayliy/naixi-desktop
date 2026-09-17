@@ -115,9 +115,46 @@ fn warm_read_retry(dir: &Path) {
     }
 }
 
-/// 把散文件资源聚合成单个 7z，根治 NSIS 逐个 File 解压上万文件造成的安装卡顿（#1/#6）。
+/// 递归收集目录下所有待打包文件，返回 (相对 resources 的路径字符串, 字节大小)。
+/// 跳过 __pycache__ 与 *.pyc/*.bak/*.log（与 sync_dir 一致）。
+fn collect_pack_files(root: &Path, base: &Path, out: &mut Vec<(String, u64)>) {
+    let entries = match fs::read_dir(root) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if p.is_dir() {
+            if name_str == "__pycache__" || name_str == ".git" {
+                continue;
+            }
+            collect_pack_files(&p, base, out);
+        } else {
+            if name_str.ends_with(".pyc")
+                || name_str.ends_with(".bak")
+                || name_str.ends_with(".log")
+            {
+                continue;
+            }
+            let rel = p
+                .strip_prefix(base)
+                .unwrap_or(&p)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let sz = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            out.push((rel, sz));
+        }
+    }
+}
+
+/// 把散文件资源聚合成「按体积均分的多个 7z 卷」+ 卷数清单，根治：
+///  1) NSIS 逐个 File 解压上万文件造成的安装卡顿（#1/#6）；
+///  2) 单个聚合包一次性异步解压导致进度「只有 0%→100%」跳变（#2）；
+///  3) 超时分支误删归档导致 SearXNG 等资源缺失（#3）。
 /// 打包 src-tauri/resources 下的 desktop_core / data / python-embed / searxng 到
-/// resources/_bundle/app_res.7z，并把 7z.exe/7z.dll 一并拷入 _bundle 作为安装器解压工具。
+/// resources/_bundle/res_part_01.7z ...，并把 7z.exe/7z.dll + part_count.txt 一并拷入。
 fn pack_resources_7z() {
     let manifest_dir = PathBuf::from(
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set by cargo"),
@@ -155,36 +192,111 @@ fn pack_resources_7z() {
     let dirs = ["desktop_core", "data", "python-embed", "searxng"];
     if !dirs.iter().any(|d| resources.join(d).is_dir()) {
         eprintln!("warn: resources 下无可打包目录，跳过 7z 打包");
+        let _ = fs::write(bundle.join("part_count.txt"), "0");
         return;
     }
 
-    // 清掉旧包，避免残留
+    // 收集全部文件（相对 resources 的路径 + 大小）
+    let mut files: Vec<(String, u64)> = Vec::new();
+    for d in dirs.iter() {
+        let root = resources.join(d);
+        if root.is_dir() {
+            collect_pack_files(&root, &resources, &mut files);
+        }
+    }
+    if files.is_empty() {
+        let _ = fs::write(bundle.join("part_count.txt"), "0");
+        return;
+    }
+
+    // 大文件优先，利于首次适应装箱，使每卷体积更均衡
+    files.sort_by(|a, b| b.1.cmp(&a.1));
+    let total: u64 = files.iter().map(|(_, s)| *s).sum();
+
+    // 目标每卷原始体积 ~60MB；卷数 clamp 到 [1, 40]
+    let target_part: u64 = 60 * 1024 * 1024;
+    let mut n: usize = ((total + target_part - 1) / target_part).clamp(1, 40) as usize;
+
+    // 首次适应装箱：把每个文件放入当前最小的一组
+    let mut groups: Vec<Vec<String>> = vec![Vec::new(); n];
+    let mut group_sz = vec![0u64; n];
+    for (rel, sz) in files {
+        let mut idx = 0usize;
+        for g in 1..n {
+            if group_sz[g] < group_sz[idx] {
+                idx = g;
+            }
+        }
+        groups[idx].push(rel);
+        group_sz[idx] += sz;
+    }
+    // 丢弃空组
+    groups.retain(|g| !g.is_empty());
+    n = groups.len();
+
+    // 清掉旧卷，避免残留
     let _ = fs::remove_file(bundle.join("app_res.7z"));
+    if let Ok(rd) = fs::read_dir(&bundle) {
+        for entry in rd.flatten() {
+            let fname = entry.file_name();
+            let ns = fname.to_string_lossy();
+            if ns.starts_with("res_part_") && ns.ends_with(".7z") {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
 
     // 在 resources 目录下打包，使归档内路径为 desktop_core/... 等，
-    // 安装器解压到 $INSTDIR/resources 即得正确布局（与旧逐文件 File 一致）。
-    let mut cmd = std::process::Command::new(&seven_zip);
-    cmd.current_dir(&resources)
-        .arg("a")
-        .arg("-t7z")
-        .arg("-mx=7")
-        .arg("-mmt=on")
-        .arg("-bsp0") // 安静，不向 stderr 吐进度
-        .arg(bundle.join("app_res.7z").to_string_lossy().as_ref());
-    for d in dirs.iter() {
-        cmd.arg(d);
+    // 安装器逐卷解压到 $INSTDIR/resources 即得正确布局（与旧逐文件 File 一致）。
+    eprintln!("info: 打包资源聚合包 (7z, {n} 卷) ...");
+    for (i, g) in groups.iter().enumerate() {
+        let name = format!("res_part_{:02}.7z", i + 1);
+        let arc_path = bundle.join(&name);
+        // 把待压缩文件清单写入临时 .lst，再用 `-i@list` 传给 7z。
+        // 严禁把上万条长路径直接当命令行参数：Windows CreateProcess 命令行上限
+        // 32767 字符，嵌套深的 searxng 一组上千文件即触发 os error 206（命令行太长）。
+        let list_path = bundle.join(format!("res_part_{:02}.lst", i + 1));
+        {
+            let mut list_content = String::with_capacity(g.len() * 64);
+            for rel in g {
+                // 7z 清单用正斜杠或反斜杠皆可（已相对 resources/），这里统一反斜杠更稳妥。
+                let line = rel.replace('/', "\\");
+                list_content.push_str(&line);
+                list_content.push('\n');
+            }
+            if let Err(e) = fs::write(&list_path, list_content) {
+                eprintln!("error: 写 7z 清单 {} 失败: {e}", list_path.display());
+                std::process::exit(1);
+            }
+        }
+        let mut cmd = std::process::Command::new(&seven_zip);
+        cmd.current_dir(&resources)
+            .arg("a")
+            .arg("-t7z")
+            .arg("-mx=7")
+            .arg("-mmt=on")
+            .arg("-bsp0") // 安静，不向 stderr 吐进度
+            .arg(arc_path.to_string_lossy().as_ref())
+            .arg(format!("-i@{}", list_path.to_string_lossy()));
+        match cmd.status() {
+            Ok(s) if s.success() => {}
+            Ok(s) => {
+                eprintln!("error: 7z 打包失败（{:?}，卷 {}），终止构建", s, name);
+                std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("error: 无法启动 7z（{e}），终止构建");
+                std::process::exit(1);
+            }
+        }
+        // 清临时清单（失败不致命，下一轮打包前会整体重算）
+        let _ = fs::remove_file(&list_path);
     }
-    eprintln!("info: 打包资源聚合包 (7z) ...");
-    match cmd.status() {
-        Ok(s) if s.success() => {}
-        Ok(s) => {
-            eprintln!("error: 7z 打包失败（{:?}），终止构建", s);
-            std::process::exit(1);
-        }
-        Err(e) => {
-            eprintln!("error: 无法启动 7z（{e}），终止构建");
-            std::process::exit(1);
-        }
+
+    // 卷数清单（纯整数，无换行，供安装器运行时读取）
+    if let Err(e) = fs::write(bundle.join("part_count.txt"), format!("{}", n)) {
+        eprintln!("error: 写 part_count.txt 失败: {e}");
+        std::process::exit(1);
     }
 
     // 拷贝 7z 解压工具（7z.exe 依赖同目录 7z.dll）
@@ -200,8 +312,8 @@ fn pack_resources_7z() {
         }
     }
     eprintln!(
-        "info: 资源聚合包已生成：{}",
-        bundle.join("app_res.7z").display()
+        "info: 资源聚合包已生成：{} 卷 (共 {n} 卷)",
+        bundle.join("res_part_01.7z").display()
     );
 }
 

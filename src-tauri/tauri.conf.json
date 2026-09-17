@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicedoc/tauri/v2/crates/tauri-config-schema/schema.json",
   "productName": "奶昔",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "identifier": "com.naixi.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -65,7 +65,8 @@
       "digestAlgorithm": "sha256"
     },
     "resources": [
-      "resources/_bundle/app_res.7z",
+      "resources/_bundle/res_part_*.7z",
+      "resources/_bundle/part_count.txt",
       "resources/_bundle/7z.exe",
       "resources/_bundle/7z.dll",
       "sidecar/*.py"
