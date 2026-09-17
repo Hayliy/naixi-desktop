@@ -1594,18 +1594,41 @@ Function fn_DoInstall
     ; 此时 NSIS 的 Delete/RMDir 会**静默失败**并留下垃圾（现场两次分别留下
     ; 7z.exe / 7z.dll / res_part_14.7z、以及 res_part_15.7z / res_part_16.7z，
     ; 而事后手动删又能删掉 ⇒ 确认是瞬时占用，不是路径写错）。
-    ; 策略：先重试 6 次（每次间隔 600ms）；仍失败则挂到下次重启删除，保证最终不留垃圾。
+    ; 策略（v0.2.4 真机二次验证后定型）：
+    ;   ① 当场只轻量重试 3 次(3s)——原 20 次×1s 会把进度页卡住 20s，且真机上杀软/
+    ;      索引器占用常持续数十秒，20s 仍清不掉（实测残留 5 项：7z.exe/7z.dll +
+    ;      res_part_12~14.7z，约 38MB），纯属白卡 UI。
+    ;   ② 起一个**脱离安装器**的静默清道夫（VBS 由 wscript 直接执行，无控制台窗口）：
+    ;      先睡 10s（等安装器退出、7z 子进程结束、杀软扫完），再最多重试 40 次×2s 删除。
+    ;      这样既不占 UI，又能在「不重启」的前提下当场清干净。
+    ;   ③ 清道夫也失败才挂 /REBOOTOK 等重启删除（极端兜底）。
     StrCpy $CleanTry 0
   res_clean:
     RMDir /r "$INSTDIR\resources\_bundle"
     ${If} ${FileExists} "$INSTDIR\resources\_bundle\*.*"
       IntOp $CleanTry $CleanTry + 1
-      ${If} $CleanTry < 6
-        Sleep 600
+      ${If} $CleanTry < 3
+        Sleep 1000
         Goto res_clean
       ${EndIf}
       Delete /REBOOTOK "$INSTDIR\resources\_bundle\*.*"
       RMDir /REBOOTOK "$INSTDIR\resources\_bundle"
+      ; ② 静默清道夫
+      ClearErrors
+      FileOpen $9 "$TEMP\naixi_bundle_clean.vbs" w
+      ${IfNot} ${Errors}
+        FileWrite $9 "Set fso = CreateObject($\"Scripting.FileSystemObject$\")$\r$\n"
+        FileWrite $9 "WScript.Sleep 10000$\r$\n"
+        FileWrite $9 "Set sh = CreateObject($\"WScript.Shell$\")$\r$\n"
+        FileWrite $9 "For i = 1 To 40$\r$\n"
+        FileWrite $9 "  sh.Run $\"cmd /c rmdir /s /q $\"$\"$INSTDIR\resources\_bundle$\"$\"$\", 0, True$\r$\n"
+        FileWrite $9 "  If Not fso.FolderExists($\"$INSTDIR\resources\_bundle$\") Then Exit For$\r$\n"
+        FileWrite $9 "  WScript.Sleep 2000$\r$\n"
+        FileWrite $9 "Next$\r$\n"
+        FileWrite $9 "fso.DeleteFile WScript.ScriptFullName, True$\r$\n"
+        FileClose $9
+        ExecShell "open" "$TEMP\naixi_bundle_clean.vbs"
+      ${EndIf}
     ${EndIf}
     IntOp $InstallStage $InstallStage + 1
     Return
