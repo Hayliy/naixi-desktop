@@ -28,6 +28,7 @@
   - 模型目录收敛为**单一真相源**：`l2d_discovery` 新增 `core_root() / data_dir() / models_dir() / invalidate_cache()`，Qt 桌宠与后端导入/列表/删除全部改用它，并按 `DESKTOP_DIR` + 逐级回溯解析（原先 Qt 与 `api.py` 各推一份路径，一旦漂移会各自留下 `.discover_cache.json`）。
   - 导入/删除后**失效模型发现缓存**（TTL 600s），否则表现为「导入成功但桌宠还说没有模型」。
   - 「管理模型」对话框在空列表时也给出「导入模型…」按钮；模型加载失败时把占位卡放回来。
+  - **导入/切换模型成功后隐藏占位卡**：这个 `hide()` 原先只写在 `initializeGL`（启动路径）里，`_init_model`（切换/导入走的那条）没有 ⇒ 模型其实已经加载好、却被占位卡整个盖住，用户以为「导入没生效、还是没有模型」（真机实测：导入后截图里模型就藏在卡片后面）。
   - `pet-start` 回报 `has_model`（进程起来 ≠ 有形象可显示），前端据此提示「点桌宠上的卡片，或右键它选导入」而不是一句「桌宠已启动」。
 
 ### 修复（「点桌宠毫无反应」的真因：装了之后桌宠子进程根本起不来）
@@ -38,6 +39,28 @@
   1. `_start_pet` 只向上找 `src-tauri/sidecar/pet_window.py`（**开发态**布局）。安装包把 `sidecar/*.py` 放在 `<INSTDIR>/sidecar/`（没有 `src-tauri` 这层），于是装完后永远落到兜底分支——直接跑 `resources/desktop_core/pet_window.py`。而 `sidecar/pet_window.py` 这个启动器**自己在代码里修 sys.path**，`desktop_core/pet_window.py` 作为库模块没有这个修复 ⇒ 模块级 import 直接炸。
   2. 那句「关键：注入 PYTHONPATH」在安装态**无效**：打包自带的 python-embed 里带 `python313._pth`，**PYTHONPATH 被完全忽略**。guest 实测 `PYTHONPATH=<resources>` 后 `import desktop_core` 仍失败，而走 `sidecar/pet_window.py` 启动器时进程能正常常驻。开发态之所以一直正常，纯粹是启动器那条路走通了 —— 典型的「只在装完后才犯」。
 - **修复**：`_start_pet` 逐级查找时**同时认两种布局**；`desktop_core/pet_window.py` 加 `__main__` 守卫（直接当脚本跑时把包的父目录插入 `sys.path`）；`_start_pet` 增加**存活自检**（Popen 后等 1.2s，子进程已退出就记 warning 并返回 `False`）——pythonw 无控制台，秒退是完全静默的，必须主动识别；前端启动失败改为明确报错。
+
+### 验证（VMware Win10 真机端到端，用户零操作）
+用计划任务在登录会话内拉起「杀残留 → curl 下载安装器 → 起安装器 → 键盘 Enter 驱动向导」，
+覆盖安装 0.2.5 后逐项取证：
+- **安装完整性**：`version.json=0.2.5`；`resources` 实装清单与构建侧做**集合差为空**
+  （构建侧 14711 个文件，0.2.4 现场缺 3113 个、含 `python-embed\python313.dll`）。
+  同时把安装包内嵌的分卷抽出、「用同一句 7z 命令手动逐卷解压」得到 16 卷全部 OK、14711 个文件一个不少
+  ⇒ 归档 / 7z / 系统环境全部清白，之前的丢卷确实出在安装器流程里（取证手法已写入 skill）。
+- **后端**：`:9845` 就绪（覆盖安装后 12s / 重装后 3s），`pet-start` 如实回报
+  `{"ok": true, "has_model": false}`（无模型时不再谎报"已启动"）。
+- **桌宠闭环**：先把机器置成「一个模型都没有」→ 桌宠显示**可点击**的占位卡 →
+  点卡片弹出「选择 Live2D 模型文件」→ 选中模型 → **整个模型文件夹被复制进 `data\models\`（8 个文件含贴图）**
+  → `data/models` 立刻可被 `/api/live/config` 发现 → 模型成功渲染、**占位卡随之隐藏**、
+  桌宠进程存活、`pet_error.log` 不存在；`pet_window.log` 记录到
+  「点击占位卡 → 打开模型导入」与「模型已导入: …」，导入链路不再有黑盒。
+- 取证材料落在 `D:\数据\Naixi-旧版留档\2026-09-18-安装丢卷修复\`（verify_025.py / verify_pet_light.py + 截图 + 日志）。
+
+### 已知遗留（不影响功能，下一轮处理）
+- `resources\_bundle` 的收尾清理在「杀软/索引器长时间占用」时仍可能整批残留（本轮实测残留 240MB，
+  即 16 个分卷 + 7z.exe/7z.dll）。已确认不是新改动的副作用：注册表 `PendingFileRenameOperations`
+  里能看到 `_bundle` 的各项 ⇒ 清理**确实执行过**、只是当场删不掉；重启后会自动清，手动删也能立刻删掉。
+  下一轮改成「应用启动时自清自己的 `_bundle` 残留」做兜底（比反复调安装器重试次数可靠）。
 
 ## [0.2.4] - 2026-09-17
 

@@ -1917,6 +1917,16 @@ class PetWindow(QWidget):
             from desktop_core.engine.skeleton import build_skeleton, set_pose, get_bone_angles, SkeletalAnimator, WalkCycle, WalkSystem, _collect_all
             self._pose = PoseEngine(self.model)
             self._pose.scan_model()
+            # ★ 加载成功必须隐藏占位卡 —— 这个隐藏原先只写在 initializeGL（启动路径）里，
+            #   于是「先起桌宠（看到占位卡）→ 再导入/切换模型」这条路走完后：
+            #   模型其实已经加载好了，却被占位卡整个盖住 ⇒ 用户以为「导入没生效 / 还是没有模型」。
+            #   真机 2026-09-18 实测（导入后截图里模型在卡片后面）。
+            fb = getattr(self, "_fallback", None)
+            if fb is not None:
+                try:
+                    QTimer.singleShot(0, fb.hide)
+                except Exception:
+                    pass
         except Exception as e:
             log.warning(f"模型切换失败: {e}")
             # 加载失败必须把占位卡放回来：否则窗口既没有模型、又没有提示，用户只看到一片透明
