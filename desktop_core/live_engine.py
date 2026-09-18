@@ -4069,6 +4069,11 @@ class LiveEngine:
                 resolved = self._resolve_model_for_kind(kind)
             else:
                 kind, resolved = self._classify_model(model_path)
+            # ★ 兜底自动发现：调用方没给模型路径时（直接调 API、配置尚未写入等），
+            #   自己做一次发现。否则机器上明明有模型，桌宠也只显示「还没有模型」占位卡
+            #   （真机踩到过：用空 model_path 调 pet-start，has_model=false 且不加载）。
+            if not resolved and not model_path:
+                resolved = self._resolve_model_for_kind(kind)
             # 记录本进程实际用的模型（空串 = 没有任何模型，桌宠只会显示占位卡）。
             # 供 api_live_pet_start 回报 has_model，让前端能把用户引到导入入口。
             self._pet_model_path = resolved or ""

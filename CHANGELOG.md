@@ -30,6 +30,15 @@
   - 「管理模型」对话框在空列表时也给出「导入模型…」按钮；模型加载失败时把占位卡放回来。
   - `pet-start` 回报 `has_model`（进程起来 ≠ 有形象可显示），前端据此提示「点桌宠上的卡片，或右键它选导入」而不是一句「桌宠已启动」。
 
+### 修复（「点桌宠毫无反应」的真因：装了之后桌宠子进程根本起不来）
+- **症状**：点「桌宠」后屏幕上什么都不出现（`pet-start` 却返回成功）；pythonw 进程随后消失，没有任何报错框、没有日志。
+- **取证**：装完后 guest 里只有后端（`sidecar\naixi_api.py`）与 searxng 两个 `pythonw`，**桌宠窗口根本不存在**。用 `python.exe` 前台跑一次拿到 stderr：
+  `from desktop_core.motion_engine import PoseEngine` → `ModuleNotFoundError: No module named 'desktop_core'`。
+- **根因**（两件事叠加）：
+  1. `_start_pet` 只向上找 `src-tauri/sidecar/pet_window.py`（**开发态**布局）。安装包把 `sidecar/*.py` 放在 `<INSTDIR>/sidecar/`（没有 `src-tauri` 这层），于是装完后永远落到兜底分支——直接跑 `resources/desktop_core/pet_window.py`。而 `sidecar/pet_window.py` 这个启动器**自己在代码里修 sys.path**，`desktop_core/pet_window.py` 作为库模块没有这个修复 ⇒ 模块级 import 直接炸。
+  2. 那句「关键：注入 PYTHONPATH」在安装态**无效**：打包自带的 python-embed 里带 `python313._pth`，**PYTHONPATH 被完全忽略**。guest 实测 `PYTHONPATH=<resources>` 后 `import desktop_core` 仍失败，而走 `sidecar/pet_window.py` 启动器时进程能正常常驻。开发态之所以一直正常，纯粹是启动器那条路走通了 —— 典型的「只在装完后才犯」。
+- **修复**：`_start_pet` 逐级查找时**同时认两种布局**；`desktop_core/pet_window.py` 加 `__main__` 守卫（直接当脚本跑时把包的父目录插入 `sys.path`）；`_start_pet` 增加**存活自检**（Popen 后等 1.2s，子进程已退出就记 warning 并返回 `False`）——pythonw 无控制台，秒退是完全静默的，必须主动识别；前端启动失败改为明确报错。
+
 ## [0.2.4] - 2026-09-17
 
 ### 修复（P0 · 安装器从来没真正解压过资源 —— 真机验证挖出）

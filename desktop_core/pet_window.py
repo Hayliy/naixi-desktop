@@ -2918,7 +2918,29 @@ class PetWindow(QWidget):
         super().closeEvent(event)
 
 
+def _setup_pet_file_log() -> None:
+    """把桌宠子进程的日志落盘（pythonw 没有控制台，不落盘就等于全盲）。
+
+    背景：桌宠由 pythonw 启动，`logging` 默认无 handler ⇒ `log.info/warning` 全部被丢弃。
+    真机上任何失败（模型加载失败、导入异常、GL 初始化失败）都**完全不可见**，
+    排查只能靠猜（2026-09-18 排查「模型导入后没显示」时就吃了这个亏）。
+    与语音链路 `voice_input._setup_pet_voice_log` 同一原则，落到同一日志目录。
+    """
+    try:
+        p = log_file("pet_window.log")
+        h = logging.FileHandler(p, encoding="utf-8")
+        h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        root = logging.getLogger()
+        root.setLevel(logging.INFO)
+        if not any(isinstance(x, logging.FileHandler) for x in root.handlers):
+            root.addHandler(h)
+        log.info(f"[桌宠] 日志落盘: {p}")
+    except Exception:
+        pass
+
+
 def run_pet(model_path: str = ""):
+    _setup_pet_file_log()
     live2d.init()
     fmt = QSurfaceFormat()
     fmt.setAlphaBufferSize(8)
