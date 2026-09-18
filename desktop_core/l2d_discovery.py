@@ -24,7 +24,56 @@ __all__ = [
     "get_extra_roots",
     "add_model_root",
     "remove_model_root",
+    "core_root",
+    "data_dir",
+    "models_dir",
+    "invalidate_cache",
 ]
+
+
+def core_root() -> str:
+    """desktop_core 的父目录（= 资源根，data/ 就在这里）。
+
+    ★ 严禁再用 ``dirname(dirname(__file__))`` 隐式推导：dev 态经 sidecar 启动时命中
+    ``src-tauri/resources/desktop_core``，只上溯一层就是 ``resources``；而另一些调用点
+    （api.py）看的是 ``DESKTOP_DIR`` 环境变量。两套推导一旦漂移，就会各自在**不同目录**
+    留下 ``data/.discover_cache.json``，表现为「刚导入的模型十分钟看不见」
+    「一处能发现、另一处找不到」。
+
+    解析优先级（与 src-tauri/sidecar/naixi_api.py::_find_core_root 保持一致）：
+      1) 环境变量 DESKTOP_DIR（sidecar 启动后端时设好，桌宠子进程继承）；
+      2) 从本文件向上逐级找「同级含 desktop_core/ 或 resources/desktop_core/」的目录；
+      3) 兜底：本文件的父目录。
+    """
+    env = os.environ.get("DESKTOP_DIR")
+    if env and os.path.isdir(env):
+        return env
+    here = os.path.dirname(os.path.abspath(__file__))
+    d = os.path.dirname(here)
+    for _ in range(4):
+        if os.path.isdir(os.path.join(d, "desktop_core")):
+            return d
+        if os.path.isdir(os.path.join(d, "resources", "desktop_core")):
+            return os.path.join(d, "resources")
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    return os.path.dirname(here)
+
+
+def data_dir() -> str:
+    """data 目录（模型 / 缓存 / 自定义根的唯一落点）。读写共用本函数，禁止各处自拼路径。"""
+    return os.path.join(core_root(), "data")
+
+
+def models_dir() -> str:
+    """「导入模型」落盘目录：<data>/models。
+
+    Qt 桌宠右键导入、后端 /api/live/models/import、模型列表必须共用本函数，
+    否则会出现「导进了 A 目录、列表扫的是 B 目录」的半死状态。
+    """
+    return os.path.join(data_dir(), "models")
 
 
 def strip_ext(fn: str) -> str:
@@ -215,8 +264,7 @@ def _known_folder_path(csidl: int) -> str:
 
 
 def _roots_config_path() -> str:
-    desktop_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(desktop_root, "data", "models_roots.json")
+    return os.path.join(data_dir(), "models_roots.json")
 
 
 def get_extra_roots() -> list:
@@ -269,11 +317,19 @@ def remove_model_root(path: str) -> bool:
 
 
 def _cache_path() -> str:
-    desktop_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(desktop_root, "data", ".discover_cache.json")
+    return os.path.join(data_dir(), ".discover_cache.json")
 
 
 _CACHE_TTL = 600  # 秒；短 TTL 防止长期漏扫（用户增删根会立即失效缓存）
+
+
+def invalidate_cache() -> None:
+    """公开的缓存失效入口：任何「落盘/删除模型」的动作都必须调它。
+
+    否则新导入的模型会被 TTL(600s) 内的旧缓存挡住，用户看到的是
+    「导入成功但桌宠还是说没有模型」（踩过）。
+    """
+    _invalidate_cache()
 
 
 def _invalidate_cache() -> None:
@@ -322,11 +378,10 @@ def discover_models() -> list:
     缓存：TTL 内直接返回上次结果，避免每次启动全量递归扫描；用户增删自定义根立即失效。
     仅依赖标准库（含 ctypes），不引入 PySide/live2d，可在后端 aiohttp 与 Qt 子进程安全共用。
     """
-    desktop_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     doc_path = _known_folder_path(5)  # CSIDL_Documents
     raw_roots = [
-        os.path.join(desktop_root, "data", "models"),
-        os.path.join(desktop_root, "godot_renderer", "models"),
+        models_dir(),
+        os.path.join(core_root(), "godot_renderer", "models"),
         VTS_MODELS,
         VTS_MODELS_X86,
         doc_path,

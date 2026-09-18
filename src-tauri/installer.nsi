@@ -841,8 +841,21 @@ FunctionEnd
 ;   而资源其实根本没被解压出来（装完是残缺的）。
 ; 所以：整条命令必须**用一对引号整体包起来**交给 cmd /c（B 写法），
 ; 且用 &&/|| 把成功失败都写进标记，杜绝“解压失败被静默吞掉”。
+;
+; ★★ 2026-09-18 二次定音：标记文件必须**每卷一个唯一名字**，禁止再共用 res_done.flag ★★
+; 真机（VMware Win10 装 0.2.4）实测：安装完 resources 只有 11598 个文件，构建侧是 14711 个，
+; 丢的正好是**最后三卷（14/15/16）整卷零产出**，其中第 16 卷含 python-embed\python313.dll
+; ⇒ pythonw.exe 起不来（弹「找不到 python313.dll」）⇒ 后端根本没起 ⇒ 点桌宠毫无反应。
+; 而同一批归档在 guest 里用同一句 7z 命令**手动逐卷解压，16 卷全部 OK、14711 个文件一个不少**
+; （归档、7z、环境全部清白）⇒ 丢卷发生在安装器的推进逻辑里：
+;   timer 靠「读 res_done.flag → Delete → 进下一卷」串行化。一旦某次 Delete 因杀软/索引器
+;   瞬时占用而**静默失败**（0.2.4 现场 _bundle 清理同样反复出现这种瞬时占用），下一 tick
+;   就会读到**上一卷的陈旧标记**，于是以 ~240ms/卷 的速度冲刺到底、把最后几卷的 7z 全部并发
+;   拉起；紧接着 res_verify→res_finish 的 RMDir /r _bundle 把归档删掉，正在启动的 7z 直接失败
+;   ⇒ 那几卷零产出；而循环此时已退出，写回来的 FAIL 标记再也没人读 ⇒ 界面照样显示“安装完成”。
+; 改成本卷唯一标记后，安装器只等待「自己刚启动的那一卷」的标记，陈旧标记天然无害。
 !macro StartPartExtract PARTINDEX
-  ExecShell "open" "cmd.exe" '/c "$\"$INSTDIR\resources\_bundle\7z.exe$\" x -y -o$\"$INSTDIR\resources$\" $\"$INSTDIR\resources\_bundle\res_part_${PARTINDEX}.7z$\" > nul 2>&1 && echo OK > $\"$PLUGINSDIR\res_done.flag$\" || echo FAIL > $\"$PLUGINSDIR\res_done.flag$\""' SW_HIDE
+  ExecShell "open" "cmd.exe" '/c "$\"$INSTDIR\resources\_bundle\7z.exe$\" x -y -o$\"$INSTDIR\resources$\" $\"$INSTDIR\resources\_bundle\res_part_${PARTINDEX}.7z$\" > nul 2>&1 && echo OK > $\"$PLUGINSDIR\res_done_${PARTINDEX}.flag$\" || echo FAIL > $\"$PLUGINSDIR\res_done_${PARTINDEX}.flag$\""' SW_HIDE
 !macroend
 
 ; 资源解压期间的心跳计数（每 tick +1，满 10 ≈ 1 秒，用于刷新"已用 N 秒"）
@@ -852,6 +865,9 @@ Var TickSecN
 Var FlagTxt
 Var ResFlag
 Var ResFail
+; 安装是否被判为「资源不完整」：置 1 后①最终文案不再谎报「安装完成。」②**保留** _bundle
+; 归档与 7z.exe（不清道夫清理），既便于用户重装复用，也便于事后取证。
+Var ResBroken
 ; 清理临时解压目录的重试计数
 Var CleanTry
 
@@ -1450,6 +1466,7 @@ Function fn_DoInstall
       StrCpy $CurPart 1
       StrCpy $BatchTmp2 0
       StrCpy $ResFail 0
+      StrCpy $ResBroken 0
       ${NSD_SetText} $hProgressStatus "正在解压核心资源... (1/$PartTotal)"
       IntFmt $R7 "%02d" $CurPart
       !insertmacro StartPartExtract $R7
@@ -1466,12 +1483,18 @@ Function fn_DoInstall
         IntOp $TickSecN $BatchTmp2 / 10
         ${NSD_SetText} $hProgressStatus "正在解压核心资源... ($CurPart/$PartTotal)，已用 $TickSecN 秒"
       ${EndIf}
-      ${If} ${FileExists} "$PLUGINSDIR\res_done.flag"
+      ; ★ 只等「当前这一卷」自己的唯一标记（res_done_NN.flag）。
+      ;   共用一个 res_done.flag 时，Delete 一旦失败就会读到陈旧标记而冲刺丢卷（见 StartPartExtract 注释）。
+      ;   $R7 是寄存器，可能被中间的 System::Call 污染 ⇒ 每 tick 都按 $CurPart 重新格式化，禁止跨 tick 依赖。
+      IntFmt $R7 "%02d" $CurPart
+      StrCpy $R9 "$PLUGINSDIR\res_done_"
+      StrCpy $R9 "$R9$R7.flag"
+      ${If} ${FileExists} "$R9"
         ; 标记文件内容 = OK / FAIL（由解压命令按退出码写入），失败不再被静默吞掉
-        FileOpen $FlagTxt "$PLUGINSDIR\res_done.flag" r
+        FileOpen $FlagTxt "$R9" r
         FileRead $FlagTxt $ResFlag
         FileClose $FlagTxt
-        Delete "$PLUGINSDIR\res_done.flag"
+        Delete "$R9"
         StrCpy $ResFlag $ResFlag 4
         ${If} $ResFlag == "FAIL"
           StrCpy $ResFail 1
@@ -1494,9 +1517,11 @@ Function fn_DoInstall
           Goto res_verify
         ${EndIf}
       ${ElseIf} $BatchTmp2 > 3000
-        ; 超时兜底（约 6 分钟）：不删归档，直接校验；缺失则明确报错（#3）
-        ${NSD_SetText} $hProgressStatus "警告：资源解压超时，正在校验完整性..."
-        Goto res_verify
+        ; 超时兜底（约 6 分钟/卷，正常单卷只需数秒~数十秒）：
+        ; 超时本身就是严重异常 ⇒ 直接判「不完整」（保留归档、最终文案不再谎报安装完成），
+        ; 而不是走 res_verify —— 那里只要哨兵文件在就会宣布成功，可能掩盖残缺。
+        ${NSD_SetText} $hProgressStatus "警告：资源解压超时（$CurPart/$PartTotal），安装可能不完整"
+        Goto res_broken
       ${EndIf}
       ; 未完成：保持状态，等待下一 tick（不阻塞 UI）
       Return
@@ -1559,7 +1584,13 @@ Function fn_DoInstall
   !insertmacro SetComp 8 2 "开始菜单快捷方式"
   StrCpy $InstallDone 1
   ${NSD_SetBitmap} $hNextBmp "$PLUGINSDIR\btn_finish.bmp" $R0
-  ${NSD_SetText} $hProgressStatus "安装完成。"
+  ; 资源完整性有告警时**不能**再写「安装完成。」—— 0.2.4 正是这样把一个「后端起不来」
+  ; 的残缺安装当成成功交付给用户的（用户看到安装成功、点桌宠却毫无反应）。
+  ${If} $ResBroken == 1
+    ${NSD_SetText} $hProgressStatus "安装完成，但核心资源不完整：请重新运行安装程序修复"
+  ${Else}
+    ${NSD_SetText} $hProgressStatus "安装完成。"
+  ${EndIf}
   ${NSD_SetText} $hCurName "安装完成"
   EnableWindow $hNextBtn 1
   Return
@@ -1569,24 +1600,40 @@ Function fn_DoInstall
     ; 先看解压过程中有没有卷报 FAIL：有就如实告知，不要再摆出一副“安装成功”的样子
     ${If} $ResFail == 1
       ${NSD_SetText} $hProgressStatus "警告：部分资源分卷解压失败，安装可能不完整"
-      Goto res_finish
+      Goto res_broken
     ${EndIf}
     ${IfNot} ${FileExists} "$INSTDIR\resources\desktop_core\api.py"
       ${NSD_SetText} $hProgressStatus "警告：核心资源缺失 (desktop_core/api.py)，安装可能不完整"
-      Goto res_finish
+      Goto res_broken
     ${EndIf}
     ${IfNot} ${FileExists} "$INSTDIR\resources\python-embed\pythonw.exe"
       ${NSD_SetText} $hProgressStatus "警告：Python 运行时缺失，安装可能不完整"
-      Goto res_finish
+      Goto res_broken
+    ${EndIf}
+    ; ★ python313.dll 必须单独校验：0.2.4 现场丢的就是含它的那一卷，而当时只校验了
+    ;   api.py / pythonw.exe，两者都在 ⇒ 安装器照样宣布成功，用户拿到的是一个
+    ;   「pythonw.exe 弹找不到 python313.dll、后端完全起不来」的坏安装。
+    ${IfNot} ${FileExists} "$INSTDIR\resources\python-embed\python313.dll"
+      ${NSD_SetText} $hProgressStatus "警告：Python 核心 DLL 缺失 (python313.dll)，安装不完整，请重新安装"
+      Goto res_broken
+    ${EndIf}
+    ${IfNot} ${FileExists} "$INSTDIR\resources\desktop_core\pet_window.py"
+      ${NSD_SetText} $hProgressStatus "警告：桌宠模块缺失 (pet_window.py)，安装不完整"
+      Goto res_broken
     ${EndIf}
     ${IfNot} ${FileExists} "$INSTDIR\resources\searxng\SearXNG for Windows.exe"
       ${NSD_SetText} $hProgressStatus "警告：SearXNG 缺失，离线搜索可能不可用"
-      Goto res_finish
+      Goto res_broken
     ${EndIf}
     !insertmacro SetComp 2 2 "核心资源 (desktop_core)"
     !insertmacro SetComp 3 2 "Python 运行时"
     !insertmacro SetComp 4 2 "SearXNG 搜索引擎"
     !insertmacro SetInstallProgress 68
+    Goto res_finish
+  ; 任一完整性告警都落到这里：置「不完整」标记后统一收尾。
+  ; 收尾阶段据此①改写最终状态文案（不再谎报「安装完成。」）②跳过 _bundle 清理（保留证据+便于重装）
+  res_broken:
+    StrCpy $ResBroken 1
     Goto res_finish
   res_finish:
     ; 清理临时解压工具与压缩包（已解压资源保留在 $INSTDIR\resources）。
@@ -1602,6 +1649,12 @@ Function fn_DoInstall
     ;      先睡 10s（等安装器退出、7z 子进程结束、杀软扫完），再最多重试 40 次×2s 删除。
     ;      这样既不占 UI，又能在「不重启」的前提下当场清干净。
     ;   ③ 清道夫也失败才挂 /REBOOTOK 等重启删除（极端兜底）。
+    ${If} $ResBroken == 1
+      ; 资源不完整：**保留** _bundle（含归档与 7z.exe），既方便用户重装时复用，
+      ; 也便于事后取证；此时绝不起清道夫，避免把证据删掉。
+      IntOp $InstallStage $InstallStage + 1
+      Return
+    ${EndIf}
     StrCpy $CleanTry 0
   res_clean:
     RMDir /r "$INSTDIR\resources\_bundle"

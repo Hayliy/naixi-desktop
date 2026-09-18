@@ -2191,8 +2191,12 @@ function LivePage() {
         // 优先用已配置/后端自动发现的模型地址；都没有则让 Qt 桌宠自身 find_model3 兜底发现
         // （VTube Studio 目录等），真正没有任何模型时才回退文件选择器，避免「有模型却被迫手填地址」。
         const r: any = await apiPost("/api/live/pet-start", { model_path: mp });
-        if (r?.ok) notify("桌宠已启动", "success");
-        else fileRef.current?.click();  // 启动失败（确实无模型）→ 选文件
+        // has_model=false：桌宠进程确实起来了，但机器上一个模型都没有，它只会显示
+        // 「还没有模型」占位卡。此时必须把用户明确引到导入入口，否则就是用户遇到的
+        // 「点了桌宠没反应、也找不到导入界面」。占位卡本身可点击，也支持右键导入。
+        if (r?.ok && r.has_model === false) notify("桌宠已启动 · 还没有模型：点桌宠上的卡片，或右键它选「导入模型文件…」", "info");
+        else if (r?.ok) notify("桌宠已启动", "success");
+        else fileRef.current?.click();  // 启动失败才回退文件选择器
       } catch {
         fileRef.current?.click();
       }

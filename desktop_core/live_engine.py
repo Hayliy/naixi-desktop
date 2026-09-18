@@ -201,6 +201,9 @@ class LiveEngine:
         self._audio_seq: int = 0
         # 桌宠子进程（PySide6 独立窗口）
         self._pet_proc: Optional[subprocess.Popen] = None
+        # 桌宠实际使用的模型路径（供 /api/live/pet-start 回报 has_model）：
+        # 进程起得来 ≠ 有形象可显示 —— 新机器上一个模型都没有时，桌宠只是个「还没有模型」占位卡。
+        self._pet_model_path: str = ""
         # 场景历史（本次会话工作缓冲，过长时压缩）
         self._scene_history: list[dict] = []
         self._live_prompt: str = DEFAULT_LIVE_PROMPT
@@ -4057,6 +4060,9 @@ class LiveEngine:
                 resolved = self._resolve_model_for_kind(kind)
             else:
                 kind, resolved = self._classify_model(model_path)
+            # 记录本进程实际用的模型（空串 = 没有任何模型，桌宠只会显示占位卡）。
+            # 供 api_live_pet_start 回报 has_model，让前端能把用户引到导入入口。
+            self._pet_model_path = resolved or ""
             vrm_script = self._find_vrm_pet_script(here) if kind == "vrm" else None
             if kind == "vrm" and vrm_script:
                 # --loop 指定循环动作（Spin/Squat/ShowFullBody 均已实测 52 轨全身 mocap）。

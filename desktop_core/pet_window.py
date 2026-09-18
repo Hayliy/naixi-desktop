@@ -188,6 +188,26 @@ def find_model3() -> list[dict]:
     return discover_models()
 
 
+def _models_dir() -> str:
+    """「导入模型」落盘目录（<资源根>/data/models）。
+
+    ★ 必须与后端 api.py 的 models_roots 解析共用同一实现（desktop_core.l2d_discovery）：
+      历史上这里有个模块级常量 DATA_MODELS，随 95ec2ac 重构被删、引用却没清 → 右键
+      「导入模型文件…」选完文件必抛 NameError，桌宠直接退出（用户看到的就是「没有导入界面」）。
+    """
+    from desktop_core.l2d_discovery import models_dir
+    return models_dir()
+
+
+def _invalidate_discovery_cache() -> None:
+    """模型落盘/删除后必须调，否则 TTL(600s) 内 find_model3() 仍返回旧列表。"""
+    try:
+        from desktop_core.l2d_discovery import invalidate_cache
+        invalidate_cache()
+    except Exception:
+        pass
+
+
 class PetGL(QOpenGLWidget):
     """Live2D 渲染子控件。
 
@@ -347,19 +367,27 @@ class PetWindow(QWidget):
 
         # 保底占位窗口：未加载模型（自动发现失败/未配置）时也必须可见，
         # 证明桌宠进程活着，而不是“全透明看不见”。模型加载成功后隐藏。
+        # ★ 2026-09-18：它同时是「全新机器上一个模型都没有」时**唯一可见的导入入口** ——
+        #   全文案只把用户指回「直播页点桌宠」会形成死循环（用户点了还是这句话）。
+        #   现在卡片本身可点击 → 直接弹模型导入对话框（见 eventFilter）。
         self._fallback = QLabel(self)
         self._fallback.setObjectName("pet_fallback")
         self._fallback.setAlignment(Qt.AlignCenter)
         self._fallback.setWordWrap(True)
-        self._fallback.setGeometry(70, int(self.BASE_H / 2) - 95, self.BASE_W - 140, 190)
+        self._fallback.setGeometry(70, int(self.BASE_H / 2) - 105, self.BASE_W - 140, 210)
         self._fallback.setStyleSheet(
-            "QLabel{background:rgba(40,30,60,235);color:#ffd6e8;border:2px solid #d98cb3;"
+            "QLabel{background:rgba(40,30,60,238);color:#ffd6e8;border:2px solid #d98cb3;"
             "border-radius:18px;padding:18px;font-size:15px;line-height:1.6;}"
         )
         self._fallback.setText(
-            "奶昔桌宠 · 未加载模型\n\n请在奶昔「直播」页点「桌宠」按钮，\n"
-            "导入或选择 Live2D 模型后即可显示形象。"
+            "奶昔桌宠 · 还没有模型\n\n"
+            "▶ 点这里导入模型\n\n"
+            "选择模型的 .model3.json 文件，\n"
+            "整个模型文件夹会被复制进来"
         )
+        self._fallback.setCursor(Qt.PointingHandCursor)
+        self._fallback.setToolTip("点击导入 Live2D 模型（.model3.json）")
+        self._fallback.installEventFilter(self)
         self._fallback.show()
         self._fallback.raise_()
 
@@ -1089,9 +1117,15 @@ class PetWindow(QWidget):
             _region = QRegion(hr)
             if _ci_visible:
                 _region = _region.united(QRegion(_ci.geometry()))
-            # 变化检测：key 含 (hr, chat_visible)，避免显隐时漏重设 setMask
+            # 未加载模型时把「保底占位卡」整体并入遮罩：否则它会被 hit_rect（无模型时是
+            # 窗口中央 45% 矩形）裁掉大半 —— 表现为卡片只剩中间一条、点不到
+            # （卡的几何 70..BASE_W-140 / BASE_H/2±105，与中央矩形只有部分相交）。
+            _fb_clickable = self._fallback_clickable()
+            if _fb_clickable:
+                _region = _region.united(QRegion(self._fallback.geometry()))
+            # 变化检测：key 含 (hr, chat_visible, fallback_visible)，避免显隐时漏重设 setMask
             # （第 18 轮起灵敏度窗是独立 owned window、不再是子控件 → 不并入本遮罩）
-            _key = (hr, _ci_visible)
+            _key = (hr, _ci_visible, _fb_clickable)
             if hr is not None and hr.width() > 10 and hr.height() > 10 and (_key != getattr(self, '_last_mask_key', None) or force):
                 self._last_mask_key = _key
                 self.setMask(_region)
@@ -1434,6 +1468,27 @@ class PetWindow(QWidget):
         event.accept()
 
     # ── 鼠标穿透（几何 WM_NCHITTEST，不依赖 GL 读像素，画布尺寸不影响命中判定）──
+    def _fallback_clickable(self) -> bool:
+        """占位卡是否处于可见可点状态（仅在未加载模型时）。"""
+        fb = getattr(self, "_fallback", None)
+        try:
+            return bool(fb is not None and fb.isVisible())
+        except Exception:
+            return False
+
+    def eventFilter(self, obj, event):
+        """占位卡上直接点击 → 打开模型导入对话框。
+
+        全新机器上没有任何模型时，这是用户能看见的唯一入口；
+        以前的文案只把用户指回「直播页 → 桌宠」按钮，点了还是同一张卡，等于死循环。
+        """
+        if obj is getattr(self, "_fallback", None):
+            if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
+                log.info("[桌宠] 点击占位卡 → 打开模型导入")
+                self._import_model()
+                return True
+        return super().eventFilter(obj, event)
+
     def _compute_hit_rect(self):
         """几何命中矩形：模型在窗口中的可点击区域。优先用 alpha 扫描的实际位置，回退固定比例。"""
         cw, ch = self.width(), self.height()
@@ -1479,6 +1534,10 @@ class PetWindow(QWidget):
         if hr is None:
             return 1  # HTCLIENT：首帧前也保证可交互
         if hr.contains(client_x, client_y):
+            return 1  # HTCLIENT
+        # 占位卡可见（未加载模型）时，卡片区域必须可点 —— 它是新机上唯一的导入入口。
+        # 与 timerEvent 里 setMask 并入卡片几何配套，二者必须同步改。
+        if self._fallback_clickable() and self._fallback.geometry().contains(client_x, client_y):
             return 1  # HTCLIENT
         # chat_input 可见时，其区域强制 HTCLIENT（不被穿透裁掉，可点击/打字）；
         # 与 timerEvent 里 setMask 并入 chat_input 几何配套 → 输入框既可见又可点
@@ -1720,13 +1779,22 @@ class PetWindow(QWidget):
         self._ws_send(json.dumps({"type": "chat", "text": text}))
 
     def _show_models(self):
-        """显示模型列表对话框"""
+        """显示模型列表对话框。
+
+        空列表时**必须**给出「导入模型」入口：新机器上用户点进这里只看到一个「关闭」
+        按钮，就会得出「怎么连导入界面都没有」的结论（2026-09-18 用户报障原话）。
+        """
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
         dlg = QDialog(self)
         dlg.setWindowTitle("模型管理")
-        dlg.setFixedSize(300, 400)
+        dlg.setFixedSize(360, 430)
         layout = QVBoxLayout(dlg)
-        for m in find_model3():
+        models = find_model3()
+        if not models:
+            tip = QLabel("还没有任何模型。\n点下面的「导入模型…」，选模型的 .model3.json 文件即可。")
+            tip.setWordWrap(True)
+            layout.addWidget(tip)
+        for m in models:
             row = QHBoxLayout()
             row.addWidget(QLabel(m["name"]))
             btn = QPushButton("删除")
@@ -1734,44 +1802,69 @@ class PetWindow(QWidget):
             btn.clicked.connect(lambda checked, name=m["name"]: self._delete_model(name, dlg))
             row.addWidget(btn)
             layout.addLayout(row)
+        btn_import = QPushButton("导入模型…")
+        btn_import.clicked.connect(lambda _c: (dlg.accept(), self._import_model()))
+        layout.addWidget(btn_import)
         btn_close = QPushButton("关闭")
         btn_close.clicked.connect(dlg.accept)
         layout.addWidget(btn_close)
         dlg.exec()
 
     def _delete_model(self, name: str, dlg=None):
-        """删除模型"""
+        """删除已导入的模型（原实现同样引用了不存在的 DATA_MODELS → 一点就 NameError）。"""
         import shutil
-        target = os.path.join(DATA_MODELS, name)
+        target = os.path.join(_models_dir(), name)
         if os.path.exists(target):
-            shutil.rmtree(target)
+            shutil.rmtree(target, ignore_errors=True)
+            _invalidate_discovery_cache()
+            log.info(f"模型已删除: {target}")
             if dlg:
                 dlg.accept()
             self._show_models()
 
     def _import_model(self):
-        p, _ = QFileDialog.getOpenFileName(self, "选择 Live2D 模型文件", "", "模型文件 (*.model3.json)")
+        """导入 Live2D 模型：选 .model3.json，把**整个模型文件夹**复制到 data/models/。
+
+        两个历史坑（都在此修掉，别再退回去）：
+          1) 原实现引用模块级常量 DATA_MODELS —— 它已随 95ec2ac 重构被删，引用没清，
+             所以选完文件必抛 NameError；PySide6 6.11 会把它从事件循环重抛出来，
+             被 run_pet 兜底捕获 → **桌宠窗口直接消失**。用户看到的就是「没有导入界面」。
+          2) 复制完必须失效模型发现缓存，否则 TTL(600s) 内 find_model3() 依旧看不到新模型，
+             表现为「导入成功但桌宠还说没有模型」。
+        """
+        p, _ = QFileDialog.getOpenFileName(
+            self, "选择 Live2D 模型文件（.model3.json）", "",
+            "Live2D 模型 (*.model3.json);;所有文件 (*)")
         if not p:
             return
-        # 复制到 data/models/ 目录
-        model_dir = os.path.dirname(p)
-        model_name = os.path.basename(model_dir)
-        target_dir = os.path.join(DATA_MODELS, model_name)
+        src_dir = os.path.dirname(os.path.abspath(p))
+        model_name = os.path.basename(src_dir) or "model"
+        new_path = p
+        tip = f"已导入：{model_name}"
         try:
-            import shutil
-            if os.path.exists(target_dir):
-                import time
-                target_dir += f"_imported_{int(time.time())}"
-            shutil.copytree(model_dir, target_dir)
-            new_path = os.path.join(target_dir, os.path.basename(p))
-            log.info(f"模型已导入: {new_path}")
-            notify = getattr(self, '_notify', None)
-            if notify:
-                notify(f"模型已导入: {model_name}")
-            self._reload_model(new_path)
+            dest_root = os.path.abspath(_models_dir())
+            inside = os.path.normcase(src_dir).startswith(os.path.normcase(dest_root))
+            if inside:
+                log.info(f"模型已在模型目录内，直接加载: {new_path}")
+            else:
+                os.makedirs(dest_root, exist_ok=True)
+                target_dir = os.path.join(dest_root, model_name)
+                if os.path.exists(target_dir):
+                    target_dir = os.path.join(dest_root, f"{model_name}_{int(time.time())}")
+                import shutil
+                shutil.copytree(src_dir, target_dir)
+                new_path = os.path.join(target_dir, os.path.basename(p))
+                log.info(f"模型已导入: {new_path}")
         except Exception as e:
-            log.warning(f"模型导入失败: {e}")
-            self._reload_model(p)  # 复制失败直接加载原路径
+            # 复制失败（权限/占用/空间）不阻断：直接用原路径加载，但必须让用户看见
+            log.warning(f"模型导入失败（改为直接加载原路径）: {e}")
+            tip = "复制到模型目录失败，先用原位置加载"
+        _invalidate_discovery_cache()
+        try:
+            self._bubble.show_text(tip, 3000)
+        except Exception:
+            pass
+        self._reload_model(new_path)
 
     def _reload_model(self, path: str):
         """重新加载模型（在 OpenGL 线程中）"""
@@ -1815,6 +1908,15 @@ class PetWindow(QWidget):
             self._pose.scan_model()
         except Exception as e:
             log.warning(f"模型切换失败: {e}")
+            # 加载失败必须把占位卡放回来：否则窗口既没有模型、又没有提示，用户只看到一片透明
+            # （重载失败时占位卡可能已在上一次成功加载后被隐藏 —— 那是最难排查的状态）
+            fb = getattr(self, "_fallback", None)
+            if fb is not None:
+                try:
+                    QTimer.singleShot(0, fb.show)
+                    QTimer.singleShot(0, fb.raise_)
+                except Exception:
+                    pass
 
     def set_mouth(self, v: float):
         self._mouth_target = max(0.0, min(1.0, v))

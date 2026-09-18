@@ -5097,7 +5097,10 @@ async def api_live_pet_start(request):
     from desktop_core.live_engine import engine
     body = await request.json() if request.body_exists else {}
     ok = engine._start_pet(body.get("model_path", ""))
-    return web.json_response({"ok": ok})
+    # has_model：进程起得来 ≠ 有形象可显示。全新机器上一个模型都没有时桌宠只会显示
+    # 「还没有模型」占位卡（卡上可直接点击导入）；前端必须据此把用户引到导入入口，
+    # 而不是一句「桌宠已启动」就完事 —— 那正是用户报「点了桌宠没反应、也找不到导入界面」的场景。
+    return web.json_response({"ok": ok, "has_model": bool(getattr(engine, "_pet_model_path", ""))})
 
 async def api_live_pet_stop(request):
     """停止桌宠"""
@@ -5244,7 +5247,8 @@ async def api_live_scene_mode(request):
 
 async def api_live_models(request):
     """列出 data/models/ 目录中的模型"""
-    models_dir = os.path.join(_DESKTOP_DIR, "data", "models")
+    from desktop_core.l2d_discovery import models_dir as _models_dir
+    models_dir = _models_dir()
     models = []
     if os.path.exists(models_dir):
         for entry in os.listdir(models_dir):
@@ -5264,17 +5268,20 @@ async def api_live_models_delete(request):
     name = body.get("name", "")
     if not name:
         return web.json_response({"error": "no name"}, status=400)
-    target = os.path.join(_DESKTOP_DIR, "data", "models", name)
+    from desktop_core.l2d_discovery import models_dir as _models_dir, invalidate_cache as _invalidate
+    target = os.path.join(_models_dir(), name)
     if not os.path.exists(target):
         return web.json_response({"error": "not found"}, status=404)
     import shutil
-    shutil.rmtree(target)
+    shutil.rmtree(target, ignore_errors=True)
+    _invalidate()  # 删完必须失效发现缓存，否则 TTL(600s) 内模型列表依旧显示已删的模型
     return web.json_response({"ok": True})
 
 
 async def api_live_models_import(request):
     """导入模型文件到 data/models/"""
-    models_dir = os.path.join(_DESKTOP_DIR, "data", "models")
+    from desktop_core.l2d_discovery import models_dir as _models_dir, invalidate_cache as _invalidate
+    models_dir = _models_dir()
     os.makedirs(models_dir, exist_ok=True)
     try:
         reader = await request.multipart()
@@ -5305,6 +5312,9 @@ async def api_live_models_import(request):
         # 返回模型路径
         model_path = os.path.join(target_dir, filename) if is_model3 else target_dir
         log.info(f"模型已导入: {dest}")
+        # ★ 必须失效发现缓存：否则 TTL(600s) 内 discover_models() 仍返回旧列表，
+        #   表现为「导入成功但桌宠还说没有模型」。
+        _invalidate()
         return web.json_response({"ok": True, "path": model_path, "name": base_name})
     except Exception as e:
         log.warning(f"模型导入失败: {e}")
