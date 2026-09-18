@@ -4034,22 +4034,31 @@ class LiveEngine:
             return True
         try:
             here = os.path.dirname(os.path.abspath(__file__))
-            # 向上逐级查找 src-tauri/sidecar/pet_window.py 入口（兼容 活目录 与 resources 副本 两种布局，
-            # 不再手算相对层数，避免 resources 布局下少退一层导致拼错路径）。入口内部 _find_core_root
-            # 会把 desktop_core 加进 sys.path，import 安全。
+            # 向上逐级查找启动器 pet_window.py，**两种布局都要认**：
+            #   开发态：<root>/src-tauri/sidecar/pet_window.py
+            #   安装态：<INSTDIR>/sidecar/pet_window.py   ← 安装包把 sidecar/*.py 放在 INSTDIR 下，
+            #           没有 src-tauri 这一层。老代码只认前者 ⇒ 装完后永远命中下面的兜底分支
+            #           （直接跑 resources\desktop_core\pet_window.py），而那个文件不自带 sys.path 修复，
+            #           `from desktop_core.xxx import` 直接 ModuleNotFoundError ⇒ 桌宠进程秒退、
+            #           pythonw 无控制台 ⇒ 用户点「桌宠」什么都不会出现（2026-09-18 用户报障的真因）。
+            #   启动器内部 _find_core_root 会把 desktop_core 加进 sys.path，import 才安全。
             pet_script = None
             d = here
             for _ in range(8):
-                cand = os.path.join(d, "src-tauri", "sidecar", "pet_window.py")
-                if os.path.exists(cand):
-                    pet_script = os.path.abspath(cand)
+                for rel in (os.path.join("src-tauri", "sidecar", "pet_window.py"),
+                            os.path.join("sidecar", "pet_window.py")):
+                    cand = os.path.join(d, rel)
+                    if os.path.exists(cand):
+                        pet_script = os.path.abspath(cand)
+                        break
+                if pet_script:
                     break
                 parent = os.path.dirname(d)
                 if parent == d:
                     break
                 d = parent
             if pet_script is None:
-                # 兜底：直接跑本目录的 pet_window.py（需 PYTHONPATH 保证 desktop_core 可 import）
+                # 最后兜底：直接跑本目录的 pet_window.py（该文件自己也会在 __main__ 下修 sys.path）
                 pet_script = os.path.abspath(os.path.join(here, "pet_window.py"))
             py = self._resolve_pet_python()
             # ── 按模型类型分流渲染器 ──
@@ -4090,7 +4099,12 @@ class LiveEngine:
                 args = [py, "-B", pet_script]
                 if resolved:
                     args.append(resolved)
-            # 关键：注入 PYTHONPATH，保证 desktop_core 包可被 import
+            # ⚠ 实测（2026-09-18，安装态）：打包自带的 python-embed 里有 `python313._pth`，
+            # 它让 PYTHONPATH **完全失效**（同一句 `set PYTHONPATH=…; python -c "import desktop_core"`
+            # 在 guest 里必报 ModuleNotFoundError）。所以「靠 PYTHONPATH 让子进程能 import desktop_core」
+            # 在开发态成立、装完后不成立 —— 必须靠入口脚本自己在代码里 sys.path.insert
+            # （sidecar/pet_window.py 与 desktop_core/pet_window.py 都已自带该修复）。
+            # 这里仍然注入，作为非 embed 解释器（开发态）下的兜底。
             env = dict(os.environ)
             core_parent = os.path.dirname(here)  # desktop_core 的父目录（含 desktop_core 包）
             pp = env.get("PYTHONPATH", "")
@@ -4107,6 +4121,15 @@ class LiveEngine:
                 popen_kwargs["startupinfo"] = _si
             self._pet_proc = subprocess.Popen(args, **popen_kwargs)
             log.info(f"[桌宠] 已启动: {py} {pet_script} (PYTHONPATH={core_parent})")
+            # ★ 存活自检：pythonw 没有控制台，子进程若因 import 失败/崩溃秒退，**不会有任何可见痕迹**
+            #   （不写 pet_error.log，也不弹任何框），用户看到的就是「点了桌宠没反应」。
+            #   这里等一小会儿确认它还活着，死了就如实回报 False，让前端能提示而不是谎报「已启动」。
+            time.sleep(1.2)
+            if self._pet_proc.poll() is not None:
+                log.warning(f"[桌宠] 子进程启动后立即退出（退出码 {self._pet_proc.returncode}），"
+                            f"入口={pet_script} 解释器={py}")
+                self._pet_proc = None
+                return False
             return True
         except Exception as e:
             log.warning(f"[桌宠] 启动失败: {e}")

@@ -2196,7 +2196,8 @@ function LivePage() {
         // 「点了桌宠没反应、也找不到导入界面」。占位卡本身可点击，也支持右键导入。
         if (r?.ok && r.has_model === false) notify("桌宠已启动 · 还没有模型：点桌宠上的卡片，或右键它选「导入模型文件…」", "info");
         else if (r?.ok) notify("桌宠已启动", "success");
-        else fileRef.current?.click();  // 启动失败才回退文件选择器
+        // 启动失败 = 子进程起来又秒退（pythonw 无控制台，之前是静默的），此时再弹文件选择器没有意义
+        else notify("桌宠启动失败，请到「日志」查看 pet 相关错误", "error");
       } catch {
         fileRef.current?.click();
       }

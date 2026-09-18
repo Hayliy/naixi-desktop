@@ -41,6 +41,17 @@ from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (QApplication, QMenu, QFileDialog, QWidget, QLineEdit,
                                 QLabel, QDialog, QSlider, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox, QScrollArea)
 
+# ★ 直接以脚本方式运行本文件时（安装态 live_engine 的兜底入口 `resources\desktop_core\pet_window.py`），
+#   必须先把**本包的父目录**塞进 sys.path，否则下面这些 `from desktop_core.xxx import` 全部失败。
+#   为什么不能靠启动方设环境变量解决：打包自带的 python-embed 里有 `python313._pth`，
+#   PYTHONPATH 对它**完全无效**（实测：设了 PYTHONPATH 仍报 No module named 'desktop_core'）。
+#   正常路径是走 sidecar\pet_window.py 启动器（它自己也在代码里修 sys.path）；
+#   此处兜底只针对启动器缺失的场景。缺了它 → 桌宠进程秒退、pythonw 无控制台，用户只看到「点桌宠没反应」。
+if __name__ == "__main__":
+    _pkg_parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _pkg_parent not in sys.path:
+        sys.path.insert(0, _pkg_parent)
+
 from desktop_core.motion_engine import PoseEngine
 from desktop_core.idle_engine import IdleEngine
 from desktop_core.engine.ecs import World
