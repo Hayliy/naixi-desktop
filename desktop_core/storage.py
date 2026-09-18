@@ -510,6 +510,24 @@ def init_tables():
             pass
         # 迁移旧 JSON 数据到新表
         _migrate_naixi_automations()
+
+        # ★★ 2026-09-18 全功能测试挖出的 P0：**表结构漂移**（CREATE TABLE IF NOT EXISTS 不会补列）
+        # 现场实证（安装态真机）：
+        #   sqlite3.OperationalError: table naixi_automations has no column named workflow_id
+        #   [ERROR] workflow: 保存工作流失败: table workflow_versions has no column named name
+        # ⇒ 「创建自动化」「保存工作流」在这版上是 **100% 失败**（HTTP 500 / success:false），
+        #    前端只是提示失败，用户根本用不了这两个功能。
+        # 规矩：以后凡是给表加列，都必须在这里补一条 ALTER（CREATE TABLE 只对全新库生效）。
+        for _col, _decl in (("workflow_id", "TEXT DEFAULT ''"),
+                            ("trigger_type", "TEXT DEFAULT 'schedule'"),
+                            ("config", "TEXT DEFAULT ''"),
+                            ("description", "TEXT DEFAULT ''"),
+                            ("last_result", "TEXT DEFAULT ''")):
+            try:
+                conn.execute(f"ALTER TABLE naixi_automations ADD COLUMN {_col} {_decl}")
+            except Exception:
+                pass  # 列已存在
+        _ensure_workflow_versions_schema(conn)
         # 兼容旧库：补 day_tag 列（按天归档 / 当日记忆豁免衰减）
         try:
             cols = [r[1] for r in conn.execute("PRAGMA table_info(agent_memory)").fetchall()]
@@ -1159,6 +1177,67 @@ def conv_delete(conv_key: str):
 
 
 # ── 自动化 ──
+
+def _ensure_workflow_versions_schema(conn):
+    """把 workflow_versions 迁移到 workflow_engine 期望的结构。
+
+    旧定义（本文件早先版本）：id INTEGER PRIMARY KEY AUTOINCREMENT，且没有 name/description/dsl；
+    而 workflow_engine.save_version 的 INSERT 带着 (id, workflow_id, version, status, name,
+    description, nodes, edges, dsl, created_at)，id 还是文本（如 "wf_x_v1"）。
+    两个后果叠在一起：先报「缺列」，补列后又会报 sqlite3.IntegrityError / datatype mismatch
+    （往 INTEGER PRIMARY KEY（rowid 别名）写文本必然失败）—— 所以只能按引擎结构重建表。
+    该表在修复前**从未成功写入过一行**（INSERT 一直报错），故重建不会丢真实数据；
+    若真存在行，也按能对应的列尽量搬过去。
+    """
+    try:
+        info = conn.execute("PRAGMA table_info(workflow_versions)").fetchall()
+    except Exception:
+        return
+    if not info:
+        return
+    cols = {r[1] for r in info}
+    id_type = next((str(r[2]).upper() for r in info if r[1] == "id"), "")
+    need = {"id", "workflow_id", "version", "status", "name", "description",
+            "nodes", "edges", "dsl", "created_at"}
+    if need.issubset(cols) and id_type == "TEXT":
+        return
+    try:
+        old_rows = conn.execute("SELECT * FROM workflow_versions").fetchall()
+    except Exception:
+        old_rows = []
+    try:
+        conn.execute("ALTER TABLE workflow_versions RENAME TO workflow_versions_old")
+        conn.execute(
+            """CREATE TABLE workflow_versions (
+                   id TEXT PRIMARY KEY,
+                   workflow_id TEXT NOT NULL,
+                   version INTEGER NOT NULL,
+                   status TEXT DEFAULT 'draft',
+                   name TEXT DEFAULT '',
+                   description TEXT DEFAULT '',
+                   nodes TEXT DEFAULT '[]',
+                   edges TEXT DEFAULT '[]',
+                   dsl TEXT DEFAULT '',
+                   created_at TEXT NOT NULL
+               )""")
+        for row in old_rows:
+            try:
+                k = row.keys()
+                conn.execute(
+                    "INSERT OR REPLACE INTO workflow_versions "
+                    "(id, workflow_id, version, status, nodes, edges, created_at) VALUES (?,?,?,?,?,?,?)",
+                    (str(row["id"]), row["workflow_id"], row["version"],
+                     row["status"] if "status" in k else "draft",
+                     row["nodes"] if "nodes" in k else "[]",
+                     row["edges"] if "edges" in k else "[]",
+                     row["created_at"] if "created_at" in k else ""))
+            except Exception:
+                pass
+        conn.execute("DROP TABLE workflow_versions_old")
+        conn.commit()
+    except Exception:
+        pass
+
 
 def _migrate_naixi_automations():
     """从 JSON blob 迁移到 naixi_automations 表（幂等，只执行一次）"""

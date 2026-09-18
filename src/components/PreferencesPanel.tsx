@@ -180,7 +180,16 @@ function ShortcutsSettings() {
         className="w-full mt-1 px-2.5 py-1 rounded-lg text-[10px] border border-sakura-100 text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 transition-colors">
         恢复默认
       </button>
-      <p className="text-[9px] text-sakura-300 mt-1">部分快捷键（如 Ctrl+L 清空对话）需要页面刷新后生效。</p>
+      {/* 如实交代：这个列表里**只有 desc 为「清空对话」的那一条**会真正绑定（Chat.tsx 的
+          keydown 只按 desc 匹配这一个动作），其余条目是固定快捷键的"参考展示"——
+          改它们的键位不会有任何效果。旧文案只说"部分需要刷新后生效"，
+          等于把"改了没用"说成"刷新就好"，是误导，全功能测试里被标了出来。 */}
+      <div className="text-[9px] text-amber-600 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 mt-1 leading-relaxed">
+        说明：<b>只有「清空对话」这一条可自定义并生效</b>（改完即刻生效）。<br />
+        「发送消息 / 换行 / 设置面板 / 取消」是程序中写死的固定快捷键，此处仅作展示，改键位不会生效；
+        自行「添加快捷键」的条目目前也不会被绑定。
+      </div>
+      <p className="text-[9px] text-sakura-300 mt-1">Ctrl+L「清空对话」改键后需重新聚焦输入框生效。</p>
     </div>
   );
 }

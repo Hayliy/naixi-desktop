@@ -248,6 +248,10 @@ export default function ChatPage() {
     await sendChatStream(agentMode ? "/api/agent/stream" : "/api/chat/stream", {
       text, key: activeKey || `chat:${Date.now().toString(36)}`, model: modelKey,
       provider_id: selectedModel?.provider_id || 0, scene,
+      // 专家/团队人设：此前 prompt 只用来在气泡上显示专家名、从不发给后端 ⇒ 选了专家
+      // 跟没选一样（模型完全不知道人设）。这里随请求带上，由后端追加进 system 提示。
+      expert_prompt: currentExpert?.prompt || undefined,
+      expert_name: currentExpert?.name || undefined,
     }, {
       onUpdate: (blocks, generating, usage) => {
         setMsgs(prev => prev.map(m => m.id !== aiId ? m : { ...m, content_blocks: blocks, content: blocks.find(b => b.type === "text")?.text || "" }));

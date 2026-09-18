@@ -275,6 +275,14 @@ export default function StageWindow() {
     const next = { ...modelMap, [agentId]: modelFile };
     saveModelMap(next);
     setModelMap(next); // 触发舞台重建
+    // 同时把"当前模型"回写后端 live_config.model_path：
+    // 否则舞台窗口的选择只活在 localStorage 里，与 Qt 桌宠 / 直播页配置各说各话
+    // （用户在舞台选了模型，桌宠那边完全不知道，看起来像"没生效"）。
+    fetch("/api/live/save-config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model_path: modelFile }),
+    }).catch(() => {});
   }
 
   return (

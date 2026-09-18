@@ -29,6 +29,9 @@ import {
 const PAGE_TITLES: Record<string, string> = {
   dashboard: "仪表盘", chat: "对话", knowledge: "知识库",
   tools: "工具", memory: "记忆", napcat: "NapCat",
+  // 左侧导航"连接"用的是 connection 这个 key，而这里原先只有 napcat ⇒ 点「连接」
+  // 既取不到标题也取不到图标，标题栏回落到"仪表盘"（看起来像点错了页面）。
+  connection: "连接",
   ops: "运维", live: "直播", scheduler: "自动化",
   logs: "日志", settings: "设置", workflow: "工作流",
   petmemory: "桌宠记忆",
@@ -45,6 +48,7 @@ const PAGE_ICONS: Record<string, React.ReactNode> = {
   scene: <Eye size={15} className="text-sakura-400" />,
   cohost: <MessageCircle size={15} className="text-sakura-400" />,
   napcat: <Bot size={15} className="text-sakura-400" />,
+  connection: <Bot size={15} className="text-sakura-400" />,
   ops: <Server size={15} className="text-sakura-400" />,
   live: <Film size={15} className="text-sakura-400" />,
   scheduler: <Calendar size={15} className="text-sakura-400" />,
@@ -1543,6 +1547,13 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
   return (
     <div className="space-y-3">
       <p className="text-sm font-semibold text-sakura-600">连接</p>
+      {/* 如实说明：目前只有 QQ(NapCat) 有真实桥接（探测 3000/3001 端口）；
+          其余平台仅把配置保存到本地库，尚未实现收发实现 —— 不写清楚的话，
+          用户会以为"配置完就能用"，属于最容易踩的信任坑。 */}
+      <div className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 leading-relaxed">
+        提示：当前仅 <b>QQ / NapCat</b> 具备真实消息桥接（应用会探测本机 3000/3001 端口）。
+        其余平台目前<strong>只保存配置、尚未实现收发</strong>，配好也不会收到消息。
+      </div>
       {loading ? (
         <div className="text-center py-8"><div className="w-5 h-5 border-2 border-sakura-200 border-t-sakura-500 rounded-full animate-spin mx-auto" /></div>
       ) : (
@@ -2136,7 +2147,10 @@ function LivePage() {
     try {
       const form = new FormData();
       form.append("file", file);
-      const res = await apiPost<any>("/api/live/models/import", form);
+      // 必须用原生 fetch：apiPost 会 JSON.stringify 请求体（FormData 会被序列化成 "{}"），
+      // 后端 multipart 解析直接失败 → 旧版现场就是 500「导入失败」。
+      const res = await fetch(`${API_BASE}/api/live/models/import`, { method: "POST", body: form })
+        .then(r => r.json()).catch(() => ({ ok: false } as any));
       if (res.ok && res.path) {
         notify(`模型已导入: ${res.name}`, "success");
         await apiPost("/api/live/save-config", { model_path: res.path });
@@ -3150,14 +3164,25 @@ function SchedulerPage() {
 function LogsPage() {
   const [logs, setLogs] = useState("");
   useEffect(() => {
-    const fetchLogs = () => fetch(`${API_BASE}/api/logs`).then(r => r.text().then(setLogs)).catch(() => {});
+    // 实测（真机）：后端日志每行都带毫秒时间戳，1 秒拉一次、每次 ~56KB 全文替换，
+    // 一小时能把日志刷到十几 MB 并触发轮转（5MB×3）。这里做三件事：
+    //   ① 间隔放宽到 3s；② 页面不可见时不拉（后台标签页不做无用功）；
+    //   ③ 内容没变就不 setState（避免整块 <pre> 重排）。
+    let last = "";
+    const fetchLogs = () => {
+      if (document.visibilityState !== "visible") return;
+      fetch(`${API_BASE}/api/logs`)
+        .then(r => r.text())
+        .then(t => { if (t !== last) { last = t; setLogs(t); } })
+        .catch(() => {});
+    };
     fetchLogs();
-    const timer = setInterval(fetchLogs, 1000);
+    const timer = setInterval(fetchLogs, 3000);
     return () => clearInterval(timer);
   }, []);
   return (
     <div className="space-y-4">
-      <p className="text-sm font-semibold text-sakura-500">日志（1 秒自动刷新）</p>
+      <p className="text-sm font-semibold text-sakura-500">日志（3 秒自动刷新）</p>
       <pre className="bg-[#1a1a2e] text-green-400 text-[11px] p-4 rounded-xl overflow-auto max-h-[70vh] font-mono leading-relaxed">{logs || "加载中..."}</pre>
     </div>
   );

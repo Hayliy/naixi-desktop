@@ -285,12 +285,38 @@ export function TopBar({ onNavigate }: { onNavigate: (k: string) => void }) {
     },
     {
       id: "pet", label: "桌宠", accel: "p",
+      // 旧版这三项全是空操作：它们操作的是 tauri.conf 里那个 visible:false、全项目无人 show()
+      // 的 /pet 网页窗口（真桌宠是 Python Qt 进程），所以点了一点反应都没有。
+      // 现改为直接调用真正的桌宠接口 /api/live/pet-start|pet-stop|pet-switch。
       items: [
-        { label: "显示桌宠", action: () => onNavigate("pet") },
-        { label: "隐藏桌宠", action: () => onNavigate("dashboard") },
-        { label: "鼠标穿透", action: () => { emitPet("naixi:pet:toggle-clickthrough"); notify("已切换桌宠鼠标穿透", "info"); } },
+        {
+          label: "显示桌宠",
+          action: async () => {
+            try {
+              const cfg = await apiGet<any>("/api/live/config");
+              const r: any = await apiPost("/api/live/pet-start", { model_path: cfg?.model_path || "" });
+              if (r?.ok && r.has_model === false) notify("桌宠已启动 · 还没有模型：点桌宠上的卡片导入", "info");
+              else if (r?.ok) notify("桌宠已启动", "success");
+              else notify("桌宠启动失败（详见日志）", "error");
+            } catch { notify("桌宠启动失败", "error"); }
+          },
+        },
+        {
+          label: "关闭桌宠",
+          action: () => { apiPost("/api/live/pet-stop", {}).then(() => notify("桌宠已关闭", "info")).catch(() => notify("关闭失败", "error")); },
+        },
         "sep",
-        { label: "切换模型", action: () => { emitPet("naixi:pet:next-model"); notify("已切换桌宠模型", "info"); } },
+        {
+          label: "切换 2D / 3D(VRM)",
+          action: async () => {
+            try {
+              const cfg = await apiGet<any>("/api/live/config");
+              const next = cfg?.render_mode === "vrm" ? "live2d" : "vrm";
+              await apiPost("/api/live/pet-switch", { kind: next });
+              notify(next === "vrm" ? "已切到 3D(VRM) 桌宠" : "已切到 2D(Live2D) 桌宠", "info");
+            } catch { notify("切换失败", "error"); }
+          },
+        },
       ],
     },
     {
@@ -304,8 +330,10 @@ export function TopBar({ onNavigate }: { onNavigate: (k: string) => void }) {
     {
       id: "live", label: "直播", accel: "l",
       items: [
-        { label: "启动引擎", action: () => { apiPost("/api/live/start", {}).then(() => notify("直播引擎已启动", "info")).catch(() => notify("启动失败", "error")); } },
-        { label: "保存配置", action: () => { apiPost("/api/live/save-config", {}).then(() => notify("直播配置已保存", "info")).catch(() => notify("保存失败", "error")); } },
+        // 旧版「启动引擎」发空 body（不带 app_id/身份码等）→ 必然启动失败；
+        // 「保存配置」发 {} → 后端以库内既有值为 base 合并，等于什么都没改却提示"已保存"。
+        // 两处都属于"骗用户"，改成跳到直播页去操作（那里有完整表单）。
+        { label: "打开直播设置…", action: () => onNavigate("live") },
         { label: "看视频反应 开/关", action: async () => { const next = !sceneAuto; setSceneAuto(next); try { await apiPost("/api/live/scene-auto", { enabled: next }); notify(next ? "场景感知已开启" : "场景感知已关闭", "info"); } catch { notify("操作失败", "error"); } } },
       ],
     },

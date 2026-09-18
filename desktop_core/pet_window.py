@@ -1274,6 +1274,43 @@ class PetWindow(QWidget):
         except Exception as e:
             log.warning(f"[桌宠] 表情切换失败 {eid}: {e}")
 
+    # 全局热键的动作标签 → 内置 idle 动作 key（与右键菜单「动作」子菜单同一张表，
+    # 保证「右键能点的」和「热键能按的」是一回事）
+    _HOTKEY_IDLE_LABELS = {
+        "身体浮动": "body_float", "看鼠标": "look_cursor", "摇头歪头": "head_sway",
+        "被风吹": "wind", "缩放呼吸": "scale_breath",
+        "张嘴哼歌": "mouth_hum", "开心蹦跳": "bounce", "歪头杀": "tilt",
+        "头发飘动": "hair_sway", "眉毛挑动": "brow_raise", "开心扭动": "wiggle",
+    }
+
+    def _play_hotkey_motion(self, label: str) -> bool:
+        """全局热键触发的动作：先认内置 idle 动作（中文标签），再退回模型自带动作组/骨骼动作。
+
+        返回是否真的播出去了 —— 不返回就成了"按了没反应又查不到原因"。
+        """
+        if not label:
+            return False
+        idle = getattr(self, "_idle", None)
+        key = self._HOTKEY_IDLE_LABELS.get(label)
+        if idle is not None and key:
+            try:
+                idle.toggle(key)   # 与右键菜单一致：开/关切换
+                return True
+            except Exception as e:
+                log.warning(f"[桌宠] 热键内置动作失败 {label}: {e}")
+                return False
+        if self.model and self._motion_groups and label in self._motion_groups:
+            try:
+                self.model.StartMotion(label, 0, 3)
+                return True
+            except Exception as e:
+                log.warning(f"[桌宠] 热键动作组失败 {label}: {e}")
+        try:
+            return bool(self._pose.play_action(label))
+        except Exception as e:
+            log.warning(f"[桌宠] 热键骨骼动作失败 {label}: {e}")
+            return False
+
     def _play_motion(self, group: str, count: int):
         """右键菜单点动作：随机抽取该组一个动作播放（对齐 web 动作热键）。"""
         if not self.model or not group:
@@ -1991,6 +2028,12 @@ class PetWindow(QWidget):
                         # audio_id 一并透传：播出去之后要回执，否则后端会兜底再播一遍=双声
                         self._ws_queue.put({"type": "audio", "audio": d.get("audio", ""),
                                             "audio_id": d.get("audio_id", "")})
+                    elif d.get("type") == "avatar_expression":
+                        # 全局热键（默认 F1/F2…，见 hotkeys.py）广播的表情指令。
+                        # 旧版这里没有分支 ⇒ 热键对 Qt 桌宠完全无效（只有网页版桌宠响应）。
+                        self._ws_queue.put({"type": "hotkey_expr", "emotion": d.get("emotion", "")})
+                    elif d.get("type") == "avatar_motion":
+                        self._ws_queue.put({"type": "hotkey_motion", "action": d.get("action", "")})
             except:
                 self._ws = None
                 if self._running:
@@ -2007,6 +2050,23 @@ class PetWindow(QWidget):
                 msg = self._ws_queue.get_nowait()
                 if msg.get("type") == "audio":
                     self._play_audio_b64(msg.get("audio", ""), msg.get("audio_id", ""))
+                    continue
+                if msg.get("type") == "hotkey_expr":
+                    _label = msg.get("emotion", "")
+                    _eid = self._resolve_expression(_label) or _label
+                    if _eid:
+                        # 与右键菜单同一语义：勾选式增删（再按一次取消）
+                        self._toggle_expression(_eid)
+                        self._bubble.show_text(f"表情：{_label}", 1500)
+                    else:
+                        log.warning(f"[桌宠] 热键表情未解析到模型表情: {_label!r}")
+                    continue
+                if msg.get("type") == "hotkey_motion":
+                    _label = msg.get("action", "")
+                    if self._play_hotkey_motion(_label):
+                        self._bubble.show_text(f"动作：{_label}", 1500)
+                    else:
+                        log.warning(f"[桌宠] 热键动作未匹配到可用动作: {_label!r}")
                     continue
                 if msg.get("type") == "speak":
                     txt = msg.get("text", "")

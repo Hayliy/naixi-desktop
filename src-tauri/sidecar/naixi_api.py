@@ -5,14 +5,37 @@
 import sys, os, asyncio, logging, subprocess, time
 from logging.handlers import RotatingFileHandler
 
-# 日志文件（崩溃时也能查到原因）
-LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "logs")
-os.makedirs(LOG_DIR, exist_ok=True)
-LOG_FILE = os.path.join(LOG_DIR, "naixi_desktop.log")
-_handler = RotatingFileHandler(LOG_FILE, maxBytes=5*1024*1024, backupCount=3, encoding="utf-8")
-_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
-logging.getLogger().addHandler(_handler)
-logging.getLogger().setLevel(logging.INFO)
+# 日志文件（崩溃时也能查到原因）—— 延迟到 DESKTOP_DIR 解析完成后再初始化，见 _init_logging()。
+#
+# ★★ 2026-09-18 全功能测试挖出的真凶：这里原本用 dirname×3 硬推日志目录：
+#     __file__ = <INSTDIR>\sidecar\naixi_api.py
+#     dirname→<INSTDIR>\sidecar，dirname→<INSTDIR>，dirname→ %LOCALAPPDATA%
+#   ⇒ 装完后**整个应用日志被写到 `%LOCALAPPDATA%\logs\naixi_desktop.log`**：
+#     ① 在用户 AppData 根目录拉了一个莫名其妙的 logs 目录；
+#     ② `/api/desktop/paths` 报的却是另一条路径（设置页给用户看的是错的）；
+#     ③ 项目红线明令禁止 dirname 硬推资源/数据目录（dev 与安装态层数不同，必然漂移）。
+#   现改为与「桌宠日志 / 语音日志」共用同一解析器 log_paths.log_dir()：
+#   安装态 = %APPDATA%\奶昔\logs，开发态 = <项目根>\logs（与 /api/logs、paths 接口同源）。
+def _init_logging():
+    log_dir = None
+    try:
+        if DESKTOP_DIR not in sys.path:
+            sys.path.insert(0, DESKTOP_DIR)
+        from desktop_core.log_paths import log_dir as _ld
+        log_dir = _ld()
+    except Exception:
+        log_dir = os.path.join(DESKTOP_DIR, "logs")
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+    except Exception:
+        pass
+    log_file = os.path.join(log_dir, "naixi_desktop.log")
+    handler = RotatingFileHandler(log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+    logging.getLogger().addHandler(handler)
+    logging.getLogger().setLevel(logging.INFO)
+    return log_file
+
 
 # 桌面端核心模块路径：向上查找包含 desktop_core 包的目录（兼容开发态与打包态）
 def _find_core_root():
@@ -38,6 +61,9 @@ if DESKTOP_DIR not in sys.path:
 # 关键：必须用 _find_core_root() 算出的 DESKTOP_DIR（开发态=项目根，打包态=resources 目录），
 # 不能写死 3 层上级（打包态 3 层上级是安装目录而非 resources，会导致 experts/skills/prompts 找不到）。
 os.environ["DESKTOP_DIR"] = DESKTOP_DIR
+
+# 日志初始化（必须放在 DESKTOP_DIR 就绪之后：log_paths 依赖它解析安装态/开发态）
+LOG_FILE = _init_logging()
 
 # 记录入口脚本路径（供重启 API 使用）
 sys._naixi_entry = __file__

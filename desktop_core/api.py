@@ -379,6 +379,10 @@ async def api_workflow_export(request):
     wid = request.match_info.get("id", "")
     wf = _get_workflow_api()
     result = await wf["export"](wid)
+    # 原先不论成败都回 200，失败时 body 是 {"error": "工作流不存在"} ——
+    # 调用方只看 HTTP 码会把它当成导出成功（前端"导出"按钮会给出错误提示却不报错）。
+    if isinstance(result, dict) and result.get("error") and not result.get("dsl"):
+        return web.json_response(result, status=404)
     return web.json_response(result)
 
 async def api_workflow_import(request):
@@ -471,8 +475,20 @@ async def api_workflow_register_webhook(request):
         body = await request.json()
     except Exception:
         return web.json_response({"error": "无效的 JSON"}, status=400)
+    wid = str(body.get("id") or "")
+    if not wid:
+        return web.json_response({"error": "缺少工作流 id"}, status=400)
     wf = _get_workflow_api()
-    result = await wf["webhook"](body.get("id", ""), body.get("endpoint", ""), body.get("method", "POST"))
+    try:
+        # 工作流不存在时底层 INSERT 会撞外键（sqlite3.IntegrityError），原样冒出去就是 500，
+        # 前端只能提示"请求失败"。这里先判存在、再兜底异常，统一给可读的 4xx/5xx。
+        one = await wf["get"](wid)
+        if not one:
+            return web.json_response({"error": "工作流不存在"}, status=404)
+        result = await wf["webhook"](wid, body.get("endpoint", ""), body.get("method", "POST"))
+    except Exception as e:
+        log.error("[工作流] 注册 webhook 失败: %s", e)
+        return web.json_response({"error": "注册 webhook 失败: " + str(e)}, status=500)
     return web.json_response(result)
 
 async def api_workflow_human_input(request):
@@ -946,11 +962,22 @@ async def api_system_restart_searxng(request):
 
 async def api_desktop_paths(request):
     """返回桌面端真实文件路径与存储信息（运行时计算，不硬编码）"""
-    import os as _os
-    base = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
-    db_path = _os.path.join(base, "data", "naixi_desktop.db")
-    logs_dir = _os.path.join(base, "logs")
-    models_dir = _os.path.join(base, "models")
+    # 2026-09-18 全功能测试修正：原先三处都用 dirname(dirname(__file__)) 硬推。
+    # 真机实测：安装态下 logs_dir 报的是 <INSTDIR>\resources\logs（**该目录根本不存在**，
+    # 真实日志在 %APPDATA%\奶昔\logs），models_dir 也不是实际在用的
+    # <INSTDIR>\resources\data\models。而「设置 → 文件与存储」是**直接把这几个路径显示给用户**的，
+    # 等于给用户看的全是错的。改为与「写日志 / 发现模型」共用同一套解析器（单一真相源）。
+    db_path = DB_PATH
+    try:
+        from desktop_core.log_paths import log_dir as _log_dir
+        logs_dir = _log_dir()
+    except Exception:
+        logs_dir = os.path.join(_DESKTOP_DIR, "logs")
+    try:
+        from desktop_core.l2d_discovery import models_dir as _models_dir
+        models_dir = _models_dir()
+    except Exception:
+        models_dir = os.path.join(_DESKTOP_DIR, "data", "models")
     db_size = _os.path.getsize(db_path) if _os.path.exists(db_path) else 0
     keep_days = 7
     raw = meta_get("desktop_config")
@@ -1678,12 +1705,28 @@ async def api_search(request):
 
         results = []
 
-        # 方案 1: 本地 SearXNG（桌面端自带 8899 或奶昔后端 8898）
-        for port in [8899, 8898]:
+        # 方案 1: 本地 SearXNG。
+        # 优先用「设置 → 搜索」里填的地址 —— 此前该设置**只存不读**（后端硬编码 8899/8898），
+        # 用户改了地址完全不生效。这里接上：填了就先试它。
+        endpoints = []
+        try:
+            _raw = meta_get("desktop_config")
+            if _raw:
+                _u = (json.loads(_raw).get("settings", {}) or {}).get("searxng_url", "")
+                if isinstance(_u, str) and _u.strip():
+                    _u = _u.strip().rstrip("/")
+                    if not _u.startswith("http"):
+                        _u = "http://" + _u
+                    endpoints.append(_u + "/search")
+        except Exception:
+            pass
+        for _p in (8899, 8898):
+            endpoints.append("http://127.0.0.1:%d/search" % _p)
+        for ep in endpoints:
             try:
                 async with aiohttp.ClientSession() as session:
                     params = {"q": q, "format": "json", "language": "zh-CN"}
-                    async with session.get(f"http://127.0.0.1:{port}/search", params=params, timeout=5) as resp:
+                    async with session.get(ep, params=params, timeout=5) as resp:
                         if resp.status == 200:
                             data = await resp.json()
                             for item in data.get("results", []):
@@ -1870,6 +1913,16 @@ async def api_chat_stream(request):
         # 获取场景和提示词
         scene = body.get("scene", "owner")
         system_prompt = _get_prompt_text(scene)
+
+        # 专家 / 团队人设：前端「资源库」里选专家后，原先只把专家名显示在气泡上，
+        # prompt 从来没发给后端 ⇒ 选了专家跟没选一样（模型完全不知道人设）。
+        # 前端现在会带 expert_prompt/expert_name，这里追加进系统提示。
+        _expert_prompt = str(body.get("expert_prompt") or "").strip()
+        if _expert_prompt:
+            _expert_name = str(body.get("expert_name") or "").strip()
+            _head = "【当前角色" + ("：" + _expert_name if _expert_name else "") + "】"
+            system_prompt += ("\n\n" + _head + "\n" + _expert_prompt
+                              + "\n回答时始终保持在上述角色的人设、口吻与专业范围内。")
 
         # Agent 模式：追加系统操作能力说明
         is_agent = "/agent/" in request.path
@@ -2821,7 +2874,15 @@ async def api_automations_save(request):
     """创建或更新自动化任务"""
     import time
     from desktop_core.storage import automation_save
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "无效的 JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "请求体必须是 JSON 对象"}, status=400)
+    # 名称必填：空名字的任务在列表里无法辨认，早退比落库后再删更友好
+    if not str(body.get("name") or "").strip():
+        return web.json_response({"error": "请填写自动化名称"}, status=400)
     now = time.strftime("%Y-%m-%d %H:%M:%S")
     item = {
         "id": body.get("id") or f"auto_{int(time.time())}",
@@ -2842,7 +2903,13 @@ async def api_automations_save(request):
         "description": body.get("description", ""),
         "last_result": "",
     }
-    automation_save(item)
+    try:
+        automation_save(item)
+    except Exception as e:
+        # 不要再让异常冒到 aiohttp（那会变成 500 + 前端只看到"请求失败"）。
+        # 现场实证：表结构漂移导致「创建自动化」100% 失败，却完全看不到原因。
+        log.error("[自动化] 保存失败: %s", e)
+        return web.json_response({"error": "保存失败: " + str(e)}, status=500)
     return web.json_response({"ok": True, "id": item["id"]})
 
 
@@ -4083,6 +4150,18 @@ async def _on_startup_services(app):
       - 同时启动 _searxng_watchdog 常驻循环：SearXNG 离线时自动拉起，
         与后端 self-heal「检测->重启」机制一致，无需用户手动触发自愈。
     """
+    # 应用「设置 → 系统与环境 → 日志级别」：此前该设置只落库、后端从不读取，
+    # 用户改成 DEBUG/WARNING 都毫无效果（而全量 INFO 会把日志刷到飞快轮转）。
+    try:
+        _raw = meta_get("desktop_config")
+        _lvl = ""
+        if _raw:
+            _lvl = str((json.loads(_raw).get("settings", {}) or {}).get("log_level", "") or "").upper()
+        if _lvl in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
+            logging.getLogger().setLevel(getattr(logging, _lvl))
+            log.info("日志级别已按设置应用: " + _lvl)
+    except Exception as _e:
+        log.warning("应用日志级别设置失败: %s", _e)
     try:
         from desktop_core.ops_engine import _ensure_searxng, _searxng_watchdog
         ok, msg = await _ensure_searxng()
@@ -5286,6 +5365,12 @@ async def api_live_models_import(request):
     try:
         reader = await request.multipart()
         field = await reader.next()
+    except Exception:
+        # 非 multipart 请求（例如前端误用 JSON 发送 FormData）以前会一路走到 500「导入失败」，
+        # 让人以为是导入逻辑坏了。明确告知要 multipart/form-data。
+        return web.json_response(
+            {"error": "请使用 multipart/form-data 上传（字段名 file）"}, status=400)
+    try:
         if not field or field.name != "file":
             return web.json_response({"error": "缺少 file 字段"}, status=400)
         filename = field.filename or "model.model3.json"

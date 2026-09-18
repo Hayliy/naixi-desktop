@@ -555,25 +555,49 @@ def _find_searxng_dir():
     return None
 
 
+# SearXNG 拉起互斥：启动钩子与看门狗都可能判定"端口没监听"，
+# 而 webapp 冷启动在嵌入式 Python 上可能长达 40s+（期间端口一直不监听），
+# 于是第二个调用方又拉起一个 —— 真机实测确实出现过两个 searxng pythonw 并存。
+# 用「互斥锁 + 刚启动过宽限期」保证同一时刻只有一个拉起流程。
+_SEARXNG_LOCK = None
+_SEARXNG_LAST_LAUNCH = 0.0
+
+
+async def _port_open(port: int = 8899, timeout: float = 1.5) -> bool:
+    try:
+        _, w = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", port), timeout=timeout)
+        w.close()
+        try:
+            await w.wait_closed()
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
+
+
 async def _ensure_searxng() -> tuple[bool, str]:
     """确保 SearXNG 在线：端口已监听则跳过，否则拉起。返回 (ok, msg)。
 
     与 _restart_searxng 的区别：先探测再决策，避免对已运行实例重复 taskkill。
     供「应用启动钩子」和「看门狗」共用，保证 SearXNG 随桌面端应用启动并持续在线。
     """
-    try:
-        _, w = await asyncio.wait_for(
-            asyncio.open_connection("127.0.0.1", 8899), timeout=1.5
-        )
-        w.close()
-        try:
-            await w.wait_closed()
-        except Exception:
-            pass
-        return True, "SearXNG 已在运行（端口 8899 监听中）"
-    except Exception:
-        pass
-    return await _restart_searxng()
+    global _SEARXNG_LOCK, _SEARXNG_LAST_LAUNCH
+    if _SEARXNG_LOCK is None:
+        _SEARXNG_LOCK = asyncio.Lock()
+    async with _SEARXNG_LOCK:
+        if await _port_open():
+            return True, "SearXNG 已在运行（端口 8899 监听中）"
+        import time as _t
+        if _t.time() - _SEARXNG_LAST_LAUNCH < 90:
+            # 上一次拉起还在冷加载（端口尚未监听）→ 等它，绝不再拉一个
+            for _ in range(25):
+                await asyncio.sleep(1)
+                if await _port_open(timeout=1.0):
+                    return True, "SearXNG 已就绪（端口 8899 监听）"
+            return False, "SearXNG 仍在加载依赖（已等待 25s）"
+        _SEARXNG_LAST_LAUNCH = _t.time()
+        return await _restart_searxng()
 
 
 async def _searxng_watchdog(interval: int = 60):
