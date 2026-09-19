@@ -587,20 +587,31 @@ class LiveEngine:
         return {"ok": True, "msg": "真人语音已关闭"}
 
     async def _download_asr_model(self, model_name: str):
-        """下载并解压 vosk 语音识别模型到 data/vosk_models/（仅首次需要，用户已授权）。"""
+        """下载并解压 vosk 语音识别模型到 data/vosk_models/（仅首次需要，用户已授权）。
+
+        修复（2026-09-19 实测）：`urlretrieve` 与 `zipfile.extractall` 都是阻塞 IO，
+        此前直接跑在事件循环里——首次在直播页开「真人语音（本地）」会让整个后端
+        卡死数分钟（所有接口无响应、前端所有轮询超时、连着点「停止引擎」也超时）。
+        现整体卸载到线程池，下载期间事件循环保持响应（状态经 /human_voice/status
+        返回 downloading）。
+        """
         import urllib.request, zipfile
         base = os.path.join(DATA_DIR, "vosk_models")
         os.makedirs(base, exist_ok=True)
         url = f"https://alphacephei.com/vosk/models/{model_name}.zip"
         dst = os.path.join(base, f"{model_name}.zip")
-        log.info(f"[真人语音] 下载语音模型 {model_name} ...")
-        urllib.request.urlretrieve(url, dst)
-        with zipfile.ZipFile(dst) as z:
-            z.extractall(base)
-        try:
-            os.remove(dst)
-        except Exception:
-            pass
+
+        def _blocking_work():
+            log.info(f"[真人语音] 下载语音模型 {model_name} ...")
+            urllib.request.urlretrieve(url, dst)
+            with zipfile.ZipFile(dst) as z:
+                z.extractall(base)
+            try:
+                os.remove(dst)
+            except Exception:
+                pass
+
+        await asyncio.to_thread(_blocking_work)
         log.info(f"[真人语音] 模型 {model_name} 已就绪")
 
     def _resolve_asr_device_index(self, device):
