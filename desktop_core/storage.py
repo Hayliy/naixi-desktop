@@ -1294,24 +1294,49 @@ def automation_list() -> list[dict]:
 
 
 def automation_save(item: dict):
-    """保存/更新自动化任务"""
+    """保存/更新自动化任务
+
+    修复：created_at/updated_at 改用本地时间（此前 datetime('now') 是 UTC，与
+    工作流端点的本地时间口径不一致，UI 直显会差 8 小时）；且 INSERT OR REPLACE
+    会把 created_at 重置为默认值——现在编辑时保留首次创建时间。
+    """
+    import time as _t
     conn = _get_conn()
     try:
+        now_str = _t.strftime("%Y-%m-%d %H:%M:%S")
+        old = conn.execute(
+            "SELECT created_at FROM naixi_automations WHERE id=?", (item.get("id", ""),)
+        ).fetchone()
+        created = (old["created_at"] if old and old["created_at"] else now_str)
         conn.execute(
-            """INSERT OR REPLACE INTO naixi_automations 
-               (id, name, prompt, schedule_type, rrule, scheduled_at, status, model, 
-                last_run, valid_from, valid_until, updated_at,
+            """INSERT OR REPLACE INTO naixi_automations
+               (id, name, prompt, schedule_type, rrule, scheduled_at, status, model,
+                last_run, valid_from, valid_until, created_at, updated_at,
                 workflow_id, trigger_type, config, description, last_result)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'),
-                       ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (item.get("id", ""), item.get("name", ""), item.get("prompt", ""),
              item.get("schedule_type", "once"), item.get("rrule", ""),
              item.get("scheduled_at", ""), item.get("status", "active"),
              item.get("model", ""), item.get("last_run", ""),
              item.get("valid_from", ""), item.get("valid_until", ""),
+             created, now_str,
              item.get("workflow_id", ""), item.get("trigger_type", "schedule"),
              item.get("config", ""), item.get("description", ""),
              item.get("last_result", ""))
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def automation_mark_run(auto_id: str):
+    """调度器触发后更新 last_run（轻量，不触碰其他字段）"""
+    import time as _t
+    conn = _get_conn()
+    try:
+        conn.execute(
+            "UPDATE naixi_automations SET last_run=? WHERE id=?",
+            (_t.strftime("%Y-%m-%d %H:%M:%S"), auto_id),
         )
         conn.commit()
     finally:
@@ -1326,7 +1351,9 @@ def automation_toggle(id: str):
         if not row:
             return
         new_status = "paused" if row["status"] == "active" else "active"
-        conn.execute("UPDATE naixi_automations SET status=?, updated_at=datetime('now') WHERE id=?", (new_status, id))
+        import time as _t
+        conn.execute("UPDATE naixi_automations SET status=?, updated_at=? WHERE id=?",
+                     (new_status, _t.strftime("%Y-%m-%d %H:%M:%S"), id))
         conn.commit()
     finally:
         conn.close()
