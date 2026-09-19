@@ -47,10 +47,16 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 def _resolve_layout() -> tuple[pathlib.Path, pathlib.Path]:
     """确定 python-embed 与 desktop_core 的位置。
 
-    默认按仓库布局；可用 `--embed-root <python-embed 目录>` 或环境变量
-    `EMBED_ROOT` 覆盖——VM/CI 里需要对**已安装**的那一份做校验（安装目录是
-    `<安装目录>/resources/python-embed`，与仓库布局不同）。指定 embed-root 时，
-    配套的 desktop_core 取其同级目录。
+    解析优先级：
+      1. `--embed-root <python-embed 目录>`（命令行）
+      2. 环境变量 `EMBED_ROOT`
+      3. 常见安装位置自动发现（%LOCALAPPDATA%\\奶昔|naixi|Programs\\naixi 下的 resources/python-embed，
+         以及脚本同级/上级的 python-embed）
+      4. 仓库默认布局 src-tauri/resources/python-embed
+
+    第 3 条是为了让守卫在**安装态**能直接被调用——VM/远程通道里传中文路径容易编码损坏，
+    自动发现可以只用纯 ASCII 参数（脚本路径 + --report）就在用户机器上跑起来。
+    指定/发现到 python-embed 时，配套的 desktop_core 取其同级目录。
     """
     arg = None
     argv = sys.argv[1:]
@@ -63,7 +69,37 @@ def _resolve_layout() -> tuple[pathlib.Path, pathlib.Path]:
     if raw:
         embed = pathlib.Path(raw)
         return embed, embed.parent / "desktop_core"
-    return ROOT / "src-tauri" / "resources" / "python-embed", ROOT / "desktop_core"
+
+    # 仓库布局优先：开发机上同时装着奶昔时，避免误校验"已安装的那一份"
+    repo = ROOT / "src-tauri" / "resources" / "python-embed"
+    if (repo / "python.exe").exists():
+        return repo, ROOT / "desktop_core"
+
+    for cand in _install_candidates():
+        if (cand / "python.exe").exists():
+            return cand, cand.parent / "desktop_core"
+
+    return repo, ROOT / "desktop_core"
+
+
+def _install_candidates() -> list[pathlib.Path]:
+    """安装态下 python-embed 的常见位置（按可能性排序）"""
+    name = "\u5976\u6614"  # 奶昔（用转义写，避免脚本编码差异）
+    cands: list[pathlib.Path] = []
+    for env in ("LOCALAPPDATA", "APPDATA", "ProgramFiles", "ProgramFiles(x86)"):
+        base = os.environ.get(env)
+        if not base:
+            continue
+        b = pathlib.Path(base)
+        cands += [
+            b / name / "resources" / "python-embed",
+            b / "Programs" / name / "resources" / "python-embed",
+            b / "naixi" / "resources" / "python-embed",
+            b / name / "resources" / "python-embed",
+        ]
+    here = pathlib.Path(__file__).resolve().parent
+    cands += [here / "python-embed", here.parent / "python-embed"]
+    return cands
 
 
 EMBED, CORE = _resolve_layout()
