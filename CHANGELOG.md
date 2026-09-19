@@ -56,6 +56,48 @@
   「点击占位卡 → 打开模型导入」与「模型已导入: …」，导入链路不再有黑盒。
 - 取证材料落在 `D:\数据\Naixi-旧版留档\2026-09-18-安装丢卷修复\`（verify_025.py / verify_pet_light.py + 截图 + 日志）。
 
+### 修复（全功能测试产出的 19 项缺陷 —— 真机全量测试，非静态推断）
+对 0.2.5 安装态做了全功能测试：从安装包的 `api.py` 解析**真实路由表**逐条冒烟（180 条）、
+带真实参数的冒烟第 2 轮、左侧 12 个导航页 + 设置页 11 个标签的 GUI 遍历取证、前端错误上报回读、
+后端异常栈取证。其中两处是**核心功能 100% 不可用**：
+
+- **P0「创建自动化」必失败**：`naixi_automations` 建表语句没有
+  `workflow_id/trigger_type/config/description/last_result` 五列，而 `automation_save` 的 INSERT
+  一直带着它们；`CREATE TABLE IF NOT EXISTS` **不会补列**。
+  现场实证：`sqlite3.OperationalError: table naixi_automations has no column named workflow_id`（HTTP 500）。
+- **P0「保存工作流」必失败**：`workflow_versions` 有两处互相矛盾的建表定义（`storage.py` 的旧定义
+  `id INTEGER PRIMARY KEY AUTOINCREMENT` 且缺 `name/description/dsl`；`workflow_engine.py` 的 INSERT
+  按**文本 id** + 这些列写），先建的旧表生效 ⇒ 先报缺列，补列后还会撞 datatype mismatch。
+  现场实证：`[ERROR] workflow: 保存工作流失败: table workflow_versions has no column named name`，
+  接口返回 `{"success": false}` 但 HTTP 200。
+  → `storage.init_tables()` 增加显式迁移：自动化补 5 列（ALTER），`workflow_versions` 按引擎结构重建
+  （旧表从未写入成功过，重建安全）。**规矩：以后给表加列必须在此补 ALTER。**
+- **P0 后端日志写进用户 AppData 根目录**：`sidecar/naixi_api.py` 用 `dirname×3` 硬推日志目录
+  （项目红线禁止的写法）⇒ 日志落到 `%LOCALAPPDATA%\logs\naixi_desktop.log`；而
+  `/api/desktop/paths` 报的是 `<INSTDIR>\resources\logs`（**该目录根本不存在**），`models_dir` 同样报错。
+  「设置 → 文件与存储」正是把这两个路径直接显示给用户的。→ 日志改用 `log_paths.log_dir()`
+  （与桌宠/语音日志同源），`paths` 接口改用 `DB_PATH + log_dir() + models_dir()`。
+- **「假功能」清理**：顶栏「桌宠」菜单三项全是空操作（操作的是 `visible:false`、全项目无人 `show()`
+  的 `/pet` 网页窗口）→ 改为直接调 `pet-start/pet-stop/pet-switch`；「直播」菜单「启动引擎」发空 body
+  必然失败、「保存配置」发 `{}` 空操作却报成功 → 合并为「打开直播设置…」；选专家后模型完全不知道人设
+  （`expert_prompt` 前后端都没接）→ 前端带上、后端注入 system 提示；全局热键对 Qt 桌宠无效
+  （只处理 `speak/audio`）→ 补 `avatar_expression/avatar_motion` 分支；舞台窗口选模型只写 localStorage
+  → 同时回写后端；「连接」页 19 个平台只落库无实现 → 界面如实说明；快捷键面板改键位大多无效 → 如实标注。
+- **设置项"只存不读"**：SearXNG 地址（后端硬编码 8899/8898）、日志级别（后端从不读取）→ 均已接上。
+- **性能/卫生**：日志页每秒拉 56KB 全量日志（实测把日志刷到 15MB、轮转 3 次）→ 3s + 不可见不拉 +
+  内容未变不重渲；`PAGE_TITLES/PAGE_ICONS` 缺 `connection` ⇒ 点「连接」标题回落成"仪表盘"；
+  SearXNG 偶发两实例并存（启动钩子与看门狗竞态）→ 加互斥 + 90s 宽限期。
+- **接口契约**：自动化保存/工作流 webhook/模型导入/工作流导出 分别改为 400/404/400/404 并给出可读原因
+  （原先一律 500 "Server got itself in trouble"，或 200 包着错误体让调用方当成功）。
+
+### 修复（全功能测试收尾：desktop/paths 回归）
+- 上述「paths 接口改用 `DB_PATH` …」那次改动引入了一个**回归**：`DB_PATH` 只在 `storage.py`
+  里定义（初始 `""`，由外层 `naixi_api.py` 在导入前注入真实值），`api.py` 作用域里**根本没有这个名字**
+  ⇒ `db_path = DB_PATH` 直接 `NameError` ⇒ 该端点 `GET /api/desktop/paths` 永远 500
+  （也就是「设置 → 文件与存储」整页打不开、控制台报红）。全功能复验的 180 路由冒烟把它抓了出来。
+- **修复**：改为**调用时** `from desktop_core import storage; storage.DB_PATH or 兜底路径`，
+  不再在模块加载时 import（避免拿到空串）。复验确认该端点恢复 200 且三处目录均真实存在。
+
 ### 已知遗留（不影响功能，下一轮处理）
 - `resources\_bundle` 的收尾清理在「杀软/索引器长时间占用」时仍可能整批残留（本轮实测残留 240MB，
   即 16 个分卷 + 7z.exe/7z.dll）。已确认不是新改动的副作用：注册表 `PendingFileRenameOperations`
