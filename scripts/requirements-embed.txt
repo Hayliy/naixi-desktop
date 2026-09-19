@@ -1,27 +1,41 @@
 # 奶昔桌面端 · 嵌入版 Python (python-embed) 依赖清单
-# 生成时间: 2026-09-19（全模块深度测试轮）
-# 用途: 重建 src-tauri/resources/python-embed 时按此清单安装，避免「装了但没打包」导致功能静默失效。
-# 安装示例（版本需按 python-embed 的 Python 3.13 win_amd64 选择）：
-#   pip install --target src-tauri/resources/python-embed/Lib/site-packages -r scripts/requirements-embed.txt
-# 注意: cv2 的发行名是 opencv-contrib-python（导入名 cv2）；phonemizer 的发行名是 phonemizer-fork。
+# 本文件由 scripts/verify_embed_deps.py 同名扫描逻辑生成，用于重建内嵌运行时。
+# 背景：2026-09-19 全模块测试发现安装版 32 个第三方依赖里 23 个从未进包
+#       （全局热键/系统监控/游戏视觉/本地TTS/文档导入/MCP/网页解析/token计数/离线ASR
+#        全部静默失效），根因是 python-embed 长期手工维护、无清单无校验。
+#
+# 重建方式（Python 3.13 win_amd64）：
+#   py -3.13 -m pip install --target <python-embed>/Lib/site-packages -r scripts/requirements-embed.txt
+# 然后必须跑守卫（构建也会自动跑）：
+#   <python-embed>/python.exe scripts/verify_embed_deps.py
+#
+# 注意（发行名 ≠ 导入名，容易踩坑）：
+#   cv2 ← opencv-contrib-python ｜ phonemizer ← phonemizer-fork
+#   rpds ← rpds-py ｜ yaml ← PyYAML ｜ docx ← python-docx ｜ bs4 ← beautifulsoup4
+#   win32api/win32con/pythoncom ← pywin32
+#   webrtcvad 有本地适配补丁，见 scripts/embed_deps_allowlist.txt
+#
+# 可选增强（体积大，默认不打进包，缺失时功能自动降级）：paddleocr（本地中文 OCR）
 
 aiohappyeyeballs==2.7.1
 aiohttp==3.14.3
-aiohttp==3.14.1
 aiosignal==1.4.0
-annotated_doc==0.0.4
+annotated_doc==0.0.5
 annotated_types==0.8.0
 anyio==4.14.2
 attrs==26.1.0
 babel==2.18.0
-certifi==2026.6.17
+beautifulsoup4==4.15.0
 certifi==2026.7.22
 cffi==2.1.0
 charset_normalizer==3.4.9
+click==8.4.2
 colorama==0.4.6
-cryptography==49.0.0
+cryptography==50.0.0
 csvw==4.1.0
-dashscope==1.26.4
+dashscope==1.26.5
+dataclasses_json==0.6.7
+deprecated==1.3.1
 dlinfo==2.0.0
 edge_tts==7.2.8
 espeakng_loader==0.2.4
@@ -29,43 +43,62 @@ flatbuffers==25.12.19
 frozenlist==1.8.0
 h11==0.16.0
 httpcore==1.0.9
+httpcore2==2.13.0
 httpx==0.28.1
+httpx2==2.13.0
 httpx_sse==0.4.3
 idna==3.18
 isodate==0.7.2
+jinja2==3.1.6
+jiter==0.17.0
 joblib==1.5.3
 jsonschema==4.26.0
 jsonschema_specifications==2025.9.1
 kokoro_onnx==0.5.0
 language_tags==1.3.1
 live2d_py==0.7.0.4
+lxml==6.1.3
 markdown_it_py==4.2.0
+markupsafe==3.0.3
+marshmallow==3.26.2
+mcp==2.2.0
+mcp_types==2.2.0
 mdurl==0.1.2
 multidict==6.7.1
-numpy==2.5.1
+mypy_extensions==1.1.0
 numpy==2.3.5
 onnxruntime==1.28.0
+openai==3.16.2
 opencv_contrib_python==4.10.0.84
+opentelemetry_api==1.44.0
 packaging==26.2
+pdfminer_six==20260107
 phonemizer_fork==3.3.2
 pillow==12.3.0
-pip==26.1.2
+pip==26.0
 propcache==0.5.2
 protobuf==7.35.1
 psutil==7.2.2
 pycparser==3.0
 pydantic==2.13.4
+pydantic_core==2.46.4
+pygltflib==1.16.5
 pygments==2.20.0
+pyjwt==2.14.0
 pynput==1.8.2
 pyopengl==3.1.10
 pyopengl_accelerate==3.1.10
 pyparsing==3.3.2
+pypdf==6.19.0
 pypdfium2==5.12.1
 pyside6==6.11.1
 pyside6_addons==6.11.1
 pyside6_essentials==6.11.1
 python_dateutil==2.9.0.post0
-pyyaml==6.0.3
+python_docx==1.2.0
+python_multipart==0.0.32
+pywin32==312
+PyYAML==6.0.2
 rdflib==7.6.0
 referencing==0.37.0
 regex==2026.7.19
@@ -77,19 +110,28 @@ segments==2.4.0
 shellingham==1.5.4
 shiboken6==6.11.1
 six==1.17.0
+sniffio==1.3.1
 sounddevice==0.5.5
 soundfile==0.14.0
+soupsieve==2.9.2
 srt==3.5.3
+sse_starlette==3.4.11
+starlette==1.6.0
 tabulate==0.10.0
 termcolor==3.3.0
+tiktoken==0.14.0
 tqdm==4.70.0
+truststore==0.10.4
 typer==0.27.0
 typing_extensions==4.16.0
+typing_inspect==0.9.0
 typing_inspection==0.4.2
 uritemplate==4.2.0
 urllib3==2.7.0
+uvicorn==0.53.0
 vosk==0.3.45
 webrtcvad==2.0.10
 websocket_client==1.9.0
 websockets==17.0.1
+wrapt==2.4.1
 yarl==1.24.5

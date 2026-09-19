@@ -1,0 +1,12 @@
+# 嵌入版依赖白名单 —— 已知的、有意为之的本地改动
+#
+# 格式：<site-packages 内的相对路径子串>  # 改动理由
+# 规则：只有当改动有明确技术与维护依据时才允许加入；每一条都必须写清理由，
+#       否则依赖守卫会把它当作"混装污染"阻断打包。
+#
+#   webrtcvad.py  # 上游 2.0.10 用 pkg_resources 读版本号，Python 3.13 下
+#                 # setuptools 不再默认提供该模块 → 本地改用 importlib.metadata
+#                 # （仅替换版本号读取，Vad/valid_rate_and_frame_length 逻辑未动）；
+#                 # 因此文件 sha256 与官方 wheel 的 RECORD 不符。
+#
+webrtcvad.py  # 上游用 pkg_resources，本地适配 Python 3.13 改为 importlib.metadata

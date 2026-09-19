@@ -643,26 +643,40 @@ class KnowledgeNode(BaseNode):
     
     async def _run(self) -> dict:
         query = self._resolve(self.config.get("query", "{input}"))
-        top_k = int(self.config.get("top_k", 3))
-        
-        results = []
         try:
-            try:
-                from core.knowledge_base import KnowledgeBase
-                kb = KnowledgeBase()
-            except ImportError:
-                kb = None
-            if kb is None:
-                results = []
-            else:
-                results = await kb.search(query, top_k=top_k)
-        except Exception:
-            log.warning("[知识库] KnowledgeBase 不可用")
-            results = [{"title": "(模拟)", "content": f"知识库搜索: {query}"}]
+            top_k = int(self.config.get("top_k", 3))
+        except (TypeError, ValueError):
+            top_k = 3
+        top_k = max(1, top_k)
+        # 知识库实际存储：meta 表 "knowledge_base"（JSON 数组），与
+        # /api/knowledge/search、tools._search_knowledge 同源。
+        # 此前这里 import 的是重命名前的旧包名 core.knowledge_base（工程内不存在），
+        # 被 except ImportError 吞掉后永远返回"模拟"结果 —— 知识库节点静默失效。
+        try:
+            from desktop_core.storage import meta_get
+            raw = meta_get("knowledge_base")
+            items = json.loads(raw) if raw else []
+            if not isinstance(items, list):
+                items = []
         except Exception as e:
-            log.error("[知识库] 查询异常: %s", e)
-            results = [{"error": str(e)}]
-        
+            log.warning("[知识库] 读取失败（按空库处理）: %s", e)
+            items = []
+
+        q = (query or "").strip().lower()
+        if q:
+            matched = [i for i in items
+                       if q in str(i.get("title", "")).lower()
+                       or q in str(i.get("content", "")).lower()]
+        else:
+            matched = list(items)
+
+        results = [{
+            "title": i.get("title", ""),
+            "content": str(i.get("content", ""))[:500],
+            "category": i.get("category", ""),
+        } for i in matched[:top_k]]
+        log.info("[知识库] 检索「%s」→ %d 条（库内共 %d 条）", query, len(results), len(items))
+
         return {
             "results": results,
             "query": query,

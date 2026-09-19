@@ -317,6 +317,64 @@ fn pack_resources_7z() {
     );
 }
 
+/// 打包前校验嵌入版 Python（resources/python-embed）的依赖完整性。
+///
+/// 历史事故（2026-09-19 全模块深度测试）：安装包能装出来、界面能正常打开，但
+/// desktop_core 实际用到的 32 个第三方依赖里有 **23 个从未进包** —— 全局热键
+/// (pynput)、系统监控(psutil)、游戏 agent 视觉(cv2)、本地离线 TTS(onnxruntime/
+/// kokoro_onnx/phonemizer/espeakng_loader)、文档导入(pypdf/pdfminer/docx)、
+/// MCP(mcp)、网页解析(bs4/lxml)、token 计数(tiktoken)、离线 ASR(vosk) 全部静默失效
+/// （代码里是 try/except 降级，只在日志留一条 WARNING，用户完全无感）。
+/// 根因：python-embed 长期手工维护、既无依赖清单也无构建期校验。
+///
+/// 这类"装了却不能用"属交付级缺陷，必须在构建期拦下，而不是等用户报障。
+/// 校验逻辑见 scripts/verify_embed_deps.py：AST 扫描实际 import + 导入探针
+/// + RECORD 哈希一致性（后者能揪出人工拷贝与 pip 混装导致的"目录内容与元数据
+/// 版本不符"，曾使 pydantic-core 2.46.5 配 pydantic 2.13.4，mcp/openai 直接
+/// SystemError，而 pip check 完全查不出来）。
+fn verify_embed_deps(manifest_dir: &Path) {
+    let py = manifest_dir
+        .join("resources")
+        .join("python-embed")
+        .join("python.exe");
+    let script = manifest_dir
+        .join("..")
+        .join("scripts")
+        .join("verify_embed_deps.py");
+    if !py.is_file() || !script.is_file() {
+        println!(
+            "cargo:warning=跳过嵌入版依赖校验（缺 {} 或 {}）",
+            py.display(),
+            script.display()
+        );
+        return;
+    }
+    match std::process::Command::new(&py).arg(&script).output() {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            if out.status.success() {
+                for line in stdout.lines() {
+                    if line.starts_with("结论：") || line.contains("导入探针") {
+                        println!("cargo:warning={line}");
+                    }
+                }
+            } else {
+                for line in stdout.lines() {
+                    println!("cargo:warning={line}");
+                }
+                panic!(
+                    "嵌入版 Python 依赖校验未通过（见上面的校验输出）。\n\
+                     缺失或与元数据不一致的第三方包会打包出一个『能打开、但部分功能静默失效』的安装包，\n\
+                     因此这里直接中止构建。\n\
+                     修复：按 scripts/requirements-embed.txt 补齐依赖；若某处不一致是有意的本地适配，\n\
+                     请在 scripts/embed_deps_allowlist.txt 里登记并写明理由。"
+                );
+            }
+        }
+        Err(e) => println!("cargo:warning=依赖校验执行失败（已跳过）：{e}"),
+    }
+}
+
 #[allow(dead_code)]
 fn main() {
     // 声明依赖：desktop_core / searxng 任一文件变化都必须重跑本 build script。
@@ -369,11 +427,14 @@ fn main() {
         );
     }
 
+    // 依赖守卫：嵌入版 Python 的第三方依赖不完整/不一致时直接中止构建。
+    // 必须放在打包聚合之前——否则会白白花几分钟打出 7z，最后才发现包里缺依赖。
+    verify_embed_deps(&manifest_dir);
+
     // 先把散文件资源聚合成单个 7z（+ 拷入 7z 解压工具），再交给 tauri_build。
     // 注意：tauri.conf.json 的 bundle.resources 已改为只收 resources/_bundle/*，
     // 故此处必须先生成 _bundle，否则 glob 空匹配 → tauri_build 直接失败。
     pack_resources_7z();
-
     tauri_build::build();
 
     // tauri_build 完成，再补一份到 target/release/resources（--no-bundle 运行态读取位置），
