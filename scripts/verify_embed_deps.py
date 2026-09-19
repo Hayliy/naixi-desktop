@@ -33,10 +33,36 @@ import pathlib
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-EMBED = ROOT / "src-tauri" / "resources" / "python-embed"
+
+
+def _resolve_layout() -> tuple[pathlib.Path, pathlib.Path]:
+    """确定 python-embed 与 desktop_core 的位置。
+
+    默认按仓库布局；可用 `--embed-root <python-embed 目录>` 或环境变量
+    `EMBED_ROOT` 覆盖——VM/CI 里需要对**已安装**的那一份做校验（安装目录是
+    `<安装目录>/resources/python-embed`，与仓库布局不同）。指定 embed-root 时，
+    配套的 desktop_core 取其同级目录。
+    """
+    arg = None
+    argv = sys.argv[1:]
+    for i, a in enumerate(argv):
+        if a == "--embed-root" and i + 1 < len(argv):
+            arg = argv[i + 1]
+        elif a.startswith("--embed-root="):
+            arg = a.split("=", 1)[1]
+    raw = arg or os.environ.get("EMBED_ROOT")
+    if raw:
+        embed = pathlib.Path(raw)
+        return embed, embed.parent / "desktop_core"
+    return ROOT / "src-tauri" / "resources" / "python-embed", ROOT / "desktop_core"
+
+
+EMBED, CORE = _resolve_layout()
 SITE = EMBED / "Lib" / "site-packages"
-CORE = ROOT / "desktop_core"
 ALLOWLIST = ROOT / "scripts" / "embed_deps_allowlist.txt"
+if not ALLOWLIST.exists():
+    # 安装态下没有仓库的 scripts/，白名单可能就在守卫脚本旁边
+    ALLOWLIST = pathlib.Path(__file__).resolve().parent / "embed_deps_allowlist.txt"
 
 
 def load_allowlist() -> list[tuple[str, str]]:
