@@ -1151,10 +1151,24 @@ function MemPage() {
   const PAGE_SIZE = 20;
 
   useEffect(() => {
-    Promise.all([
-      apiGet<any>("/api/memory/stats").then(setStats).catch(() => {}),
-      apiGet<any>("/api/memory/categories").then(d => setCategories(d.categories || [])).catch(() => {}),
-    ]).finally(() => setLoading(false));
+    // 修复：此前一次性拉取失败后被 catch(() => {}) 静默吞掉，统计卡恒显示 0 且不再重试
+    // （启动竞态下必现）。改为失败指数退避重试，最多 4 次。
+    let pending = 2;
+    const done = () => { pending -= 1; if (pending <= 0) setLoading(false); };
+    const fetchStats = (attempt: number) => {
+      apiGet<any>("/api/memory/stats")
+        .then(setStats)
+        .finally(done)
+        .catch(() => { if (attempt < 4) setTimeout(() => fetchStats(attempt + 1), 1000 * 2 ** attempt); });
+    };
+    const fetchCats = (attempt: number) => {
+      apiGet<any>("/api/memory/categories")
+        .then(d => setCategories(d.categories || []))
+        .finally(done)
+        .catch(() => { if (attempt < 4) setTimeout(() => fetchCats(attempt + 1), 1000 * 2 ** attempt); });
+    };
+    fetchStats(0);
+    fetchCats(0);
   }, []);
 
   const doSearch = useCallback(async (q: string, convFilter: string, page: number = 1) => {
@@ -2891,6 +2905,10 @@ function SchedulerPage() {
   });
 
   const triggerLabel = (a: any) => {
+    // 触发类型优先按 trigger_type 判定（schedule/webhook），workflow_id 只表示任务执行的工作流
+    // 修复：此前 workflow_id 判断在前，导致“定时 (cron)”型任务被错误显示为“工作流”，与统计卡口径矛盾
+    if (a.trigger_type === "schedule") return `定时 (${safeParse(a.config).cron || "?"})`;
+    if (a.trigger_type === "webhook") return `Webhook`;
     // 工作流型
     if (a.workflow_id) return `工作流`;
     // Prompt 型
@@ -2904,8 +2922,6 @@ function SchedulerPage() {
       }
       return `Prompt`;
     }
-    if (a.trigger_type === "schedule") return `定时 (${safeParse(a.config).cron || "?"})`;
-    if (a.trigger_type === "webhook") return `Webhook`;
     return "手动";
   };
 
