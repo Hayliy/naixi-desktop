@@ -967,7 +967,15 @@ async def api_desktop_paths(request):
     # 真实日志在 %APPDATA%\奶昔\logs），models_dir 也不是实际在用的
     # <INSTDIR>\resources\data\models。而「设置 → 文件与存储」是**直接把这几个路径显示给用户**的，
     # 等于给用户看的全是错的。改为与「写日志 / 发现模型」共用同一套解析器（单一真相源）。
-    db_path = DB_PATH
+    # ★ 修复 2026-09-18 全功能测试引入的回归：原先写 `db_path = DB_PATH`，
+    #   但 `DB_PATH` 在 api.py 作用域根本不存在（它定义在 storage.py，初始为 ""，
+    #   由外层 naixi_api.py 在导入前注入真实值）→ NameError → 该端点 500。
+    #   必须在调用时从 storage 取，且带兜底路径，避免拿到空串时 os.path.getsize("") 再崩。
+    try:
+        from desktop_core import storage as _storage
+        db_path = _storage.DB_PATH or os.path.join(_DESKTOP_DIR, "data", "naixi_desktop.db")
+    except Exception:
+        db_path = os.path.join(_DESKTOP_DIR, "data", "naixi_desktop.db")
     try:
         from desktop_core.log_paths import log_dir as _log_dir
         logs_dir = _log_dir()
@@ -2322,17 +2330,6 @@ async def api_conversation_message_delete(request):
 
 
 async def api_providers(request):
-    import os
-    pj_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "platforms.json")
-    try:
-        with open(pj_path, encoding="utf-8") as f:
-            data = json.load(f)
-        return web.json_response(data)
-    except Exception as e:
-        return web.json_response({"error": str(e)}, status=500)
-
-
-async def api_providers(request):
     """返回已保存的 API 提供商配置（兼容 Chat 页面的 ProviderSettings）"""
     raw = meta_get("desktop_config")
     providers = []
@@ -3028,6 +3025,137 @@ async def api_automations_delete_run(request):
     body = await request.json()
     automation_delete_run(body.get("id", 0))
     return web.json_response({"ok": True})
+
+
+def _cron_match(expr: str, tm) -> bool:
+    """极简 5 段 cron 匹配（分 时 日 月 周），支持 * 、数字、逗号列表、范围 a-b、步长 * / n。
+
+    仅覆盖自动化面板会用到的常见写法（如 "0 9 * * *"），不追求完整 cron 语义。
+    """
+    fields = expr.split()
+    if len(fields) != 5:
+        return False
+    values = [tm.tm_min, tm.tm_hour, tm.tm_mday, tm.tm_mon, tm.tm_wday]
+    # cron 的周字段 0=周日，Python tm_wday 0=周一
+    weekdays = (values[4] + 1) % 7
+    values[4] = weekdays
+    for f, v in zip(fields, values):
+        matched = False
+        for part in f.split(","):
+            part = part.strip()
+            step = 1
+            if "/" in part:
+                part, step_s = part.split("/", 1)
+                try:
+                    step = int(step_s)
+                except ValueError:
+                    return False
+            if part in ("*", ""):
+                if step > 1:
+                    if v % step == 0:
+                        matched = True
+                        break
+                else:
+                    matched = True
+                    break
+            elif "-" in part and not part.lstrip("-").isdigit():
+                lo_s, hi_s = part.split("-", 1)
+                try:
+                    lo, hi = int(lo_s), int(hi_s)
+                except ValueError:
+                    return False
+                if lo <= v <= hi and (v - lo) % step == 0:
+                    matched = True
+                    break
+            else:
+                try:
+                    n = int(part)
+                except ValueError:
+                    return False
+                if step > 1:
+                    if v >= n and (v - n) % step == 0:
+                        matched = True
+                        break
+                elif v == n:
+                    matched = True
+                    break
+        if not matched:
+            return False
+    return True
+
+
+async def _automation_scheduler(interval: int = 30):
+    """自动化任务调度循环（修复：此前定时任务只落库、没有任何后台循环触发，永不执行）。
+
+    每 interval 秒扫描一次 active 任务：
+    - trigger_type=schedule（cron）: 当前分钟匹配 cron 表达式且本分钟未触发过
+    - schedule_type=once + scheduled_at: 到达即触发一次，然后暂停
+    - rrule（HOURLY/DAILY/WEEKLY，prompt 型）: 距 last_run 超过对应间隔
+    - webhook: 不在此触发（由外部请求驱动）
+    触发即内部调用 /api/automations/run（复用 Agent 执行与记录逻辑），并回写 last_run。
+    """
+    import asyncio, time as _t
+    import aiohttp
+    from desktop_core.storage import automation_list, automation_mark_run, automation_toggle
+    last_fire: dict[str, str] = {}
+    while True:
+        try:
+            autos = automation_list()
+            now = _t.localtime()
+            now_str = _t.strftime("%Y-%m-%d %H:%M:%S")
+            minute_key = _t.strftime("%Y%m%d%H%M")
+            for a in autos:
+                if a.get("status") != "active":
+                    continue
+                aid = a.get("id", "")
+                if not aid:
+                    continue
+                try:
+                    cfg = json.loads(a.get("config") or "{}")
+                except Exception:
+                    cfg = {}
+                tt = a.get("trigger_type") or ""
+                st = a.get("schedule_type") or ""
+                should = False
+                once = False
+                if tt == "webhook":
+                    continue
+                cron = cfg.get("cron", "") if isinstance(cfg, dict) else ""
+                if (tt == "schedule" or st == "schedule") and cron:
+                    if _cron_match(cron, now) and last_fire.get(aid) != minute_key:
+                        should = True
+                elif st == "once" and a.get("scheduled_at"):
+                    if a["scheduled_at"].strip() and a["scheduled_at"].strip() <= now_str:
+                        should = True
+                        once = True
+                elif a.get("rrule"):
+                    rr = str(a.get("rrule", "")).upper()
+                    iv = {"HOURLY": 3600, "DAILY": 86400, "WEEKLY": 604800}.get(rr, 0)
+                    if iv:
+                        last_run = a.get("last_run") or ""
+                        try:
+                            last_ts = _t.mktime(_t.strptime(last_run, "%Y-%m-%d %H:%M:%S"))
+                        except Exception:
+                            last_ts = 0
+                        if _t.time() - last_ts >= iv:
+                            should = True
+                if not should:
+                    continue
+                last_fire[aid] = minute_key
+                log.info(f"调度器触发自动化: {a.get('name', aid)}")
+                try:
+                    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=300)) as sess:
+                        await sess.post("http://127.0.0.1:9845/api/automations/run",
+                                        json={"id": aid})
+                except Exception as e:
+                    log.warning(f"调度器执行自动化 {aid} 失败: {e}")
+                automation_mark_run(aid)
+                if once:
+                    # 一次性任务触发后暂停，避免重复执行
+                    automation_toggle(aid)
+        except Exception as e:
+            log.warning(f"自动化调度循环异常: {e}")
+        await asyncio.sleep(interval)
 
 
 async def api_automations_trigger(request):
@@ -4793,6 +4921,9 @@ async def _launch_startup_tasks(app):
     asyncio.create_task(_on_startup_services(app))
     asyncio.create_task(_on_startup_mcp(app))
     asyncio.create_task(_on_startup_hotkeys(app))
+    # 自动化任务调度循环（此前定时任务只落库永不执行）
+    asyncio.create_task(_automation_scheduler())
+    log.info("启动钩子：自动化调度循环已启动（30s 扫描周期）")
 
 
 async def api_live_connector_bind(request):
