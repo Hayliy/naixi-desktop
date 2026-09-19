@@ -6077,9 +6077,12 @@ async def api_logs(request):
             lines = f.readlines()
         # 过滤掉 aiohttp.access 行（HTTP 请求日志），只保留应用日志
         app_lines = [l for l in lines if 'aiohttp.access' not in l]
-        # 如果应用日志太少，回退到全部日志
+        # 修复：此前「应用日志 <10 行时回退到全部日志」——轮转后的新文件可能
+        # 几乎全是 access 行，回退等于把刷屏原样还给用户。始终返回过滤后的
+        # 应用日志；若确实太短，补少量原始行尾即可。
         if len(app_lines) < 10:
-            app_lines = lines
+            tail_raw = [l for l in lines if 'aiohttp.access' in l][-20:]
+            app_lines = app_lines + tail_raw
         last_lines = app_lines[-200:]
         return web.Response(text="".join(last_lines), content_type="text/plain", charset="utf-8")
     except FileNotFoundError:
