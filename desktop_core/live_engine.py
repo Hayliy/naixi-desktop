@@ -381,8 +381,20 @@ class LiveEngine:
         return be
 
     def _backend_for_model(self, model_id) -> object:
-        """按 model_id 反查绑定角色的非VTS后端；查不到或角色用 VTS 时返回 None（走存量路径）。"""
+        """按 model_id 反查绑定角色的非VTS后端；查不到或角色用 VTS 时返回 None（走存量路径）。
+
+        修复（2026-09-19 实测）：model_id 为空时（弹幕互动路径不指定模型）此前直接
+        `return None` → 永远落到 VTS 存量分支，导致把渲染后端设为 vmc/self 的角色
+        在直播互动里**收不到任何表情/口型**（VMC 用户表现＝"选了 VMC 形象完全不动"，
+        日志里连一条发送记录都没有）。现空 model_id 时回退到主角色 naixi（其次任一
+        非 VTS 绑定角色）。
+        """
         if not model_id:
+            if self._backend_kinds.get("naixi", "vts") != "vts":
+                return self._ensure_backend("naixi")
+            for aid, kind in self._backend_kinds.items():
+                if kind != "vts":
+                    return self._ensure_backend(aid)
             return None
         for aid, mid in self._model_bindings.items():
             if mid == model_id:
