@@ -33,45 +33,27 @@ def _win_hide_kwargs():
 import ctypes
 from ctypes import wintypes, Structure, byref, sizeof
 
+# ★ 系统指标单一真相源（ctypes 实现）。
+# 2026-09-20：原先运维/巡检/自愈各自用 psutil 取指标，实测 psutil 7.2.2 的
+# cpu_percent(interval=…) 第二次调用起返回 0.0、Process.cpu_percent 恒 0.0，
+# 导致「后端 CPU」恒 0、健康分 CPU 项永远满分、CPU 型自愈永不触发。
+from desktop_core import sys_metrics as _sys_metrics
+
 def _win_cpu_times():
-    """返回 (idle, kernel, user) 的 64 位 FILETIME 计数值；失败返回 (0,0,0)。"""
-    idle = wintypes.FILETIME()
-    kernel = wintypes.FILETIME()
-    user = wintypes.FILETIME()
-    if not ctypes.windll.kernel32.GetSystemTimes(byref(idle), byref(kernel), byref(user)):
-        return (0, 0, 0)
-    def _ft2ull(ft):
-        return (ft.dwHighDateTime << 32) | ft.dwLowDateTime
-    return (_ft2ull(idle), _ft2ull(kernel), _ft2ull(user))
+    """返回 (idle, kernel, user) 的 64 位 FILETIME 计数值；失败返回 (0,0,0)。
+
+    2026-09-20：实现已收敛到 desktop_core.sys_metrics（单一真相源），
+    这里保留函数名以兼容既有调用点。
+    """
+    return _sys_metrics.cpu_times()
 
 def _win_memory():
     """返回 (memory_load_pct, total_bytes, avail_bytes)；失败返回 (0,0,0)。"""
-    class MEMORYSTATUSEX(Structure):
-        _fields_ = [
-            ("dwLength", wintypes.DWORD),
-            ("dwMemoryLoad", wintypes.DWORD),
-            ("ullTotalPhys", ctypes.c_ulonglong),
-            ("ullAvailPhys", ctypes.c_ulonglong),
-            ("ullTotalPageFile", ctypes.c_ulonglong),
-            ("ullAvailPageFile", ctypes.c_ulonglong),
-            ("ullTotalVirtual", ctypes.c_ulonglong),
-            ("ullAvailVirtual", ctypes.c_ulonglong),
-            ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
-        ]
-    stat = MEMORYSTATUSEX()
-    stat.dwLength = sizeof(MEMORYSTATUSEX)
-    if not ctypes.windll.kernel32.GlobalMemoryStatusEx(byref(stat)):
-        return (0, 0, 0)
-    return (stat.dwMemoryLoad, stat.ullTotalPhys, stat.ullAvailPhys)
+    return _sys_metrics.memory()
 
 def _win_disk(drive):
     """返回 (total_bytes, free_bytes)；失败返回 (0,0)。"""
-    free = ctypes.c_ulonglong()
-    total = ctypes.c_ulonglong()
-    avail = ctypes.c_ulonglong()
-    if not ctypes.windll.kernel32.GetDiskFreeSpaceExW(ctypes.c_wchar_p(drive), byref(free), byref(total), byref(avail)):
-        return (0, 0)
-    return (total.value, free.value)
+    return _sys_metrics.disk(drive)
 
 def _win_list_disks():
     """枚举所有本地固定盘，返回 [{DeviceID, SizeGB, FreeGB, UsedGB}]。"""
@@ -172,7 +154,8 @@ async def _get_gpu_info():
     now = time.time()
     if _gpu_cache["value"] is not None and (now - _gpu_cache["ts"]) < 3:
         return _gpu_cache["value"]
-    gpu = {"gpu_util": 0, "gpu_name": "N/A", "gpu_mem_total": 0, "gpu_mem_used": 0}
+    gpu = {"gpu_util": 0, "gpu_name": "N/A", "gpu_mem_total": 0, "gpu_mem_used": 0,
+           "available": False}
     try:
         gproc = await asyncio.create_subprocess_exec(
             "nvidia-smi", "--query-gpu=utilization.gpu,name,memory.total,memory.used",
@@ -190,6 +173,7 @@ async def _get_gpu_info():
                     "gpu_name": parts[1] or "N/A",
                     "gpu_mem_total": float(parts[2] or 0),
                     "gpu_mem_used": float(parts[3] or 0),
+                    "available": True,
                 }
     except Exception:
         pass
@@ -698,8 +682,22 @@ async def api_stats(request):
     conn = _get_conn()
     db_size, db_tables = 0, []
     try:
-        db_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "data", "naixi_desktop.db")
-        if _os.path.exists(db_path):
+        # ★ 数据库文件路径必须用存储层解析出的真实路径（单一真相源）。
+        # 2026-09-20 实测：此处原为 dirname(__file__) 硬推，"../data/xxx.db"，
+        # 安装态下该路径并不存在（真实库在 DESKTOP_DIR/data 下），
+        # 于是 db_size 恒为 0 → 仪表盘「数据库大小」永远显示 0MB（用户可见的错误数据）。
+        # 顺带遵循项目铁则：读写数据目录禁止用 dirname 硬推。
+        from desktop_core import storage as _st
+        db_path = _st.DB_PATH or ""
+        if not db_path or not _os.path.exists(db_path):
+            for _cand in (
+                _os.path.join(_os.environ.get("DESKTOP_DIR", ""), "data", "naixi_desktop.db"),
+                _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "data", "naixi_desktop.db"),
+            ):
+                if _cand and _os.path.exists(_cand):
+                    db_path = _cand
+                    break
+        if db_path and _os.path.exists(db_path):
             db_size = _os.path.getsize(db_path)
         tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
         for r in tables:
@@ -758,12 +756,17 @@ async def api_system_resources(request):
             "cpu": cpu, "memory": mem_used_pct, "disk": disk_used_pct,
             "gpu_util": gpu["gpu_util"], "gpu_name": gpu["gpu_name"],
             "gpu_mem_total": gpu["gpu_mem_total"], "gpu_mem_used": gpu["gpu_mem_used"],
+            # ★ gpu_available：无 NVIDIA 卡 / 无驱动时 nvidia-smi 不可用，
+            #   前端据此显示「未检测到 NVIDIA 显卡」，而不是把 0% / N/A / 0 MB
+            #   当成真实读数展示给用户（用户会以为"数据坏了"）。
+            "gpu_available": bool(gpu.get("available")),
             "uptime": int(time.time()),
         })
     except Exception as e:
         return web.json_response({
             "cpu": 0, "memory": 0, "disk": 0,
             "gpu_util": 0, "gpu_name": "N/A", "gpu_mem_total": 0, "gpu_mem_used": 0,
+            "gpu_available": False,
             "error": str(e)[:50]
         })
 
@@ -4278,6 +4281,14 @@ async def _on_startup_services(app):
       - 同时启动 _searxng_watchdog 常驻循环：SearXNG 离线时自动拉起，
         与后端 self-heal「检测->重启」机制一致，无需用户手动触发自愈。
     """
+    # 预热进程 CPU 采样基线：sys_metrics 的进程 CPU 用两次采样求差，首次调用
+    # 必然没有基线（只能返回 0.0）。启动时先取一次，之后运维总览与自愈
+    # 第一次调用就能拿到真实值，而不是先显示一个周期的 0%。
+    try:
+        _sys_metrics.prime_process_cpu(os.getpid())
+    except Exception:
+        pass
+
     # 应用「设置 → 系统与环境 → 日志级别」：此前该设置只落库、后端从不读取，
     # 用户改成 DEBUG/WARNING 都毫无效果（而全量 INFO 会把日志刷到飞快轮转）。
     try:

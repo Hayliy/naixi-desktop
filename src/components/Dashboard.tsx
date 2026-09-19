@@ -82,7 +82,7 @@ interface StatsData {
 interface DesktopStatusData { name: string; version: string; online: boolean; }
 // 连接子页（消息平台）沿用的 QQ 连接状态类型，仅用于"连接"tab，不进主仪表盘
 interface NapcatData { connected: boolean; groups: number; }
-interface SysData { cpu: number; memory: number; disk: number; gpu_name?: string; gpu_mem_total?: number; gpu_mem_used?: number; gpu_util?: number; }
+interface SysData { cpu: number; memory: number; disk: number; gpu_name?: string; gpu_mem_total?: number; gpu_mem_used?: number; gpu_util?: number; gpu_available?: boolean; }
 interface KbData { categories: { name: string; count: number }[]; total: number; }
 interface MemData {
   total: number; conversations: number; recent_7d: number;
@@ -293,10 +293,11 @@ export default function Dashboard() {
                 <Bar label="CPU" val={`${sys?.cpu ?? 0}%`} w={sys?.cpu ?? 0} tip="全系统 CPU 占用（含所有进程），与任务管理器『性能→CPU』整体%一致" />
                 <Bar label="内存" val={`${sys?.memory ?? 0}%`} w={sys?.memory ?? 0} tip="整机物理内存占用百分比" />
                 <Bar label="磁盘容量" val={`${sys?.disk ?? 0}%`} w={sys?.disk ?? 0} tip="系统盘(C:)已用空间占比，并非磁盘繁忙度。任务管理器『性能→磁盘』显示的是活动时间%，两者概念不同" />
-                <Bar label="GPU" val={`${sys?.gpu_util ?? 0}%`} w={sys?.gpu_util ?? 0} tip="NVIDIA 整体利用率（任一引擎忙即计），任务管理器默认按单一引擎(3D/CUDA)显示，可切换对照" />
+                <Bar label="GPU" val={sys?.gpu_available ? `${sys?.gpu_util ?? 0}%` : "未检测到"} w={sys?.gpu_available ? (sys?.gpu_util ?? 0) : 0} tip="NVIDIA 整体利用率（任一引擎忙即计），任务管理器默认按单一引擎(3D/CUDA)显示，可切换对照。未检测到 NVIDIA 显卡/驱动时显示『未检测到』——此处不是 0% 的真实读数" />
                 <div className="border-t border-sakura-100 pt-3 space-y-1.5 text-xs">
-                  <Row l="显卡" v={sys?.gpu_name ?? "N/A"} />
-                  <Row l="显存" v={`${sys?.gpu_mem_used ?? 0}/${sys?.gpu_mem_total ?? 0} MB`} />
+                  {/* 未检测到 NVIDIA 卡时，不要把 N/A / 0 MB 当读数展示（用户会以为数据坏了） */}
+                  <Row l="显卡" v={sys?.gpu_available ? (sys?.gpu_name || "NVIDIA") : "未检测到 NVIDIA 显卡"} />
+                  <Row l="显存" v={sys?.gpu_available ? `${sys?.gpu_mem_used ?? 0}/${sys?.gpu_mem_total ?? 0} MB` : "—"} />
                   <Row l="后端进程" v={`PID ${stats?.backend?.pid ?? "—"}`} />
                   <Row l="后端内存" v={`${stats?.backend?.memory_mb ?? 0} MB`} />
                   <Row l="后端 CPU" v={`${stats?.backend?.cpu ?? 0}%`} />

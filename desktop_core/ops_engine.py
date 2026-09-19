@@ -20,6 +20,14 @@ try:
 except ImportError:
     psutil = None
 
+# ★ 系统指标单一真相源（ctypes 实现，零子进程）。
+# 2026-09-20 深度测试：psutil 7.2.2 的 cpu_percent(interval=…) 第二次调用起返回 0.0、
+# Process.cpu_percent 恒 0.0 → 运维总览「后端 CPU」恒 0、健康分 CPU 项永远满分、
+# CPU 型自愈永不触发；而 disk_usage("/") 还会随工作目录换盘。故统一改用本模块。
+from desktop_core.sys_metrics import (  # noqa: E402
+    cpu_percent_async, disk_percent, memory_percent, process_cpu_percent,
+)
+
 # ────────────────────────────────────────────
 # 1. 数据表初始化
 # ────────────────────────────────────────────
@@ -744,9 +752,9 @@ async def _restart_searxng() -> tuple[bool, str]:
 async def _cleanup_disk(threshold: int = 85) -> tuple[bool, str]:
     """磁盘空间清理：当日志/磁盘超过阈值时自动清理"""
     try:
-        import shutil
-        disk = shutil.disk_usage("/")
-        used_pct = round(disk.used / disk.total * 100, 1) if disk.total else 0
+        # ★ 用 sys_metrics.disk_percent()：`shutil.disk_usage("/")` 在 Windows 上按
+        #   当前工作目录所在盘解释（CWD 变则盘变），会把清理判断应用到错误的盘。
+        used_pct = disk_percent()
 
         if used_pct < threshold:
             return True, f"磁盘使用率 {used_pct}%，无需清理"
@@ -802,7 +810,10 @@ async def try_self_heal(trigger_type: str = "auto") -> dict:
             # 1. 检查后端自身
             self_proc = psutil.Process(os.getpid())
             mem_mb = round(self_proc.memory_info().rss / (1024**2), 1)
-            cpu_pct = self_proc.cpu_percent(interval=0.2)
+            # ★ 差值法取进程 CPU。原 psutil.Process.cpu_percent(interval=0.2) 在
+            #   psutil 7.x 下恒返回 0.0（实测）→ 下面 `cpu_pct > 95` 永不成立，
+            #   「后端资源回收」这条自愈路径完全失效。启动钩子会预热基线。
+            cpu_pct = process_cpu_percent(os.getpid())
 
             if cpu_pct > 95 or mem_mb > 500:
                 # 资源占用过高，尝试恢复
@@ -872,28 +883,30 @@ async def run_inspection() -> dict:
     summary = {}
 
     # ── 1. 系统资源 ──
-    if psutil is not None:
-        try:
-            sys_cpu = psutil.cpu_percent(interval=0.5)
-            sys_mem = psutil.virtual_memory().percent
-            sys_disk = psutil.disk_usage("/").percent
-            details["system"] = {
-                "cpu": sys_cpu,
-                "memory": sys_mem,
-                "disk": sys_disk,
-            }
-            if sys_cpu > 90:
-                issues.append({"severity": "warning", "item": "CPU 使用率过高", "value": f"{sys_cpu}%"})
-            if sys_mem > 90:
-                issues.append({"severity": "warning", "item": "内存使用率过高", "value": f"{sys_mem}%"})
-            if sys_disk > 90:
-                issues.append({"severity": "critical", "item": "磁盘空间不足", "value": f"{sys_disk}%"})
-            elif sys_disk > 80:
-                issues.append({"severity": "warning", "item": "磁盘空间即将不足", "value": f"{sys_disk}%"})
-        except Exception as e:
-            issues.append({"severity": "error", "item": "系统资源检测失败", "value": str(e)})
-    else:
-        details["system"] = {"cpu": None, "memory": None, "disk": None, "note": "未安装 psutil，系统指标不可用"}
+    # 2026-09-20 改用 sys_metrics（ctypes 单一真相源）：
+    #   psutil 7.x 的 cpu_percent(interval=…) 第二次调用起返回 0.0（实测），
+    #   且 disk_usage("/") 在 Windows 上按当前工作目录所在盘解释 ——
+    #   会让巡检报告里的 CPU 恒 0、磁盘可能报错盘。
+    try:
+        sys_cpu = await cpu_percent_async(0.5)
+        sys_mem = memory_percent()
+        sys_disk = disk_percent()
+        details["system"] = {
+            "cpu": sys_cpu,
+            "memory": sys_mem,
+            "disk": sys_disk,
+        }
+        if sys_cpu > 90:
+            issues.append({"severity": "warning", "item": "CPU 使用率过高", "value": f"{sys_cpu}%"})
+        if sys_mem > 90:
+            issues.append({"severity": "warning", "item": "内存使用率过高", "value": f"{sys_mem}%"})
+        if sys_disk > 90:
+            issues.append({"severity": "critical", "item": "磁盘空间不足", "value": f"{sys_disk}%"})
+        elif sys_disk > 80:
+            issues.append({"severity": "warning", "item": "磁盘空间即将不足", "value": f"{sys_disk}%"})
+    except Exception as e:
+        issues.append({"severity": "error", "item": "系统资源检测失败", "value": str(e)})
+        details["system"] = {"cpu": None, "memory": None, "disk": None, "note": str(e)[:80]}
 
     # ── 2. 服务连通性 ──
     services = {}
@@ -1130,18 +1143,20 @@ async def get_ops_dashboard() -> dict:
     try:
         self_proc = psutil.Process(self_pid)
         self_mem = round(self_proc.memory_info().rss / (1024**2), 1)
-        self_cpu = self_proc.cpu_percent(interval=0.3)
+        # ★ 后端 CPU 用差值法（sys_metrics）。原 psutil.Process.cpu_percent(interval=0.3)
+        #   在 psutil 7.x 下恒返回 0.0（实测多次），导致「后端 CPU」永远显示 0%。
+        self_cpu = process_cpu_percent(self_pid)
         create_time = self_proc.create_time()
         uptime_seconds = int(time.time() - create_time)
     except:
         self_mem = self_cpu = 0
         uptime_seconds = 0
 
-    # 系统资源
+    # 系统资源（ctypes 采样；CPU 间隔交给事件循环，不阻塞其它请求）
     try:
-        sys_cpu = psutil.cpu_percent(interval=0.3)
-        sys_mem = psutil.virtual_memory().percent
-        sys_disk = psutil.disk_usage("/").percent
+        sys_cpu = await cpu_percent_async(0.3)
+        sys_mem = memory_percent()
+        sys_disk = disk_percent()
     except:
         sys_cpu = sys_mem = sys_disk = 0
 
