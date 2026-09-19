@@ -77,6 +77,41 @@ _EMOTION_TO_BLEND = {
 }
 
 
+def _osc_pad(b: bytes) -> bytes:
+    """OSC 字段的 4 字节对齐补零。"""
+    return b + b"\x00" * ((4 - len(b) % 4) % 4)
+
+
+def _osc_message(address: str, args) -> bytes:
+    """最小 OSC 报文编码（自带实现，不依赖 pythonosc）。
+
+    修复（2026-09-19 实测）：VMC 后端此前 `from pythonosc.udp_client import
+    SimpleUDPClient`，而 python-osc **从未进入依赖清单/安装包**——任何用户选
+    「VMC（VSeeFace/Warudo/VMagicMirror）」后端都初始化失败，形象完全不动，
+    且只有一条 WARNING 不提示用户。OSC 报文格式极简，直接自实现即可免除依赖。
+
+    支持本模块用到的类型：i(32位整数) / f(32位浮点) / s(字符串)。
+    格式：地址(4字节对齐) + 类型标签(4字节对齐) + 参数(按标签顺序)。
+    """
+    import struct
+    tags = ","
+    body = b""
+    for a in (args or []):
+        if isinstance(a, bool):
+            tags += "i"
+            body += struct.pack(">i", 1 if a else 0)
+        elif isinstance(a, int):
+            tags += "i"
+            body += struct.pack(">i", a)
+        elif isinstance(a, float):
+            tags += "f"
+            body += struct.pack(">f", a)
+        else:
+            tags += "s"
+            body += _osc_pad(str(a).encode("utf-8"))
+    return _osc_pad(address.encode("ascii", "ignore")) + _osc_pad(tags.encode("ascii")) + body
+
+
 class VmcBackend(AvatarBackend):
     """VMC 协议发送器：向 host:port 发 OSC 报文驱动 VRM 形象。
 
@@ -92,19 +127,30 @@ class VmcBackend(AvatarBackend):
         self.host = host
         self.port = port
         self._client = None
+        self._sock = None
         self._expr_reset_task: Optional[asyncio.Task] = None
 
     async def connect(self) -> bool:
         try:
-            from pythonosc.udp_client import SimpleUDPClient
-            self._client = SimpleUDPClient(self.host, self.port)
+            import socket
+            self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            # UDP 无握手：socket 建好即视为可用（实际投递由接收端决定）
+            self._client = True
+            log.info(f"[VMC:{self.port}] OSC 发送就绪 → {self.host}:{self.port}")
             return True
         except Exception as e:
             log.warning(f"[VMC:{self.port}] 初始化失败: {e}")
             self._client = None
+            self._sock = None
             return False
 
     async def disconnect(self):
+        try:
+            if self._sock is not None:
+                self._sock.close()
+        except Exception:
+            pass
+        self._sock = None
         self._client = None
 
     @property
@@ -112,11 +158,16 @@ class VmcBackend(AvatarBackend):
         # UDP 无连接语义，client 可用即视为在线
         return self._client is not None
 
+    def _send(self, address: str, args) -> None:
+        if self._sock is None:
+            raise RuntimeError("VMC socket 未初始化")
+        self._sock.sendto(_osc_message(address, args), (self.host, self.port))
+
     def _blend(self, name: str, value: float):
-        self._client.send_message("/VMC/Ext/Blend/Val", [name, float(value)])
+        self._send("/VMC/Ext/Blend/Val", [name, float(value)])
 
     def _apply(self):
-        self._client.send_message("/VMC/Ext/Blend/Apply", [])
+        self._send("/VMC/Ext/Blend/Apply", [])
 
     async def send_expression(self, emotion: str, model_id: Optional[str] = None):
         if not self._client or not emotion:

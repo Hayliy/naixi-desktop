@@ -2783,18 +2783,29 @@ class LiveEngine:
         return None
 
     def _to_wav_base64(self, audio_bytes: bytes, sample_rate: int = 24000) -> str:
-        """把任意合成音频 bytes 统一转成标准 WAV（24000/1ch/s16）并返回 base64。
+        """把合成音频 bytes 转成 WAV 并返回 base64（推给客户端自行播放）。
 
         用于推给客户端（Qt 桌宠 / 浏览器舞台）自行播放，避免在后端进程出声
-        （后端由 Tauri 拉起，音频会话/设备易出问题导致听不到）。ffmpeg 路径复用
-        _resolve_ffmpeg 探测；转码失败返回空串，由调用方记录日志。
+        （后端由 Tauri 拉起，音频会话/设备易出问题导致听不到）。
+
+        修复（2026-09-19 实测）：此前 ffmpeg 不可用就 `return ""` —— 实测表现为
+        **直播语音在所有客户端彻底不出声**（VM 无 ffmpeg 场景）。现在：
+        - 已是 WAV（RIFF）→ 原样推（Qt 侧按文件头自适应采样率，无需转码）
+        - ffmpeg 可用 → 照旧转标准 WAV
+        - ffmpeg 不可用 → 按原始格式（多为 mp3）直推客户端：浏览器/舞台用
+          WebAudio decodeAudioData 可解 mp3；Qt 桌宠要求 WAV，需装 ffmpeg。
         """
         if not audio_bytes:
             return ""
+        import base64 as _b64
+        # 已是 WAV：无需任何转码（Qt 端 wave.open 会读实际采样率并自行重采样）
+        if len(audio_bytes) > 12 and audio_bytes[:4] == b"RIFF" and audio_bytes[8:12] == b"WAVE":
+            return _b64.b64encode(audio_bytes).decode("ascii")
         ffmpeg_path = self._resolve_ffmpeg()
         if not ffmpeg_path:
-            log.warning("[语音] ffmpeg 不可用，无法转 wav 推给客户端")
-            return ""
+            log.warning("[语音] ffmpeg 不可用：按原始格式直推客户端（浏览器舞台可播；"
+                        "Qt 桌宠需 ffmpeg 才能播 WAV）")
+            return _b64.b64encode(audio_bytes).decode("ascii")
         try:
             import io, os, base64, subprocess, tempfile
             tmp_in = os.path.join(tempfile.gettempdir(), f"tts_in_{int(time.time()*1000)}")

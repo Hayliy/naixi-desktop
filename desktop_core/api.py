@@ -4422,6 +4422,12 @@ async def api_live_inject_danmaku(request):
     text = (body.get("text") or "").strip()
     if not text:
         return web.json_response({"error": "text required"}, status=400)
+    # 调试注入也进弹幕缓存（否则前端弹幕列表/统计在调试路径恒为空，与真实
+    # B站路径不一致；真实路径在 _on_bili_json 里已写缓存，此处不会双写）
+    try:
+        engine._cache_danmaku(body.get("user", "测试观众"), text)
+    except Exception:
+        pass
     await engine._dispatch_danmaku({"text": text, "user": body.get("user", "测试观众")})
     return web.json_response({"ok": True, "dispatched": text})
 
