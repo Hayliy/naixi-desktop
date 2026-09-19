@@ -1906,9 +1906,15 @@ def export_to_dsl(nodes: list[dict], edges: list[dict], name: str = "", descript
         dsl["graph"]["nodes"].append(dsl_node)
     
     for e in edges:
+        # 兼容两种字段命名：React Flow 前端用 source/target，旧 DSL/外部导入可能是 from/to。
+        # 缺端点直接跳过——此前 e["source"] 硬取键，数据稍不规范就整单 500（实测）。
+        src = e.get("source") or e.get("from")
+        dst = e.get("target") or e.get("to")
+        if not src or not dst:
+            continue
         dsl_edge = {
-            "source": e["source"],
-            "target": e["target"],
+            "source": src,
+            "target": dst,
         }
         if e.get("sourceHandle") and e["sourceHandle"] != "output":
             dsl_edge["sourceHandle"] = e["sourceHandle"]
@@ -2063,7 +2069,7 @@ def import_from_dsl(dsl_input: str) -> dict:
 # ══════════════════════════════════════════════
 
 def _init_db():
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     try:
         conn.executescript("""
@@ -2189,7 +2195,7 @@ def _init_db():
 
 
 def _get_all_workflows() -> list[dict]:
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     try:
         rows = conn.execute("SELECT * FROM workflows ORDER BY updated_at DESC").fetchall()
@@ -2199,7 +2205,7 @@ def _get_all_workflows() -> list[dict]:
 
 
 def _get_workflow(wid: str) -> Optional[dict]:
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     try:
         row = conn.execute("SELECT * FROM workflows WHERE id=?", (wid,)).fetchone()
@@ -2209,7 +2215,7 @@ def _get_workflow(wid: str) -> Optional[dict]:
 
 
 def _save_workflow(wid: str, name: str, description: str, nodes: list, edges: list, dsl: str = "", status: str = "draft"):
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     now = datetime.now().isoformat()
     try:
@@ -2242,7 +2248,7 @@ def _save_workflow(wid: str, name: str, description: str, nodes: list, edges: li
 
 
 def _get_version(workflow_id: str, version: int = None) -> Optional[dict]:
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     try:
         if version:
@@ -2255,7 +2261,7 @@ def _get_version(workflow_id: str, version: int = None) -> Optional[dict]:
 
 
 def _list_versions(workflow_id: str) -> list[dict]:
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     try:
         rows = conn.execute("SELECT id, version, status, created_at FROM workflow_versions WHERE workflow_id=? ORDER BY version DESC", (workflow_id,)).fetchall()
@@ -2265,7 +2271,7 @@ def _list_versions(workflow_id: str) -> list[dict]:
 
 
 def _publish_workflow(workflow_id: str) -> dict:
-    from core import storage
+    from desktop_core import storage
     import secrets
     conn = storage._get_conn()
     try:
@@ -2297,7 +2303,7 @@ def _publish_workflow(workflow_id: str) -> dict:
 
 
 def _get_api_key(workflow_id: str) -> str | None:
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     try:
         row = conn.execute("SELECT key FROM workflow_keys WHERE workflow_id=? AND enabled=1 ORDER BY id LIMIT 1", (workflow_id,)).fetchone()
@@ -2311,7 +2317,7 @@ def _get_api_key(workflow_id: str) -> str | None:
 
 
 def _log_call(workflow_id: str, api_key_id: str, status: str, input_data: str, output: str, duration_ms: int):
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     try:
         conn.execute(
@@ -2324,7 +2330,7 @@ def _log_call(workflow_id: str, api_key_id: str, status: str, input_data: str, o
 
 
 def _register_webhook(workflow_id: str, endpoint: str, method: str = "POST") -> dict:
-    from core import storage
+    from desktop_core import storage
     import uuid
     conn = storage._get_conn()
     now = datetime.now().isoformat()
@@ -2343,7 +2349,7 @@ def _register_webhook(workflow_id: str, endpoint: str, method: str = "POST") -> 
 # ── 自动化管理 ──
 
 def _list_automations() -> list[dict]:
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     try:
         rows = conn.execute("SELECT * FROM automations ORDER BY created_at DESC").fetchall()
@@ -2354,7 +2360,7 @@ def _list_automations() -> list[dict]:
 
 def _create_automation(name: str, description: str, workflow_id: str,
                        trigger_type: str, config: dict) -> dict:
-    from core import storage
+    from desktop_core import storage
     import uuid
     conn = storage._get_conn()
     now = datetime.now().isoformat()
@@ -2371,7 +2377,7 @@ def _create_automation(name: str, description: str, workflow_id: str,
 
 
 def _update_automation(aid: str, **kwargs) -> dict:
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     now = datetime.now().isoformat()
     fields = []
@@ -2393,7 +2399,7 @@ def _update_automation(aid: str, **kwargs) -> dict:
 
 
 def _delete_automation(aid: str) -> dict:
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     try:
         conn.execute("DELETE FROM automations WHERE id=?", (aid,))
@@ -2405,7 +2411,7 @@ def _delete_automation(aid: str) -> dict:
 
 
 def _get_automation_runs(aid: str, limit: int = 20) -> list[dict]:
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     try:
         rows = conn.execute(
@@ -2419,7 +2425,7 @@ def _get_automation_runs(aid: str, limit: int = 20) -> list[dict]:
 
 def _record_automation_run(aid: str, wid: str, status: str, trigger: str,
                            input_data: str, output: str):
-    from core import storage
+    from desktop_core import storage
     import uuid
     conn = storage._get_conn()
     now = datetime.now().isoformat()
@@ -2621,7 +2627,7 @@ BUILTIN_TEMPLATES = [
 
 def _init_templates():
     """初始化预置模板到数据库"""
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     try:
         now = datetime.now().isoformat()
@@ -2640,7 +2646,7 @@ def _init_templates():
 
 
 def _list_templates(category: str = "") -> list[dict]:
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     try:
         if category:
@@ -2653,7 +2659,7 @@ def _list_templates(category: str = "") -> list[dict]:
 
 
 def _use_template(tid: str) -> Optional[dict]:
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     try:
         conn.execute("UPDATE workflow_templates SET usage_count = usage_count + 1 WHERE id=?", (tid,))
@@ -2670,7 +2676,7 @@ def _use_template(tid: str) -> Optional[dict]:
 
 
 def _get_template_categories() -> list[str]:
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     try:
         rows = conn.execute("SELECT DISTINCT category FROM workflow_templates ORDER BY category").fetchall()
@@ -2681,7 +2687,7 @@ def _get_template_categories() -> list[str]:
 
 
 def _delete_workflow(wid: str):
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     try:
         conn.execute("DELETE FROM workflow_versions WHERE workflow_id=?", (wid,))
@@ -2694,7 +2700,7 @@ def _delete_workflow(wid: str):
 
 
 def _get_runs(wid: str, limit: int = 10) -> list[dict]:
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     try:
         rows = conn.execute(
@@ -2723,7 +2729,7 @@ def _get_runs(wid: str, limit: int = 10) -> list[dict]:
 
 def _save_run(run_id: str, workflow_id: str, status: str, trigger: str,
               input_data: str, output: str, node_results: list, variables: list):
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     now = datetime.now().isoformat()
     try:
@@ -2788,7 +2794,7 @@ async def api_publish_workflow(wid: str) -> dict:
 async def api_regenerate_api_key(wid: str) -> dict:
     """重新生成 API Key（新表：旧 key 置为禁用，创建新 key）"""
     import secrets
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     try:
         # 禁用所有旧 key
@@ -2812,7 +2818,7 @@ async def api_list_versions(wid: str) -> list[dict]:
 
 async def api_list_keys(wid: str) -> list[dict]:
     """列出工作流的所有 API Key"""
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     try:
         rows = conn.execute("SELECT id, workflow_id, name, key, enabled, rate_limit, created_at FROM workflow_keys WHERE workflow_id=? ORDER BY created_at", (wid,)).fetchall()
@@ -2824,7 +2830,7 @@ async def api_list_keys(wid: str) -> list[dict]:
 async def api_create_key(wid: str, name: str = "新密钥") -> dict:
     """创建新的 API Key"""
     import secrets
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     try:
         new_key = "naixi_" + secrets.token_hex(16)
@@ -2840,7 +2846,7 @@ async def api_create_key(wid: str, name: str = "新密钥") -> dict:
 
 async def api_update_key(key_id: int, enabled: bool = None, name: str = None, rate_limit: int = None) -> dict:
     """更新 API Key 属性"""
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     try:
         if enabled is not None:
@@ -2859,7 +2865,7 @@ async def api_update_key(key_id: int, enabled: bool = None, name: str = None, ra
 
 async def api_delete_key(key_id: int) -> dict:
     """删除 API Key"""
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     try:
         conn.execute("DELETE FROM workflow_keys WHERE id=?", (key_id,))
@@ -2875,7 +2881,7 @@ async def api_delete_key(key_id: int) -> dict:
 
 async def api_get_usage_stats(wid: str, days: int = 7) -> dict:
     """获取工作流调用统计"""
-    from core import storage
+    from desktop_core import storage
     conn = storage._get_conn()
     try:
         total = conn.execute("SELECT COUNT(*) as c, SUM(duration_ms) as t FROM workflow_call_logs WHERE workflow_id=?", (wid,)).fetchone()
