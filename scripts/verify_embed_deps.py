@@ -32,6 +32,15 @@ import os
 import pathlib
 import sys
 
+# 中文 Windows 控制台默认 GBK，本脚本用了 ✓/✗/○/· 等符号。若直接 print，
+# 在 GBK 下遇到无法编码的字符会抛 UnicodeEncodeError，把"依赖校验失败"变成
+# 看不懂的编码异常（VM 实测：构建/校验都被这个崩溃掩盖了真正原因）。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors="replace")
+    except Exception:
+        pass
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
@@ -220,7 +229,40 @@ def check_records() -> tuple[list[str], list[str]]:
     return bad, known
 
 
+class _Tee:
+    """同时写到控制台与报告文件（报告统一 UTF-8，避免控制台编码影响取证）"""
+
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, s):
+        for st in self.streams:
+            try:
+                st.write(s)
+            except Exception:
+                pass
+
+    def flush(self):
+        for st in self.streams:
+            try:
+                st.flush()
+            except Exception:
+                pass
+
+
 def main() -> int:
+    # 可选：--report <path> 额外写一份 UTF-8 完整报告。
+    # VM/CI 里控制台常是 GBK，中文与符号容易乱码；报告文件可直接取回分析。
+    argv = sys.argv[1:]
+    report = None
+    for i, a in enumerate(argv):
+        if a == "--report" and i + 1 < len(argv):
+            report = argv[i + 1]
+        elif a.startswith("--report="):
+            report = a.split("=", 1)[1]
+    if report:
+        sys.stdout = _Tee(sys.__stdout__, io.open(report, "w", encoding="utf-8"))
+
     if not (EMBED / "python.exe").exists() and os.name == "nt":
         print(f"[SKIP] 未找到嵌入解释器 {EMBED / 'python.exe'}，跳过依赖校验")
         return 0

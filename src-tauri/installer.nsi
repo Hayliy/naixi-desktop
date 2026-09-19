@@ -1439,6 +1439,14 @@ Function fn_DoInstall
     ${If} $ResBatch == 0
       ${NSD_SetText} $hProgressStatus "创建资源目录..."
       !insertmacro SetInstallProgress 40
+      ; ★ 覆盖安装：先删上一版的程序目录，再解压新资源（保留 resources\data 用户数据）。
+      ;   7z 是覆盖式解压（x -y），不会删除新版本已去掉的旧文件。VM 实测（0.2.6 → 0.2.7）：
+      ;   python-embed 里同时留下两代 site-packages，残留 aiohttp 3.14.1 / cryptography 49.0.0 /
+      ;   certifi 2026.6.17 / annotated_doc 0.0.4 的旧文件与旧 dist-info，共 727 处哈希不一致；
+      ;   残留还可能让 Python import 到已删除的旧模块。故此处显式清理后重装。
+      ;   仅清理纯程序目录；resources\data（数据库/模型/日志）绝不动。
+      RMDir /r "$INSTDIR\resources\python-embed"
+      RMDir /r "$INSTDIR\resources\desktop_core"
       !insertmacro SetComp 2 1 "核心资源 (desktop_core)"
       !insertmacro SetComp 3 1 "Python 运行时"
       !insertmacro SetComp 4 1 "SearXNG 搜索引擎"

@@ -8,6 +8,50 @@
 
 > 版本号唯一来源：`src-tauri/tauri.conf.json` 的 `version` 字段。修改后重新构建，安装包文件名与 GitHub Release tag 会自动跟随，无需在别处同步。
 
+## [0.2.7] - 2026-09-20
+
+> 本版本源自一轮「全模块深度测试 + 依赖审计」，主题是**依赖完整性**：安装包能装出来、界面能打开，但大量功能因依赖从未进包而静默失效。
+
+### 修复（交付级 · 安装包「装得上、用不了」）
+- **23 个第三方依赖从未进安装包**，对应功能全部静默失效（代码里是 `try/except` 降级，只在日志留一条 WARNING，用户完全无感）：
+  | 缺失依赖 | 用户可感知的后果 |
+  |---|---|
+  | `pynput` | **全局热键完全失效** |
+  | `psutil` | 仪表盘/运维页系统指标恒 0 |
+  | `cv2` | 游戏 Agent 视觉接地不可用 |
+  | `onnxruntime` / `kokoro_onnx` / `phonemizer` / `espeakng_loader` | 本地离线 TTS 兜底链路不可用 |
+  | `vosk` | 真人语音（离线 ASR）不可用 |
+  | `pypdf` / `pdfminer.six` / `python-docx` | PDF / Word 导入知识库不可用 |
+  | `mcp` | MCP 服务器接入不可用 |
+  | `bs4` / `lxml` | 网页解析（URL 导入、搜索清洗）降级 |
+  | `tiktoken` | 对话 token 计数恒「-」 |
+  | `jinja2` | 工作流模板渲染不可用 |
+  | `soundfile` / `pygltflib` | 音频读写 / glTF 模型格式不可用 |
+  根因：项目没有依赖清单，`python-embed` 长期手工维护、既无清单也无构建期校验；`src-tauri/resources/` 又在 `.gitignore` 内，依赖根本不在版本控制里，换机器构建必漏。
+
+- **新增构建期依赖守卫**（`scripts/verify_embed_deps.py`，由 `build.rs` 强制调用）：AST 扫描代码实际 import → 逐个导入探针 → **RECORD 哈希一致性校验**。任一关键依赖缺失或与元数据不一致，**直接中止构建**，不再打出「能打开、但部分功能坏的」安装包。哈希校验专治**人工拷贝与 pip 混装**——测试中正是它抓出 `pydantic-core 2.46.5` 配 `pydantic 2.13.4` 导致 `mcp`/`openai` 抛 `SystemError`，而 `pip check` 报告 `No broken requirements found`，完全查不出来。
+- **新增依赖清单与同步脚本**：`scripts/requirements-embed.txt`（118 个包，含发行名≠导入名映射说明）、`scripts/sync_embed_deps.py`（按依赖闭包从同版本环境同步，或 `--from-pip` 按清单安装）、`scripts/embed_deps_allowlist.txt`（登记有意的本地适配，如 `webrtcvad` 的 `pkg_resources`→`importlib.metadata`），使内嵌运行时**可复现重建**。
+
+### 修复（P1 · 功能不可用）
+- **工作流模块整体不可用**：`workflow_engine.py` 中有 **29 处 `from core import storage`**（包重命名前的旧包名，工程内不存在 `core` 包）→ `POST /api/workflows/save` 直接 500，保存/发布/密钥/版本/模板全部失效。已全部改为 `from desktop_core import storage`。
+- **知识库节点返回假结果**：`KnowledgeNode` 里 `from core.knowledge_base import KnowledgeBase` 被 `except ImportError` 吞掉 → 节点永远返回 `{"title": "(模拟)", "content": "知识库搜索: …"}`，**用户拿到的是编造的结果**。现改为读 `meta` 表 `knowledge_base` 的真实检索（与 `/api/knowledge/search`、`tools._search_knowledge` 同源），本地单测 4/4 通过。
+- **直播：选 VMC 形象完全不动**（两项根因）：
+  - `python-osc` 从未进入依赖清单，`VmcBackend.connect()` 直接失败 → 现自实现最小 OSC 编码（地址 + 类型标签 + float/int/string，4 字节对齐），字节级单测与 VSeeFace 期望一致，UDP 实测收到表情/口型/复位共 6 包；
+  - `_backend_for_model('')` 直接返回 `None`，弹幕互动路径不带 `model_id`，于是永远走 VTS 分支，把后端设为 `vmc`/`self` 的角色收不到任何表情与口型 → 空 `model_id` 回退主角色。
+- **直播语音在所有客户端不出声**：无 ffmpeg 时 `_to_wav_base64` 直接返回空串 → 现已是 WAV 原样推，无 ffmpeg 时按原始格式（多为 mp3）直推，浏览器舞台 WebAudio 可解。
+- **开「真人语音（本地）」把后端卡死数分钟**：`_download_asr_model` 用同步 `urlretrieve` + `zipfile.extractall` 跑在事件循环里，期间**所有接口无响应、连「停止引擎」也超时**（端口仍 LISTENING 但连不上）。现下载卸载到线程池并改为后台任务：toggle **57ms** 返回 `state=downloading`，关闭/停止引擎都会取消下载。
+
+### 其它
+- **调试注入的弹幕不进列表/统计**：`/api/live/inject-danmaku` 不写 `_danmaku_cache`，调试路径下弹幕列表恒 0，与真实 B 站路径行为不一致。
+- **工作流 DSL 导出健壮性**：`export_to_dsl` 硬取 `e["source"]`，边字段命名稍异（`from`/`to`）即整单 500 → 兼容并跳过缺失端点的边。
+
+### 验证
+- 依赖守卫：**30 个第三方模块全部可导入、RECORD 哈希全部一致**（修复前 23 项缺失）；
+- 工作流：本地 save/list/get/publish/delete 全通过；VM 端到端 `save → run` 三节点（start→llm→end）全 success、发布返回 api_key；
+- 知识库节点：真实检索单测 4/4（命中/未命中/空 query 返回全量）；
+- 直播：VM 假凭证启动引擎 5 个 Agent 全 running，UDP 监听收到 6 个 OSC 包（`/VMC/Ext/Blend/Val ,sf Joy 1.0` → `Apply` → `,sf A 0.75`（口型）→ `Apply` → 复位 → `Apply`），toggle 57ms / stop 24–28ms；
+- `py_compile` 与 `tsc --noEmit` 全部通过。
+
 ## [0.2.6] - 2026-09-19
 
 > 本版本源自一轮「用户视角黑盒测试」（VMware 真机安装 0.2.5 后，真实键鼠注入 + 截图 OCR + 后端 API 逐字段对拍），全部问题由测试发现。
