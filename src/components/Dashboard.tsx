@@ -174,14 +174,11 @@ export default function Dashboard() {
   const kbCategories = kb?.categories ?? [];
   const memCats = mem?.categories ?? [];
 
-  // 桌面端模型清单（静态展示，真实用量由供应商配额接口提供）
-  const MODEL_CONFIG = [
-    { n: "qwen3-32b",      r: "对话主力 · 百炼",  p: null },
-    { n: "glm-4.7-flash",  r: "智谱备用 · 对话", p: null },
-    { n: "qwen-vl-plus",   r: "识图 · 百炼视觉", p: null },
-    { n: "CogView-3-Flash", r: "文生图 · 智谱",  p: "免费" },
-    { n: "CogVideoX-Flash", r: "文生视频 · 智谱", p: "免费" },
-  ];
+  // 模型清单：改为展示实际配置的供应商模型（此前是硬编码静态清单，
+  // 与用户实际配置的模型不符产生误导）。无配置时列表为空并显示空态。
+  const MODEL_CONFIG = (stats?.providers?.list ?? [])
+    .filter((p: any) => p.model)
+    .map((p: any) => ({ n: p.model, r: `${p.name} · ${p.type === "chat" ? "对话" : p.type || "供应商"}`, p: p.has_key ? "已配密钥" : "" }));
 
   return (
     <AppProvider>
@@ -409,6 +406,9 @@ export default function Dashboard() {
                     {m.p && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-600 shrink-0">{m.p}</span>}
                   </div>
                 ))}
+                {MODEL_CONFIG.length === 0 && (
+                  <div className="text-center py-8 text-sakura-300 text-xs">尚未配置模型，请在设置中添加供应商</div>
+                )}
               </div>
             </Card>
 
