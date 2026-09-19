@@ -42,6 +42,8 @@
 - **开「真人语音（本地）」把后端卡死数分钟**：`_download_asr_model` 用同步 `urlretrieve` + `zipfile.extractall` 跑在事件循环里，期间**所有接口无响应、连「停止引擎」也超时**（端口仍 LISTENING 但连不上）。现下载卸载到线程池并改为后台任务：toggle **57ms** 返回 `state=downloading`，关闭/停止引擎都会取消下载。
 
 ### 其它
+- **覆盖安装不再残留上一版程序文件**：7z 是覆盖式解压（`x -y`），不会删除新版本已去掉的旧文件。VM 实测 0.2.6 → 0.2.7 覆盖安装后，`python-embed` 里同时存在两代 `site-packages`——残留 `aiohttp 3.14.1` / `cryptography 49.0.0` / `certifi 2026.6.17` / `annotated_doc 0.0.4` 的旧文件与旧 `dist-info`（共 727 处哈希不一致），既可能让 Python `import` 到新版已删除的旧模块，也让"安装是否健康"无法判定。现安装资源前显式清理 `resources\python-embed` 与 `resources\desktop_core` 后重装；`resources\data`（数据库/模型/日志）不受影响。
+- **依赖守卫在中文 Windows 上的编码问题**：脚本输出的 `✗/✓` 在 GBK 控制台会触发 `UnicodeEncodeError`，把"依赖校验失败"变成看不懂的编码异常（构建期同样中招）。现设置 `errors=replace`，并新增 `--report <path>` 输出 UTF-8 完整报告，便于 VM/CI 取证。
 - **调试注入的弹幕不进列表/统计**：`/api/live/inject-danmaku` 不写 `_danmaku_cache`，调试路径下弹幕列表恒 0，与真实 B 站路径行为不一致。
 - **工作流 DSL 导出健壮性**：`export_to_dsl` 硬取 `e["source"]`，边字段命名稍异（`from`/`to`）即整单 500 → 兼容并跳过缺失端点的边。
 
