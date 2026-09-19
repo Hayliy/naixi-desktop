@@ -186,6 +186,7 @@ class LiveEngine:
 
         # 层3 真人语音闭环（麦克风 ASR → 自动上麦）
         self._human_voice_task: Optional[asyncio.Task] = None   # 麦克风采集协程
+        self._asr_download_task: Optional[asyncio.Task] = None  # 模型后台下载任务（不阻塞请求）
         self._asr_model: str = "vosk-model-small-cn-0.22"    # 默认中文小模型（42MB，离线）
         self._asr_device: str = ""                            # 留空=系统默认输入设备
         self._asr_provider: str = "cloud"                     # 识别引擎: cloud(百炼paraformer) | local(vosk离线)
@@ -555,13 +556,17 @@ class LiveEngine:
             if not os.path.isdir(model_dir):
                 self._asr_status = {"enabled": True, "state": "downloading",
                                     "model": self._asr_model, "error": ""}
-                try:
-                    await self._download_asr_model(self._asr_model)
-                except Exception as e:
-                    self._asr_status = {"enabled": False, "state": "error",
-                                        "model": self._asr_model, "error": f"模型下载失败: {e}"}
-                    return {"ok": False, "msg": f"模型下载失败: {e}"}
-                model_dir = self._asr_model_dir()
+                # 修复（2026-09-19 实测）：下载 40MB+ 模型会让 toggle 请求长时间挂起
+                # （VM 上 60s 超时，前端一直转圈）。改为后台任务，立即返回 downloading，
+                # 状态经 /api/live/human_voice/status 轮询；下载完自动进入 listening。
+                old = getattr(self, "_asr_download_task", None)
+                if old is not None and not old.done():
+                    old.cancel()
+                self._asr_download_task = asyncio.create_task(
+                    self._download_and_start_human_voice(self._asr_device, self._asr_provider))
+                log.info("[真人语音] 开始后台下载模型 %s（立即返回，不阻塞请求）" % self._asr_model)
+                return {"ok": True, "msg": "正在后台下载语音模型，下载完成后自动开启",
+                        "state": "downloading", "model": self._asr_model}
         self._asr_status = {"enabled": True, "state": "listening",
                             "model": self._asr_provider, "error": ""}
         self._human_voice_task = asyncio.create_task(
@@ -569,8 +574,37 @@ class LiveEngine:
         log.info("[真人语音] 已开启（provider=%s，设备=%s）" % (self._asr_provider, self._asr_device or "默认"))
         return {"ok": True, "msg": "真人语音已开启"}
 
+    async def _download_and_start_human_voice(self, device: str, provider: str):
+        """后台：下载 vosk 模型 → 启动麦克风采集协程（供 start_human_voice 的 local 分支）。"""
+        try:
+            await self._download_asr_model(self._asr_model)
+        except Exception as e:
+            self._asr_status = {"enabled": False, "state": "error",
+                                "model": self._asr_model, "error": f"模型下载失败: {e}"}
+            log.warning(f"[真人语音] 模型下载失败: {e}")
+            return
+        model_dir = self._asr_model_dir()
+        self._asr_status = {"enabled": True, "state": "listening",
+                            "model": provider, "error": ""}
+        self._human_voice_task = asyncio.create_task(
+            self._agent_human_voice(model_dir, device, provider))
+        log.info("[真人语音] 模型就绪，已自动开启（provider=%s，设备=%s）" % (provider, device or "默认"))
+
     async def stop_human_voice(self) -> dict:
         """关闭真人语音闭环，取消麦克风采集协程。"""
+        # 正在后台下载模型时关闭：取消下载任务，避免"关了还继续拉 40MB"
+        dl = getattr(self, "_asr_download_task", None)
+        if dl is not None and not dl.done():
+            dl.cancel()
+            try:
+                await dl
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._asr_download_task = None
+            self._asr_status = {"enabled": False, "state": "idle",
+                                "model": self._asr_model, "error": ""}
+            log.info("[真人语音] 已取消模型下载")
+            return {"ok": True, "msg": "已停止（模型下载已取消）"}
         if self._human_voice_task is None or self._human_voice_task.done():
             self._asr_status = {"enabled": False, "state": "idle",
                                 "model": self._asr_model, "error": ""}
@@ -1618,6 +1652,13 @@ class LiveEngine:
             try: await self._human_voice_task
             except: pass
             self._human_voice_task = None
+        # 后台模型下载任务也要取消（否则停引擎后仍在后台拉 40MB 模型）
+        dl = getattr(self, "_asr_download_task", None)
+        if dl is not None and not dl.done():
+            dl.cancel()
+            try: await dl
+            except: pass
+        self._asr_download_task = None
         self._asr_status = {"enabled": False, "state": "idle",
                             "model": self._asr_model, "error": ""}
         for aid in list(self._agent_tasks.keys()):
