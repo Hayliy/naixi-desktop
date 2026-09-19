@@ -205,10 +205,19 @@ def _ensure_tables():
 
 # ── 健康检查记录 ──
 
-def save_health_log(data: dict):
-    """记录一次健康检查快照"""
+def save_health_log(data: dict, min_interval: float = 60.0):
+    """记录一次健康检查快照
+
+    修复：/api/ops/dashboard 前端每 3s 轮询一次，此前每次请求都插入一条快照，
+    ops_health_log 3 小时即膨胀 8000+ 行且无限增长。现按 min_interval 节流
+    （默认 60s 内的重复快照直接丢弃）；巡检等关键节点可传 min_interval=0 强制写入。
+    """
     conn = _get_conn()
     try:
+        last = conn.execute("SELECT ts FROM ops_health_log ORDER BY id DESC LIMIT 1").fetchone()
+        ts = data.get("ts", time.time())
+        if last and min_interval > 0 and (ts - last["ts"]) < min_interval:
+            return
         conn.execute("""
             INSERT INTO ops_health_log
             (ts, score, backend_alive, backend_mem, backend_cpu,
@@ -216,7 +225,7 @@ def save_health_log(data: dict):
              providers_valid, error_count, uptime_seconds, details)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
-            data.get("ts", time.time()),
+            ts,
             data.get("score", 0),
             1 if data.get("backend_alive") else 0,
             data.get("backend_mem", 0),
@@ -231,6 +240,11 @@ def save_health_log(data: dict):
             data.get("uptime_seconds", 0),
             json.dumps(data.get("details", {}), ensure_ascii=False),
         ))
+        # 双保险：无论节流与否，兜底清理仅保留最近 20000 条（24h 分钟级 ≈1440 条）
+        conn.execute(
+            "DELETE FROM ops_health_log WHERE id NOT IN "
+            "(SELECT id FROM ops_health_log ORDER BY id DESC LIMIT 20000)"
+        )
         conn.commit()
     finally:
         conn.close()
