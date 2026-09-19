@@ -731,7 +731,9 @@ async def api_stats(request):
         "backend": {"pid": self_pid, "memory_mb": self_mem, "cpu": self_cpu, "version": _app_version()},
         "services": services,
         "providers": {"total": len(providers), "with_key": sum(1 for p in providers if p.get("has_key")), "list": providers[:10]},
-        "database": {"size_mb": round(db_size/(1024**2),1) if db_size else 0, "tables": db_tables},
+        # 精度与 /api/desktop/paths 对齐（2 位小数）。此前这里 1 位、paths 2 位，
+        # 同一个库在两处显示 0.3MB / 0.27MB，用户会以为其中一个是错的。
+        "database": {"size_mb": round(db_size / (1024 ** 2), 2) if db_size else 0, "tables": db_tables},
     })
 
 async def api_system_resources(request):
@@ -2562,6 +2564,16 @@ async def api_knowledge_add(request):
         category = body.get("category", "默认").strip()
         if not title:
             return web.json_response({"error": "标题不能为空"}, status=400)
+        # 长度上限（2026-09-20 深度测试发现：20k 字符的标题能直接写入，
+        # 既污染知识库列表也让检索/渲染变慢）。给出明确上限而非静默截断，
+        # 让用户知道该拆分成多条。
+        MAX_TITLE, MAX_CONTENT, MAX_CATEGORY = 200, 50000, 50
+        if len(title) > MAX_TITLE:
+            return web.json_response({"error": f"标题过长（{len(title)} 字符，上限 {MAX_TITLE}）"}, status=400)
+        if len(content) > MAX_CONTENT:
+            return web.json_response({"error": f"内容过长（{len(content)} 字符，上限 {MAX_CONTENT}）"}, status=400)
+        if len(category) > MAX_CATEGORY:
+            return web.json_response({"error": f"分类名过长（上限 {MAX_CATEGORY} 字符）"}, status=400)
         raw = meta_get("knowledge_base")
         try: items = json.loads(raw) if raw else []
         except: items = []
@@ -2576,7 +2588,10 @@ async def api_knowledge_add(request):
         meta_set("knowledge_base", json.dumps(items, ensure_ascii=False))
         return web.json_response({"ok": True, "total": len(items)})
     except Exception as e:
-        return web.json_response({"error": str(e)}, status=400)
+        # 不把内部异常文本直接抛给前端（此前非法 JSON 会回
+        # "'str' object has no attribute 'get'" 这类实现细节）。
+        log.warning(f"[知识库] 添加失败：{e}")
+        return web.json_response({"error": "请求格式不正确或服务内部错误"}, status=400)
 
 
 async def api_knowledge_delete(request):
