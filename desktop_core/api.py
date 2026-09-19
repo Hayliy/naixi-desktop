@@ -6078,11 +6078,22 @@ async def api_logs(request):
         # 过滤掉 aiohttp.access 行（HTTP 请求日志），只保留应用日志
         app_lines = [l for l in lines if 'aiohttp.access' not in l]
         # 修复：此前「应用日志 <10 行时回退到全部日志」——轮转后的新文件可能
-        # 几乎全是 access 行，回退等于把刷屏原样还给用户。始终返回过滤后的
-        # 应用日志；若确实太短，补少量原始行尾即可。
+        # 几乎全是 access 行，回退等于把刷屏原样还给用户（0.2.6 VM 实测复现）。
+        # 现在改为：应用日志不足时从最近的轮转文件（.1/.2/.3）补应用日志，
+        # 全程不把 access 行还给用户。
         if len(app_lines) < 10:
-            tail_raw = [l for l in lines if 'aiohttp.access' in l][-20:]
-            app_lines = app_lines + tail_raw
+            for suffix in (".1", ".2", ".3"):
+                rot = log_path + suffix
+                if not os.path.exists(rot):
+                    continue
+                try:
+                    with open(rot, "r", encoding="utf-8", errors="replace") as rf:
+                        rot_app = [l for l in rf.readlines() if 'aiohttp.access' not in l]
+                    app_lines = rot_app[-200:] + app_lines
+                except Exception:
+                    pass
+                if len(app_lines) >= 10:
+                    break
         last_lines = app_lines[-200:]
         return web.Response(text="".join(last_lines), content_type="text/plain", charset="utf-8")
     except FileNotFoundError:
