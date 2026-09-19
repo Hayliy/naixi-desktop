@@ -407,9 +407,9 @@ export default function ChatPage() {
                       <button onClick={() => setRenaming(false)} className="p-0.5 text-sakura-300"><X size={12} /></button>
                     </div>
                   ) : (
-                    <button onClick={() => { if (activeKey) { setRenameText(customNames[activeKey] || convName(activeKey, msgs)); setRenaming(true); } }}
+                    <button onClick={() => { if (activeKey) { setRenameText(customNames[activeKey] || convName(activeKey, msgs, undefined, convs.find(c => c.key === activeKey)?.last_msg)); setRenaming(true); } }}
                       className="text-xs font-semibold text-sakura-600 hover:text-sakura-800 transition-colors truncate">
-                      {activeKey ? convName(activeKey, msgs, customNames[activeKey]) : "新对话"}
+                      {activeKey ? convName(activeKey, msgs, customNames[activeKey], convs.find(c => c.key === activeKey)?.last_msg) : "新对话"}
                     </button>
                   )}
                   {activeKey && <span className="text-[10px] text-sakura-300 truncate">{activeKey}</span>}

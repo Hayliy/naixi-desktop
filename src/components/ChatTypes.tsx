@@ -15,7 +15,7 @@ export function fmtTime(ts: number) {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
-export function convName(key: string, msgs?: MsgItem[], customName?: string) {
+export function convName(key: string, msgs?: MsgItem[], customName?: string, lastMsg?: string) {
   if (customName) return customName;
   if (msgs && msgs.length > 0) {
     const first = msgs.find(m => m.role === "user");
@@ -23,6 +23,11 @@ export function convName(key: string, msgs?: MsgItem[], customName?: string) {
       const txt = first.content.replace(/^\[[^\]]+\]\s*:\s*/, "").slice(0, 20);
       return txt + (txt.length >= 20 ? "..." : "");
     }
+  }
+  // 修复：无消息详情时回退到会话列表的 last_msg 摘要，避免 chat: 会话一律显示“新对话”
+  if (lastMsg) {
+    const txt = lastMsg.replace(/^\[[^\]]+\]\s*:?\s*/, "").trim().slice(0, 20);
+    if (txt) return txt + (txt.length >= 20 || lastMsg.trim().length > 20 ? "..." : "");
   }
   const parts = key.split(":");
   if (parts.length < 2) return key;

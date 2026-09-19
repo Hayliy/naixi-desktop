@@ -33,7 +33,7 @@ export default function ConvList({
   const allGroups = [...new Set(Object.values(groups).flat())];
   const allTags = [...new Set(Object.values(tags).flat())];
 
-  let filtered = convs.filter(c => (customNames[c.key] || convName(c.key)).includes(search) || c.last_msg.includes(search));
+  let filtered = convs.filter(c => (customNames[c.key] || convName(c.key, undefined, undefined, c.last_msg)).includes(search) || c.last_msg.includes(search));
   if (filterGroup) filtered = filtered.filter(c => (groups[c.key] || []).includes(filterGroup));
   if (filterTag) filtered = filtered.filter(c => (tags[c.key] || []).includes(filterTag));
   return (
@@ -76,7 +76,7 @@ export default function ConvList({
             onMouseLeave={() => setHoveredKey(null)}>
             <button onClick={() => onSelect(c.key)}
               className={`w-full text-left px-3 py-2.5 border-b border-sakura-50 transition-colors hover:bg-sakura-50 ${activeKey === c.key ? "bg-sakura-100" : ""}`}
-              title={`${customNames[c.key] || convName(c.key)} — ${c.last_msg}`}>
+              title={`${customNames[c.key] || convName(c.key, undefined, undefined, c.last_msg)} — ${c.last_msg}`}>
               <div className="flex items-start gap-2">
                 {c.key.startsWith("auto:") ? (
                   <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-indigo-100 text-indigo-400">
@@ -96,7 +96,7 @@ export default function ConvList({
                 )}
                 <div className="flex-1 min-w-0 pr-4">
                   <div className="flex items-center justify-between gap-1">
-                    <span className="text-xs font-medium text-sakura-600 truncate">{customNames[c.key] || convName(c.key)}</span>
+                    <span className="text-xs font-medium text-sakura-600 truncate">{customNames[c.key] || convName(c.key, undefined, undefined, c.last_msg)}</span>
                     <span className="text-[10px] text-sakura-300 shrink-0">{fmtTime(c.last_time)}</span>
                   </div>
                   <p className="text-[11px] text-sakura-400 truncate mt-0.5">{c.last_msg}</p>
