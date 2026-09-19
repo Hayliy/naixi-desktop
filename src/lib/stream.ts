@@ -165,7 +165,13 @@ export async function sendChatStream(
     });
 
     if (!res.ok) {
-      callbacks.onError(`HTTP ${res.status}`);
+      // 优先透出后端返回的错误信息（如“请先在设置中配置 API Key”），而非干巴巴的状态码
+      let msg = `HTTP ${res.status}`;
+      try {
+        const errBody = await res.json();
+        if (errBody?.error) msg = String(errBody.error);
+      } catch { /* 响应体不是 JSON 时保留状态码 */ }
+      callbacks.onError(msg);
       return;
     }
 
