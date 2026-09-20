@@ -35,6 +35,7 @@ import {
   CheckCircle2, Shield, Volume2, Library, User, Palette, Search, Download, Star, Reply, Users, BookOpen, Zap, Clock,
 } from "lucide-react";
 import { loadAvatarCache } from "@/lib/avatar";
+import { loadShortcuts, comboMatches, onShortcutsChanged } from "@/lib/shortcuts";
 
 const MODELS: ProviderModel[] = [{ key: "auto", label: "自动路由（默认）", provider_id: 0 }];
 
@@ -168,38 +169,42 @@ export default function ChatPage() {
     }
   }, [activeKey]);
 
-  // 快捷键处理：Ctrl+, 开设置 + 自定义快捷键
+  // 快捷键处理：全局动作（设置面板 / 清空对话 / 关闭弹窗）真正按配置绑定生效。
+  // 此前只有「清空对话」一条生效、设置面板硬编码 Ctrl+,，其余条目是纯展示占位——
+  // 已重做：全部读 naixi_shortcuts 配置，改键即刻生效（onShortcutsChanged 重载）。
+  // 输入框动作（发送消息 / 换行 / 上一条消息）在 ChatInput.tsx 内处理，此处不抢。
+  const sideTabRef = useRef<SideTab>(null);
+  useEffect(() => { sideTabRef.current = sideTab; }, [sideTab]);
   useEffect(() => {
-    const raw = localStorage.getItem("naixi_shortcuts");
-    try { shortcutsRef.current = JSON.parse(raw ?? "[]") || []; } catch { shortcutsRef.current = []; }
+    const apply = () => { shortcutsRef.current = loadShortcuts(); };
+    apply();
+    const off = onShortcutsChanged(apply);
+    const inEditable = (t: EventTarget | null) =>
+      !!(t as HTMLElement | null)?.closest?.("input,textarea,[contenteditable]");
 
     const handler = (e: KeyboardEvent) => {
-      // Ctrl+, 开/关设置面板
-      if (e.key === "," && e.ctrlKey && !e.shiftKey && !e.altKey) {
+      const get = (desc: string) => shortcutsRef.current.find(s => s.desc === desc)?.key || "";
+      const kPanel = get("打开/关闭设置面板");
+      if (kPanel && comboMatches(e, kPanel)) {
         e.preventDefault();
         setSideTab(t => t === "settings" ? null : "settings");
         return;
       }
-      // 自定义快捷键：不在输入框内时才匹配
-      if ((e.target as HTMLElement)?.closest("input,textarea,[contenteditable]")) return;
-      // 跳过 Tab（浏览器原生焦点跳转，不参与快捷键匹配）
-      if (e.key === "Tab") return;
-      for (const s of shortcutsRef.current) {
-        const parts = s.key.toLowerCase().split("+");
-        const key = parts.pop() || "";
-        if (e.key.toLowerCase() !== key) continue;
-        if (parts.includes("ctrl") !== e.ctrlKey) continue;
-        if (parts.includes("shift") !== e.shiftKey) continue;
-        if (parts.includes("alt") !== e.altKey) continue;
-        if (s.desc === "清空对话") {
-          e.preventDefault();
-          handleNew();
-          return;
-        }
+      const kClear = get("清空对话");
+      if (kClear && comboMatches(e, kClear)) {
+        e.preventDefault();
+        handleNew();
+        return;
+      }
+      const kClose = get("取消/关闭当前弹窗");
+      if (kClose && comboMatches(e, kClose) && !inEditable(e.target)) {
+        // 只在确有浮层打开时拦截 Escape，避免吞掉弹窗内部自己的 Esc 语义
+        if (sideTabRef.current) { e.preventDefault(); setSideTab(null); }
+        return;
       }
     };
     window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    return () => { window.removeEventListener("keydown", handler); off(); };
   }, []);
 
   useEffect(() => {
@@ -556,7 +561,8 @@ export default function ChatPage() {
               setReplyToId(null);
               handleSend(text);
             }} streaming={streaming} onStop={stopStreaming}
-              onCapabilityClick={(a) => setCapabilityAction(a)} />
+              onCapabilityClick={(a) => setCapabilityAction(a)}
+              lastUserMsg={msgs.filter(m => m.role === "user").slice(-1)[0]?.content} />
           </>
         )}
       </div>

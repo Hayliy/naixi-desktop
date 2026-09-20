@@ -4,6 +4,7 @@ import { apiGet, apiPost } from "@/lib/api";
 import { useToast } from "@/components/Toast";
 import ThemeSettings from "@/components/ThemeSettings";
 import { prefillAvatars, getAvatarTotal, refreshAvatarCache } from "@/lib/avatar";
+import { loadShortcuts, saveShortcuts, eventToCombo, SHORTCUT_ACTIONS, type ShortcutItem } from "@/lib/shortcuts";
 
 export default function PreferencesPanel({ onClose }: { onClose: () => void }) {
   const { notify } = useToast();
@@ -130,66 +131,78 @@ function AvatarRow({ label, storageKey, isName, previewKey }: { label: string; s
   );
 }
 
-/* ─── 快捷键设置 ─── */
-const DEFAULT_SHORTCUTS: { key: string; desc: string }[] = [
-  { key: "Ctrl+Enter", desc: "发送消息" },
-  { key: "Enter", desc: "换行" },
-  { key: "Ctrl+,", desc: "打开/关闭设置面板" },
-  { key: "Escape", desc: "取消/关闭当前弹窗" },
-  { key: "Ctrl+L", desc: "清空对话" },
-  { key: "↑ (输入框)", desc: "上一条消息" },
-];
-
+/* ─── 快捷键设置 ───
+   此前这里只有 desc 为「清空对话」的一条真正绑定，其余条目是纯展示
+   （改键位 / 添加条目都不生效）——占位假实现，全功能测试点名后重做。
+   现在全部动作真正绑定生效：全局动作（设置面板 / 关闭弹窗 / 清空对话）由
+   Chat.tsx 的 window keydown 分发；输入框动作（发送消息 / 换行 / 上一条消息）
+   由 ChatInput.tsx 的 textarea keydown 处理。键位用「按下即录制」录入。 */
 function ShortcutsSettings() {
-  const [s, setS] = useState<{ key: string; desc: string }[]>(() => {
-    try { return JSON.parse(localStorage.getItem("naixi_shortcuts") || "null") || DEFAULT_SHORTCUTS; } catch { return DEFAULT_SHORTCUTS; }
-  });
+  const [s, setS] = useState<ShortcutItem[]>(() => loadShortcuts());
   const [ei, setEi] = useState<number | null>(null);
   const [ek, setEk] = useState("");
-  const [ed, setEd] = useState("");
-  const save = (v: typeof s) => { setS(v); localStorage.setItem("naixi_shortcuts", JSON.stringify(v)); };
+  const [dupIdx, setDupIdx] = useState<number | null>(null);
+  const commit = (v: ShortcutItem[]) => { setS(v); saveShortcuts(v); };
+  const conflict = (key: string, exceptIdx: number) =>
+    s.some((x, i) => i !== exceptIdx && x.key.toLowerCase() === key.toLowerCase());
+  // 被删除的动作会出现在这里，点击即可重新加回（键位用该动作的默认键）
+  const missing = SHORTCUT_ACTIONS.filter(a => !s.some(x => x.desc === a.desc));
 
   return (
     <div className="space-y-2 text-xs">
-      <p className="text-[10px] text-sakura-400 mb-1">快捷键列表（按 Ctrl+, 打开设置面板）</p>
+      <p className="text-[10px] text-sakura-400 mb-1">快捷键列表（点击铅笔后按下新键位即录制）</p>
       <div className="space-y-1">
         {s.map((item, i) => ei === i ? (
-          <div key={i} className="flex items-center gap-1">
-            <input value={ek} onChange={e => setEk(e.target.value)} className="flex-1 px-1.5 py-0.5 rounded border border-sakura-100 bg-sakura-50 text-[10px] font-mono text-sakura-600 w-20" placeholder="快捷键" />
-            <input value={ed} onChange={e => setEd(e.target.value)} className="flex-1 px-1.5 py-0.5 rounded border border-sakura-100 bg-sakura-50 text-[10px] text-sakura-600" placeholder="说明" />
-            <button onClick={() => { if (ek.trim() && ed.trim()) { const n = [...s]; n[i] = { key: ek.trim(), desc: ed.trim() }; save(n); setEi(null); } }} className="p-0.5 text-sakura-400 hover:text-sakura-600"><Check size={10} /></button>
+          <div key={item.desc} className="flex items-center gap-1">
+            <input readOnly value={ek}
+              onKeyDown={e => { e.preventDefault(); const c = eventToCombo(e); if (c) setEk(c); }}
+              onBlur={() => {
+                if (ek && ek !== item.key) {
+                  if (conflict(ek, i)) { setDupIdx(i); return; }
+                  const n = [...s]; n[i] = { ...n[i], key: ek }; commit(n);
+                }
+                setEi(null);
+              }}
+              className="flex-1 px-1.5 py-0.5 rounded border border-sakura-200 bg-white text-[10px] font-mono text-sakura-600 w-20"
+              placeholder="按下新键位" autoFocus />
+            <span className="text-[10px] text-sakura-400 flex-1">{item.desc}</span>
+            <button onClick={() => {
+              if (ek && ek !== item.key && !conflict(ek, i)) { const n = [...s]; n[i] = { ...n[i], key: ek }; commit(n); }
+              setEi(null); setDupIdx(null);
+            }} className="p-0.5 text-sakura-400 hover:text-sakura-600"><Check size={10} /></button>
           </div>
         ) : (
-          <div key={i} className="flex items-center justify-between group">
+          <div key={item.desc} className="flex items-center justify-between group">
             <span className="flex items-center gap-1.5">
               <code className="px-1 py-0.5 rounded bg-sakura-50 text-[10px] font-mono text-sakura-500">{item.key}</code>
               <span className="text-[10px] text-sakura-400">{item.desc}</span>
+              {dupIdx === i && <span className="text-[9px] text-red-500">键位重复，换个键位</span>}
             </span>
             <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100">
-              <button onClick={() => { setEi(i); setEk(item.key); setEd(item.desc); }} className="p-0.5 text-sakura-300 hover:text-sakura-500"><Pencil size={9} /></button>
-              <button onClick={() => save(s.filter((_, j) => j !== i))} className="p-0.5 text-sakura-300 hover:text-red-500"><X size={9} /></button>
+              <button onClick={() => { setEi(i); setEk(item.key); setDupIdx(null); }} className="p-0.5 text-sakura-300 hover:text-sakura-500"><Pencil size={9} /></button>
+              <button onClick={() => commit(s.filter((_, j) => j !== i))} className="p-0.5 text-sakura-300 hover:text-red-500"><X size={9} /></button>
             </div>
           </div>
         ))}
       </div>
-      <button onClick={() => save([...s, { key: "新快捷键", desc: "说明" }])}
-        className="flex items-center gap-1 text-[10px] text-sakura-400 hover:text-sakura-500">
-        <Plus size={10} /> 添加快捷键
-      </button>
-      <button onClick={() => save(DEFAULT_SHORTCUTS)}
+      {missing.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {missing.map(a => (
+            <button key={a.desc} onClick={() => commit([...s, { ...a }])}
+              className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-sakura-100 text-sakura-400 hover:text-sakura-600 hover:bg-sakura-50">
+              <Plus size={9} /> 添加：{a.desc}
+            </button>
+          ))}
+        </div>
+      )}
+      <button onClick={() => commit(SHORTCUT_ACTIONS.map(a => ({ ...a })))}
         className="w-full mt-1 px-2.5 py-1 rounded-lg text-[10px] border border-sakura-100 text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 transition-colors">
         恢复默认
       </button>
-      {/* 如实交代：这个列表里**只有 desc 为「清空对话」的那一条**会真正绑定（Chat.tsx 的
-          keydown 只按 desc 匹配这一个动作），其余条目是固定快捷键的"参考展示"——
-          改它们的键位不会有任何效果。旧文案只说"部分需要刷新后生效"，
-          等于把"改了没用"说成"刷新就好"，是误导，全功能测试里被标了出来。 */}
-      <div className="text-[9px] text-amber-600 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 mt-1 leading-relaxed">
-        说明：<b>只有「清空对话」这一条可自定义并生效</b>（改完即刻生效）。<br />
-        「发送消息 / 换行 / 设置面板 / 取消」是程序中写死的固定快捷键，此处仅作展示，改键位不会生效；
-        自行「添加快捷键」的条目目前也不会被绑定。
+      <div className="text-[9px] text-sakura-300 leading-relaxed">
+        以上所有快捷键均可改键、<b>即刻生效</b>（无需刷新，键位冲突会提示）。<br />
+        「发送消息 / 换行 / 上一条消息」在输入框内生效；其余为全局动作（输入框内不触发，避免打字误触）。
       </div>
-      <p className="text-[9px] text-sakura-300 mt-1">Ctrl+L「清空对话」改键后需重新聚焦输入框生效。</p>
     </div>
   );
 }

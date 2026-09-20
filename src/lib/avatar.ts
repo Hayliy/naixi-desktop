@@ -60,6 +60,17 @@ export async function refreshAvatarCache(): Promise<void> {
   await loadAvatarCache();
 }
 
+/* ─── 内置默认头像（二次元猫娘，随安装包分发，离线可用） ───
+   源：data/avatars 的 50 张 1024px 猫娘图 → 构建时输出 128px 缩略图入 public/avatars/。
+   放在 DiceBear 之前：新装机后端从未生成过头像、/api/avatar/list 为空时，
+   对话页默认头像也必须是猫娘图，而不是外网 DiceBear 卡通占位。 */
+const BUILTIN_AVATAR_COUNT = 50;
+
+/** 直接根据名字 hash 取内置猫娘头像（必命中，无网络依赖） */
+export function getBuiltinAvatarUrl(name: string): string {
+  return `avatars/avatar-${hashCode(name) % BUILTIN_AVATAR_COUNT}.png`;
+}
+
 // ── hash 工具 ──
 
 function hashCode(s: string): number {
@@ -80,7 +91,8 @@ export function getDiceBearUrl(name: string, styleIndex?: number): string {
   return `${AVATAR_BASE}/${style}/svg?seed=${encodeURIComponent(name)}&size=40`;
 }
 
-/** 解析最终头像 URL：优先 AI 生成缓存，其次 DiceBear，最后 localStorage 自定义 */
+/** 解析最终头像 URL：优先 localStorage 自定义，其次后端 AI 生成缓存，
+ *  再其次内置 50 张猫娘头像（默认兜底，离线可用），最后 DiceBear */
 export function resolveAvatarUrl(storageKey: string, fallbackName: string): string {
   // 1. localStorage 自定义
   try {
@@ -88,22 +100,22 @@ export function resolveAvatarUrl(storageKey: string, fallbackName: string): stri
     if (custom) return custom;
   } catch {}
 
-  // 2. AI 生成缓存（hash 映射到预生成的 avatar-N）
+  // 2. 后端 AI 生成缓存（hash 映射到 avatar-N；OSS 过期自动跳过）
   const ai = getAiAvatarUrl(fallbackName);
   if (ai) return ai;
 
-  // 3. DiceBear 回退
-  return getDiceBearUrl(fallbackName);
+  // 3. 内置 50 张二次元猫娘头像（新装机 / 后端无缓存时的默认，离线可用）
+  return getBuiltinAvatarUrl(fallbackName);
 }
 
 /**
  * 旧版兼容名：根据名字获取头像 URL
- * 优先 AI 缓存，其次 DiceBear
+ * 优先 AI 缓存，其次内置猫娘头像，最后 DiceBear
  */
 export function getAvatarUrl(name: string, styleIndex?: number): string {
   const ai = getAiAvatarUrl(name);
   if (ai) return ai;
-  return getDiceBearUrl(name, styleIndex);
+  return getBuiltinAvatarUrl(name);
 }
 
 /** 解析最终显示名称：优先 localStorage 自定义 */
