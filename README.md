@@ -5,7 +5,7 @@
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2B-0078D6?logo=windows)
 ![Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20React%2019%20%C2%B7%20Python%203.13-1F4E79)
 ![License](https://img.shields.io/badge/License-Apache%202.0-green)
-![Release](https://img.shields.io/badge/Release-v0.2.8-blue)
+![Release](https://img.shields.io/badge/Release-v0.2.9-blue)
 ![Commits](https://img.shields.io/badge/Commits-502-orange)
 ![LOC](https://img.shields.io/badge/LOC-48k-blueviolet)
 
@@ -214,7 +214,7 @@ naixi-desktop/
 
 ## 快速开始（安装包）
 
-1. 到 [Releases](../../releases) 下载 `naixi-desktop_0.2.8_x64-setup.exe`
+1. 到 [Releases](../../releases) 下载 `naixi-desktop_0.2.9_x64-setup.exe`
 2. 运行安装程序，按向导完成安装（含 WebView2 运行时自动安装）
 3. 从开始菜单或桌面快捷方式启动「奶昔」
 
@@ -323,7 +323,7 @@ sha256sum -c --ignore-missing sha256sums.txt
 
 ### 关于代码签名（如实说明）
 
-**当前 0.2.8 安装包尚未做代码签名**（未购置 OV/EV 证书）。因此 Windows SmartScreen 会提示「未知发布者」，这是预期行为、不是被篡改——**正因如此，上面两步哈希校验更要照做**。补签名后本段会更新。
+**当前 0.2.9 安装包尚未做代码签名**（未购置 OV/EV 证书）。因此 Windows SmartScreen 会提示「未知发布者」，这是预期行为、不是被篡改——**正因如此，上面两步哈希校验更要照做**。补签名后本段会更新。
 
 ### 在虚拟机里做样本分析 / 对抗演示
 
