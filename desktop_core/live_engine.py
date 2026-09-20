@@ -4139,7 +4139,13 @@ class LiveEngine:
             # ── 按模型类型分流渲染器 ──
             #   VRM(.vrm)   -> vrm_pet.py（QWebEngineView + three-vrm，自带 mocap / 面捕）
             #   Live2D(.model3.json) -> pet_window.py（QOpenGLWidget + live2d，原逻辑不变）
-            if kind in ("vrm", "live2d"):
+            if model_path and os.path.exists(model_path):
+                # 显式传入模型路径优先（API pet-start 传参场景）：按扩展名分类并采用。
+                # 修复（0.2.8 真机测试坐实）：原先只要 saved kind 是 vrm/live2d 就走
+                # _resolve_model_for_kind，调用方传的 model_path 被**完全忽略** ⇒
+                # 指定模型启动桌宠永远 has_model=false，只能显示「还没有模型」占位卡。
+                kind, resolved = self._classify_model(model_path)
+            elif kind in ("vrm", "live2d"):
                 # 运行时 2D/3D 切换：显式指定渲染模式，覆盖按模型扩展名的自动分类
                 resolved = self._resolve_model_for_kind(kind)
             else:

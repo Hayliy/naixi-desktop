@@ -219,7 +219,10 @@ async def main():
             resp.headers["Vary"] = "Origin"
         return resp
 
-    app = web.Application(middlewares=[cors_middleware])
+    # client_max_size：aiohttp 默认仅 1MB，导致「模型导入」上传任何 >1MB 的 .vrm 直接
+    # 413「Content Too Large」（UI 上表现为导入失败）。VRM 模型动辄几十~几百 MB，
+    # 放宽到 2GB（0.2.8 真机测试坐实：353MB VRM 导入必失败）。
+    app = web.Application(middlewares=[cors_middleware], client_max_size=2 * 1024 ** 3)
     setup_routes(app)
 
     runner = web.AppRunner(app)
