@@ -4102,6 +4102,7 @@ class LiveEngine:
         另强制注入 PYTHONPATH 到 desktop_core 的父目录，双保险：即便直接跑模块作脚本，
         `from desktop_core.xxx import` 也不会 ModuleNotFoundError。
         """
+        _kind_explicit = kind is not None
         if kind is None:
             kind = self._read_saved_pet_kind()
         if self._pet_proc and self._pet_proc.poll() is None:
@@ -4148,8 +4149,24 @@ class LiveEngine:
             elif kind in ("vrm", "live2d"):
                 # 运行时 2D/3D 切换：显式指定渲染模式，覆盖按模型扩展名的自动分类
                 resolved = self._resolve_model_for_kind(kind)
+                if not resolved and not _kind_explicit:
+                    # 自动启动（按保存的偏好模式）但该模式下没有任何模型 → 回退另一种模式。
+                    # 0.2.8 真机坐实：导入 VRM 后默认 2D 偏好启动桌宠，占位卡仍显示
+                    # 「还没有模型」——机器上明明有模型，只是模式对不上，用户会懵。
+                    other = "live2d" if kind == "vrm" else "vrm"
+                    r2 = self._resolve_model_for_kind(other)
+                    if r2:
+                        log.info(f"[桌宠] 偏好模式 {kind} 下无可用模型，自动回退 {other} 渲染")
+                        kind, resolved = other, r2
             else:
-                kind, resolved = self._classify_model(model_path)
+                # 既无保存偏好也没传模型路径：两种模式都试，有啥渲染啥
+                for _k in ("live2d", "vrm"):
+                    _r = self._resolve_model_for_kind(_k)
+                    if _r:
+                        kind, resolved = _k, _r
+                        break
+                else:
+                    kind, resolved = "live2d", ""
             # ★ 兜底自动发现：调用方没给模型路径时（直接调 API、配置尚未写入等），
             #   自己做一次发现。否则机器上明明有模型，桌宠也只显示「还没有模型」占位卡
             #   （真机踩到过：用空 model_path 调 pet-start，has_model=false 且不加载）。
