@@ -1206,6 +1206,13 @@ class PetWindow(QWidget):
         super().mousePressEvent(e)
 
     def mouseMoveEvent(self, e: QMouseEvent):
+        if self._dragging and not (e.buttons() & Qt.LeftButton):
+            # 拖拽状态自愈：模态对话框（如占位卡点开的导入窗）/ Alt-Tab 会打断
+            # press→release 事件对，_dragging 卡在 True ⇒ 鼠标一动窗口就跟着跑
+            # （0.2.8 真机用户复现：关导入窗后占位卡随鼠标漂移）。左键已不在
+            # 按下状态却仍处于拖拽 ⇒ 判定状态残留，立即复位。
+            self._dragging = False
+            return
         if self._dragging:
             self.move(e.globalPosition().toPoint() - self._drag_offset)
 
@@ -1533,6 +1540,10 @@ class PetWindow(QWidget):
         if obj is getattr(self, "_fallback", None):
             if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
                 log.info("[桌宠] 点击占位卡 → 打开模型导入")
+                # 点占位卡时 press 会先冒泡到 PetWindow.mousePressEvent 置 _dragging=True，
+                # 而 release 在这里被消费、不再走 mouseReleaseEvent ⇒ 拖拽状态残留，
+                # 关掉导入窗后窗口会跟着鼠标漂移（0.2.8 真机复现）。开窗前显式复位。
+                self._dragging = False
                 self._import_model()
                 return True
         return super().eventFilter(obj, event)
