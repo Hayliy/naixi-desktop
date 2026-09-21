@@ -122,6 +122,16 @@ npm run tauri dev
 - 改版本只改这一处，然后跑 `npm run sync:version`（其实 `pretauri` 钩子每次构建都会自动跑），它会同步到 `Cargo.toml` / `package.json` / `version.json` / `src/lib/version.ts`。
 - 不要手工改上面四个文件里的版本号，会被覆盖且造成不一致。
 
+### 6.1 兼容性承诺（通往 1.0.0）
+
+- **`0.y.z` 阶段**：快速迭代，不承诺 DB / 配置 schema 稳定，内部 API 随意变。
+- **`1.0.0` 起**：进入稳定期，遵循 SemVer——
+  - **MAJOR** = 破坏性数据 / schema 变更（必须配 `_SCHEMA_MIGRATIONS` 迁移且向前兼容）；
+  - **MINOR** = 向后兼容的新功能；
+  - **PATCH** = 向后兼容的缺陷修复。
+- **用户数据是第一契约**：升级绝不允许丢数据、不允许静默覆盖用户配置。任何改表动作必须在 `storage.py` 登记迁移（见 §7）。
+- 后端 REST API 是内部实现细节（仅绑 `127.0.0.1`），**不是公共契约**，不在此兼容承诺范围内。
+
 ---
 
 ## 7. 自测 / CI

@@ -13,6 +13,8 @@
   B. 核心模块导入冒烟 —— 关键纯逻辑模块在干净解释器下可导入。
   C. 配置合并语义     —— API Key 掩码回传不得清掉旧密文（历史踩坑）。
   D. schema 版本迁移框架 —— 1.0.0 数据契约基础设施：版本戳、幂等、失败回滚语义。
+  E. 基础模块回归     —— 定时任务 cron 匹配（0.2.6 类比：匹配错则任务永不执行）+ 系统指标
+     健康分分段（0.2.8 类比：cpu 恒 0 曾致健康分虚高），对应差距一要求的两类自动化回归测试。
 """
 from __future__ import annotations
 
@@ -22,6 +24,7 @@ import pathlib
 import re
 import sqlite3
 import sys
+import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))   # 让 desktop_core 可导入（--light 也需要）
@@ -204,6 +207,63 @@ def t_schema_failure_keeps_version() -> None:
         storage._SCHEMA_MIGRATIONS = {1: lambda conn: None}
 
 
+# ──────────────────────────── E. 基础模块回归（对应 0.2.6 / 0.2.8 交付事故） ────────────────────────────
+# 这两类纯函数无副作用、可在 CI 直接断言，是"定时任务 / 系统指标"两大基础模块的回归防线。
+
+def _mk_tm(hour: int, minute: int, wday: int, mday: int = 21, mon: int = 9, year: int = 2026):
+    # wday 遵循 Python tm_wday：0=周一 … 6=周日（_cron_match 内部会转成 cron 的 0=周日）
+    return time.struct_time((year, mon, mday, hour, minute, 0, wday, 0, 0))
+
+
+def t_cron_match_regression() -> str:
+    """0.2.6 事故类比：定时任务 cron 匹配逻辑——匹配错则任务永不执行或误执行。"""
+    api = importlib.import_module("desktop_core.api")
+    f = api._cron_match
+    cases = [
+        ("0 9 * * *",     _mk_tm(9, 0, 0),  True,  "周一9:00整点应触发"),
+        ("0 9 * * *",     _mk_tm(9, 30, 0), False, "周一9:30非整点不触发"),
+        ("* * * * *",     _mk_tm(3, 17, 4), True,  "全通配任意时刻触发"),
+        ("*/15 * * * *",  _mk_tm(9, 0, 0),  True,  "分钟0是15的倍数"),
+        ("*/15 * * * *",  _mk_tm(9, 10, 0), False, "分钟10非15的倍数"),
+        ("0 9-17 * * 1-5", _mk_tm(9, 0, 0),  True,  "周一9点在工作日窗内"),
+        ("0 9-17 * * 1-5", _mk_tm(9, 0, 5),  False, "周六不在周1-5"),
+        ("0 9 * * 1",     _mk_tm(9, 0, 0),  True,  "cron周1=周一应匹配"),
+        ("0 9 * * 0",     _mk_tm(9, 0, 0),  False, "cron周0=周日不匹配周一"),
+        ("0 9 * *",       _mk_tm(9, 0, 0),  False, "4段非法表达式视为不匹配"),
+    ]
+    bad = []
+    for expr, tm, want, desc in cases:
+        got = f(expr, tm)
+        if got != want:
+            bad.append(f"{expr}@{desc}: 期望{want}实{got}")
+    if bad:
+        raise AssertionError("cron 匹配失败: " + "; ".join(bad))
+    return f"{len(cases)} 个 cron 用例通过（含周字段换算与非法表达式）"
+
+
+def t_health_score_regression() -> str:
+    """0.2.8 事故类比：系统指标健康分分段——cpu 恒 0 曾导致健康分虚高、资源项永远满分。"""
+    ops = importlib.import_module("desktop_core.ops_engine")
+    f = ops.compute_health_score
+    # 全健康 → 100
+    total, bd = f(True, 2, 2, 1, 1, 0, 10.0, 20.0, 30.0)
+    assert total == 100, f"全健康应100，实{total} bd={bd}"
+    # CPU 真实飙高 → 资源项 cpu 段只拿 2 分（验证不再虚高）
+    total_hi, bd_hi = f(True, 2, 2, 1, 1, 0, 90.0, 20.0, 30.0)
+    assert bd_hi["resources"] == 2 + 6 + 6, f"cpu=90 时资源分应14，实{bd_hi['resources']}"
+    assert total_hi == 94, f"cpu=90 总应94，实{total_hi}"
+    # 后端挂 → backend 0 分 → 总分扣 30
+    total_dead, bd_dead = f(False, 2, 2, 1, 1, 0, 10.0, 20.0, 30.0)
+    assert bd_dead["backend"] == 0 and total_dead == 70, f"后端死应70，实{total_dead}"
+    # 错误率分层：0→15分 / ≤3→10分 / ≤10→5分 / >10→0分
+    t0, _ = f(True, 2, 2, 1, 1, 0, 10, 20, 30)
+    t5, _ = f(True, 2, 2, 1, 1, 5, 10, 20, 30)
+    t15, _ = f(True, 2, 2, 1, 1, 15, 10, 20, 30)
+    # 真实分段：err=0→15分 / err≤3→10分 / err≤10→5分 / err>10→0分
+    assert t0 == 100 and t5 == 90 and t15 == 85, f"错误率分层应100/90/85，实{t0}/{t5}/{t15}"
+    return "健康分分段正确（cpu高扣分 / 后端死扣30 / 错误率4档）"
+
+
 # ──────────────────────────── 主流程 ────────────────────────────
 
 def main() -> int:
@@ -223,8 +283,11 @@ def main() -> int:
         check("空 key 回传保留旧密文", t_merge_preserve_keys_empty)
         check("真实新 key 正常覆盖", t_merge_preserve_keys_real)
         check("非 dict 供应者不炸", t_merge_preserve_keys_non_dict)
+        print("\n[E] 基础模块回归（定时任务 cron / 系统指标健康分）")
+        check("cron 匹配逻辑（0.2.6 类比）", t_cron_match_regression)
+        check("健康分分段逻辑（0.2.8 类比）", t_health_score_regression)
     else:
-        print("\n[B/C] （--light 跳过：需完整依赖环境）")
+        print("\n[B/C/E] （--light 跳过：需完整依赖环境）")
 
     print("\n[D] schema 版本迁移框架")
     check("基线版本戳 + 幂等", t_schema_baseline_stamped)
