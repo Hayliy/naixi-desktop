@@ -60,12 +60,13 @@ jobs:
       - name: 按清单安装全部依赖（含 PySide6/onnxruntime/opencv 等重包）
         shell: pwsh
         run: |
-          # 坑（实测）：GitHub 的 pwsh shim 把 $ErrorActionPreference 设为 stop，
-          # pip 的 stderr（下载进度条）一旦进 PowerShell 管道就被包装成 ErrorRecord
-          # 立即终止脚本 —— 表现为"开局几十秒即失败"，后置的错误处理器根本不执行。
-          # 本地干净 venv 全量装清单 + 冒烟 9/9 全绿（清单无问题），故用 cmd 把 pip
-          # 输出整体重定向进文件，PS 只读文件、不碰 stderr 流。
-          cmd /c "pip install -r scripts/requirements-embed.txt > pip_install.log 2>&1"
+          # 坑1（实测）：GitHub 的 pwsh shim 把 $ErrorActionPreference 设为 stop，
+          # pip 的 stderr（下载进度条）一旦进管道就被包装成 ErrorRecord 立即终止脚本
+          # ——表现为"开局几十秒即失败"。故用 cmd 把输出整体重定向进文件，PS 只读文件。
+          # 坑2（实测）：清单里含 pip 自身时，直接调 `pip` 可执行文件会触发
+          # "ERROR: To modify pip, please run: python -m pip install -r ..."保护；
+          # 必须用 `python -m pip` 形式（本地复现脚本正是因此才通过的）。
+          cmd /c "python -m pip install -r scripts/requirements-embed.txt > pip_install.log 2>&1"
           Get-Content pip_install.log -Tail 8
           if ($LASTEXITCODE -ne 0) {
             $l = Get-Content pip_install.log
