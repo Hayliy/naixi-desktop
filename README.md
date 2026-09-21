@@ -2,6 +2,7 @@
 
 [English](README_EN.md) | 简体中文
 
+[![CI](https://github.com/Hayliy/naixi-desktop/actions/workflows/ci.yml/badge.svg)](https://github.com/Hayliy/naixi-desktop/actions/workflows/ci.yml)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2B-0078D6?logo=windows)
 ![Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20React%2019%20%C2%B7%20Python%203.13-1F4E79)
 ![License](https://img.shields.io/badge/License-Apache%202.0-green)
