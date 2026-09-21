@@ -60,13 +60,19 @@ jobs:
       - name: 按清单安装全部依赖（含 PySide6/onnxruntime/opencv 等重包）
         shell: pwsh
         run: |
-          pip install -r scripts/requirements-embed.txt 2>&1 | Tee-Object -Variable pipout
+          # 坑（实测）：GitHub 的 pwsh shim 把 $ErrorActionPreference 设为 stop，
+          # pip 的 stderr（下载进度条）一旦进 PowerShell 管道就被包装成 ErrorRecord
+          # 立即终止脚本 —— 表现为"开局几十秒即失败"，后置的错误处理器根本不执行。
+          # 本地干净 venv 全量装清单 + 冒烟 9/9 全绿（清单无问题），故用 cmd 把 pip
+          # 输出整体重定向进文件，PS 只读文件、不碰 stderr 流。
+          cmd /c "pip install -r scripts/requirements-embed.txt > pip_install.log 2>&1"
+          Get-Content pip_install.log -Tail 8
           if ($LASTEXITCODE -ne 0) {
-            # 日志站对部分网络不可达：把 pip 报错压成单条 ::error:: annotation
-            # （GitHub 每 step 只保留 10 条 error annotation，逐行发射会占满限额、真错误反而看不到）
-            $err = $pipout | Where-Object { $_ -match '(?i)error|could not|no matching|failed|cannot install|Cannot find' } | Select-Object -Last 8
-            $tail = $pipout | Select-Object -Last 6
+            $l = Get-Content pip_install.log
+            $err = @($l | Where-Object { $_ -match '(?i)error|could not|no matching|failed|cannot' } | Select-Object -Last 8)
+            $tail = @($l | Select-Object -Last 4)
             $msg = ($err + $tail) -join ' ¶ '
+            if (-not $msg) { $msg = 'pip failed without matching error lines; see job log' }
             if ($msg.Length -gt 950) { $msg = $msg.Substring($msg.Length - 950) }
             Write-Output "::error::$msg"
             exit 1
