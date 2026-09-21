@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { cn, apiPost, apiGet } from "@/lib/api";
+import { cn, apiPost, apiGet, getDiagnostics, type DiagnosticsData } from "@/lib/api";
 import { useToast } from "@/components/Toast";
 import { APP_FALLBACK_VERSION } from "@/lib/version";
 
@@ -42,6 +42,9 @@ export function TopBar({ onNavigate }: { onNavigate: (k: string) => void }) {
   const [altOn, setAltOn] = useState(false);
   const [maximized, setMaximized] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [diagOpen, setDiagOpen] = useState(false);
+  const [diagData, setDiagData] = useState<DiagnosticsData | null>(null);
+  const [diagLoading, setDiagLoading] = useState(false);
   const menusRef = useRef<HTMLDivElement | null>(null);
 
   /* ── 窗口控制（动态导入 + 守卫）── */
@@ -188,6 +191,18 @@ export function TopBar({ onNavigate }: { onNavigate: (k: string) => void }) {
       setDevData({ stats: null, sysinfo: null });
     } finally {
       setDevLoading(false);
+    }
+  }, []);
+
+  const openDiag = useCallback(async () => {
+    setDiagOpen(true); setDiagLoading(true);
+    try {
+      const d = await getDiagnostics();
+      setDiagData(d);
+    } catch (e: any) {
+      setDiagData({ ok: false, backend: "running", python: "", platform: "", config_schema_version: 0, configured_providers: [], configured_platforms: [], update_source: "", db_exists: false, degradations: ["诊断聚合失败：" + (e?.message || String(e))] });
+    } finally {
+      setDiagLoading(false);
     }
   }, []);
 
@@ -344,6 +359,7 @@ export function TopBar({ onNavigate }: { onNavigate: (k: string) => void }) {
         { label: "重启 SearXNG", action: () => { apiPost("/api/system/restart_searxng", {}).then(() => notify("SearXNG 重启中…", "info")).catch(() => notify("SearXNG 重启失败", "error")); } },
         { label: "打开配置目录", action: () => openConfigDir() },
         { label: "查看日志", action: () => onNavigate("logs") },
+        { label: "运行诊断", action: openDiag },
         "sep",
         { label: "全屏", shortcut: "F11", action: () => toggleFullscreen() },
         { label: "退出", shortcut: "Ctrl+Q", action: () => closeWin() },
@@ -593,6 +609,49 @@ export function TopBar({ onNavigate }: { onNavigate: (k: string) => void }) {
               <button onClick={openWebviewDevtools} className="rounded-lg border border-sakura-200 px-3 py-1.5 text-xs text-sakura-500 hover:bg-sakura-50">Webview 开发者工具</button>
               <button onClick={() => openConfigDir()} className="rounded-lg border border-sakura-200 px-3 py-1.5 text-xs text-sakura-500 hover:bg-sakura-50">打开配置目录</button>
               <button onClick={() => setDevOpen(false)} className="rounded-lg bg-sakura-500 px-4 py-1.5 text-xs text-white hover:bg-sakura-600">关闭</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 运行诊断弹窗：1.0.0 自查入口（对应后端 /api/diagnostics） */}
+      {diagOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40" onClick={() => setDiagOpen(false)}>
+          <div className="flex max-h-[82vh] w-[500px] flex-col rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <h2 className="mb-1 text-sm font-bold text-sakura-500">运行诊断</h2>
+            <div className="mb-2 text-xs text-sakura-400">配置契约 / 连接器 / 直播 / 系统健康 / 已知降级 一站式自查</div>
+            <div className="flex-1 space-y-2 overflow-y-auto">
+              {diagLoading ? (
+                <div className="p-4 text-center text-xs text-sakura-300">加载中…</div>
+              ) : diagData ? (
+                <>
+                  <DevRow label="后端" value={diagData.backend || "—"} />
+                  <DevRow label="Python" value={diagData.python || "—"} />
+                  <DevRow label="配置 schema 版本" value={String(diagData.config_schema_version)} />
+                  <DevRow label="数据库 schema 版本" value={diagData.db_schema_version != null ? String(diagData.db_schema_version) : (diagData.db_exists ? "未知" : "无库")} />
+                  <DevRow label="平台连接器" value={`${diagData.platform_catalog_count ?? "?"} 个已定义`} />
+                  <DevRow label="已配 API 提供商" value={`${diagData.configured_providers.length} 个`} />
+                  <DevRow label="已配平台" value={diagData.configured_platforms.length ? diagData.configured_platforms.join(", ") : "无"} />
+                  <DevRow label="直播引擎" value={diagData.live_running ? `运行中${diagData.live_room ? " (房间 " + diagData.live_room + ")" : ""}` : "未运行"} />
+                  <DevRow label="系统健康分" value={diagData.health_score != null ? String(diagData.health_score) : (diagData.health_available === false ? "巡检未跑" : "—")} />
+                  <div className="rounded-md bg-sakura-50/40 px-2.5 py-1.5">
+                    <div className="mb-1 text-xs font-medium text-sakura-500">已知降级（空 = 健康）</div>
+                    {diagData.degradations && diagData.degradations.length ? (
+                      <ul className="list-disc space-y-0.5 pl-4 text-xs text-amber-600">
+                        {diagData.degradations.map((d, i) => (<li key={i}>{d}</li>))}
+                      </ul>
+                    ) : (
+                      <div className="text-xs text-emerald-600">无</div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="p-4 text-center text-xs text-sakura-300">无数据</div>
+              )}
+            </div>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button onClick={openDiag} className="rounded-lg border border-sakura-200 px-3 py-1.5 text-xs text-sakura-500 hover:bg-sakura-50">刷新</button>
+              <button onClick={() => setDiagOpen(false)} className="rounded-lg bg-sakura-500 px-4 py-1.5 text-xs text-white hover:bg-sakura-600">关闭</button>
             </div>
           </div>
         </div>

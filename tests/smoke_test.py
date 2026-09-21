@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
 import pathlib
 import re
 import sqlite3
@@ -264,6 +265,116 @@ def t_health_score_regression() -> str:
     return "健康分分段正确（cpu高扣分 / 后端死扣30 / 错误率4档）"
 
 
+# ──────────────────────────── F. 配置 schema 迁移（差距二：配置冻结承诺） ────────────────────────────
+# 1.0.0 数据契约：desktop_config 此前是裸 JSON blob，无版本/无 schema/无迁移。
+# 这组测试守的是「升级不丢用户数据 + 缺失键自动补全 + 幂等 + 坏数据不崩」。
+
+def t_config_migrate_preserves_user_data() -> str:
+    """升级最关键的契约：老库缺新键时，用户已有的 api_providers / platform_configs 必须原样保留。"""
+    cs = importlib.import_module("desktop_core.config_schema")
+    old = {
+        "api_providers": {"openai": {"api_key": "enc:REAL", "model": "gpt-4"}},
+        "platform_configs": {"napcat": {"webhook_url": "http://a/b"}},
+        # 故意缺：mcp_servers / desktop_full_trust / settings / update_source / schema_version
+    }
+    new = cs.migrate_desktop_config(old)
+    assert new["api_providers"]["openai"]["api_key"] == "enc:REAL", "用户 api_key 不得丢"
+    assert new["api_providers"]["openai"]["model"] == "gpt-4", "用户 model 不得丢"
+    assert new["platform_configs"]["napcat"]["webhook_url"] == "http://a/b", "用户平台配置不得丢"
+    # 缺失键必须被默认值补齐（升级不丢数据、且补齐结构）
+    assert new["mcp_servers"] == {}, "缺失 mcp_servers 应补默认空对象"
+    assert new["desktop_full_trust"] is False, "缺失 desktop_full_trust 应补默认 False"
+    assert new["settings"] == {}, "缺失 settings 应补默认空对象"
+    assert new["update_source"] == "", "缺失 update_source 应补默认空串"
+    assert new["schema_version"] == cs.CONFIG_SCHEMA_VERSION, "必须打上当前 schema 版本戳"
+    # 不得引入未登记顶层键污染配置
+    known = set(cs.DESKTOP_CONFIG_DEFAULTS)
+    for k in new:
+        assert k in known or k == "schema_version", f"迁移引入了未登记键 {k}"
+    return "老配置升级：用户数据全保留 + 缺失键补全 + 版本戳就位"
+
+
+def t_config_migrate_idempotent() -> None:
+    cs = importlib.import_module("desktop_core.config_schema")
+    old = {"api_providers": {"x": {"api_key": "enc:A"}}}
+    once = cs.migrate_desktop_config(old)
+    twice = cs.migrate_desktop_config(once)
+    assert once == twice, "迁移必须幂等（重跑不得改变结果）"
+    third = cs.migrate_desktop_config(twice)
+    assert third["schema_version"] == cs.CONFIG_SCHEMA_VERSION, "已是最新版不得改动版本戳"
+
+
+def t_config_migrate_bad_json() -> None:
+    cs = importlib.import_module("desktop_core.config_schema")
+    out = cs.migrate_desktop_config("{not valid json")
+    assert out["schema_version"] == 1 and out["api_providers"] == {}, "坏 JSON 降级为默认结构而非崩溃"
+    assert cs.migrate_desktop_config(None)["schema_version"] == 1, "None 输入不得崩溃"
+    assert cs.migrate_desktop_config(42)["schema_version"] == 1, "非 dict 输入不得崩溃"
+
+
+def t_config_validate_flags_missing() -> None:
+    cs = importlib.import_module("desktop_core.config_schema")
+    issues = cs.validate_desktop_config({})
+    assert any("缺少顶层键" in i for i in issues), "空配置应告警缺失键"
+    full = cs.migrate_desktop_config({})
+    assert cs.validate_desktop_config(full) == [], "完整默认配置应零告警"
+
+
+# ──────────────────────────── G. 多平台连接器回归（差距：平台接入） ────────────────────────────
+# 19 个平台连接器共享同一套 platform_configs 合并逻辑；这组测试守的是
+# 「存平台配置不污染 api_key、存 api_provider 不污染平台配置」的双向隔离。
+
+def t_platforms_json_valid() -> str:
+    p = ROOT / "desktop_core" / "platforms.json"
+    assert p.exists(), "platforms.json 缺失"
+    data = json.loads(p.read_text(encoding="utf-8"))
+    plats = data.get("platforms", [])
+    assert len(plats) >= 1, "platforms 为空"
+    ids = [x.get("id") for x in plats]
+    assert len(ids) == len(set(ids)), f"平台 id 重复: {ids}"
+    required = ("id", "name", "platform", "steps", "links")
+    for x in plats:
+        miss = [k for k in required if k not in x]
+        assert not miss, f"平台 {x.get('id')} 缺必需字段 {miss}"
+    return f"{len(plats)} 个平台连接器定义合法（id 唯一、字段完整）"
+
+
+def t_platform_config_roundtrip() -> None:
+    """模拟前端「先存 G 平台配置、再存某 api_provider」的两次合并，断言互不破坏。"""
+    storage = importlib.import_module("desktop_core.storage")
+    cs = importlib.import_module("desktop_core.config_schema")
+    MERGE_KEYS = ("api_providers", "platform_configs", "mcp_servers",
+                  "desktop_full_trust", "settings", "update_source")
+
+    def merge_step(base, body):
+        merged = dict(base)
+        for key in MERGE_KEYS:
+            if key in body:
+                merged[key] = body[key]
+        merged = storage.merge_preserve_keys(merged, base)
+        return cs.migrate_desktop_config(merged)
+
+    original = {"api_providers": {"openai": {"api_key": "enc:OLD"}}, "platform_configs": {}}
+    # 第一次：前端存 napcat webhook 平台配置
+    m1 = merge_step(original, {"platform_configs": {"napcat": {"webhook_url": "http://x/y", "enabled": True}}})
+    assert m1["api_providers"]["openai"]["api_key"] == "enc:OLD", "存平台配置不得清掉已有 api_key"
+    assert m1["platform_configs"]["napcat"]["webhook_url"] == "http://x/y", "平台配置应写入"
+    # 第二次：前端存真实新 api_provider
+    m2 = merge_step(m1, {"api_providers": {"openai": {"api_key": "sk-new"}}})
+    assert m2["api_providers"]["openai"]["api_key"] == "sk-new", "真实新 key 应覆盖"
+    assert m2["platform_configs"]["napcat"]["webhook_url"] == "http://x/y", "存 api_provider 不得清掉平台配置"
+
+
+def t_diagnostics_collectable() -> str:
+    """/api/diagnostics 聚合函数必须在无 HTTP 上下文也能跑出结构化快照（CI 可单测）。"""
+    diag = importlib.import_module("desktop_core.diagnostics").collect_diagnostics()
+    assert diag.get("backend") == "running", "后端存活标记缺失"
+    assert "config_schema_version" in diag, "配置 schema 版本缺失"
+    assert "platform_catalog_count" in diag and diag["platform_catalog_count"] >= 1, "平台清单未聚合"
+    assert isinstance(diag.get("degradations"), list), "降级列表缺失（§4.3 可见性落地）"
+    return f"诊断快照可聚合（{diag['platform_catalog_count']} 平台 / 配置v{diag['config_schema_version']}）"
+
+
 # ──────────────────────────── 主流程 ────────────────────────────
 
 def main() -> int:
@@ -286,6 +397,15 @@ def main() -> int:
         print("\n[E] 基础模块回归（定时任务 cron / 系统指标健康分）")
         check("cron 匹配逻辑（0.2.6 类比）", t_cron_match_regression)
         check("健康分分段逻辑（0.2.8 类比）", t_health_score_regression)
+        print("\n[F] 配置 schema 迁移（1.0.0 数据契约 / 升级不丢数据）")
+        check("老配置升级保留用户数据", t_config_migrate_preserves_user_data)
+        check("迁移幂等", t_config_migrate_idempotent)
+        check("坏 JSON / None 不崩溃", t_config_migrate_bad_json)
+        check("结构校验告警缺失键", t_config_validate_flags_missing)
+        print("\n[G] 多平台连接器回归 + 诊断聚合")
+        check("platforms.json 定义合法", t_platforms_json_valid)
+        check("平台配置 ↔ API Key 双向隔离", t_platform_config_roundtrip)
+        check("诊断快照可聚合", t_diagnostics_collectable)
     else:
         print("\n[B/C/E] （--light 跳过：需完整依赖环境）")
 

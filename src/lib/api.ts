@@ -124,3 +124,29 @@ export interface StatusData {
   agents: number;
   cases: number;
 }
+
+// ── 应用内诊断快照（1.0.0 自查入口，对应后端 /api/diagnostics）──
+export interface DiagnosticsData {
+  ok: boolean;
+  backend: string;
+  python: string;
+  platform: string;
+  config_schema_version: number;
+  configured_providers: string[];
+  configured_platforms: string[];
+  update_source: string;
+  platform_catalog_count?: number;
+  platform_catalog_ids?: string[];
+  live_running?: boolean;
+  live_room?: string | null;
+  health_score?: number | null;
+  health_available?: boolean;
+  db_schema_version?: number;
+  db_exists: boolean;
+  degradations?: string[];
+  [k: string]: unknown;
+}
+
+export async function getDiagnostics(): Promise<DiagnosticsData> {
+  return apiGet<DiagnosticsData>("/api/diagnostics", 10000);
+}

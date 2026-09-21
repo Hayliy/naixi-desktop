@@ -877,12 +877,11 @@ async def api_database_stats(request):
 
 async def api_desktop_config_get(request):
     # 安全：绝不向前端返回明文密钥，只返回掩码占位符（前端用它判断"已配置"，编辑时留原样即保留）
-    raw = meta_get("desktop_config")
-    if raw:
-        config = json.loads(raw)
-        mask_config(config)  # 掩码 api_key，永不返回明文
-        return web.json_response(config)
-    return web.json_response({"api_providers": {}, "platform_configs": {}})
+    from desktop_core import config_schema
+    # 自修复：补齐缺失顶层键 + 打 schema_version 戳，避免老库缺键导致前端按"未配"渲染/KeyError
+    config = config_schema.migrate_desktop_config(meta_get("desktop_config", ""))
+    mask_config(config)  # 掩码 api_key，永不返回明文
+    return web.json_response(config)
 
 
 async def api_desktop_provider_key_get(request):
@@ -924,12 +923,25 @@ async def api_desktop_config_set(request):
                 original = {}
         # 前端回传掩码/空密钥时，沿用已存的加密密文，避免误删或误覆盖真实密钥
         merge_preserve_keys(body, original)
+        from desktop_core import config_schema
+        body = config_schema.migrate_desktop_config(body)  # 补全 schema_version 等契约字段
         encrypt_config(body)  # 幂等加密：只加密新明文密钥，不重复加密已加密值
         meta_set("desktop_config", json.dumps(body, ensure_ascii=False))
         return web.json_response({"ok": True})
     except Exception as e:
         log.warning(f"保存桌面配置失败: {e}")
         return web.json_response({"error": "配置保存失败"}, status=400)
+
+
+async def api_diagnostics(request):
+    """应用内诊断快照（1.0.0 自查入口）：配置 schema 版本、连接器状态、直播状态、
+    系统健康分、已知降级（让 CONTRIBUTING §4.3「降级必须 UI 可见」落地）、数据库版本。"""
+    try:
+        from desktop_core import diagnostics
+        return web.json_response(diagnostics.collect_diagnostics())
+    except Exception as e:
+        log.warning(f"诊断聚合失败: {e}")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 
 async def api_desktop_restart(request):
@@ -4024,6 +4036,7 @@ def setup_routes(app):
     app.router.add_get("/api/system/processes", api_system_processes)
     app.router.add_post("/api/system/restart_searxng", api_system_restart_searxng)
     app.router.add_get("/api/desktop/config", api_desktop_config_get)
+    app.router.add_get("/api/diagnostics", api_diagnostics)
     app.router.add_get("/api/desktop/provider-key", api_desktop_provider_key_get)
     app.router.add_post("/api/desktop/config", api_desktop_config_set)
     app.router.add_get("/api/desktop/paths", api_desktop_paths)
@@ -5219,8 +5232,8 @@ async def api_live_config(request):
                 found = discover_models()
                 if found:
                     mp = found[0]["path"]
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning(f"自动发现 Live2D 模型失败（直播页模型路径将留空）: {e}")
         return web.json_response({
             "access_key_id": engine._access_key_id,
             "access_key_secret": engine._access_key_secret[:4]+"****" if engine._access_key_secret else "",

@@ -102,6 +102,8 @@ npm run tauri dev
 2. **关键依赖缺失要 fail-loud**：构建期由依赖守卫拦截（`scripts/verify_embed_deps.py`）；运行期缺失核心依赖的功能入口应给出明确错误提示，而不是返回空结果。
 3. **新加第三方依赖的必做三步**：写入 `scripts/requirements-embed.txt` →（如发行名≠导入名）在 `sync_embed_deps.py` 的 `ALIASES` 补映射 → 跑 `python tests/smoke_test.py` 确认"A. 依赖清单完整性"通过。漏第一步 = 重演 0.2.7，CI 的 `backend-light` 门会直接标红拦住。
 
+> **降级可见性的落地工具（1.0.0）**：后端 `desktop_core/diagnostics.py` 的 `collect_diagnostics()` 聚合所有已知降级状态到 `degradations` 列表，并经 `/api/diagnostics` 暴露给前端「系统 → 运行诊断」面板。新增 `except` 分支时，要么记 `log.warning`，要么把状态写进 `degradations`。完整清单见 [`docs/DEGRADATION_AUDIT.md`](docs/DEGRADATION_AUDIT.md)。
+
 ### 4.4 发布前必须做
 - `npm run tauri build --bundles nsis` 会在 `beforeBuildCommand` 自动跑 `npm run build && node scripts/stage-core.cjs`，把活代码同步进副本再打包。**只改了 `desktop_core/` 却没重新 build，发出的安装包还是旧代码。**
 
