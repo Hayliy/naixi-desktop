@@ -52,8 +52,10 @@
 - [目录结构](#目录结构)
 - [快速开始](#快速开始安装包)
 - [从源码构建](#从源码构建)
+- [开发者上手（贡献指南）](#开发者上手贡献指南)
 - [资源自备说明](#资源自备说明)
 - [配置](#配置)
+- [已知问题 / 限制](#已知问题--限制)
 - [常见问题](#常见问题faq)
 - [安全与完整性](#安全与完整性)
 - [赞助支持](#赞助支持)
@@ -240,6 +242,25 @@ npm run tauri build --bundles nsis
 
 ---
 
+## 开发者上手（贡献指南）
+
+想读代码、改代码、提 PR？完整内容见 **[CONTRIBUTING.md](CONTRIBUTING.md)**（技术全景 / 开发循环 / 后端与前端规范 / 版本号 / 自测 / PR 与发版流程）。这里先记住**最致命的一条**：
+
+> **后端 Python 代码在磁盘上有三份**：仓库根 `desktop_core/`（活代码，**唯一编辑入口**）、`src-tauri/resources/desktop_core/`（构建副本，由 `stage-core.cjs` 在 build 时同步）、`src-tauri/target/.../resources/desktop_core/`（产物副本）。运行时的 sidecar 通过 `_find_core_root()` 向上查找来定位代码——**你永远只改仓库根 `desktop_core/`**，改完跑 `npm run stage-core` 同步副本，否则就是"改了不生效"。路径解析同理禁用 `__file__` 硬编码，日志/数据/资源目录一律走 `desktop_core/log_paths.py` 与共享解析器。
+
+开发循环速览：
+
+```bash
+npm install
+npm run tauri dev        # 前端 :1420 HMR；后端 sidecar 绑 127.0.0.1:9845 随宿主启动
+```
+
+- 改前端 `src/`：HMR 热更新，无需重启。
+- 改后端 `desktop_core/`：重启应用生效（aiohttp 未开热重载），顺手 `npm run stage-core` 消除副本歧义。
+- 版本号**只改** `src-tauri/tauri.conf.json` 的 `version`，`npm run sync:version`（pretauri 钩子自动跑）同步到 Cargo.toml / package.json / version.json / src/lib/version.ts。
+
+---
+
 ## 资源自备说明
 
 以下大体积 / 版权资源**不随仓库分发**，克隆后需自备：
@@ -258,6 +279,21 @@ npm run tauri build --bundles nsis
 - **本地搜索**：SearXNG 随应用启动自动拉起，离线时降级到公共引擎。
 - **MCP**：在设置中添加 MCP 服务器地址，启动自动连接。
 - **知识库 / 工作流 / 自动化**：均在应用内 UI 完成配置，数据存于本地 `data/`。
+
+---
+
+## 已知问题 / 限制
+
+这是 0.2.10 的真实边界，不藏。贡献前请先读，避免在 WIP 模块上白费功夫：
+
+- **未做代码签名**：当前安装包未购置 OV/EV 证书，Windows SmartScreen 会提示「未知发布者」——这是预期行为、不是被篡改，也正因如此下载后更要做哈希校验（见[安全与完整性](#安全与完整性)）。补签名后本条会更新。
+- **0.2.10 只发布 NSIS 安装包，不发布 MSI**：资源聚合改用 7z 后 WiX(MSI) 模板未同步，旧 MSI 方案会装不出 `desktop_core` 等资源目录。需要 MSI 可本地 `tauri build --bundles msi`，但须先同步 WiX 模板。
+- **VRM 3D 模型 / Godot 渲染工程不入库**：单文件超 GitHub 100MB 上限且涉游戏 IP；缺失不影响对话、自动化、知识库、Live2D 桌宠、直播等核心能力。
+- **离线 TTS 兜底音质偏弱**：TTS 三层故障转移（CosyVoice → Edge-TTS → 本地 kokoro-onnx）中，本地 kokoro-onnx 的音质与音色明显弱于云端，仅作离线兜底。
+- **游戏 Agent 为实验性**：Minecraft / Mindustry / 扫雷均为「截图输入 + 键鼠输出」的视觉操控实验，依赖 OCR 与视觉 grounding，复杂或动态场景易卡墙，非生产可用。
+- **大体积资源构建时下载**：`python-embed` 运行时与 `searxng/` 便携版不入库，首次 `tauri build` 需联网（SearXNG 约 154MB）。
+- **后端无热重载**：改 `desktop_core/` 后需重启应用才能加载新代码（aiohttp 未开 reload）。
+- **开发态三副本路径陷阱**：见[开发者上手](#开发者上手贡献指南)——手改错副本 = 改动丢失且可能不生效，这是新人最常踩的坑。
 
 ---
 
