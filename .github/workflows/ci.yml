@@ -58,6 +58,14 @@ jobs:
           cache: 'pip'
           cache-dependency-path: scripts/requirements-embed.txt
       - name: 按清单安装全部依赖（含 PySide6/onnxruntime/opencv 等重包）
-        run: pip install -r scripts/requirements-embed.txt
+        shell: pwsh
+        run: |
+          pip install -r scripts/requirements-embed.txt 2>&1 | Tee-Object -Variable pipout
+          if ($LASTEXITCODE -ne 0) {
+            # 日志站对部分网络不可达：把 pip 报错尾部写成 ::error:: annotation，
+            # 这样经 api.github.com 的 check-runs/annotations 也能读到失败原因
+            $pipout | Select-Object -Last 60 | ForEach-Object { Write-Output "::error::$_" }
+            exit 1
+          }
       - name: 全量冒烟（依赖导入探针 + 配置语义 + 迁移框架）
         run: python tests/smoke_test.py
