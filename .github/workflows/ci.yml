@@ -62,9 +62,13 @@ jobs:
         run: |
           pip install -r scripts/requirements-embed.txt 2>&1 | Tee-Object -Variable pipout
           if ($LASTEXITCODE -ne 0) {
-            # 日志站对部分网络不可达：把 pip 报错尾部写成 ::error:: annotation，
-            # 这样经 api.github.com 的 check-runs/annotations 也能读到失败原因
-            $pipout | Select-Object -Last 60 | ForEach-Object { Write-Output "::error::$_" }
+            # 日志站对部分网络不可达：把 pip 报错压成单条 ::error:: annotation
+            # （GitHub 每 step 只保留 10 条 error annotation，逐行发射会占满限额、真错误反而看不到）
+            $err = $pipout | Where-Object { $_ -match '(?i)error|could not|no matching|failed|cannot install|Cannot find' } | Select-Object -Last 8
+            $tail = $pipout | Select-Object -Last 6
+            $msg = ($err + $tail) -join ' ¶ '
+            if ($msg.Length -gt 950) { $msg = $msg.Substring($msg.Length - 950) }
+            Write-Output "::error::$msg"
             exit 1
           }
       - name: 全量冒烟（依赖导入探针 + 配置语义 + 迁移框架）
