@@ -119,10 +119,20 @@ def sync_from_env(src: pathlib.Path, dry: bool = False) -> int:
 
     need: set[str] = set()
 
+    # 清单发行名 → 源环境里实际存在的 dist 名（清单与源环境版本载体不一致时的桥接）。
+    # 例：清单用 webrtcvad-wheels（可复现、有 wheel），本地源环境装的是手工编译的 webrtcvad。
+    ENV_ALIASES = {"webrtcvad-wheels": "webrtcvad"}
+
     def add(name: str) -> None:
         name = name.lower().replace("_", "-")
-        if name in need or name not in meta:
+        if name in need:
             return
+        if name not in meta:
+            bridged = ENV_ALIASES.get(name)
+            if bridged and bridged in meta:
+                name = bridged
+            else:
+                return
         need.add(name)
         for r in (meta[name].requires or []):
             if "extra ==" in r:

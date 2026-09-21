@@ -13,7 +13,11 @@
 #   cv2 ← opencv-contrib-python ｜ phonemizer ← phonemizer-fork
 #   rpds ← rpds-py ｜ yaml ← PyYAML ｜ docx ← python-docx ｜ bs4 ← beautifulsoup4
 #   win32api/win32con/pythoncom ← pywin32
-#   webrtcvad 有本地适配补丁，见 scripts/embed_deps_allowlist.txt
+#   webrtcvad ← webrtcvad-wheels：上游 webrtcvad==2.0.10 只有源码包（无任何 wheel，
+#     且 sdist 构建需 Cython、无 pyproject 声明），干净环境 pip 装不上（CI 首跑实测挂）。
+#     历史上本地是"源码编译 + 手工补丁（pkg_resources→importlib.metadata）"维护的，
+#     不可复现；改用社区预编译的 webrtcvad-wheels（即 webrtcvad 2.0.10 的 wheel 重打包）。
+#     本地嵌入环境里已装的手工版可继续用；下次按清单重建时自动换成 webrtcvad-wheels。
 #
 # 可选增强（体积大，默认不打进包，缺失时功能自动降级）：paddleocr（本地中文 OCR）
 
@@ -130,7 +134,7 @@ uritemplate==4.2.0
 urllib3==2.7.0
 uvicorn==0.53.0
 vosk==0.3.45
-webrtcvad==2.0.10
+webrtcvad_wheels==2.0.14
 websocket_client==1.9.0
 websockets==17.0.1
 wrapt==2.4.1
