@@ -350,6 +350,46 @@ def _migrate_text_at_rest():
         log.warning(f"文本加密迁移失败（下次启动重试）: {e}")
 
 
+# ── Schema 版本化迁移框架（1.0.0 数据契约的基础设施） ──
+# 背景：历史上表结构变更只靠两招——CREATE TABLE IF NOT EXISTS（对旧库不生效）+
+# 散落的幂等 ALTER（见 init_tables）。2026-09-18 的 P0（naixi_automations 缺列
+# 导致创建自动化 100% 失败）正是这种"无版本"演进的产物。
+# 规矩（1.0.0 契约）：从 v2 起，任何改表/加列动作必须在这里登记一个新版本号的
+# 迁移函数（幂等，或用 meta 标记守护），禁止只改 CREATE TABLE；框架按
+# PRAGMA user_version 顺序执行、逐版本提交，失败即中止并保留版本号，下次启动重试。
+SCHEMA_VERSION = 1   # v1 = 0.2.10 基线（历史迁移全部幂等且已并入 init_tables，v1 为 no-op 占位）
+
+_SCHEMA_MIGRATIONS = {
+    1: lambda conn: None,   # 基线：老库打版本戳，新库与老库行为一致
+}
+
+
+def get_schema_version(conn: sqlite3.Connection) -> int:
+    try:
+        return int(conn.execute("PRAGMA user_version").fetchone()[0])
+    except Exception:
+        return 0
+
+
+def run_schema_migrations(conn: sqlite3.Connection) -> int:
+    """把数据库从当前 user_version 逐版本迁移到最新。
+
+    返回最终版本号。每个迁移函数只拿 conn，自行 commit 与否均可（框架在
+    版本戳写入前统一 commit）。失败抛异常——调用方决定是崩溃还是降级。
+    """
+    current = get_schema_version(conn)
+    for v in sorted(_SCHEMA_MIGRATIONS):
+        if v <= current:
+            continue
+        _SCHEMA_MIGRATIONS[v](conn)
+        conn.commit()
+        conn.execute(f"PRAGMA user_version = {int(v)}")
+        conn.commit()
+        log.info(f"schema 迁移完成: v{current} -> v{v}")
+        current = v
+    return current
+
+
 def init_tables():
     """创建桌面端所需的数据表（工作流相关）"""
     conn = _get_conn()
@@ -535,6 +575,8 @@ def init_tables():
                 conn.execute("ALTER TABLE agent_memory ADD COLUMN day_tag TEXT DEFAULT ''")
         except Exception:
             pass
+        # 版本化迁移：老库补打 schema 版本戳；未来改表从这里走（见 SCHEMA_VERSION 注释）
+        run_schema_migrations(conn)
         conn.commit()
     finally:
         conn.close()

@@ -94,7 +94,15 @@ npm run tauri dev
 - ❌ 用 `__file__` / `dirname(dirname(__file__))` 拼日志、数据、资源路径（见第 0 节）。
 - ❌ 把密钥/PII 写进日志或提交进仓库（API Key 一律 Fernet 加密落本地库，密钥派生自本机标识）。
 
-### 4.3 发布前必须做
+### 4.3 错误处理与降级规约（0.2.7 的教训）
+
+0.2.7 的事故模式是：依赖缺失 → `try/except ImportError` → `log.warning` 一条 → 功能静默失效，用户完全无感知。因此确立以下规矩：
+
+1. **允许降级，但降级必须可见**：功能降级时要在前端 UI 上留下痕迹（状态徽标、面板提示、首次使用引导），只写日志不算"已处理"。
+2. **关键依赖缺失要 fail-loud**：构建期由依赖守卫拦截（`scripts/verify_embed_deps.py`）；运行期缺失核心依赖的功能入口应给出明确错误提示，而不是返回空结果。
+3. **新加第三方依赖的必做三步**：写入 `scripts/requirements-embed.txt` →（如发行名≠导入名）在 `sync_embed_deps.py` 的 `ALIASES` 补映射 → 跑 `python tests/smoke_test.py` 确认"A. 依赖清单完整性"通过。漏第一步 = 重演 0.2.7，CI 的 `backend-light` 门会直接标红拦住。
+
+### 4.4 发布前必须做
 - `npm run tauri build --bundles nsis` 会在 `beforeBuildCommand` 自动跑 `npm run build && node scripts/stage-core.cjs`，把活代码同步进副本再打包。**只改了 `desktop_core/` 却没重新 build，发出的安装包还是旧代码。**
 
 ---
@@ -116,7 +124,20 @@ npm run tauri dev
 
 ---
 
-## 7. 自测 / 验证
+## 7. 自测 / CI
+
+**CI（GitHub Actions）**：每次 push / PR 自动跑三道门——① 前端构建；② 后端轻量门（依赖清单完整性 + schema 迁移框架语义，仅 stdlib，秒级）；③ 后端全量冒烟（按 `requirements-embed.txt` 装齐依赖后跑完整测试）。CI 红了必须先修再合并。见 `.github/workflows/ci.yml`。
+
+**本地冒烟**（CI 同款，零测试框架依赖）：
+
+```bash
+python tests/smoke_test.py            # 全量（需依赖齐全的环境）
+python tests/smoke_test.py --light    # 轻量（仅 stdlib，秒级）
+```
+
+覆盖四类回归：A 依赖清单完整性（0.2.7 事故防线）、B 核心模块导入、C 配置合并语义（API Key 掩码保护）、D schema 版本迁移框架。给 desktop_core 新加第三方 import 而不更新清单，A 类必红。
+
+**改 DB 表结构**：从 v2 起必须在 `desktop_core/storage.py` 的 `_SCHEMA_MIGRATIONS` 登记版本化迁移（幂等或 meta 守护），禁止只改 `CREATE TABLE IF NOT EXISTS`（对旧库不生效——2026-09-18 的 P0 事故根因）。框架会按 `PRAGMA user_version` 顺序执行并逐版本提交。
 
 - **后端健康**：`/api/status`、`/api/desktop_status`、`/api/ops/inspect`（运维面板数据也来自这里）。
 - **启动看门狗**：SearXNG 等子服务挂了会被自动拉起，验证搜索前先看它是否 UP。

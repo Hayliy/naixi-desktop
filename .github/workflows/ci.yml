@@ -1,0 +1,63 @@
+# 奶昔桌面端 CI
+# 背景：0.2.7 交付事故（23 个依赖从未进包 → 功能静默失效）证明"只在本地构建时把关"
+# 不可靠。本流水线把三道门搬进每次 push / PR：
+#   1) frontend     —— 前端必须能构建（TS/打包错误当场暴露）
+#   2) backend-light —— 轻量门：依赖清单完整性（AST 扫描 desktop_core 的第三方 import
+#                      必须能映射到 requirements-embed.txt）+ schema 迁移框架语义
+#   3) backend-full —— 真实门：按清单装齐全部依赖后跑全量冒烟（含核心模块导入探针）
+# 注意：这里故意不跑 `tauri build`——build.rs 依赖不入库的 python-embed/searxng 资源，
+# 完整打包仍以本地/发布机为准（见 CONTRIBUTING.md「三副本陷阱」）。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: 前端构建 (React/Vite)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: 安装依赖
+        run: npm ci
+      - name: 构建
+        run: npm run build
+
+  backend-light:
+    name: 后端轻量门 (清单完整性 + 迁移框架)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: 冒烟（--light，仅 stdlib）
+        run: python tests/smoke_test.py --light
+
+  backend-full:
+    name: 后端全量冒烟 (依赖齐全环境)
+    runs-on: windows-latest
+    needs: backend-light
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+          cache-dependency-path: scripts/requirements-embed.txt
+      - name: 按清单安装全部依赖（含 PySide6/onnxruntime/opencv 等重包）
+        run: pip install -r scripts/requirements-embed.txt
+      - name: 全量冒烟（依赖导入探针 + 配置语义 + 迁移框架）
+        run: python tests/smoke_test.py
