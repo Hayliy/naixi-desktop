@@ -4204,6 +4204,8 @@ def setup_routes(app):
     app.router.add_post("/api/live/pet-start", api_live_pet_start)
     app.router.add_post("/api/live/pet-stop", api_live_pet_stop)
     app.router.add_post("/api/live/pet-switch", api_live_pet_switch)
+    app.router.add_get("/api/self_test_request", api_self_test_request)
+    app.router.add_post("/api/self_test_report", api_self_test_report)
     app.router.add_post("/api/live/chat-test", api_live_chat_test)
     app.router.add_post("/api/live/scene", api_live_scene)
     app.router.add_post("/api/live/scene-auto", api_live_scene_auto)
@@ -5374,6 +5376,50 @@ async def api_live_pet_switch(request):
     engine._stop_pet()
     ok = engine._start_pet(kind=kind)
     return web.json_response({"ok": ok, "kind": kind})
+
+async def api_self_test_request(request):
+    """全量页面交互自测的「开闸」端点（默认关闭）。
+
+    为什么需要它：应用前端跑在 Tauri 的 WebView 里，外部没有稳定的 UI 自动化通道
+    （实测 release 包设 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port
+    也不会监听，CDP 走不通）。因此改由「数据文件 + 后端端点」下发指令：
+    安装目录下存在 data/self_test.request 时返回 run=true，前端主界面挂载后询问一次即执行。
+    """
+    try:
+        dd = os.path.dirname(_storage.DB_PATH) if _storage.DB_PATH else os.path.join(_DESKTOP_DIR, "data")
+        flag = os.path.join(dd, "self_test.request")
+        run = os.path.isfile(flag)
+        if run:
+            log.warning("[SELFTEST] 检测到标记文件 %s，已向前端下发自测指令", flag)
+        return web.json_response({"run": run})
+    except Exception as e:
+        return web.json_response({"run": False, "error": str(e)})
+
+
+async def api_self_test_report(request):
+    """接收前端「全量页面交互自测」报告：落盘 + 日志摘要（便于无头环境直接读结论）。"""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid json"}, status=400)
+    try:
+        dd = os.path.dirname(_storage.DB_PATH) if _storage.DB_PATH else os.path.join(_DESKTOP_DIR, "data")
+        out = os.path.join(dd, "self_test_report.json")
+        with open(out, "w", encoding="utf-8") as f:
+            json.dump(body, f, ensure_ascii=False, indent=2)
+        steps = body.get("steps") or []
+        failed = body.get("failedPages") or []
+        log.warning("[SELFTEST] 报告已落盘 %s：共 %d 页，失败 %d 页，错误 %s 条",
+                    out, len(steps), len(failed), body.get("totalErrors"))
+        for s in steps:
+            if s.get("errors") or s.get("suspicious"):
+                log.warning("[SELFTEST] 页面 %s：errors=%s suspicious=%s",
+                            s.get("page"), s.get("errors"), s.get("suspicious"))
+        return web.json_response({"ok": True, "path": out})
+    except Exception as e:
+        log.error("[SELFTEST] 报告落盘失败: %s", e)
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
 
 async def api_live_chat_test(request):
     """LLM 测试：发送文本 → 返回回复+情绪"""
