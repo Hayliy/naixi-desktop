@@ -8,9 +8,9 @@
 
 > 版本号唯一来源：`src-tauri/tauri.conf.json` 的 `version` 字段。改后跑 `npm run sync:version`，同步到 Cargo.toml / package.json / desktop_core/version.json / src/lib/version.ts / README 徽章与下载名。
 
-## [未发布]
+## [1.0.1] - 2026-09-22
 
-> 1.0.0 发布后，由用户报障「虚拟机里点桌宠没反应」牵出的两项修复（均已真机验证）。
+> 1.0.0 发布后，由用户报障「虚拟机里点桌宠没反应」牵出的两项修复，以及为「不再靠人肉点界面」新增的全量页面自测。均已真机验证。
 
 ### 修复（P1 · 桌宠在虚拟机 / 远程桌面里空白）
 - **根因**：3D 桌宠走 Chromium 的 WebGL。两件事叠加导致上下文创建失败 —— ① Chromium 自 M117 起默认禁止在无硬件 GL 时回退软件渲染（SwiftShader）；② 虚拟机显卡驱动被 Chromium 的 GPU 黑名单拦下。页面脚本因此整体中断，桌宠窗口全透明。
@@ -20,6 +20,12 @@
 ### 修复（P1 · 渲染失败不再静默）
 - **问题**：上述失败此前只写进 `pet_vrm.log`，界面无任何提示 —— 用户看到的现象就是「点了桌宠没反应、也找不到原因」。
 - **修复**：探针连续 10 次（约 30 秒）拿不到页面 JS 状态，即在桌宠窗口内用 **Qt 原生控件**画一张可见提示卡（不依赖 WebGL），写明原因与两条出路（切 2D / 装显卡驱动后重启）。真机抓屏确认卡片显示。
+
+### 新增（QA · 全量页面交互自测）
+- **由来**：用户报「点桌宠没反应」时，问题其实早已写进日志，只是没人翻 —— 靠人肉点界面必漏。
+- 前端 `src/lib/selftest.ts`：遍历全部 12 个导航页（仪表盘/对话/工作流/自动化/知识库/工具/记忆/连接/运维/直播/日志/设置），每页点击导航 → 等 DOM 静默稳定 → 检查「内容近乎空白且无 canvas/img/table/input」与「正文出现错误提示文案」；在**安全白名单**内点击按钮（刷新/详情/展开/取消/关闭…），命中黑名单（删除/卸载/清空/重置/发布/导入/发送/启动/停止/退出/保存…）跳过并记录；收集 console.error、命中关键词的 console.warn、window.onerror、unhandledrejection，按页归属。
+- 后端：`GET /api/self_test_request`（以 `data/self_test.request` 标记文件为开关，默认关闭，不影响正常用户）与 `POST /api/self_test_report`（报告写 `data/self_test_report.json`，并在日志里逐页列出问题）。
+- 为什么不由外部驱动：实测 release 包设 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` 端口不监听，CDP 拿不到 WebView 控制通道，故改由「数据文件 + 后端端点」下发指令。
 
 ### 文档
 - `docs/TROUBLESHOOTING.md` 新增「六、虚拟机 / 远程桌面」，收录该症状的根因与自查顺序（含 `[PROBE] webview status` 的读法）。
