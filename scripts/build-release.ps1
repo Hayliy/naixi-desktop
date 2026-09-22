@@ -127,6 +127,15 @@ if (Test-Path $appExe) {
   }
 }
 
+# ── 4.4 生成上传用 ASCII 别名（GitHub Releases 会清洗资产名里的非 ASCII 字符）
+# 说明：Release 资产名只能可靠地是 ASCII（奶昔_1.0.1_... 传到 GitHub 上会变成 _1.0.1_...）。
+# 这里**每次构建都重建**别名副本，避免上一轮的旧别名留在目录里与新包哈希不一致
+# （真机实测过：清单里出现同名两行不同哈希，用户 sha256sum -c 必然 FAILED）。
+$aliasName = ($installer.Name -replace '奶昔', 'naixi-desktop') -replace '[^\x20-\x7E]', ''
+$aliasPath = Join-Path $installer.DirectoryName $aliasName
+Copy-Item $installer.FullName $aliasPath -Force
+Write-Host "[assets] 上传用 ASCII 别名已重建：$aliasName"
+
 # ── 4.5 产出发布资产（哈希清单 + 签名公钥）──────────────────────
 # 缺这两样，README 教用户的「下载后校验」与「核验签名主体」就无从执行
 # （v0.2.10 实测只上传了 exe，用户按文档找不到清单与公钥）。
@@ -160,12 +169,18 @@ if (-not $SkipGuard) {
 
 Write-Host ""
 Write-Host "构建 + 签名 + 卡口 全部完成：$($installer.Name)"
-Write-Host "上传到 GitHub Release 的资产："
-foreach ($n in @($installer.Name, "SHA256SUMS.txt", "naixi-selfsign.cer")) {
-  $p = Join-Path $assetDir $n
-  if (Test-Path $p) {
-    Write-Host ("  - {0}  ({1} bytes)" -f $n, (Get-Item $p).Length)
+Write-Host "上传到 GitHub Release 的资产（name 为上传后 GitHub 上的实际 ASCII 文件名）："
+# ★ 注意：安装包在 bundle\nsis\ 下，而清单与公钥在 bundle\ 根 —— 早先这里统一按 bundle\ 根
+#   做 Test-Path，导致安装包永远显示 [缺失]（真机实测），汇总信息失去作用。
+$assetList = @(
+  @{ Name = $aliasName; Path = $aliasPath },
+  @{ Name = "SHA256SUMS.txt"; Path = (Join-Path $assetDir "SHA256SUMS.txt") },
+  @{ Name = "naixi-selfsign.cer"; Path = (Join-Path $assetDir "naixi-selfsign.cer") }
+)
+foreach ($a in $assetList) {
+  if (Test-Path $a.Path) {
+    Write-Host ("  - {0}  ({1} bytes)" -f $a.Name, (Get-Item $a.Path).Length)
   } else {
-    Write-Host ("  - {0}  [缺失]" -f $n)
+    Write-Host ("  - {0}  [缺失]  <- {1}" -f $a.Name, $a.Path)
   }
 }

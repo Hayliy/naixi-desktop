@@ -72,12 +72,41 @@ function asciiName(name) {
 }
 
 const pkgLines = [];
-for (const f of files.sort()) {
+// ★ 按「归一化后的 ASCII 名」去重：仓库里可能同时存在
+//   奶昔_1.0.1_x64-setup.exe（tauri 的真实产物）与 naixi-desktop_1.0.1_x64-setup.exe（上传用别名副本）。
+//   两者归一化到同一个下载名，若不去重就会写出**两行同名不同哈希**的清单 —— 用户
+//   `sha256sum -c` 必然 FAILED（真机实测：上一轮遗留的旧别名与本次新包哈希不同）。
+//   优先取非 ASCII 原件（tauri 本次真实产物），别名副本仅在其缺失时兜底。
+const candidates = files
+  .map((f) => ({ f, out: asciiName(basename(f)) }))
+  .sort((a, b) => {
+    const aAlias = basename(a.f) === a.out ? 1 : 0;
+    const bAlias = basename(b.f) === b.out ? 1 : 0;
+    if (aAlias !== bAlias) return aAlias - bAlias;
+    return posix(a.f) < posix(b.f) ? -1 : 1;
+  });
+const seenPkg = new Map();
+for (const { f, out } of candidates) {
   const rel = posix(relative(bundleDir, f));
   const h = sha256(f);
-  const out = asciiName(basename(f));
+  const prev = seenPkg.get(out);
+  if (prev) {
+    if (prev !== h) {
+      console.warn(
+        `[warn] 同名副本内容不一致，已忽略（多半是上一轮遗留的旧 ASCII 别名，请删除或重建）：${rel}`,
+      );
+    } else {
+      console.log(`[skip] 同名同内容的副本，已忽略：${rel}`);
+    }
+    continue;
+  }
+  seenPkg.set(out, h);
   pkgLines.push(`${h}  ${out}`);
   console.log(`[pkg] ${rel}  -> ${out}  ${h.slice(0, 16)}...`);
+}
+if (!pkgLines.length) {
+  console.error(`[err] 目录内没有可收录的安装包产物（版本 ${curVersion}）`);
+  process.exit(1);
 }
 
 // ── 主程序 ──（安装后的 naixi-desktop.exe，应用内卡片显示的就是它）
