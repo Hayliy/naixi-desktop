@@ -7,7 +7,8 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build && node scripts/stage-core.cjs"
+    "beforeBuildCommand": "npm run build && node scripts/stage-core.cjs",
+    "beforeBundleCommand": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sign-app-binary.ps1"
   },
   "app": {
     "windows": [
@@ -21,7 +22,6 @@
         "resizable": true,
         "center": true,
         "decorations": false,
-        "devtools": true,
         "visible": false
       },
       {
@@ -44,7 +44,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -61,7 +63,6 @@
         "uninstallerIcon": "icons/uninstall.ico",
         "compression": "zlib"
       },
-      "signCommand": "powershell -NoProfile -Command \"& { if ($env:NAIXI_CODESIGN_PFX -and $env:NAIXI_CODESIGN_THUMB -and $env:NAIXI_SIGNTOOL) { & $env:NAIXI_SIGNTOOL sign /fd SHA256 /sha1 $env:NAIXI_CODESIGN_THUMB /tr http://timestamp.digicert.com /td SHA256 $env:NAIXI_CODESIGN_PFX $file } }\"",
       "digestAlgorithm": "sha256"
     },
     "resources": [

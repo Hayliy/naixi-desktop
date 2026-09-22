@@ -5,12 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "stage-core": "node scripts/stage-core.cjs",
     "gen:sponsor-hash": "node scripts/gen-sponsor-hash.mjs",
     "gen:release-hashes": "node scripts/gen-release-hashes.mjs",
+    "gen:licenses": "python scripts/gen_third_party_licenses.py",
     "sync:version": "node scripts/sync-version.mjs",
+    "guard": "python scripts/release_guard.py",
     "pretauri": "node scripts/sync-version.mjs",
     "tauri": "tauri"
   },

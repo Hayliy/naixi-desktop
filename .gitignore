@@ -140,3 +140,13 @@ src-tauri/test_flow.nsi
 src-tauri/test_flow_current.nsi
 src-tauri/test_flow_old_working.nsi
 
+# 代码签名：私钥与口令绝不入库；公钥 .cer 与 selfsign.json 可入库（供用户核验指纹）
+src-tauri/codesign/*.pfx
+src-tauri/codesign/pfx-password.txt
+
+# OCR 实验素材（仅研究用，非产品运行所需；源码保留在本地磁盘，不进版本库）
+_ocr_big/
+
+# 误入库的 Windows 快捷方式等垃圾文件
+*.lnk
+

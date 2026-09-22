@@ -1,0 +1,7 @@
+﻿{
+    "thumbprint":  "05A176B02D8D2C671DBBD191B6BA8ACF09FC42C4",
+    "subject":  "CN=Naixi Desktop (Self-Signed), O=Naixi, C=CN",
+    "notAfter":  "2029-09-22",
+    "cer":  "D:\\naixi_desktop\\src-tauri\\codesign\\naixi-selfsign.cer",
+    "selfSigned":  true
+}

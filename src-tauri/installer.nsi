@@ -1076,7 +1076,7 @@ Function un.Confirm
   !insertmacro ApplyFont $0 $hFontTiny
 
   ; 删除数据勾选
-  ${NSD_CreateCheckBox} 30 310 480 18 "同时删除我的个人配置与数据（对话历史、知识库、偏好设置）"
+  ${NSD_CreateCheckBox} 30 310 480 18 "同时删除我的个人配置与数据（对话历史、知识库、本地数据库）"
   Pop $unDeleteChk
   SendMessage $unDeleteChk ${BM_SETCHECK} ${BST_UNCHECKED} 0
   SetCtlColors $unDeleteChk "${CLR_INPUT_TEXT}" "${CLR_BG}"
@@ -1225,6 +1225,15 @@ Function un.Done
     Pop $0
     SetCtlColors $0 "${CLR_TEXT_BODY}" "${CLR_BG}"
     !insertmacro ApplyFont $0 $hFontBody
+  ${Else}
+    ${NSD_CreateLabel} 30 236 480 20 "你的个人配置与数据已保留，重新安装后会继续使用。"
+    Pop $0
+    SetCtlColors $0 "${CLR_TEXT_BODY}" "${CLR_BG}"
+    !insertmacro ApplyFont $0 $hFontBody
+    ${NSD_CreateLabel} 30 262 480 18 "数据位置：$INSTDIR\resources\data"
+    Pop $0
+    SetCtlColors $0 "${CLR_TEXT_MUTED}" "${CLR_BG}"
+    !insertmacro ApplyFont $0 $hFontTiny
   ${EndIf}
 
   !insertmacro CreateFooterU 3 "$PLUGINSDIR\btn_finish.bmp" 0 1 un.fn_PrevClick un.fn_NextClick
@@ -1304,6 +1313,9 @@ Function un.DoUninstallStage
     DeleteRegKey SHCTX "${UNINSTKEY}"
     ${If} $unDeleteData == ${BST_CHECKED}
       RMDir /r "$APPDATA\${PRODUCTNAME}"
+      ; ★ 安装目录内的用户数据（本地数据库 + 用户工作区）——仅在用户明确勾选时删除
+      RMDir /r "$INSTDIR\resources\data"
+      RMDir /r "$INSTDIR\resources\workspace"
     ${EndIf}
     IntOp $unInstallStage $unInstallStage + 1
     Return
@@ -1312,8 +1324,22 @@ Function un.DoUninstallStage
     ${NSD_SetText} $unProgStatus "正在清理目录... 100%"
     SendMessage $hProgressFill ${PBM_SETPOS} 100 0
   ${EndIf}
-  ; 此时资源文件已分批删空，下面 RMDir /r 只清理空目录残壳，速度快、不会卡。
-  RMDir /r "$INSTDIR\resources"
+  ; ★ 用户数据保护（2026-09-22）：原先这里是一句 RMDir /r "$INSTDIR\resources"，
+  ;   会把 resources\data（本地数据库：工作流/知识库/记忆/配额）与 resources\workspace
+  ;   （用户工作区文件）一并删除 —— 卸载即毁用户资产。现改为逐个删除"纯程序资源"目录，
+  ;   用户数据目录只在确认页勾选"同时删除我的个人配置与数据"时才删（见 unInstallStage 3）。
+  ;   最后的 RMDir 不带 /r，仅当目录已空时才移除；用户数据保留时 $INSTDIR 会留下，
+  ;   这是"保留数据"应有的结果（完成页会告知用户数据位置）。
+  RMDir /r "$INSTDIR\resources\desktop_core"
+  RMDir /r "$INSTDIR\resources\python-embed"
+  RMDir /r "$INSTDIR\resources\searxng"
+  RMDir /r "$INSTDIR\resources\plugins"
+  RMDir /r "$INSTDIR\resources\_bundle"
+  ${If} $unDeleteData == ${BST_CHECKED}
+    RMDir /r "$INSTDIR\resources\data"
+    RMDir /r "$INSTDIR\resources\workspace"
+  ${EndIf}
+  RMDir "$INSTDIR\resources"
   RMDir /r "$INSTDIR\sidecar"
   RMDir "$INSTDIR"
   StrCpy $unInstallDone 1

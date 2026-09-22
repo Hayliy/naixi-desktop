@@ -11,6 +11,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+# 注：`devtools` 特性必须保留 —— src/lib.rs 的 open_devtools 命令（前端「开发者工具」菜单）
+# 依赖它才能编译。发布版不开放 devtools 的策略改由两处保证：
+#   ① scripts/build-release.ps1 构建时注入 windows[].devtools=false；
+#   ② open_devtools 命令在 release 构建里直接拒绝。
 tauri = { version = "2", features = ["tray-icon", "devtools"] }
 tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }

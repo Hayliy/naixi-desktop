@@ -32,11 +32,13 @@ jobs:
           cache: 'npm'
       - name: 安装依赖
         run: npm ci
+      - name: 类型检查 (tsc --noEmit)
+        run: npm run typecheck
       - name: 构建
         run: npm run build
 
   backend-light:
-    name: 后端轻量门 (清单完整性 + 迁移框架)
+    name: 后端轻量门 (清单完整性 + 迁移框架 + 单元测试)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,6 +47,8 @@ jobs:
           python-version: '3.13'
       - name: 冒烟（--light，仅 stdlib）
         run: python tests/smoke_test.py --light
+      - name: 单元测试（--light，仅 stdlib）
+        run: python tests/unit_test.py --light
 
   backend-full:
     name: 后端全量冒烟 (依赖齐全环境)
@@ -80,3 +84,5 @@ jobs:
           }
       - name: 全量冒烟（依赖导入探针 + 配置语义 + 迁移框架）
         run: python tests/smoke_test.py
+      - name: 全量单元测试（迁移幂等 / 掩码语义 / 路径不变量 / 诊断契约）
+        run: python tests/unit_test.py

@@ -419,13 +419,23 @@ fn backend_ready() -> bool {
 /// 因此自定义命令直达底层：wry Windows 后端 open_devtools 调用
 /// webview2.OpenDevToolsWindow()。前置条件（均已满足）：
 ///   - Cargo.toml 开 `devtools` 特性 → 该 Rust 方法才编译进 release exe
-///   - tauri.conf 主窗口 `devtools: true` → webview 允许 devtools
+///   - 窗口允许 devtools（调试构建默认开启；发布构建由
+///     scripts/build-release.ps1 注入 windows[].devtools=false 关闭）
+/// 发布版策略：本命令在 release 构建里直接拒绝，正式包不暴露调试面。
 #[tauri::command]
 fn open_devtools(app: tauri::AppHandle) -> Result<(), String> {
-    app.get_webview_window("main")
-        .ok_or_else(|| "找不到主窗口 main".to_string())?
-        .open_devtools();
-    Ok(())
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = app;
+        Err("开发者工具仅在调试构建中可用".to_string())
+    }
+    #[cfg(debug_assertions)]
+    {
+        app.get_webview_window("main")
+            .ok_or_else(|| "找不到主窗口 main".to_string())?
+            .open_devtools();
+        Ok(())
+    }
 }
 
 /// 供前端「重启后端」按钮调用：先彻底结束旧进程并确认端口释放，再重新拉起。

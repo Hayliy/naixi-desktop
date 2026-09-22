@@ -75,9 +75,15 @@ if (fs.existsSync(readmePath)) {
     if (m !== newDl) changed = true;
     return newDl;
   });
-  // 代码签名说明段里的版本号（「当前 X.Y.Z 安装包尚未做代码签名」）
-  readme = readme.replace(/当前 [0-9]+\.[0-9]+\.[0-9]+ 安装包尚未做代码签名/, (m) => {
-    const want = `当前 ${version} 安装包尚未做代码签名`;
+  // 代码签名说明段里的版本号（「当前 X.Y.Z 安装包使用自签名证书」）
+  readme = readme.replace(/当前 [0-9]+\.[0-9]+\.[0-9]+ 安装包使用自签名证书/, (m) => {
+    const want = `当前 ${version} 安装包使用自签名证书`;
+    if (m !== want) changed = true;
+    return want;
+  });
+  // 「已知问题」小节开头的版本号（「这是 X.Y.Z 的真实边界」）——历史上漏同步会变成陈旧承诺
+  readme = readme.replace(/这是 [0-9]+\.[0-9]+\.[0-9]+ 的真实边界/, (m) => {
+    const want = `这是 ${version} 的真实边界`;
     if (m !== want) changed = true;
     return want;
   });

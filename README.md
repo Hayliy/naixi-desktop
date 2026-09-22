@@ -299,8 +299,8 @@ npm run tauri dev        # 前端 :1420 HMR；后端 sidecar 绑 127.0.0.1:9845 
 
 这是 0.2.10 的真实边界，不藏。贡献前请先读，避免在 WIP 模块上白费功夫：
 
-- **未做代码签名**：当前安装包未购置 OV/EV 证书，Windows SmartScreen 会提示「未知发布者」——这是预期行为、不是被篡改，也正因如此下载后更要做哈希校验（见[安全与完整性](#安全与完整性)）。补签名后本条会更新。
-- **0.2.10 只发布 NSIS 安装包，不发布 MSI**：资源聚合改用 7z 后 WiX(MSI) 模板未同步，旧 MSI 方案会装不出 `desktop_core` 等资源目录。需要 MSI 可本地 `tauri build --bundles msi`，但须先同步 WiX 模板。
+- **代码签名现状（自签名，如实说明）**：安装包已做 Authenticode 自签名（流程见 [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md)），但自签名证书的根不在 Windows 受信任根库里，**SmartScreen 仍会提示「未知发布者」**——这不是被篡改。签名带来的价值是「完整性与签名主体可核验、固定指纹可公开比对」，因此下载后仍**必须**按[安全与完整性](#安全与完整性)做哈希校验。换受信任 CA 证书后本段会更新。
+- **只发布 NSIS 安装包，不发布 MSI**：`bundle.targets` 已收为 `["nsis"]`（资源聚合改用 7z 后 WiX(MSI) 模板未同步，MSI 会装不出 `desktop_core` 等资源目录）。要恢复 MSI 需先同步 WiX 模板，并同步放开发布卡口 `scripts/release_guard.py` 中的 MSI 断言。
 - **VRM 3D 模型 / Godot 渲染工程不入库**：单文件超 GitHub 100MB 上限且涉游戏 IP；缺失不影响对话、自动化、知识库、Live2D 桌宠、直播等核心能力。
 - **离线 TTS 兜底音质偏弱**：TTS 三层故障转移（CosyVoice → Edge-TTS → 本地 kokoro-onnx）中，本地 kokoro-onnx 的音质与音色明显弱于云端，仅作离线兜底。
 - **游戏 Agent 为实验性**：Minecraft / Mindustry / 扫雷均为「截图输入 + 键鼠输出」的视觉操控实验，依赖 OCR 与视觉 grounding，复杂或动态场景易卡墙，非生产可用。
@@ -388,7 +388,15 @@ sha256sum -c --ignore-missing sha256sums.txt
 
 ### 关于代码签名（如实说明）
 
-**当前 0.2.10 安装包尚未做代码签名**（未购置 OV/EV 证书）。因此 Windows SmartScreen 会提示「未知发布者」，这是预期行为、不是被篡改——**正因如此，上面两步哈希校验更要照做**。补签名后本段会更新。
+**当前 0.2.10 安装包使用自签名证书**（尚未购置受信任 CA 的 OV/EV 证书）。自签名的根不被 Windows 信任，因此 SmartScreen 仍会提示「未知发布者」——这是预期行为、不是被篡改，**正因如此，上面两步哈希校验更要照做**。签名带来的额外保证是：包体带 Authenticode 签名，可核验签名主体、指纹与「包是否被改动过」（改动后签名立即失效）。
+
+核验方法：
+
+1. 从 Release 下载 `naixi-selfsign.cer`（公钥），可导入「受信任的根证书颁发机构」；不导入也能核验指纹；
+2. 右键安装包 → 属性 → **数字签名** → 查看签名主体与指纹，与 Release 说明中的指纹比对；
+3. 命令行：`Get-AuthenticodeSignature .\naixi-desktop_<版本>_x64-setup.exe | Format-List Status,SignerCertificate`。
+
+构建与换正式证书的完整流程见 [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md)。换受信任证书后本段会更新。
 
 ### 在虚拟机里做样本分析 / 对抗演示
 
@@ -397,6 +405,9 @@ sha256sum -c --ignore-missing sha256sums.txt
 ### 相关文档
 
 - 发布安全规范（哈希清单、官方渠道、防银狐）：[docs/RELEASE_SECURITY.md](docs/RELEASE_SECURITY.md)
+- 代码签名与发布构建流程：[docs/CODE_SIGNING.md](docs/CODE_SIGNING.md)
+- 隐私与数据流向说明：[docs/PRIVACY.md](docs/PRIVACY.md)
+- 第三方许可证清单（含 LGPL/AGPL/GPL 分发义务）：[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 - 虚拟机防逃逸加固清单：[docs/VM_SANDBOX_HARDENING.md](docs/VM_SANDBOX_HARDENING.md)
 
 ---
@@ -409,7 +420,7 @@ sha256sum -c --ignore-missing sha256sums.txt
 - **游戏 Agent（看屏操控）**：「截图输入 + 键鼠输出」仅操控你自己的当前窗口、不读游戏内存，但**键鼠注入在联网/竞技类游戏中可能被反作弊系统判定为外挂**。请只用于单机游戏或明确允许自动化的场景，**请勿用于任何联网对战游戏**，由此导致的封号等后果自负。
 - **安全中心（银狐应急防护）**：哨兵扫描与一键急救会**结束进程、删除计划任务、修改 Defender 排除项**——这些动作可能被其他安全软件误报，或与已装杀软产生冲突。能力边界（仅用户态、不碰内核 rootkit、不反制 C2）在功能页有明确公示。
 - **直播 / 弹幕功能**：依赖各直播平台的第三方接口，平台侧接口变更可能导致相关功能临时失效，我们会跟随修复但不承诺实时性。
-- **安装包未做代码签名**：Windows SmartScreen 会提示「未知发布者」，属预期行为；请务必按[安全与完整性](#安全与完整性)完成哈希校验。
+- **安装包使用自签名证书**：SmartScreen 仍会提示「未知发布者」，属预期行为；签名可用于核验完整性与签名指纹，但请务必按[安全与完整性](#安全与完整性)完成哈希校验。
 
 ---
 
