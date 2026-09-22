@@ -16,6 +16,7 @@ const snapCoreVer = path.join(root, 'src-tauri/resources/desktop_core/version.js
 const releaseCoreVer = path.join(root, 'src-tauri/target/release/resources/desktop_core/version.json');
 const tsPath = path.join(root, 'src/lib/version.ts');
 const readmePath = path.join(root, 'README.md');
+const readmeEnPath = path.join(root, 'README_EN.md');
 
 function readVersion() {
   const conf = JSON.parse(fs.readFileSync(confPath, 'utf8'));
@@ -58,40 +59,47 @@ fs.writeFileSync(tsPath,
   `export const APP_FALLBACK_VERSION = ${JSON.stringify(version)};\n`);
 
 // 5) README 徽章 + 快速开始下载文件名（避免发版后 README 仍写旧版本号，#5）
-if (fs.existsSync(readmePath)) {
-  let readme = fs.readFileSync(readmePath, 'utf8');
+// ★ 中英两份都要同步（2026-09-22）：此前只处理 README.md，导致 README_EN.md 的徽章与下载名
+//   长期停在旧版本（1.0.1 发布时它的徽章还写着 v1.0.0，用户看到的英文页是过期的）。
+function syncReadme(file) {
+  if (!fs.existsSync(file)) return false;
+  let s = fs.readFileSync(file, 'utf8');
   let changed = false;
-  // 徽章：![Release](https://img.shields.io/badge/Release-vX.Y.Z-blue)
-  const newBadge = `![Release](https://img.shields.io/badge/Release-v${version}-blue)`;
-  readme = readme.replace(/!\[Release\]\(https:\/\/img\.shields\.io\/badge\/Release-v[0-9]+\.[0-9]+\.[0-9]+-blue\)/, (m) => {
-    if (m !== newBadge) changed = true;
-    return newBadge;
-  });
-  // 快速开始下载名：naixi-desktop_X.Y.Z_x64-setup.exe
-  // 注意：必须与 GitHub Release 实际上传的资产名一致（历史均用 naixi-desktop_*，
+  const fix = (re, want) => {
+    s = s.replace(re, (m) => {
+      if (m !== want) changed = true;
+      return want;
+    });
+  };
+
+  const badge = `![Release](https://img.shields.io/badge/Release-v${version}-blue)`;
+  // 下载名：必须与 GitHub Release 实际上传的资产名一致（历史均用 naixi-desktop_*，
   // 且资产名须 ASCII，故不能用中文 productName 前缀 奶昔_*，否则 README 下载链接 404）。
-  const newDl = `naixi-desktop_${version}_x64-setup.exe`;
-  readme = readme.replace(/naixi-desktop_[0-9]+\.[0-9]+\.[0-9]+_x64-setup\.exe/g, (m) => {
-    if (m !== newDl) changed = true;
-    return newDl;
-  });
-  // 代码签名说明段里的版本号（「当前 X.Y.Z 安装包使用自签名证书」）
-  readme = readme.replace(/当前 [0-9]+\.[0-9]+\.[0-9]+ 安装包使用自签名证书/, (m) => {
-    const want = `当前 ${version} 安装包使用自签名证书`;
-    if (m !== want) changed = true;
-    return want;
-  });
-  // 「已知问题」小节开头的版本号（「这是 X.Y.Z 的真实边界」）——历史上漏同步会变成陈旧承诺
-  readme = readme.replace(/这是 [0-9]+\.[0-9]+\.[0-9]+ 的真实边界/, (m) => {
-    const want = `这是 ${version} 的真实边界`;
-    if (m !== want) changed = true;
-    return want;
-  });
-  if (changed) fs.writeFileSync(readmePath, readme);
+  const dl = `naixi-desktop_${version}_x64-setup.exe`;
+
+  fix(/!\[Release\]\(https:\/\/img\.shields\.io\/badge\/Release-v[0-9]+\.[0-9]+\.[0-9]+-blue\)/g, badge);
+  fix(/naixi-desktop_[0-9]+\.[0-9]+\.[0-9]+_x64-setup\.exe/g, dl);
+
+  if (s.includes('这是 ') || file === readmePath) {
+    // 中文版：代码签名说明段 + 「已知问题」开头的真实边界（历史上漏同步会变成陈旧承诺）
+    fix(/当前 [0-9]+\.[0-9]+\.[0-9]+ 安装包使用自签名证书/g, `当前 ${version} 安装包使用自签名证书`);
+    fix(/这是 [0-9]+\.[0-9]+\.[0-9]+ 的真实边界/g, `这是 ${version} 的真实边界`);
+  }
+  if (file === readmeEnPath) {
+    // 英文版：同上两处（发布后忘记同步会给出过期的英文承诺）
+    fix(/The [0-9]+\.[0-9]+\.[0-9]+ installer uses/g, `The ${version} installer uses`);
+    fix(/The honest boundary of [0-9]+\.[0-9]+\.[0-9]+:/g, `The honest boundary of ${version}:`);
+  }
+
+  if (changed) fs.writeFileSync(file, s);
+  return changed;
 }
+
+const readmeChanged = syncReadme(readmePath);
+const readmeEnChanged = syncReadme(readmeEnPath);
 
 console.log(`[sync-version] 已同步版本 -> ${version}`);
 console.log('  来源: src-tauri/tauri.conf.json');
 console.log('  已写: src-tauri/Cargo.toml / package.json / desktop_core/version.json(x3) / src/lib/version.ts');
-console.log('  已同步: README.md 徽章 / 快速开始下载名 / 代码签名说明段');
+console.log('  已同步: README.md 与 README_EN.md 的徽章 / 快速开始下载名 / 版本相关段落');
 console.log('  前端运行时仍优先用 getVersion() 读 tauri.conf.json，以上仅为兜底/构建期注入。');
