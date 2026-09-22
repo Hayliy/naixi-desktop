@@ -450,12 +450,23 @@ async function testOnePage(
     step.ms = Math.round(performance.now() - t0);
     return step;
   }
-  const beforeTxt = (mainArea().innerText || "").trim().slice(0, 300);
+  const areaBefore = mainArea();
+  const beforeTxt = (areaBefore.innerText || "").trim();
   nav.click();
   await waitStable(1300);
-  const afterTxt = (mainArea().innerText || "").trim().slice(0, 300);
+  const areaAfter = mainArea();
+  const afterTxt = (areaAfter.innerText || "").trim();
   if (beforeTxt.length > 50 && beforeTxt === afterTxt) {
-    step.suspicious.push("点击导航后内容区文本未变化（可能未真正切换页面）");
+    // ★ 必须自解释。上一轮有 9 个页面报这条，当时只能靠"各页点到的控件是否符合该页"
+    //   （自动化→创建/定时、工具→MCP 配置、设置→保存更改…）才反推出是**误报**：
+    //   容器解析到的元素（<main> 缺失时的兜底候选）其文本前缀跨页稳定，于是永远"没变化"。
+    //   把容器与文本开头一并写进报告，下次一眼可判，不必再反推。
+    const cls = String((areaAfter as HTMLElement).className || "");
+    const tag = `${areaAfter.tagName.toLowerCase()}${cls ? "." + cls.split(/\s+/).slice(0, 2).join(".") : ""}`;
+    step.suspicious.push(
+      `点击导航后内容区文本未变化（容器=${tag}，文本长度=${afterTxt.length}，` +
+        `开头=「${afterTxt.slice(0, 80).replace(/\s+/g, " ")}」）`,
+    );
   }
 
   const area = mainArea();
