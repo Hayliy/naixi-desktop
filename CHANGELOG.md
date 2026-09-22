@@ -47,6 +47,29 @@
 - **发现方式**：全量接口自测跑完全部 12 个页面后，后端日志出现 `自动化调度异常: not enough values to unpack (expected 2, got 1)`。
 - **修复**：改为显式循环 —— 跳过不含 `=` 的段，`split("=", 1)` 限次切分并 strip。已用真实坏输入回归（`FREQ=DAILY;`、`BYDAY`、`FREQ=DAILY;;INTERVAL=1` 旧版全部抛异常，新版全部正确解析）。
 
+### 修复（P1 · 复制到剪贴板失败却提示"已复制"）
+- **发现方式**：全量页面自测（L1）走完 12 页后，工作流页一次遍历就报 12 条
+  `NotAllowedError: Failed to execute 'writeText' on 'Clipboard': Document is not focused.`
+  （成对出现：`console.error` 的「未捕获的 Promise」+ `unhandledrejection`）。
+- **根因**：前端 **13 处** `navigator.clipboard.writeText` 写法各异 —— 裸调用（无 catch，抛未捕获拒绝，
+  其中消息复制与工作流变量复制还**紧接着提示"已复制"**，即失败却告诉用户成功）、
+  `.catch(() => {})`（不报错但毫无反馈）、以及只有一处自写 textarea 兜底。
+  `writeText` 失败的真实场景：窗口失焦时点击、WebView 尚未取得焦点、剪贴板被占用、安全上下文判定异常。
+- **修复**：新增统一入口 `src/lib/clipboard.ts::copyText()` —— 先试异步 Clipboard API，失败回退
+  `textarea + execCommand('copy')`，**绝不抛异常**，返回 boolean；13 处全部改用它，
+  有通知的页面按结果显示成功 / 「复制失败：请手动选中文本复制」，只有图标状态的改为**失败不打勾**。
+
+### 修复（P1 · 自测开关读不到、报告写不出 —— 端点静默失败）
+- **现象**：按文档放好 `resources\data\self_test.request` 后，`GET /api/self_test_request` 恒返回
+  `{"run": false}`，报告永远不生成。
+- **根因**：两个自测端点直接引用 `_storage.DB_PATH`，而 `_storage` 在 `api.py` 作用域**并不存在**
+  （`DB_PATH` 定义在 `storage.py`，初始为空串，由 `naixi_api.py` 在导入前注入真实值）⇒ 抛 `NameError`
+  ⇒ 被各自的 `except` 兜成"没有开关"。真实报错就写在返回体里：
+  `"error":"name '_storage' is not defined"`。
+- **修复**：新增统一入口 `_naixi_data_dir()`（内部 `from desktop_core import storage as _storage` +
+  兜底路径），两个端点改用它，并在 docstring 写明"禁止再手写 `_storage.DB_PATH`"。
+  真机验证：返回 `{"run":true,"mode":"full"}`，日志出现下发指令，报告开始按页增量落盘。
+
 ### 新增（QA · 两层全量自测）
 - **由来**：用户报「点桌宠没反应」时，问题其实早已写进日志，只是没人翻 —— 靠人肉点界面必漏。
 - **L1 前端（应用自己点自己）**：`src/lib/selftest.ts` 遍历全部 12 个导航页（仪表盘/对话/工作流/自动化/知识库/工具/记忆/连接/运维/直播/日志/设置），每页点导航 → 等 DOM 静默稳定 → 检查「内容近乎空白且无 canvas/img/table/input」与「正文出现错误提示文案」→ 点击页面与弹窗内的元素 → 收集 console.error、命中关键词的 console.warn、window.onerror、unhandledrejection，按页归属。两种模式：`safe`（只点安全元素）与 `full`（**除「会中断自测本身」的动作外全部点击**，含弹窗内的确认/删除/清空/启动，并自动填空输入框、遍历下拉选项）。
@@ -59,6 +82,16 @@
 ### 文档
 - `docs/TROUBLESHOOTING.md` 新增「六、虚拟机 / 远程桌面」，收录该症状的根因与自查顺序（含 `[PROBE] webview status` 的读法）。
 - `docs/TROUBLESHOOTING.md` 新增「七、出现多个实例 / 点了没反应」，说明多实例的成因、1.0.1 之前的自救步骤，以及「多个接口同时超时 = 事件循环被占住」这一判断依据。
+
+### 自测首轮结果（1.0.1 定版前的实测基线）
+- 真机（VMware + Windows 10，覆盖安装）跑 `mode=full`：**12/12 页、253 个动作、约 8 分钟**；
+  错误 12 条（全部为上面的剪贴板问题，已修），另有 9 条「内容区文本未变化」经核实为**自测器误报**
+  （导航正常，证据：各页点到的控件与该页真实控件一致），已把该判定改为自解释以便复跑判读。
+- 已知覆盖缺口（如实登记，未修）：纯展示型卡片扫不到 —— 自测器只认
+  `button / [role=button] / a / [class*=cursor-pointer]`，以 `<div onClick>` 绑事件的卡片（如仪表盘卡片）
+  不会被发现，故仪表盘一页动作数为 0。
+- 单实例保护真机验证：启动后 `main=1 / backend=1`；再启动第二个实例，进程数不变（守卫拦下并唤出已有窗口）。
+
 
 ## [1.0.0] - 2026-09-22
 
