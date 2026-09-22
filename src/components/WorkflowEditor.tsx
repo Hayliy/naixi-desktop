@@ -20,6 +20,7 @@ import {
   Position,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { copyText as copyClipboardText } from "@/lib/clipboard";
 import { apiGet, apiPost } from "@/lib/api";
 import { useToast } from "@/components/Toast";
 import {
@@ -1572,7 +1573,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                     { key: "{{input}}", desc: "工作流输入" },
                     { key: "{{now}}", desc: "当前时间" },
                   ].map(v => (
-                    <div key={v.key} onClick={() => navigator.clipboard.writeText(v.key).catch(() => {})}
+                    <div key={v.key} onClick={() => void copyClipboardText(v.key)}
                       className="p-1.5 rounded border border-gray-100 hover:border-sakura-200 hover:bg-sakura-50 cursor-pointer transition-colors">
                       <code className="text-[9px] font-mono text-sakura-600 bg-sakura-50 px-1 py-0.5 rounded">{v.key}</code>
                       <p className="text-[9px] text-gray-400 mt-0.5">{v.desc}</p>
@@ -1598,7 +1599,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                               <code className="text-[9px] font-mono text-sakura-500 ml-auto">{nodeVar}</code>
                             </summary>
                             <div className="ml-3 mt-0.5 space-y-0.5">
-                              <div onClick={() => navigator.clipboard.writeText(nodeVar).catch(() => {})}
+                              <div onClick={() => void copyClipboardText(nodeVar)}
                                 className="flex items-center justify-between px-1.5 py-0.5 rounded hover:bg-sakura-50 cursor-pointer">
                                 <code className="text-[9px] font-mono text-sakura-400">{nodeVar}</code>
                                 <span className="text-[8px] text-gray-300">节点全部输出</span>
@@ -1606,7 +1607,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                               {outputKeys.slice(0, 6).map(k => {
                                 const fullVar = `{{${n.id}.${k}}}`;
                                 return (
-                                  <div key={k} onClick={() => navigator.clipboard.writeText(fullVar).catch(() => {})}
+                                  <div key={k} onClick={() => void copyClipboardText(fullVar)}
                                     className="flex items-center justify-between px-1.5 py-0.5 rounded hover:bg-sakura-50 cursor-pointer">
                                     <code className="text-[9px] font-mono text-gray-500">{fullVar}</code>
                                     <span className="text-[8px] text-gray-300 truncate max-w-[60px]">{typeof config[k] === 'string' ? config[k].slice(0, 12) : typeof config[k]}</span>
@@ -1738,7 +1739,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                       className="flex-1 text-xs font-mono bg-white px-2 py-1.5 border border-gray-200 rounded-md outline-none"
                     />
                     <button
-                      onClick={() => navigator.clipboard.writeText(`/api/webhook/${workflowId}`).catch(() => {})}
+                      onClick={() => void copyClipboardText(`/api/webhook/${workflowId}`)}
                       className="shrink-0 px-3 py-1.5 rounded text-xs bg-sakura-100 text-sakura-600 hover:bg-sakura-200"
                     >
                       复制
@@ -1780,7 +1781,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                           {showKey ? <EyeOff size={13} /> : <Eye size={13} />}
                         </button>
                       </div>
-                      <button onClick={() => navigator.clipboard.writeText(publishResult.api_key).catch(() => {})}
+                      <button onClick={() => void copyClipboardText(publishResult.api_key)}
                         className="shrink-0 px-3 py-1.5 rounded text-xs bg-sakura-100 text-sakura-600 hover:bg-sakura-200">复制</button>
                     </div>
                     <div className="flex items-center gap-2 mt-2">
@@ -1833,7 +1834,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                                 {k.enabled ? '启用' : '禁用'}
                               </button>
                               <button
-                                onClick={() => { navigator.clipboard.writeText(k.key); notify("已复制", "success"); }}
+                                onClick={async () => { const ok = await copyClipboardText(k.key); notify(ok ? "已复制" : "复制失败：请手动选中文本复制", ok ? "success" : "error"); }}
                                 className="text-[9px] text-gray-400 hover:text-gray-600"
                               >
                                 复制

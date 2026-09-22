@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { copyText as copyClipboardText } from "@/lib/clipboard";
 import { apiGet, apiPost } from "@/lib/api";
 import { useAppConfig } from "@/contexts/AppContext";
 
@@ -230,7 +231,7 @@ export default function SetupGuide({ onClose, standalone }: { onClose: () => voi
               <p className="text-[11px] text-sakura-500 mb-1">你的 webhook 地址</p>
               <div className="flex items-center gap-2">
                 <code className="flex-1 px-3 py-2 bg-white border border-sakura-200 rounded-lg text-xs font-mono text-sakura-700 truncate">{webhookUrl}</code>
-                <button onClick={() => navigator.clipboard.writeText(webhookUrl)}
+                <button onClick={() => { void copyClipboardText(webhookUrl); }}
                   className="px-3 py-2 bg-sakura-100 text-sakura-600 rounded-lg text-xs hover:bg-sakura-200 shrink-0">复制</button>
               </div>
             </div>
@@ -395,7 +396,7 @@ function SetupSteps({
 }: any) {
 
   const copy = (text: string) => {
-    navigator.clipboard.writeText(text).catch(() => {});
+    void copyClipboardText(text);
   };
 
   if (step === 0) {

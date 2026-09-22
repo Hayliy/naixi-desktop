@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { copyText as copyClipboardText } from "@/lib/clipboard";
 import {
   Cpu, Cat, Mic, Search, HardDrive, Server,
   Palette, DatabaseBackup, ShieldCheck, Info, Check, X, Lock, Download,
@@ -523,20 +524,10 @@ function SelfIntegrityCard() {
   const isDevBuild = !!info?.exe_path && /[\\/]target[\\/]debug[\\/]/i.test(info.exe_path);
   const copy = async () => {
     if (!info?.sha256) return;
-    try {
-      await navigator.clipboard.writeText(info.sha256);
-    } catch {
-      try {
-        const ta = document.createElement("textarea");
-        ta.value = info.sha256;
-        ta.style.position = "fixed";
-        ta.style.opacity = "0";
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-      } catch { /* noop */ }
-    }
+    // 原先这里自写了一份 textarea 兜底（与其它页面各写一遍）；现统一由 copyText 承担，
+    // 且失败时不再显示"已复制"（原来的实现无论成败都会打勾）
+    const ok = await copyClipboardText(info.sha256);
+    if (!ok) return;
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { copyText as copyClipboardText } from "@/lib/clipboard";
 import { Copy, Check, ChevronDown, ChevronRight, Loader2, File, Play, Music, Image as ImageIcon, Wrench } from "lucide-react";
 
 /* ─── 内容块类型 ─── */
@@ -92,7 +93,11 @@ function renderInline(text: string): React.ReactNode {
 function CodeBlock({ text, language }: { text: string; language?: string }) {
   const [copied, setCopied] = useState(false);
   const handleCopy = () => {
-    navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); });
+    // 统一走 copyText：既吸收 Document is not focused 之类的失败，也不产生未捕获的 Promise 拒绝；
+    // 失败时不打勾（原先无 catch，失败也照样显示"已复制"）
+    void copyClipboardText(text).then((ok) => {
+      if (ok) { setCopied(true); setTimeout(() => setCopied(false), 1500); }
+    });
   };
   return (
     <div className="my-1 rounded-lg overflow-hidden border border-sakura-100">

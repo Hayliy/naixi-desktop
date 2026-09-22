@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { apiGet, apiPost, API_BASE } from "@/lib/api";
+import { copyText as copyClipboardText } from "@/lib/clipboard";
 import { APP_FALLBACK_VERSION } from "@/lib/version";
 import { AppShell, Sidebar, Header, Main } from "@/components/shell";
 import { AppProvider } from "@/contexts/AppContext";
@@ -1287,7 +1288,7 @@ function MemPage() {
                     </div>
                     <p className="text-[10px] text-sakura-600 mt-0.5 whitespace-pre-wrap">{m.content}</p>
                   </div>
-                  <button onClick={() => { navigator.clipboard.writeText(m.content||""); notify("已复制","success"); }}
+                  <button onClick={async () => { const ok = await copyClipboardText(m.content || ""); notify(ok ? "已复制" : "复制失败：请手动选中文本复制", ok ? "success" : "error"); }}
                     className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-sakura-50 text-sakura-300 hover:text-sakura-500 transition-all shrink-0"><Copy size={10} /></button>
                 </div>
               ))}
@@ -2107,7 +2108,8 @@ function LivePage() {
   };
 
   const copyText = async (t: string) => {
-    try { await navigator.clipboard.writeText(t); notify('已复制', 'success'); } catch { notify('复制失败', 'error'); }
+    const ok = await copyClipboardText(t);
+    notify(ok ? '已复制' : '复制失败：请手动选中文本复制', ok ? 'success' : 'error');
   };
 
   const unregisterAgent = async (id: string) => {

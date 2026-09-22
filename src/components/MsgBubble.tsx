@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { copyText as copyClipboardText } from "@/lib/clipboard";
 import { Bot, User, Copy, Check, RotateCcw, Edit3, X, Volume2, VolumeX, Star, Reply } from "lucide-react";
 import ContentRenderer from "@/components/ContentRenderer";
 import type { MsgItem } from "@/components/ChatTypes";
@@ -69,9 +70,10 @@ export default function MsgBubble({ msg, onEdit, onRegenerate, onDelete, onStar,
   };
 
   const copyText = () => {
-    navigator.clipboard.writeText(msg.content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    // 原先无 catch：失败会抛未捕获拒绝，且照样显示勾（假成功）
+    void copyClipboardText(msg.content).then((ok) => {
+      if (ok) { setCopied(true); setTimeout(() => setCopied(false), 1500); }
+    });
   };
 
   const toggleSpeak = async () => {

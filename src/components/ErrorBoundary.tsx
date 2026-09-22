@@ -1,4 +1,5 @@
 import React from "react";
+import { copyText as copyClipboardText } from "@/lib/clipboard";
 
 interface ErrorBoundaryProps {
   children: React.ReactNode;
@@ -42,7 +43,7 @@ export default class ErrorBoundary extends React.Component<ErrorBoundaryProps, E
 
   copyError = () => {
     const text = `[${this.props.name || "未知页面"}]\n${this.state.error?.message || "未知错误"}\n\n${this.state.error?.stack || "无堆栈"}`;
-    navigator.clipboard.writeText(text).catch(() => {});
+    void copyClipboardText(text);
   };
 
   render() {
