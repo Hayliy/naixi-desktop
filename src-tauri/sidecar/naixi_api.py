@@ -364,7 +364,20 @@ async def main():
                                 pass
                     elif sched_type == "recurring":
                         rrule = auto.get("rrule", "FREQ=DAILY")
-                        parts = {k: v for kv in rrule.split(";") for k, v in [kv.split("=")] if "=" in kv}
+                        # 解析 rrule 的 k=v 段。**不能**写成
+                        #   {k: v for kv in rrule.split(";") for k, v in [kv.split("=")] if "=" in kv}
+                        # —— 推导式里 `for k, v in [...]` 的解包发生在 `if "=" in kv` 之前，
+                        # 于是只要有一段不含等号（例如 rrule 结尾多一个分号产生的空段），
+                        # 就会 `not enough values to unpack (expected 2, got 1)` 抛异常，
+                        # 被外层 except 吞成一条 WARNING，并让**该轮所有自动化都不执行**
+                        # （2026-09-22 由前端全量自测真机挖出）。
+                        parts = {}
+                        for _kv in rrule.split(";"):
+                            _kv = _kv.strip()
+                            if "=" not in _kv:
+                                continue
+                            _k, _v = _kv.split("=", 1)
+                            parts[_k.strip()] = _v.strip()
                         freq = parts.get("FREQ", "DAILY")
                         interval = int(parts.get("INTERVAL", "1"))
                         last_run = auto.get("last_run", "")
