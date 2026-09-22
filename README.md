@@ -31,7 +31,7 @@
   </tr>
   <tr>
     <td width="50%"><img src="docs/screenshots/03-workflow-editor.png" alt="可视化工作流编辑器"><br><sub><b>可视化工作流</b> — DAG 节点拖拽，25 种节点 · 含 LLM / 条件 / 人工输入</sub></td>
-    <td width="50%"><img src="docs/screenshots/04-platform-connections.png" alt="平台连接器"><br><sub><b>平台连接器</b> — QQ / 飞书 / 企业微信 / 钉钉 / Discord / Slack / Telegram / WhatsApp / 邮件 / GitHub / GitLab / 自定义 HTTP</sub></td>
+    <td width="50%"><img src="docs/screenshots/04-platform-connections.png" alt="12 个平台连接器"><br><sub><b>12 个平台连接器</b> — QQ / 飞书 / 企业微信 / 钉钉 / Discord / Slack / Telegram / WhatsApp / 邮件 / GitHub / GitLab / 自定义 HTTP</sub></td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/screenshots/05-chat.png" alt="智能对话"><br><sub><b>智能对话</b> — 流式 / Agent / 快捷问答 / 工具调用可观测</sub></td>

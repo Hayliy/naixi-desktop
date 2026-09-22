@@ -39,7 +39,7 @@ A few of the core views (full feature breakdown in [Features](#features)):
   </tr>
   <tr>
     <td width="50%"><img src="docs/screenshots/03-workflow-editor.png" alt="Visual Workflow Editor"><br><sub><b>Visual workflow editor</b> — drag-and-drop DAG with 25 node types (LLM, conditional, human input…).</sub></td>
-    <td width="50%"><img src="docs/screenshots/04-platform-connections.png" alt="Platform connectors"><br><sub><b>Platform connectors</b> — QQ, Feishu, WeCom, DingTalk, Discord, Slack, Telegram, WhatsApp, email, GitHub, GitLab, custom HTTP.</sub></td>
+    <td width="50%"><img src="docs/screenshots/04-platform-connections.png" alt="12 platform connectors"><br><sub><b>12 platform connectors</b> — QQ, Feishu, WeCom, DingTalk, Discord, Slack, Telegram, WhatsApp, email, GitHub, GitLab, custom HTTP.</sub></td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/screenshots/05-chat.png" alt="Chat"><br><sub><b>Chat</b> — streaming, agent mode, shortcut answers and observable tool calls.</sub></td>
