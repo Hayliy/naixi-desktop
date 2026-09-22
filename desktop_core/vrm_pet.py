@@ -441,8 +441,53 @@ def _start_ui(vrm_path: str, ws_url: str, port: int, no_ws: bool, selftest: bool
             except Exception as e:
                 log(f"[PROBE] err {e}")
 
+        def _show_render_failure(self, reason: str):
+            """在桌宠窗口内画一张可见的失败提示卡（Qt 原生控件，不依赖 WebGL）。
+
+            2026-09-22 新增。此前在无 3D 加速的环境（VMware 虚拟显卡 / 缺显卡驱动 / 远程桌面）里：
+              WebGL 上下文创建失败 → three-vrm 初始化抛错 → 页面 JS 整体中断 →
+              window.__vrmReady 永不出现 → 探针一直 JS-NOT-RUN → 窗口全透明空白。
+            而这一切只写进日志，用户看到的现象就是「点了桌宠没反应」——纯静默失败。
+            """
+            if getattr(self, "_fail_label", None) is not None:
+                return
+            try:
+                from PySide6.QtWidgets import QLabel
+                lab = QLabel(self)
+                lab.setText(
+                    "3D 形象渲染不可用\n\n"
+                    "无法创建 WebGL 上下文。常见原因：\n"
+                    "· 虚拟机 / 远程桌面缺少 3D 加速\n"
+                    "· 显卡驱动未安装或过旧\n\n"
+                    "可右键桌宠切换到「2D（Live2D）」模式，\n"
+                    "或装好显卡驱动后重新启动桌宠。"
+                )
+                lab.setWordWrap(True)
+                lab.setAlignment(Qt.AlignCenter)
+                lab.setStyleSheet(
+                    "background: rgba(28,28,30,238); color: #ffe9f0;"
+                    "border: 1px solid #d9a7b8; border-radius: 10px; padding: 14px;"
+                    "font: 12pt 'Microsoft YaHei';"
+                )
+                w = max(280, int(self.width() * 0.88))
+                h = max(200, int(self.height() * 0.62))
+                lab.setGeometry((self.width() - w) // 2, (self.height() - h) // 2, w, h)
+                lab.show()
+                lab.raise_()
+                self._fail_label = lab
+                log(f"[RENDER-FAIL] 已显示渲染不可用提示（{reason}）")
+            except Exception as e:
+                log(f"[RENDER-FAIL] 显示提示失败: {e}")
+
         def _on_probe(self, r):
             log(f"[PROBE] webview status = {r}")
+            if r == "JS-NOT-RUN":
+                # 连续 10 次（约 30 秒）仍未见到页面 JS → 判定渲染不可用并给出可见提示
+                self._js_fail = getattr(self, "_js_fail", 0) + 1
+                if self._js_fail == 10:
+                    self._show_render_failure("页面 JS 未启动，WebGL 上下文创建失败")
+            else:
+                self._js_fail = 0
             if r == "READY" and self._inject_js and not self._inject_done:
                 self._inject_done = True
                 self._enqueue_js(self._inject_js)
