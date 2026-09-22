@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 发布完整性哈希清单生成器
-// 扫描 src-tauri/target/release 下的安装包产物 + 主程序 exe，算 SHA-256 写 sha256sums.txt
-// 用途：随 GitHub Releases 上传，用户下载后可 `sha256sum -c sha256sums.txt` 校验，
+// 扫描 src-tauri/target/release 下的安装包产物 + 主程序 exe，算 SHA-256 写 SHA256SUMS.txt
+// 用途：随 GitHub Releases 上传，用户下载后可 `sha256sum -c SHA256SUMS.txt` 校验，
 //       防银狐类伪造/投毒安装包（只认官方清单里的哈希）。
 //
 // ★ 清单分两组，缺一不可（2026-09-03 补齐）：
@@ -47,7 +47,7 @@ function walk(d) {
 walk(bundleDir);
 if (!files.length) { console.error("[err] 未找到安装包产物"); process.exit(1); }
 
-// 清单用【纯文件名】：用户把 sha256sums.txt 与下载到的安装包放在同一目录校验，
+// 清单用【纯文件名】：用户把 SHA256SUMS.txt 与下载到的安装包放在同一目录校验，
 // 带 msi/ nsis/ 目录前缀在用户侧是无效路径（历史版本就踩过这个坑）。
 // ★ GitHub Releases 资产名会被服务端强制清洗成 ASCII（非 ASCII 字符被直接删除）：
 //   实测上传 ?name=奶昔_0.2.0_x64_zh-CN.msi → 存下来是 _0.2.0_x64_zh-CN.msi（中文前缀被删）；
@@ -79,19 +79,23 @@ if (existsSync(mainExe)) {
 }
 
 const stamp = new Date().toISOString();
+// 清单里第一条安装包的实际下载名（用于 header 的命令示例，避免硬编码版本号/扩展名）
+const firstPkgName =
+  (pkgLines[0] || "").split(/\s{2}/).slice(1).join("  ") || "naixi-desktop_x.y.z_x64-setup.exe";
 const header = [
   "# 奶昔 发布完整性哈希清单（SHA-256）",
   `# 生成时间：${stamp}`,
   "#",
   "# 【怎么校验】清单一律用纯文件名，把它和下载到的安装包放在同一个目录里用。",
   "# 【文件名说明】GitHub Releases 会把资产名里的非 ASCII 字符删掉，",
-  "#   所以安装包在 GitHub 上的名字是 naixi-desktop_0.2.0_*.msi / .exe（不是「奶昔_」开头）。",
+  "#   安装包在 GitHub 上的实际名字见下方清单行（不是「奶昔_」开头）：",
+  ...pkgLines.map((l) => "#     " + l.split(/\s{2}/).slice(1).join("  ")),
   "#   本清单就用这个实际下载名，下载后文件名可直接对上、无需改名。",
   "#   1) 安装包 —— 下载后立刻验，确认你下载到的就是官方文件：",
-  "#        sha256sum -c --ignore-missing sha256sums.txt",
+  "#        sha256sum -c --ignore-missing SHA256SUMS.txt",
   "#      （--ignore-missing 用于跳过下面[主程序]那一行——它不在下载目录里）",
   "#      Windows PowerShell：",
-  "#        Get-FileHash naixi-desktop_0.2.0_x64-setup.exe -Algorithm SHA256",
+  `#        Get-FileHash ${firstPkgName} -Algorithm SHA256`,
   "#   2) 主程序 —— 装完后验，确认安装目录里的程序没被替换：",
   "#      方式 A（推荐）：应用内打开「设置 → 安全 → 安装包完整性 · 本程序哈希」，",
   "#                     一键复制页面显示的 SHA-256，与下方[主程序]段的值比对。",
@@ -109,9 +113,9 @@ const body = [
   "# ── 主程序（安装后校验）──",
   ...mainLines,
 ];
-const out = join(bundleDir, "sha256sums.txt");
+const out = join(bundleDir, "SHA256SUMS.txt");
 writeFileSync(out, [...header, ...body].join("\n") + "\n", "utf8");
 console.log(`[done] wrote ${out}`);
 console.log("随 GitHub Releases 与安装包一同发布。");
-console.log("注意：src-tauri/target/ 已被 .gitignore 排除，若要提交/发布这份清单，请复制到仓库根：");
-console.log("  cp src-tauri/target/release/bundle/sha256sums.txt ./sha256sums.txt");
+console.log("注意：本清单只随 GitHub Release 上传，不要提交进仓库——");
+console.log("  仓库里躺一份旧清单会与最新 Release 不一致，用户照它校验必然失败。");

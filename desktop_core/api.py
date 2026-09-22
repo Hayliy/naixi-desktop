@@ -3766,7 +3766,7 @@ def _locate_main_exe():
 
 
 async def api_self_hash(request):
-    """返回本程序主 exe（naixi-desktop.exe）的 SHA-256，供用户与官方 sha256sums.txt 中
+    """返回本程序主 exe（naixi-desktop.exe）的 SHA-256，供用户与官方 SHA256SUMS.txt 中
     【主程序 naixi-desktop.exe】那一行比对，识别『伪造安装包 / 整包被替换』。
     注意：随包携带清单的比对无意义（攻击者连清单一起换），故只暴露哈希让用户自行对照官方发布值。"""
     import hashlib, os, platform

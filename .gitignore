@@ -150,3 +150,7 @@ _ocr_big/
 # 误入库的 Windows 快捷方式等垃圾文件
 *.lnk
 
+
+# 发布哈希清单：只随 GitHub Release 上传，仓库内不留（旧清单会与最新 Release 不一致）
+SHA256SUMS.txt
+sha256sums.txt

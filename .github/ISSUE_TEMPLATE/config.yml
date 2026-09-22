@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全漏洞上报（请勿开公开 Issue）
+    url: https://github.com/Hayliy/naixi-desktop/security/advisories/new
+    about: 私密上报漏洞，见 SECURITY.md
+  - name: 安装与使用文档
+    url: https://github.com/Hayliy/naixi-desktop#目录
+    about: 安装、升级、卸载、系统要求、已知问题
+  - name: 故障排查手册
+    url: https://github.com/Hayliy/naixi-desktop/blob/main/docs/TROUBLESHOOTING.md
+    about: 语音无声、面捕、SearXNG 降级、SmartScreen 等高频问题的自救步骤

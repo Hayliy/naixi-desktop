@@ -234,6 +234,39 @@ def main() -> int:
                 else:
                     say(OK, "签名指纹与期望一致")
 
+    # ── 5.5 发布资产（README 让用户校验/核验签名所依赖的文件）──────
+    # 背景：v0.2.10 的 Release 只上传了安装包本身，而 README 教用户下载
+    # SHA256SUMS.txt 做哈希校验、下载 naixi-selfsign.cer 核验签名主体 ——
+    # 缺这两个文件，整个「下载后校验」流程对用户是不可执行的（文档与产物脱节）。
+    print()
+    sums_path = os.path.join(bundle, "SHA256SUMS.txt")
+    cer_path = os.path.join(bundle, "naixi-selfsign.cer")
+    if not os.path.isfile(sums_path):
+        failures.append(
+            "缺少 SHA256SUMS.txt：README 指引的哈希校验将不可执行（跑 npm run gen:release-hashes 生成）"
+        )
+        say(BAD, "缺少哈希清单 SHA256SUMS.txt")
+    else:
+        sums_text = open(sums_path, encoding="utf-8", errors="replace").read()
+        if installer:
+            if sha256_file(installer) not in sums_text:
+                failures.append(
+                    "SHA256SUMS.txt 与当前安装包不一致：清单里找不到该安装包的哈希（清单是旧构建留下的？）"
+                )
+                say(BAD, "哈希清单与安装包不一致")
+            else:
+                say(OK, f"哈希清单已覆盖安装包 {os.path.basename(installer)}")
+        if "naixi-desktop.exe" in sums_text:
+            say(OK, "哈希清单含[主程序]组（应用内「本程序哈希」卡片可比对）")
+        else:
+            failures.append("SHA256SUMS.txt 缺少[主程序]组：应用内卡片显示的哈希将无对应值可比")
+            say(BAD, "哈希清单缺少[主程序]组")
+    if os.path.isfile(cer_path):
+        say(OK, "签名公钥 naixi-selfsign.cer 已就位（用户可导入后核验签名主体）")
+    else:
+        failures.append("缺少 naixi-selfsign.cer：用户无法导入证书核验签名主体")
+        say(BAD, "缺少签名公钥 naixi-selfsign.cer")
+
     # ── 6. 构建清单 ───────────────────────────────────────────────
     print()
     manifest = {
@@ -250,6 +283,9 @@ def main() -> int:
         if os.path.isfile(os.path.join(ROOT, "package-lock.json"))
         else None,
         "artifact": None,
+        "release_assets": [
+            os.path.basename(p) for p in (installer, sums_path, cer_path) if p and os.path.isfile(p)
+        ],
         "signature": sig or None,
         "guard_result": "FAIL" if failures else "PASS",
     }

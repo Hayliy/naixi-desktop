@@ -127,6 +127,29 @@ if (Test-Path $appExe) {
   }
 }
 
+# ── 4.5 产出发布资产（哈希清单 + 签名公钥）──────────────────────
+# 缺这两样，README 教用户的「下载后校验」与「核验签名主体」就无从执行
+# （v0.2.10 实测只上传了 exe，用户按文档找不到清单与公钥）。
+$assetDir = Join-Path $root "src-tauri/target/release/bundle"
+$hashFile = Join-Path $assetDir "SHA256SUMS.txt"
+$node = Get-Command node -ErrorAction SilentlyContinue
+if (-not $node) { throw "找不到 node，无法生成哈希清单（scripts/gen-release-hashes.mjs）" }
+Push-Location $root
+try {
+  & $node.Source (Join-Path $root "scripts/gen-release-hashes.mjs")
+  if ($LASTEXITCODE -ne 0) { throw "生成哈希清单失败（退出码 $LASTEXITCODE）" }
+} finally { Pop-Location }
+if (-not (Test-Path $hashFile)) { throw "未生成哈希清单：$hashFile" }
+Write-Host "[assets] 哈希清单: $hashFile"
+
+$cerSrc = Join-Path $root "src-tauri/codesign/naixi-selfsign.cer"
+if (Test-Path $cerSrc) {
+  Copy-Item $cerSrc (Join-Path $assetDir "naixi-selfsign.cer") -Force
+  Write-Host "[assets] 签名公钥已就位（用户可导入后核验签名主体）"
+} else {
+  Write-Host "[assets] 警告：未找到公钥 $cerSrc —— 用户将无法导入证书核验签名主体"
+}
+
 # ── 5. 卡口校验 ───────────────────────────────────────────────────
 if (-not $SkipGuard) {
   $py = Find-Python
@@ -137,3 +160,12 @@ if (-not $SkipGuard) {
 
 Write-Host ""
 Write-Host "构建 + 签名 + 卡口 全部完成：$($installer.Name)"
+Write-Host "上传到 GitHub Release 的资产："
+foreach ($n in @($installer.Name, "SHA256SUMS.txt", "naixi-selfsign.cer")) {
+  $p = Join-Path $assetDir $n
+  if (Test-Path $p) {
+    Write-Host ("  - {0}  ({1} bytes)" -f $n, (Get-Item $p).Length)
+  } else {
+    Write-Host ("  - {0}  [缺失]" -f $n)
+  }
+}

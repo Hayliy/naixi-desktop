@@ -1,0 +1,66 @@
+name: 功能建议
+description: 提出一个新功能或改进建议
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        本项目**只支持单机 / 离线玩法，不连服务器、不代玩游戏**，也不做需要平台授权的第三方客户端。
+        建议前请先读 README 的「已知问题 / 限制」，避免在已声明的边界上重复提出。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你想解决什么问题
+      description: 描述当前遇到的不便或缺失的能力，而不是直接给方案
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 你期望的做法
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 你试过的替代方案
+      description: 现在你用什么办法绕过这个问题？为什么不够好？
+    validations:
+      required: false
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: 涉及模块
+      multiple: true
+      options:
+        - 对话 / 模型路由
+        - 桌宠 / 虚拟形象
+        - 直播 / 弹幕
+        - 语音（输入 / TTS）
+        - 知识库
+        - 记忆系统
+        - 工作流
+        - 自动化
+        - 运维 / 诊断
+        - 工具 / MCP
+        - 游戏 Agent
+        - 安全中心
+        - 安装 / 升级 / 卸载
+        - 其他
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: help
+    attributes:
+      label: 参与意愿
+      options:
+        - label: 我愿意自己提 PR 实现它
+          required: false
+        - label: 我可以提供测试环境或复现数据
+          required: false

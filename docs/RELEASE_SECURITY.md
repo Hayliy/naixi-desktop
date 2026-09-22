@@ -44,10 +44,10 @@
 npm run gen:release-hashes
 ```
 
-产物 `src-tauri/target/release/bundle/sha256sums.txt` 随安装包**一同上传 GitHub Releases**。
+产物 `src-tauri/target/release/bundle/SHA256SUMS.txt` 随安装包**一同上传 GitHub Releases**。
 
 > `src-tauri/target/` 已被 `.gitignore` 排除，若要提交到仓库，复制到仓库根：
-> `cp src-tauri/target/release/bundle/sha256sums.txt ./sha256sums.txt`
+> `cp src-tauri/target/release/bundle/SHA256SUMS.txt ./SHA256SUMS.txt`
 
 清单含**两组**哈希，一律用**纯文件名**（用户的下载目录里没有 msi/ nsis/ 子目录）：
 
@@ -57,7 +57,7 @@ npm run gen:release-hashes
 用户把清单与安装包放在同一目录后校验：
 
 ```bash
-sha256sum -c --ignore-missing sha256sums.txt
+sha256sum -c --ignore-missing SHA256SUMS.txt
 ```
 
 `--ignore-missing` 用于跳过 `[主程序]` 那一行（它不在下载目录里）。只有清单里的哈希通过，才说明安装包与作者构建的一致。
@@ -111,7 +111,7 @@ sha256sum -c --ignore-missing sha256sums.txt
 - **应急哨兵扫描**（`GET /api/security_scan`）：检测本机银狐类木马的**用户态可见痕迹**——① Defender 排除项被篡改（银狐常把 C:–F: 加排除列表致盲杀软）；② 已知银狐 IOC 进程名（`designaccent.exe` / `gjdluhqzmjsagyw.exe` / `singmusice.exe` / `khdzetmjqmsagyw.exe` / `issueaccentrequest`）；③ 可疑计划任务（Silver Fox 的 `DesignAccent` / `Accent` / `zpaq` 命名）；④ 到已知银狐 C2 网段（`118.107.40.*`）的外连。返回风险等级（safe/warn/danger）+ 逐条明细。设置页「安全急救 · 银狐应急哨兵」面板展示绿/黄/红，命中危险项时给「断网→改密→安全模式查杀」应急指引 + 一键跳转火绒官网 / 国家病毒协同分析平台。
 - **一键急救**（`POST /api/security_remediate`）：移除已检测到的银狐**用户态**痕迹——结束已知 IOC 进程（`taskkill`）、删除可疑计划任务（`Unregister-ScheduledTask`）、恢复被篡改的 Defender 整盘排除项（`Remove-MpPreference`）。
   **安全约束**：① 仅处理服务端 IOC 目录内的已知项，绝不通客户端的任意路径/命令（防命令注入）；② 所有动作服务端权威重算，不信任前端传参；③ 计划任务名经 `^[\w\-\. ]{1,120}$` 白名单校验后才执行。
-- **安装包完整性自检**（`GET /api/self_hash`）：返回主程序 `naixi-desktop.exe` 的 SHA-256，设置页「安装包完整性 · 本程序哈希」展示（带一键复制），供用户与官方 `sha256sums.txt` 的**「主程序」段**人工比对，识别「安装目录里的程序被替换/篡改」。**注意**：随包携带清单的比对无意义（攻击者连清单一起换），故只暴露哈希让人核对。
+- **安装包完整性自检**（`GET /api/self_hash`）：返回主程序 `naixi-desktop.exe` 的 SHA-256，设置页「安装包完整性 · 本程序哈希」展示（带一键复制），供用户与官方 `SHA256SUMS.txt` 的**「主程序」段**人工比对，识别「安装目录里的程序被替换/篡改」。**注意**：随包携带清单的比对无意义（攻击者连清单一起换），故只暴露哈希让人核对。
   - 清单必须用 `npm run gen:release-hashes`（`scripts/gen-release-hashes.mjs`）生成，它同时产出**两组**哈希：`[安装包]`（下载后校验下载到的文件）与 `[主程序]`（安装后校验 naixi-desktop.exe）。只算安装包是不够的——卡片显示的是安装后主程序的哈希，与安装包哈希不是同一个文件；早期版本缺 `[主程序]` 组，导致用户拿卡片哈希去比对时永远找不到对应行。
   - 定位主程序的实现坑见 `desktop_core/api.py::_locate_main_exe`：Windows PowerShell 5.1 的 `Get-Process` 对象**没有 `ParentProcessId` 成员**（PowerShell 7 才有），旧写法恒返回空使该功能 100% 失效；现改为**纯 ctypes 遍历进程祖先链**（`NtQueryInformationProcess` + `QueryFullProcessImageNameW`）为首选，powershell CIM 与目录回溯依次降级。
 
@@ -124,7 +124,7 @@ sha256sum -c --ignore-missing sha256sums.txt
 - [ ] `public/sponsor/*.png` 已是真实收款码（非占位 logo）
 - [ ] `src/lib/sponsorIntegrity.ts` 的 `SPONSOR_REAL_NAME` 已是真实收款实名
 - [ ] 已运行 `npm run gen:sponsor-hash` 并重打包
-- [ ] 已运行 `npm run gen:release-hashes`，`sha256sums.txt` 随 Releases 上传
+- [ ] 已运行 `npm run gen:release-hashes`，`SHA256SUMS.txt` 随 Releases 上传
 - [ ] 构建机已配置代码签名证书环境变量
-- [ ] 确认 Releases 资产只有官方安装包 + `sha256sums.txt`，无其他外部链接
-- [ ] 在 GitHub 发布说明里写明「只从本 Releases 下载，并校验 sha256sums.txt」
+- [ ] 确认 Releases 资产只有官方安装包 + `SHA256SUMS.txt`，无其他外部链接
+- [ ] 在 GitHub 发布说明里写明「只从本 Releases 下载，并校验 SHA256SUMS.txt」

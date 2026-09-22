@@ -541,7 +541,7 @@ function SelfIntegrityCard() {
     setTimeout(() => setCopied(false), 1500);
   };
   return (
-    <Section title="安装包完整性 · 本程序哈希" desc="把下面这串 SHA-256 与 GitHub Releases 上 sha256sums.txt 的「主程序」段（naixi-desktop.exe 那一行）比对；不一致即本机程序可能被替换/篡改。随包自带清单的比对无意义（攻击者连清单一起换），故只暴露哈希供你人工核对。">
+    <Section title="安装包完整性 · 本程序哈希" desc="把下面这串 SHA-256 与 GitHub Releases 上 SHA256SUMS.txt 的「主程序」段（naixi-desktop.exe 那一行）比对；不一致即本机程序可能被替换/篡改。随包自带清单的比对无意义（攻击者连清单一起换），故只暴露哈希供你人工核对。">
       <div className="rounded-lg border border-dashed border-sakura-200 bg-sakura-50/40 p-3">
         {!info && <p className="text-[10px] text-gray-500">读取中…</p>}
         {info && (

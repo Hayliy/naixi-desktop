@@ -6,13 +6,13 @@
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2B-0078D6?logo=windows)
 ![Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20React%2019%20%C2%B7%20Python%203.13-1F4E79)
 ![License](https://img.shields.io/badge/License-Apache%202.0-green)
-![Release](https://img.shields.io/badge/Release-v0.2.10-blue)
-![Commits](https://img.shields.io/badge/Commits-502-orange)
-![LOC](https://img.shields.io/badge/LOC-48k-blueviolet)
+![Release](https://img.shields.io/badge/Release-v1.0.0-blue)
+![Commits](https://img.shields.io/badge/Commits-575-orange)
+![LOC](https://img.shields.io/badge/LOC-51k-blueviolet)
 
 > 一款**本地优先**的桌面 AI 智能体。基于 Tauri 2 构建，常驻系统托盘，把「对话、桌宠、直播互动、工作流、自动化、本地搜索、知识库、记忆」整合进一个随开随用的桌面应用。所有 AI 推理所需的模型调用、本地搜索、语音处理都在本机或你自己的账号下完成，**数据留在本地**。
 
-**项目规模**：第一方代码约 **4.8 万行**（Python 33,508 / 前端 14,208 / Rust 467）· **52** 个 Python 模块 · **35** 个前端组件 · **176** 个 REST API · **27** 张 SQLite 表 · **502** 次提交 · Apache-2.0
+**项目规模**：第一方代码约 **5.2 万行**（Python 36,490 / 前端 14,743 / Rust 477）· **55** 个 Python 模块 · **38** 个前端组件 · **182** 个 REST 端点 · **28** 张 SQLite 表 · **575** 次提交 · Apache-2.0
 
 - 宿主：Tauri 2（Rust）+ 系统托盘常驻
 - 前端：React 19 + Vite + Tailwind CSS
@@ -31,7 +31,7 @@
   </tr>
   <tr>
     <td width="50%"><img src="docs/screenshots/03-workflow-editor.png" alt="可视化工作流编辑器"><br><sub><b>可视化工作流</b> — DAG 节点拖拽，25 种节点 · 含 LLM / 条件 / 人工输入</sub></td>
-    <td width="50%"><img src="docs/screenshots/04-platform-connections.png" alt="19 平台接入"><br><sub><b>19 平台接入</b> — QQ / 微信 / 飞书 / 钉钉 / 公众号 / Telegram / Discord / Slack / LINE…</sub></td>
+    <td width="50%"><img src="docs/screenshots/04-platform-connections.png" alt="平台连接器"><br><sub><b>平台连接器</b> — QQ / 飞书 / 企业微信 / 钉钉 / Discord / Slack / Telegram / WhatsApp / 邮件 / GitHub / GitLab / 自定义 HTTP</sub></td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/screenshots/05-chat.png" alt="智能对话"><br><sub><b>智能对话</b> — 流式 / Agent / 快捷问答 / 工具调用可观测</sub></td>
@@ -47,10 +47,12 @@
 
 ## 目录
 
+- [界面一览](#界面一览)
 - [工程亮点](#工程亮点)（想快速判断技术含量，先看这节）
 - [功能一览](#功能一览)
 - [技术架构](#技术架构)
 - [目录结构](#目录结构)
+- [系统要求](#系统要求)
 - [快速开始](#快速开始安装包)
 - [升级与卸载](#升级与卸载)
 - [从源码构建](#从源码构建)
@@ -71,7 +73,7 @@
 ## 工程亮点
 
 1. **双进程解耦架构**：Tauri 2（Rust）宿主只负责窗口、托盘与子进程生命周期；Python sidecar 承载全部 AI 能力。Rust 侧实现端口预检、进程树回收与 embed 运行时定位，前后端可独立热更新、异常自愈。
-2. **四级渲染后端抽象**：一个 `AvatarBackend` 接口（`send_expression` / `send_motion` / `send_parameters`）统一自研 Live2D、VTube Studio 连接池、VMC 协议 OSC、插件扩展四种实现，同时驱动 Live2D / VRM / Pixi.js 三套管线与 Godot 3D 渲染。
+2. **四级渲染后端抽象**：一个 `AvatarBackend` 接口（`send_expression` / `send_motion` / `send_parameters`）统一自研 Live2D、VTube Studio 连接池、VMC 协议 OSC、插件扩展四种实现，同时驱动 Live2D / three-vrm / Pixi.js 三套桌宠管线与 Godot 渲染后端（Godot 需自备导出产物，见[资源自备说明](#资源自备说明)）。
 3. **系统级 Windows 疑难攻克**：透明置顶悬浮窗 + `WM_NCHITTEST` 像素级鼠标穿透；解决 DWM 合成层导致对话框不可见的问题（18 轮真机迭代，可见率 0.8172 一次通过）。
 4. **LLM 应用工程**：按任务类型（文本 / 视觉 / 视频 / 代码 / 语音）路由模型并遵守并发上限；分层记忆 + 三级上下文压缩 + 46 处工具调用 + MCP 客户端；TTS 三层故障转移（CosyVoice → Edge-TTS → 离线 kokoro-onnx）。
 5. **游戏操控 Agent（Cradle 范式）**：截图输入 + 键鼠输出，不读游戏内存、不连服务器，只操控用户自己的当前窗口；含执行后反思纠偏（帧差判断卡墙并强制脱困）。
@@ -149,7 +151,7 @@
 - **应急哨兵扫描**（`GET /api/security_scan`）：检测用户态可见痕迹——① Defender 排除项被篡改（银狐常把 C:–F: 加进排除列表致盲杀软）；② 已知 IOC 进程名；③ 可疑计划任务（`DesignAccent` / `Accent` / `zpaq` 等 Silver Fox 命名）；④ 到已知 C2 网段的外连。返回 safe / warn / danger 三级与逐条明细。
 - **一键急救**（`POST /api/security_remediate`）：移除已检出的用户态痕迹——结束 IOC 进程、删除可疑计划任务、恢复被篡改的 Defender 整盘排除项。**安全约束**：仅处理服务端 IOC 目录内的已知项，绝不接受客户端传来的任意路径/命令；所有动作服务端权威重算。
 - **360 系统急救箱**：调用官方正版工具，补用户态以外的内核/rootkit 级强杀能力。
-- **安装包完整性自检**（`GET /api/self_hash`）：展示本机主程序 `naixi-desktop.exe` 的 SHA-256，可一键复制，供与官方 `sha256sums.txt` 的「主程序」段人工比对。
+- **安装包完整性自检**（`GET /api/self_hash`）：展示本机主程序 `naixi-desktop.exe` 的 SHA-256，可一键复制，供与官方 `SHA256SUMS.txt` 的「主程序」段人工比对。
 - **自动监测哨兵**：后台周期性巡检，命中异常时告警。
 
 > **能力边界（重要）**：银狐最新变种用 BYOVD 加载 `wnBios` 内核级 rootkit，能直接读写物理内存、致盲 Defender / 火绒 / 360。这种**内核层**的东西任何**用户态程序（含奶昔）都杀不掉**，必须靠专业杀软 + 安全模式全盘查杀。奶昔只处理**用户态可见痕迹**，UI 已写明，不做能力误导；也**绝不内置任何反制 C2 的能力**（对 C2 发起 DoS / 未授权访问既违法也无效）。
@@ -219,9 +221,24 @@ naixi-desktop/
 
 ---
 
+## 系统要求
+
+| 项 | 要求 |
+| --- | --- |
+| 操作系统 | Windows 10 1809 及以上 / Windows 11（x64） |
+| 运行时 | WebView2 —— 安装程序会自动安装；离线环境会给出中文手动安装指引 |
+| 磁盘 | 安装后约 **1.3 GB**（含自包含 Python 运行时与内置本地搜索），建议预留 2 GB |
+| 内存 | 建议 4 GB 及以上 |
+| 网络 | **需要**：模型推理走你自己的 API Key（云端）；对话存储、知识库、桌宠、本地搜索均在本机完成 |
+| 可选硬件 | 麦克风（语音输入 / 直播上麦）、摄像头（面捕，默认关闭）、NVIDIA 显卡（仪表盘 GPU 指标） |
+
+> 后端只监听 `127.0.0.1:9845`，不对外暴露端口；不采集遥测、不上传使用数据。逐条数据流向见 [docs/PRIVACY.md](docs/PRIVACY.md)。
+
+---
+
 ## 快速开始（安装包）
 
-1. 到 [Releases](../../releases) 下载 `naixi-desktop_0.2.10_x64-setup.exe`
+1. 到 [Releases](https://github.com/Hayliy/naixi-desktop/releases) 下载 `naixi-desktop_1.0.0_x64-setup.exe`
 2. 运行安装程序，按向导完成安装（含 WebView2 运行时自动安装）
 3. 从开始菜单或桌面快捷方式启动「奶昔」
 
@@ -231,9 +248,15 @@ naixi-desktop/
 
 ## 升级与卸载
 
-**升级**：从 [Releases](../../releases) 下载新版安装包，直接运行即可覆盖升级，**无需先卸载**。升级不要求重新配置模型供应商；你的对话、知识库、记忆等数据保存在安装目录的 `data/` 下，覆盖安装不针对用户数据做格式化。**升级前建议手动复制一份 `data/` 目录**（内含 SQLite 数据库）以防万一——数据无价，备份永远不亏。
+**升级**：从 [Releases](https://github.com/Hayliy/naixi-desktop/releases) 下载新版安装包，直接运行即可覆盖升级，**无需先卸载**，也不需要重新配置模型供应商。安装程序只替换程序文件（`desktop_core` / `python-embed` / `searxng` 等），**不会动你的数据**（`data/` 下的数据库与 `workspace/` 工作区）。升级前仍建议手动复制一份 `data/` 目录——数据无价，备份不亏。
 
-**卸载**：Windows 设置 → 应用 → 找到「奶昔」→ 卸载。注意：卸载程序移除的是程序本体；安装目录下的 `data/`（对话记录、知识库、长期记忆、Fernet 加密的 API Key）可能残留，**如需彻底清除请手动删除整个安装目录**。API Key 即使残留也是加密落盘的，但仍建议彻底删除。
+**卸载**：Windows 设置 → 应用 → 找到「奶昔」→ 卸载。
+
+- **默认保留你的数据**：卸载程序只移除程序本体（`desktop_core` / `python-embed` / `searxng` / `plugins`）、桌面与开始菜单快捷方式、注册表卸载项；**`data/`（对话记录、知识库、长期记忆、Fernet 加密的 API Key）与 `workspace/` 留在原地**，卸载完成页会告知数据位置。
+- **想彻底清除**：在卸载确认页勾选「同时删除我的个人配置与数据（对话历史、知识库、偏好设置）」，会一并删除安装目录的 `data/`、`workspace/` 与 `%APPDATA%\奶昔`。该勾选**默认不勾**，需主动选择。
+- 0.2.x 及更早版本的卸载程序没有这层保护（会连带删掉整个资源目录），1.0.0 起不再如此。
+
+> 卸载前请先退出「奶昔」（含桌宠）。GUI 卸载会结束残留进程；命令行静默卸载（`uninstall.exe /S`）不会，程序仍在运行时个别文件可能因占用而残留。
 
 ---
 
@@ -251,7 +274,7 @@ npm run tauri build --bundles nsis
 
 构建产物位于 `src-tauri/target/release/bundle/nsis/`。
 
-> 构建会下载并附加 SearXNG 便携版（约 154MB）与自包含 Python 运行时，请确保网络可用。
+> 构建会下载并附加 SearXNG 便携版（约 108 MB）与自包含 Python 运行时，请确保网络可用。运行 `scripts/build-release.ps1` 可一并完成签名、哈希清单与发布卡口（见 [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md)）。
 
 ---
 
@@ -281,6 +304,7 @@ npm run tauri dev        # 前端 :1420 HMR；后端 sidecar 绑 127.0.0.1:9845 
 | 资源 | 位置 | 说明 |
 | --- | --- | --- |
 | VRM 3D 模型 | `godot_renderer/scenes/` 或 `godot_renderer/models/` | 单文件超 GitHub 100MB 上限，且涉游戏 IP；缺失不影响对话/自动化等核心能力 |
+| Godot 导出产物 `NaixiVRM.exe` | `godot_renderer/export/` | 工程源码在库内，但**导出产物需自行用 Godot 4.7 导出**；缺失时「VMC 驱动 Godot 渲染」这条后端不可用，不影响 Live2D 与 three-vrm 桌宠 |
 | 本地 TTS 模型（kokoro-onnx） | `naixi_tts_models/`（自动生成） | 首次使用自动下载，无需手动放置 |
 | Minecraft 客户端/服务端 | `mc_test/`（已忽略） | 仅游戏 Agent 自验用，含第三方版权文件 |
 
@@ -297,14 +321,15 @@ npm run tauri dev        # 前端 :1420 HMR；后端 sidecar 绑 127.0.0.1:9845 
 
 ## 已知问题 / 限制
 
-这是 0.2.10 的真实边界，不藏。贡献前请先读，避免在 WIP 模块上白费功夫：
+这是 1.0.0 的真实边界，不藏。贡献前请先读，避免在 WIP 模块上白费功夫：
 
 - **代码签名现状（自签名，如实说明）**：安装包已做 Authenticode 自签名（流程见 [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md)），但自签名证书的根不在 Windows 受信任根库里，**SmartScreen 仍会提示「未知发布者」**——这不是被篡改。签名带来的价值是「完整性与签名主体可核验、固定指纹可公开比对」，因此下载后仍**必须**按[安全与完整性](#安全与完整性)做哈希校验。换受信任 CA 证书后本段会更新。
 - **只发布 NSIS 安装包，不发布 MSI**：`bundle.targets` 已收为 `["nsis"]`（资源聚合改用 7z 后 WiX(MSI) 模板未同步，MSI 会装不出 `desktop_core` 等资源目录）。要恢复 MSI 需先同步 WiX 模板，并同步放开发布卡口 `scripts/release_guard.py` 中的 MSI 断言。
-- **VRM 3D 模型 / Godot 渲染工程不入库**：单文件超 GitHub 100MB 上限且涉游戏 IP；缺失不影响对话、自动化、知识库、Live2D 桌宠、直播等核心能力。
+- **VRM 模型与 Godot 导出产物不入库**：VRM 单文件超 GitHub 100MB 上限且涉游戏 IP；Godot 导出产物 `NaixiVRM.exe` 需自行用 Godot 4.7 导出（工程源码在库内）。缺失不影响对话、自动化、知识库、Live2D 桌宠、three-vrm 桌宠、直播等核心能力，仅「VMC 驱动 Godot 渲染」这条后端不可用。
 - **离线 TTS 兜底音质偏弱**：TTS 三层故障转移（CosyVoice → Edge-TTS → 本地 kokoro-onnx）中，本地 kokoro-onnx 的音质与音色明显弱于云端，仅作离线兜底。
 - **游戏 Agent 为实验性**：Minecraft / Mindustry / 扫雷均为「截图输入 + 键鼠输出」的视觉操控实验，依赖 OCR 与视觉 grounding，复杂或动态场景易卡墙，非生产可用。
-- **大体积资源构建时下载**：`python-embed` 运行时与 `searxng/` 便携版不入库，首次 `tauri build` 需联网（SearXNG 约 154MB）。
+- **大体积资源构建时下载**：`python-embed` 运行时与 `searxng/` 便携版不入库，首次 `tauri build` 需联网（SearXNG 约 108 MB）。
+- **静默卸载不结束残留进程**：GUI 卸载会先结束桌宠与后端进程；命令行 `uninstall.exe /S` 不会。若卸载时程序仍在运行，`python-embed` 与主程序可能因文件占用而残留（**用户数据不受影响，仍按[升级与卸载](#升级与卸载)的规则保留**）。批量部署请先退出应用。
 - **后端无热重载**：改 `desktop_core/` 后需重启应用才能加载新代码（aiohttp 未开 reload）。
 - **开发态三副本路径陷阱**：见[开发者上手](#开发者上手贡献指南)——手改错副本 = 改动丢失且可能不生效，这是新人最常踩的坑。
 
@@ -312,7 +337,7 @@ npm run tauri dev        # 前端 :1420 HMR；后端 sidecar 绑 127.0.0.1:9845 
 
 ## 版本与兼容性承诺
 
-- **当前阶段**：`0.y.z` 为快速迭代期，不承诺接口 / 数据格式稳定；`1.0.0` 起进入稳定期。
+- **当前阶段**：自 `1.0.0` 起进入稳定期。**用户数据向后兼容是硬承诺**——本地 SQLite 数据库与配置文件的任何破坏性变更都必须登记迁移函数并向前兼容。
 - **用户数据契约（核心承诺）**：本地 SQLite 数据库与配置文件 schema 受版本化迁移保护（`desktop_core/storage.py` 的 `SCHEMA_MIGRATIONS` 框架）。升级时**用户数据不丢、配置不被覆盖**；未来任何破坏性 schema 变更都会登记迁移函数并向前兼容。
 - **配置格式**：用户配置以「合并保留」策略处理（前端回传的掩码值 / 空值不会清掉本地真实密文），升级不破坏既有设置。
 - **内部 API 不承诺兼容**：后端 REST API 仅绑定 `127.0.0.1`、供本机前端与 sidecar 使用，**不属于公共契约**，版本间可能变更，不保证向后兼容。
@@ -359,21 +384,21 @@ A：全部存于本地 `data/` 目录（SQLite + 文件），不上传云端。
 
 ### 只认官方渠道
 
-本项目**只通过 [GitHub Releases](../../releases) 分发**。任何网盘、论坛、QQ 群、第三方站点的「奶昔」安装包都**不是官方**，请勿下载——银狐类木马常伪造开源项目安装包投毒。
+本项目**只通过 [GitHub Releases](https://github.com/Hayliy/naixi-desktop/releases) 分发**。任何网盘、论坛、QQ 群、第三方站点的「奶昔」安装包都**不是官方**，请勿下载——银狐类木马常伪造开源项目安装包投毒。
 
 ### 下载后怎么验（两步都要做）
 
-`sha256sums.txt` 随每次发布附在 Releases 里，由 `npm run gen:release-hashes` 生成，内含**两组**哈希：
+`SHA256SUMS.txt` 随每次发布附在 Releases 里，由 `npm run gen:release-hashes` 生成，内含**两组**哈希：
 
 把清单和下载到的安装包放在**同一个目录**，然后：
 
 ```bash
-sha256sum -c --ignore-missing sha256sums.txt
+sha256sum -c --ignore-missing SHA256SUMS.txt
 ```
 
 | 组 | 验的是 | 什么时候验 |
 | --- | --- | --- |
-| `[安装包]` | 你下载到的那个 msi / setup.exe | **下载后立刻验**，确认下载到的就是官方文件 |
+| `[安装包]` | 你下载到的那个 setup.exe | **下载后立刻验**，确认下载到的就是官方文件 |
 | `[主程序]` | 装好后的 `naixi-desktop.exe` | **安装后验**，确认安装目录里的程序没被替换 |
 
 `--ignore-missing` 是为了跳过 `[主程序]` 那一行——它不在下载目录里，缺了会报错。
@@ -388,7 +413,7 @@ sha256sum -c --ignore-missing sha256sums.txt
 
 ### 关于代码签名（如实说明）
 
-**当前 0.2.10 安装包使用自签名证书**（尚未购置受信任 CA 的 OV/EV 证书）。自签名的根不被 Windows 信任，因此 SmartScreen 仍会提示「未知发布者」——这是预期行为、不是被篡改，**正因如此，上面两步哈希校验更要照做**。签名带来的额外保证是：包体带 Authenticode 签名，可核验签名主体、指纹与「包是否被改动过」（改动后签名立即失效）。
+**当前 1.0.0 安装包使用自签名证书**（尚未购置受信任 CA 的 OV/EV 证书）。自签名的根不被 Windows 信任，因此 SmartScreen 仍会提示「未知发布者」——这是预期行为、不是被篡改，**正因如此，上面两步哈希校验更要照做**。签名带来的额外保证是：包体带 Authenticode 签名，可核验签名主体、指纹与「包是否被改动过」（改动后签名立即失效）。
 
 核验方法：
 
@@ -405,10 +430,13 @@ sha256sum -c --ignore-missing sha256sums.txt
 ### 相关文档
 
 - 发布安全规范（哈希清单、官方渠道、防银狐）：[docs/RELEASE_SECURITY.md](docs/RELEASE_SECURITY.md)
+- 安全策略与漏洞上报渠道：[SECURITY.md](SECURITY.md)
 - 代码签名与发布构建流程：[docs/CODE_SIGNING.md](docs/CODE_SIGNING.md)
 - 隐私与数据流向说明：[docs/PRIVACY.md](docs/PRIVACY.md)
 - 第三方许可证清单（含 LGPL/AGPL/GPL 分发义务）：[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 - 虚拟机防逃逸加固清单：[docs/VM_SANDBOX_HARDENING.md](docs/VM_SANDBOX_HARDENING.md)
+- 贡献流程与编程规范：[CONTRIBUTING.md](CONTRIBUTING.md)
+- 贡献者行为准则：[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 
 ---
 
@@ -416,7 +444,7 @@ sha256sum -c --ignore-missing sha256sums.txt
 
 奶昔是本地运行的桌面应用，但部分能力**依赖第三方平台与非官方接口**，使用前请知情：
 
-- **多平台消息接入（19 平台）**：其中部分平台（如 QQ / 微信生态）通过**非官方协议实现**（如 NapCat 等第三方框架）接入。这类接法存在被平台方限制、风控甚至封禁账号的风险——请自行评估并遵守对应平台的服务条款。本项目与所列任何平台官方均**无合作关系**。
+- **多平台消息接入（12 个连接器）**：其中 **QQ 通过非官方协议实现**（NapCat / LLOneBot 等第三方框架）接入，这类接法存在被平台方限制、风控甚至封禁账号的风险——请自行评估并遵守对应平台的服务条款。飞书 / 企业微信 / 钉钉 / Discord / Slack / Telegram / WhatsApp 走各自官方 Bot API 或 Webhook，GitHub / GitLab / 邮件 / 自定义 HTTP 用于事件触发工作流。本项目与所列任何平台官方均**无合作关系**。
 - **游戏 Agent（看屏操控）**：「截图输入 + 键鼠输出」仅操控你自己的当前窗口、不读游戏内存，但**键鼠注入在联网/竞技类游戏中可能被反作弊系统判定为外挂**。请只用于单机游戏或明确允许自动化的场景，**请勿用于任何联网对战游戏**，由此导致的封号等后果自负。
 - **安全中心（银狐应急防护）**：哨兵扫描与一键急救会**结束进程、删除计划任务、修改 Defender 排除项**——这些动作可能被其他安全软件误报，或与已装杀软产生冲突。能力边界（仅用户态、不碰内核 rootkit、不反制 C2）在功能页有明确公示。
 - **直播 / 弹幕功能**：依赖各直播平台的第三方接口，平台侧接口变更可能导致相关功能临时失效，我们会跟随修复但不承诺实时性。
