@@ -5406,19 +5406,40 @@ async def api_live_pet_switch(request):
     ok = await loop.run_in_executor(None, lambda: engine._start_pet(kind=kind))
     return web.json_response({"ok": ok, "kind": kind})
 
+def _naixi_data_dir():
+    """桌面端**真实**数据目录（与数据库同级）。
+
+    ★ 为什么要有这个小函数（2026-09-22 真机踩坑）：`_storage.DB_PATH` 在 api.py 作用域
+    **并不存在** —— 它定义在 storage.py，且初始为空串，由外层 naixi_api.py 在导入前注入真实值。
+    直接在函数里引用 `_storage` 而不 import，会抛 `NameError: name '_storage' is not defined`；
+    而这两处自测端点又把异常包在 `except` 里返回 `{"run": false}`，于是**每次都静默失败**：
+    标记文件明明在、后端却永远说"没开关"，真机排查耗了两轮才挖到（是前端在背锅）。
+    api.py 里已有两处各写一遍同样的取法（`api_desktop_paths` 等），故抽成统一入口，
+    禁止再手写 `_storage.DB_PATH`。
+    """
+    try:
+        from desktop_core import storage as _storage
+        p = _storage.DB_PATH or ""
+    except Exception:
+        p = ""
+    if p:
+        return os.path.dirname(p)
+    return os.path.join(_DESKTOP_DIR, "data")
+
+
 async def api_self_test_request(request):
     """全量页面交互自测的「开闸」端点（默认关闭）。
 
     为什么需要它：应用前端跑在 Tauri 的 WebView 里，外部没有稳定的 UI 自动化通道
     （实测 release 包设 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port
     也不会监听，CDP 走不通）。因此改由「数据文件 + 后端端点」下发指令：
-    安装目录下存在 data/self_test.request 时返回 run=true，前端主界面挂载后询问一次即执行。
+    数据目录下存在 self_test.request 时返回 run=true，前端主界面挂载后询问一次即执行。
     标记文件可指定模式：
       空文件 / 非 JSON      -> safe（只点安全元素）
       {"mode":"full"}      -> full（除会终止自测本身的动作外全部点击，仅限一次性测试环境）
     """
     try:
-        dd = os.path.dirname(_storage.DB_PATH) if _storage.DB_PATH else os.path.join(_DESKTOP_DIR, "data")
+        dd = _naixi_data_dir()
         flag = os.path.join(dd, "self_test.request")
         run = os.path.isfile(flag)
         mode = "safe"
@@ -5453,7 +5474,7 @@ async def api_self_test_report(request):
     except Exception:
         return web.json_response({"ok": False, "error": "invalid json"}, status=400)
     try:
-        dd = os.path.dirname(_storage.DB_PATH) if _storage.DB_PATH else os.path.join(_DESKTOP_DIR, "data")
+        dd = _naixi_data_dir()
         out = os.path.join(dd, "self_test_report.json")
         with open(out, "w", encoding="utf-8") as f:
             json.dump(body, f, ensure_ascii=False, indent=2)
