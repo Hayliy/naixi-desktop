@@ -8,6 +8,25 @@
 
 > 版本号唯一来源：`src-tauri/tauri.conf.json` 的 `version` 字段。改后跑 `npm run sync:version`，同步到 Cargo.toml / package.json / desktop_core/version.json / src/lib/version.ts / README 徽章与下载名。
 
+## [未发布]
+
+> 1.0.0 发布后，由用户报障「虚拟机里点桌宠没反应」牵出的两项修复（均已真机验证）。
+
+### 修复（P1 · 桌宠在虚拟机 / 远程桌面里空白）
+- **根因**：3D 桌宠走 Chromium 的 WebGL。两件事叠加导致上下文创建失败 —— ① Chromium 自 M117 起默认禁止在无硬件 GL 时回退软件渲染（SwiftShader）；② 虚拟机显卡驱动被 Chromium 的 GPU 黑名单拦下。页面脚本因此整体中断，桌宠窗口全透明。
+- **修复**：`vrm_pet.py` 在创建 QApplication **之前**注入 `--ignore-gpu-blocklist --enable-unsafe-swiftshader`（保留用户已设的 flags）。
+- **真机验证（VMware，此前「加速 3D 图形」即已开启）**：加参数前 `THREE.WebGLRenderer: A WebGL context could not be created（VENDOR = 0x15ad, VMware）`、探针持续 `JS-NOT-RUN`、窗口全透明；加参数后 `[PROBE] webview status = READY`、`[JS:LOG] [FPS] 26 / 44`、mocap 轨道正常加载，抓屏可见完整 VRM 形象。
+
+### 修复（P1 · 渲染失败不再静默）
+- **问题**：上述失败此前只写进 `pet_vrm.log`，界面无任何提示 —— 用户看到的现象就是「点了桌宠没反应、也找不到原因」。
+- **修复**：探针连续 10 次（约 30 秒）拿不到页面 JS 状态，即在桌宠窗口内用 **Qt 原生控件**画一张可见提示卡（不依赖 WebGL），写明原因与两条出路（切 2D / 装显卡驱动后重启）。真机抓屏确认卡片显示。
+
+### 文档
+- `docs/TROUBLESHOOTING.md` 新增「六、虚拟机 / 远程桌面」，收录该症状的根因与自查顺序（含 `[PROBE] webview status` 的读法）。
+
+### 已知待修（不在本次范围）
+- `_resolve_model_for_kind("vrm")` 以 `**/*.vrm` 从 desktop_core 逐级向上递归搜索，真机实测命中 `%TEMP%\yangyang.vrm` —— 范围过宽，会把无关目录里的 vrm 当成模型。
+
 ## [1.0.0] - 2026-09-22
 
 > 首个稳定版。主题是「可交付」：把此前只在开发机上成立的东西——版本契约、用户数据安全、签名与发布链路、合规告知、质量门禁——变成可复现、有证据的流程。同时新增应用内诊断面板，让「装完之后到底健不健康」由用户自己一眼看出。

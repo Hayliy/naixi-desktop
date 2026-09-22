@@ -885,7 +885,30 @@ def _find_default_vrm() -> str:
     return cand[0] if cand else ""
 
 
+def _ensure_webgl_flags():
+    """给 QtWebEngine 补 Chromium 参数，让虚拟机 / 低端显卡上也能拿到 WebGL 上下文。
+
+    背景（2026-09-22 真机实测）：VMware 虚拟显卡下 three-vrm 报
+      「A WebGL context could not be created. VENDOR = 0x15ad … GL_VENDOR = Google Inc. (VMware…)」，
+    桌宠窗口全透明、页面 JS 整体中断。两个已知诱因：
+      1) Chromium 自 M117 起**默认禁止**在无硬件 GL 时回退到软件渲染（SwiftShader），
+         必须显式 `--enable-unsafe-swiftshader` 才允许软件 WebGL；
+      2) 虚拟机显卡驱动常被 Chromium 的 GPU 黑名单拦下 → `--ignore-gpu-blocklist` 放行。
+    两个开关都只影响渲染后端选择，不改业务逻辑；已设过的 flags 一律保留。
+    必须在创建 QApplication **之前**调用（QtWebEngine 仅在初始化时读该环境变量）。
+    """
+    want = ("--ignore-gpu-blocklist", "--enable-unsafe-swiftshader")
+    cur = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+    add = [f for f in want if f not in cur]
+    if add:
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (cur + " " + " ".join(add)).strip()
+        log(f"[GPU] 已注入 QtWebEngine 参数: {' '.join(add)}")
+    else:
+        log("[GPU] QtWebEngine 参数已就绪")
+
+
 def main():
+    _ensure_webgl_flags()
     ap = argparse.ArgumentParser(description="Qt 桌宠 VRM 模式（Path A 实测）")
     ap.add_argument("--vrm", default="", help="VRM 模型路径（默认自动找 godot_renderer 下首个 .vrm）")
     ap.add_argument("--ws", default="ws://127.0.0.1:9845/api/live/live2d-stream", help="后端 WS 地址")
