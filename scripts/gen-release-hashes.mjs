@@ -47,6 +47,19 @@ function walk(d) {
 walk(bundleDir);
 if (!files.length) { console.error("[err] 未找到安装包产物"); process.exit(1); }
 
+// 只收录「当前版本」的产物：bundle 目录里常残留历史版本的安装包，全量收录会让发布清单
+// 出现一堆无关哈希，连命令示例都会取错文件（字符串排序下 0.2.10 会排在 0.2.9 前面）。
+const confPath = join(__dirname, "..", "src-tauri", "tauri.conf.json");
+const curVersion = JSON.parse(readFileSync(confPath, "utf8")).version;
+const matched = files.filter((f) => basename(f).includes(curVersion));
+if (matched.length) {
+  console.log(`[filter] 只收录当前版本 ${curVersion} 的产物：${matched.length} 个（目录内共 ${files.length} 个）`);
+  files.length = 0;
+  files.push(...matched);
+} else {
+  console.warn(`[warn] 目录内没有含版本号 ${curVersion} 的产物，回退收录全部 ${files.length} 个`);
+}
+
 // 清单用【纯文件名】：用户把 SHA256SUMS.txt 与下载到的安装包放在同一目录校验，
 // 带 msi/ nsis/ 目录前缀在用户侧是无效路径（历史版本就踩过这个坑）。
 // ★ GitHub Releases 资产名会被服务端强制清洗成 ASCII（非 ASCII 字符被直接删除）：
