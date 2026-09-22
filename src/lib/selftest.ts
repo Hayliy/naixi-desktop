@@ -22,6 +22,8 @@
  * ⚠ 自测期间会临时接管 confirm/alert/prompt/window.open，原因见 installGuards()。
  */
 
+import { API_BASE } from "./api";
+
 export type SelfTestMode = "safe" | "full";
 
 export interface SelfAction {
@@ -516,8 +518,11 @@ async function testOnePage(
 
 async function postReport(rep: SelfTestReport): Promise<void> {
   try {
-    await fetch("/api/self_test_report", {
+    // 必须用 API_BASE 拼绝对地址：生产构建里页面 origin 是 http://tauri.localhost，
+    // 裸相对路径会打到那里而不是后端的 127.0.0.1:9845，且失败是静默的（真机踩过）。
+    await fetch(`${API_BASE}/api/self_test_report`, {
       method: "POST",
+      mode: "cors",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(rep),
     });
@@ -586,7 +591,8 @@ export async function runSelfTest(
 /** 由后端开关决定是否跑；跑完（或每页）把报告 POST 回后端落盘 */
 export async function maybeRunSelfTest(): Promise<void> {
   try {
-    const r = await fetch("/api/self_test_request");
+    // 同 postReport：Tauri 生产环境下必须用绝对基址（相对路径会打到 tauri.localhost）
+    const r = await fetch(`${API_BASE}/api/self_test_request`, { mode: "cors" });
     if (!r.ok) return;
     const j = (await r.json()) as { run?: boolean; mode?: SelfTestMode };
     if (!j.run) return;

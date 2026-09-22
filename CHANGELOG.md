@@ -10,7 +10,19 @@
 
 ## [1.0.1] - 2026-09-22
 
-> 1.0.0 发布后，由用户报障「虚拟机里点桌宠没反应」牵出的两项修复，以及为「不再靠人肉点界面」新增的全量页面自测。均已真机验证。
+> 1.0.0 发布后，由用户报障「虚拟机里点桌宠没反应」牵出的三项修复，以及为「不再靠人肉点界面」新增的两层全量自测（前端全页 + 后端全接口）。均已真机验证。
+
+### 修复（P0 · 切换 3D 桌宠会冻结整个后端 139 秒）
+- **现象**：真机（VMware + Windows 10）实测时序 —— `20:00:53` 客户端发出 `POST /api/live/pet-switch {"kind":"vrm"}`，`20:03:11` 后端才写出「VRM 渲染器…」日志，`20:03:12` 才返回 200。**该请求实际耗时 139 秒**，期间所有接口要么超时、要么被拒绝连接（后端进程一度消失并被 BackendGuard 重新拉起）。用户侧看到的就是「点桌宠没反应 / 界面卡死」。
+- **根因**：`live_engine._resolve_model_for_kind("vrm")` 的两段上溯循环 —— 第一段把查找游标从 `resources\desktop_core` 逐级向上推到了**盘符根**，第二段接着执行 `glob(<根> + "/**/*.vrm", recursive=True)`，等于**扫描整个 C 盘**；它最终命中的是 `...\AppData\Local\Temp\yangyang.vrm`（%TEMP% 里偶然存在的文件，模型来源本也不可信）。该函数是纯同步的，却被 async 端点直接调用在 aiohttp 事件循环里，因此这段时间整个后端无响应。
+- **为什么长期没暴露**：同一场景切 **live2d** 只用 1979 ms —— 它命中了第一段的 `godot_renderer` 分支，从未走到全盘扫描那一步。
+- **修复**：
+  1. 新增 `_vrm_search_roots()`：只认「与数据库同级的 `models/`」与「安装 / 工程根下的 `data/models`、`models`、`godot_renderer`」这几处**有限目录**（向上最多 4 层、只查固定子目录、不做递归），并支持模型库按一层子目录组织；找不到就返回空串，交由上层显示「还没有模型」占位卡。
+  2. `pet-start` / `pet-stop` / `pet-switch` 三个端点的实质工作全部移入线程池（`run_in_executor`）—— 即使某个操作再慢，也只影响该请求，不会再冻住整个后端。
+
+### 修复（P1 · 安全扫描 / 一键急救同样冻结后端）
+- `GET /api/security_scan` 与 `POST /api/security_remediate` 属同一类问题（0 个 `await`、内部同步调用系统命令）：真机实测首次扫描 38 秒、急救 27 秒，期间所有接口无响应。
+- 修复：拆出同步核心 `_security_remediate_core()`，两个端点均改为在线程池中执行。
 
 ### 修复（P1 · 桌宠在虚拟机 / 远程桌面里空白）
 - **根因**：3D 桌宠走 Chromium 的 WebGL。两件事叠加导致上下文创建失败 —— ① Chromium 自 M117 起默认禁止在无硬件 GL 时回退软件渲染（SwiftShader）；② 虚拟机显卡驱动被 Chromium 的 GPU 黑名单拦下。页面脚本因此整体中断，桌宠窗口全透明。
@@ -21,17 +33,17 @@
 - **问题**：上述失败此前只写进 `pet_vrm.log`，界面无任何提示 —— 用户看到的现象就是「点了桌宠没反应、也找不到原因」。
 - **修复**：探针连续 10 次（约 30 秒）拿不到页面 JS 状态，即在桌宠窗口内用 **Qt 原生控件**画一张可见提示卡（不依赖 WebGL），写明原因与两条出路（切 2D / 装显卡驱动后重启）。真机抓屏确认卡片显示。
 
-### 新增（QA · 全量页面交互自测）
+### 新增（QA · 两层全量自测）
 - **由来**：用户报「点桌宠没反应」时，问题其实早已写进日志，只是没人翻 —— 靠人肉点界面必漏。
-- 前端 `src/lib/selftest.ts`：遍历全部 12 个导航页（仪表盘/对话/工作流/自动化/知识库/工具/记忆/连接/运维/直播/日志/设置），每页点击导航 → 等 DOM 静默稳定 → 检查「内容近乎空白且无 canvas/img/table/input」与「正文出现错误提示文案」；在**安全白名单**内点击按钮（刷新/详情/展开/取消/关闭…），命中黑名单（删除/卸载/清空/重置/发布/导入/发送/启动/停止/退出/保存…）跳过并记录；收集 console.error、命中关键词的 console.warn、window.onerror、unhandledrejection，按页归属。
-- 后端：`GET /api/self_test_request`（以 `data/self_test.request` 标记文件为开关，默认关闭，不影响正常用户）与 `POST /api/self_test_report`（报告写 `data/self_test_report.json`，并在日志里逐页列出问题）。
-- 为什么不由外部驱动：实测 release 包设 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` 端口不监听，CDP 拿不到 WebView 控制通道，故改由「数据文件 + 后端端点」下发指令。
+- **L1 前端（应用自己点自己）**：`src/lib/selftest.ts` 遍历全部 12 个导航页（仪表盘/对话/工作流/自动化/知识库/工具/记忆/连接/运维/直播/日志/设置），每页点导航 → 等 DOM 静默稳定 → 检查「内容近乎空白且无 canvas/img/table/input」与「正文出现错误提示文案」→ 点击页面与弹窗内的元素 → 收集 console.error、命中关键词的 console.warn、window.onerror、unhandledrejection，按页归属。两种模式：`safe`（只点安全元素）与 `full`（**除「会中断自测本身」的动作外全部点击**，含弹窗内的确认/删除/清空/启动，并自动填空输入框、遍历下拉选项）。
+- 触发方式：`resources\data\self_test.request` 写 `{"mode":"full"}` 后**重启应用**（前端只在挂载时问一次）；后端 `GET /api/self_test_request` **一次性消费**该文件，避免每次启动都重跑全量。报告按页**增量**写 `resources\data\self_test_report.json`，中途把应用点崩也能拿到已跑部分。
+- 自测器自带的几个安全阀（不修则自测根本跑不完）：接管 `confirm/alert/prompt/window.open`（前端两处原生 `confirm()` 在 WebView2 里会**同步阻塞 JS**，一弹整轮就死在那）；跳过 `<input type=file>`（会弹 JS 关不掉的系统对话框）；跳过 `a[href]` 外链；导航项只在 `aside/nav` 内查找、内容区优先 `<main>`；重复同名按钮按出现次序编号，否则列表里 10 个「删除」只会点到第一个。
+- **L2 后端（全接口真实请求）**：对 82 个 GET + 101 个 POST 全量发真实请求，分三段执行（只读与安全写 → 关键功能端到端 → 破坏性与中断性）。上面的 139 秒阻塞就是这套脚本挖出来的。
+- 为什么不由外部驱动 UI：实测 release 包设 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` 端口不监听，CDP 拿不到 WebView 控制通道，故改由「数据文件 + 后端端点」下发指令。
+- L2 顺带确认（非缺陷）：`test-tts` / `test-config` / `config_auto_detect` 是真异步（`await aiohttp`），测试机上的 18 秒超时系访问云端 API 慢；`check_update` 返回 502 是测试机访问 GitHub 被限流；若干 404 是「空 body 找不到指定资源」的正常响应。
 
 ### 文档
 - `docs/TROUBLESHOOTING.md` 新增「六、虚拟机 / 远程桌面」，收录该症状的根因与自查顺序（含 `[PROBE] webview status` 的读法）。
-
-### 已知待修（不在本次范围）
-- `_resolve_model_for_kind("vrm")` 以 `**/*.vrm` 从 desktop_core 逐级向上递归搜索，真机实测命中 `%TEMP%\yangyang.vrm` —— 范围过宽，会把无关目录里的 vrm 当成模型。
 
 ## [1.0.0] - 2026-09-22
 
