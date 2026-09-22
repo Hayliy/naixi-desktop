@@ -17,5 +17,9 @@ tauri-build = { version = "2", features = [] }
 #   ② open_devtools 命令在 release 构建里直接拒绝。
 tauri = { version = "2", features = ["tray-icon", "devtools"] }
 tauri-plugin-shell = "2"
+# 单实例保护：没有它，双击两次图标就会起**两套完整实例**（两个后端抢 9845、两个桌宠、
+# 两套 SearXNG）。2026-09-22 真机实测到 3 个 naixi-desktop.exe 同时在跑 —— 由此产生
+# 「后端 pid 漂移」「桌宠切换失败」「点了没反应」等一串难以复现的怪现象。
+tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

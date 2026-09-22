@@ -88,8 +88,15 @@ const SAFE = /(刷新|重试|详情|查看|展开|收起|更多|上一页|下一
 const SKIP_HREF = /^(https?:|mailto:|tel:|javascript:|#)/i;
 
 const BUDGET_SAFE = 12;
-const BUDGET_FULL = 120;
-const SETTLE_MAX_MS = 5200;
+const BUDGET_FULL = 60;
+/**
+ * 单次动作后的最长等待。**不能设大**：仪表盘有每秒刷新的实时图表/CPU 曲线，DOM 几乎一直在变，
+ * MutationObserver 的"静默"判定永远达不到，于是每个动作都会等满这个上限。
+ * 真机实测设 5200ms 时 120 个动作 × 12 页要跑数小时（后台看不到进度、报告迟迟不落盘）。
+ * 2200ms 下总时长约 20 分钟，且对"点击是否生效"的判定依然够用。
+ */
+const SETTLE_MAX_MS = 2200;
+const QUIET_MS = 250;
 
 function sleep(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms));
@@ -160,7 +167,7 @@ function visibleDialog(): HTMLElement | null {
   return null;
 }
 
-async function waitStable(minMs = 900, quietMs = 500, maxMs = SETTLE_MAX_MS): Promise<void> {
+async function waitStable(minMs = 500, quietMs = QUIET_MS, maxMs = SETTLE_MAX_MS): Promise<void> {
   const t0 = performance.now();
   await sleep(minMs);
   await new Promise<void>((resolve) => {
@@ -572,6 +579,11 @@ export async function runSelfTest(
       rep.totalErrors = steps.reduce((n, s) => n + s.errors.length, 0);
       rep.failedPages = steps.filter((s) => !s.ok).map((s) => s.page);
       await postReport(rep); // 增量上报：后面崩了也不丢已跑部分
+      showBanner(
+        `进度 ${steps.length}/${pages.length}（${p.label}：动作 ${step.actions.length}，错误 ${step.errors.length}）` +
+          (step.errors[0] ? `\n首个错误：${step.errors[0].slice(0, 180)}` : ""),
+        step.errors.length > 0,
+      );
       console.log(
         `[SELFTEST] ${p.label}：动作 ${step.actions.length} 次，错误 ${step.errors.length}，可疑 ${step.suspicious.length}`,
       );
@@ -588,22 +600,61 @@ export async function runSelfTest(
   return rep;
 }
 
+/**
+ * 诊断横幅：自测的失败过去只进 console.warn，在无人值守的环境里等于不存在
+ * （真机排查时就是这么卡住的）。这里在页面顶部插一条可见的横幅，抓屏即可读到原因。
+ */
+function showBanner(text: string, bad = false): void {
+  try {
+    const id = "naixi-selftest-banner";
+    let d = document.getElementById(id);
+    if (!d) {
+      d = document.createElement("div");
+      d.id = id;
+      document.body.appendChild(d);
+    }
+    d.style.cssText =
+      "position:fixed;left:0;right:0;top:0;z-index:2147483647;padding:6px 10px;" +
+      "font:13px/1.5 Consolas,monospace;white-space:pre-wrap;word-break:break-all;" +
+      (bad ? "background:#b00020;color:#fff;" : "background:#0b6;color:#fff;");
+    d.textContent = "[SELFTEST] " + text;
+  } catch {
+    /* 忽略 */
+  }
+}
+
 /** 由后端开关决定是否跑；跑完（或每页）把报告 POST 回后端落盘 */
 export async function maybeRunSelfTest(): Promise<void> {
   try {
     // 同 postReport：Tauri 生产环境下必须用绝对基址（相对路径会打到 tauri.localhost）
-    const r = await fetch(`${API_BASE}/api/self_test_request`, { mode: "cors" });
-    if (!r.ok) return;
+    const url = `${API_BASE}/api/self_test_request`;
+    let r: Response;
+    try {
+      r = await fetch(url, { mode: "cors" });
+    } catch (e) {
+      showBanner(`取开关失败 url=${url} origin=${location.origin} err=${String(e)}`, true);
+      throw e;
+    }
+    if (!r.ok) {
+      showBanner(`开关返回 ${r.status}（url=${url}）`, true);
+      return;
+    }
+    showBanner(`已取到开关，开始全量自测（url=${url}）`);
     const j = (await r.json()) as { run?: boolean; mode?: SelfTestMode };
     if (!j.run) return;
     const mode: SelfTestMode = j.mode === "full" ? "full" : "safe";
     console.log(`[SELFTEST] 收到自测指令（模式=${mode}），开始遍历全部页面`);
     const report = await runSelfTest(NAV_LABELS, mode);
     await postReport(report);
+    showBanner(
+      `完成：${report.steps.length} 页，失败 ${report.failedPages.length} 页，错误 ${report.totalErrors} 条`,
+      report.failedPages.length > 0,
+    );
     console.log(
       `[SELFTEST] 完成：${report.steps.length} 页，失败 ${report.failedPages.length} 页，错误 ${report.totalErrors} 条`,
     );
   } catch (e) {
+    showBanner(`自测执行失败: ${String(e)}`, true);
     console.warn("[SELFTEST] 自测执行失败:", String(e).slice(0, 200));
   }
 }

@@ -33,12 +33,18 @@ fn kill_backend(app: &tauri::AppHandle) {
             .spawn();
     } else {
         // 兜底：PID 没存上（例如本次启动时端口已被上次残留占用而直接复用），
-        // 按监听 9845 的进程再清一次，避免残留 python.exe。只杀监听该端口者，不误杀其它 python。
+        // 按监听 9845 的进程再清一次，避免残留 python.exe。
+        // ⚠ 必须先确认「占用者是奶昔的后端」再动手 —— 否则会把恰好在用这个端口的
+        //   其它程序一并杀掉（老代码就是这个隐患）。
         if let Some(port_pid) = pid_listening_on(9845) {
-            let _ = std::process::Command::new("taskkill")
-                .args(["/F", "/T", "/PID", &port_pid.to_string()])
-                .creation_flags(0x08000000)
-                .spawn();
+            if is_naixi_backend_pid(port_pid) {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/F", "/T", "/PID", &port_pid.to_string()])
+                    .creation_flags(0x08000000)
+                    .spawn();
+            } else {
+                eprintln!("退出时未清理 9845：占用者(pid={})不是奶昔后端，跳过以免误杀", port_pid);
+            }
         }
     }
 }
@@ -64,6 +70,50 @@ fn pid_listening_on(port: u16) -> Option<u32> {
 #[cfg(not(windows))]
 fn pid_listening_on(_port: u16) -> Option<u32> {
     None
+}
+
+/// 判断某 PID 是否「奶昔自己的 Python 后端」。
+///
+/// 为什么要判断：9845 这个端口是奶昔的后端在监听，但**不能假定占用者一定是自己**——
+/// 用户机器上完全可能有别的程序占用它。老代码在退出兜底里直接 `taskkill /F /T /PID`，
+/// 会把占用该端口的**任意进程**杀掉（可能误杀用户自己在跑的服务）。
+///
+/// 判据刻意保守：进程名必须是 python 系，**且**命令行里含 `naixi`。
+/// 两者任一取不到（例如系统已移除 wmic）就返回 false —— 宁可不动手、让上层给出提示，
+/// 也不要误杀。
+fn is_naixi_backend_pid(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        let pid_s = pid.to_string();
+        let name_ok = std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {}", pid_s), "/FO", "CSV", "/NH"])
+            .creation_flags(0x08000000)
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase().contains("python"))
+            .unwrap_or(false);
+        if !name_ok {
+            return false;
+        }
+        // wmic 的输出在不同系统上可能是 ANSI 也可能是 UTF-16LE，两种都试一遍
+        let out = match std::process::Command::new("wmic")
+            .args(["process", "where", &format!("processid={}", pid_s), "get", "commandline"])
+            .creation_flags(0x08000000)
+            .output()
+        {
+            Ok(o) => o.stdout,
+            Err(_) => return false,
+        };
+        let plain = String::from_utf8_lossy(&out).to_lowercase();
+        let wide_bytes: Vec<u8> = out.iter().copied().filter(|b| *b != 0).collect();
+        let wide = String::from_utf8_lossy(&wide_bytes).to_lowercase();
+        plain.contains("naixi") || wide.contains("naixi")
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pid;
+        false
+    }
 }
 
 /// 显示并聚焦主窗口（从托盘恢复）
@@ -113,6 +163,16 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // ★单实例守卫：**必须最先注册**（插件按顺序处理）。
+        // 没有它时双击两次图标就会起两套实例，两个后端抢 9845：第二个实例的 spawn_backend
+        // 发现端口被占用就跳过启动，于是两个前端连到同一个后端；第一个实例退出时又会
+        // kill_backend 把那个后端杀掉，第二个实例瞬间失去后端 ⇒ 用户看到「点了没反应」。
+        // 2026-09-22 真机实测同时存在 3 个 naixi-desktop.exe + 2 个后端，即由此而来。
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // 第二个实例被拦截：把已存在的窗口唤到前台，让用户明白"它已经在运行"，
+            // 而不是以为点了没反应又去点一次。
+            show_main_window(app);
+        }))
         .plugin(tauri_plugin_shell::init())
         .manage(BackendPid::default())
         .invoke_handler(tauri::generate_handler![
@@ -311,9 +371,34 @@ fn spawn_backend(app: &tauri::AppHandle) -> Result<(), String> {
             );
         }
     }
-    // 端口已占用说明后端已在运行，避免重复拉起
+    // 端口已被占用。老代码在这里直接 `return Ok(())`（"说明后端已在运行"），
+    // 但在多实例 / 覆盖安装 / 上次异常退出的场景下，端口上跑的可能是**旧后端孤儿**
+    // —— 新实例的前端会连到它上面（版本与资源路径都可能对不上），表现为各种莫名的
+    // 功能失效（2026-09-22 真机实测：3 个实例 + 2 个后端互相干扰）。
+    // 现在的策略：
+    //   · 占用者确实是奶昔后端 → 先杀掉（它是孤儿/旧版本），再起自己的；
+    //   · 占用者是别的程序   → 不硬抢、也不误杀，返回明确错误让用户处理。
     if port_in_use("127.0.0.1:9845") {
-        return Ok(());
+        if let Some(pid) = pid_listening_on(9845) {
+            if is_naixi_backend_pid(pid) {
+                eprintln!("检测到残留的奶昔后端(pid={})，先清理再启动新后端", pid);
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/F", "/T", "/PID", &pid.to_string()])
+                    .creation_flags(0x08000000)
+                    .spawn();
+                for _ in 0..60 {
+                    if !port_in_use("127.0.0.1:9845") {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            }
+        }
+        if port_in_use("127.0.0.1:9845") {
+            return Err("9845 端口被占用，奶昔后端无法启动。若占用者是残留的奶昔进程，\
+                        请结束它后重试；若是其它程序，请先释放该端口。"
+                .to_string());
+        }
     }
     let shell = app.shell();
     match shell
