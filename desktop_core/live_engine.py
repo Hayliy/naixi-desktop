@@ -4023,31 +4023,67 @@ class LiveEngine:
             return "vrm", model_path
         return "live2d", model_path
 
+    def _vrm_search_roots(self):
+        """VRM 候选目录：**有限、已知**的几个位置，绝不递归全盘。
+
+        2026-09-22 真机事故（1.0.1 全量自测挖出）：旧实现找不到 .vrm 时会逐级向上做
+        `**/*.vrm` 递归扫描，而第一个上溯循环已经把游标推到了 `C:\\`，于是第二段直接变成
+        「glob 整个 C 盘」—— 实测单次调用耗时 **139 秒**（最后命中
+        `C:\\Users\\<用户>\\AppData\\Local\\Temp\\yangyang.vrm`）。该函数是同步调用、
+        跑在 aiohttp 事件循环里，这 139 秒内**整个后端 API 全部无响应**（实测期间所有请求
+        连接被拒/超时），用户侧表现就是「点桌宠没反应 / 界面卡死」。顺带它还让
+        %TEMP% 里偶然存在的 .vrm 被当成模型，模型来源不可信。
+
+        现在只认这几个位置，每个都是有限目录，毫秒级返回。
+        """
+        out = []
+        # 1) 用户模型库：与数据库同级的 models/（导入的模型都落在这）
+        try:
+            from desktop_core import storage as _st
+            dbp = getattr(_st, "DB_PATH", None)
+            if dbp:
+                out.append(os.path.join(os.path.dirname(dbp), "models"))
+        except Exception:
+            pass
+        # 2) 安装根 / 工程根下的固定位置（向上最多 4 层，只查固定子目录，不做递归）
+        d = os.path.dirname(os.path.abspath(__file__))
+        for _ in range(4):
+            out.append(os.path.join(d, "data", "models"))
+            out.append(os.path.join(d, "models"))
+            out.append(os.path.join(d, "godot_renderer"))
+            parent = os.path.dirname(d)
+            if parent == d:
+                break
+            d = parent
+        seen, res = set(), []
+        for p in out:
+            ap = os.path.abspath(p)
+            if ap not in seen:
+                seen.add(ap)
+                res.append(ap)
+        return res
+
     def _resolve_model_for_kind(self, kind: str):
         """运行时 2D/3D 切换：按显式渲染模式解析模型路径。
-        kind="vrm"    -> godot_renderer 下首个 .vrm（找不到则空串，交给 vrm_pet 自动发现）
+
+        kind="vrm"    -> 用户模型库 / 工程自带目录下的首个 .vrm；找不到返回空串，
+                         由上层显示「还没有模型」占位卡（这是正确行为，不是错误）
         kind="live2d" -> l2d_discovery 发现的第一个 Live2D 模型
+
+        ⚠ 只扫 _vrm_search_roots() 给出的有限目录。**禁止**改回「逐级向上 + `**` 递归」：
+        那会让这个同步函数跑上百秒并冻结整个后端事件循环（详见 _vrm_search_roots 说明）。
         """
         if kind == "vrm":
             import glob as _glob
-            here = os.path.dirname(os.path.abspath(__file__))
-            d = here
-            for _ in range(8):
-                cands = _glob.glob(os.path.join(d, "godot_renderer", "*.vrm"))
+            for root in self._vrm_search_roots():
+                if not os.path.isdir(root):
+                    continue
+                # 允许模型库按「一层子目录」组织（<models>/<角色名>/xxx.vrm）
+                cands = sorted(_glob.glob(os.path.join(root, "*.vrm")))
+                if not cands:
+                    cands = sorted(_glob.glob(os.path.join(root, "*", "*.vrm")))
                 if cands:
                     return cands[0]
-                parent = os.path.dirname(d)
-                if parent == d:
-                    break
-                d = parent
-            for _ in range(8):
-                cands = _glob.glob(os.path.join(d, "**", "*.vrm"), recursive=True)
-                if cands:
-                    return cands[0]
-                parent = os.path.dirname(d)
-                if parent == d:
-                    break
-                d = parent
             return ""
         try:
             from desktop_core.l2d_discovery import discover_models

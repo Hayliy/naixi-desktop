@@ -3559,8 +3559,15 @@ def _security_scan_core():
 
 
 async def api_security_scan(request):
-    """应急哨兵：检测银狐类木马的【用户态可见痕迹】。"""
-    return web.json_response(_security_scan_core())
+    """应急哨兵：检测银狐类木马的【用户态可见痕迹】。
+
+    ⚠ 放线程池：_security_scan_core 内部同步跑 powershell（单条超时上限 25s），首次扫描
+    实测 **38 秒**。直接在事件循环里同步调用会把整个后端冻住 —— 用户点一下「安全扫描」，
+    其它所有接口在这 38 秒内全部无响应。
+    """
+    loop = asyncio.get_running_loop()
+    data = await loop.run_in_executor(None, _security_scan_core)
+    return web.json_response(data)
 
 
 def _ps_run(cmd, timeout=25):
@@ -3574,17 +3581,22 @@ def _ps_run(cmd, timeout=25):
         return "", f"执行失败: {e}"
 
 
-async def api_security_remediate(request):
-    """一键急救：移除已检测到的银狐【用户态】痕迹。
+def _security_remediate_core():
+    """一键急救的**同步实现**：会多次跑 powershell / taskkill（实测整轮约 27 秒）。
+
+    ⚠ 只允许由 api_security_remediate 放进线程池调用。直接在事件循环里同步调用会冻结
+    整个后端 —— 用户点一下「一键急救」，其它所有接口都会一起卡到它跑完。
+
     安全边界：① 仅处理服务端 IOC 目录内的已知项，绝不接收客户端任意路径/命令（防命令注入）；
               ② 内核级 rootkit（BYOVD wnBios）用户态无法清除，仍需专业杀软 + 安全模式。
-    动作：结束已知 IOC 进程 / 删除可疑计划任务 / 恢复被篡改的 Defender 整盘排除项。"""
+    动作：结束已知 IOC 进程 / 删除可疑计划任务 / 恢复被篡改的 Defender 整盘排除项。
+    """
     import re, platform
     result = {"ok": True, "platform": platform.system(), "actions": []}
     if platform.system() != "Windows":
         result["ok"] = False
         result["note"] = "一键急救仅支持 Windows 平台。"
-        return web.json_response(result)
+        return result
 
     def _act(kind, target, status, msg=""):
         result["actions"].append({"kind": kind, "target": target,
@@ -3639,6 +3651,13 @@ async def api_security_remediate(request):
     result["summary"] = ("已处理 %d 项用户态痕迹" % len(done)) if done else "未发现可移除的银狐用户态痕迹"
     result["note"] = ("用户态急救完成。若仍不放心或怀疑内核级 rootkit（银狐 BYOVD 技术），"
                       "请断网后用专业杀软（火绒 / 360）进安全模式全盘查杀——用户态程序清不掉内核层。")
+    return result
+
+
+async def api_security_remediate(request):
+    """一键急救端点：把 _security_remediate_core 丢进线程池，避免同步阻塞冻结整个后端。"""
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, _security_remediate_core)
     return web.json_response(result)
 
 
@@ -5350,19 +5369,27 @@ async def api_live2d_stream(request):
     return ws
 
 async def api_live_pet_start(request):
-    """启动桌宠（PySide6 独立窗口）"""
+    """启动桌宠（PySide6 独立窗口）
+
+    ⚠ 必须丢进线程池执行：_start_pet 内部有模型目录扫描、Popen、等待进程，是同步阻塞调用。
+    直接在 async handler 里同步调用会**冻结 aiohttp 的事件循环**（2026-09-22 真机实测：
+    模型解析扫全盘时 pet-switch 阻塞 139 秒，期间所有接口连接被拒，用户看到的就是
+    「点桌宠没反应 / 界面卡死」）。放 executor 后，即使它慢也只影响这一个请求。
+    """
     from desktop_core.live_engine import engine
     body = await request.json() if request.body_exists else {}
-    ok = engine._start_pet(body.get("model_path", ""))
+    loop = asyncio.get_running_loop()
+    ok = await loop.run_in_executor(None, lambda: engine._start_pet(body.get("model_path", "")))
     # has_model：进程起得来 ≠ 有形象可显示。全新机器上一个模型都没有时桌宠只会显示
     # 「还没有模型」占位卡（卡上可直接点击导入）；前端必须据此把用户引到导入入口，
     # 而不是一句「桌宠已启动」就完事 —— 那正是用户报「点了桌宠没反应、也找不到导入界面」的场景。
     return web.json_response({"ok": ok, "has_model": bool(getattr(engine, "_pet_model_path", ""))})
 
 async def api_live_pet_stop(request):
-    """停止桌宠"""
+    """停止桌宠（_stop_pet 要等子进程退出，同 pet-start 一样放线程池，勿改回同步调用）"""
     from desktop_core.live_engine import engine
-    engine._stop_pet()
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, engine._stop_pet)
     return web.json_response({"ok": True})
 
 async def api_live_pet_switch(request):
@@ -5373,8 +5400,10 @@ async def api_live_pet_switch(request):
     kind = body.get("kind", "")
     if kind not in ("vrm", "live2d"):
         return web.json_response({"error": "kind 必须是 vrm 或 live2d"}, status=400)
-    engine._stop_pet()
-    ok = engine._start_pet(kind=kind)
+    # 停止 + 启动都在线程池里跑（原因同 pet-start：同步阻塞会冻结整个后端事件循环）
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, engine._stop_pet)
+    ok = await loop.run_in_executor(None, lambda: engine._start_pet(kind=kind))
     return web.json_response({"ok": ok, "kind": kind})
 
 async def api_self_test_request(request):
@@ -5384,16 +5413,37 @@ async def api_self_test_request(request):
     （实测 release 包设 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port
     也不会监听，CDP 走不通）。因此改由「数据文件 + 后端端点」下发指令：
     安装目录下存在 data/self_test.request 时返回 run=true，前端主界面挂载后询问一次即执行。
+    标记文件可指定模式：
+      空文件 / 非 JSON      -> safe（只点安全元素）
+      {"mode":"full"}      -> full（除会终止自测本身的动作外全部点击，仅限一次性测试环境）
     """
     try:
         dd = os.path.dirname(_storage.DB_PATH) if _storage.DB_PATH else os.path.join(_DESKTOP_DIR, "data")
         flag = os.path.join(dd, "self_test.request")
         run = os.path.isfile(flag)
+        mode = "safe"
         if run:
-            log.warning("[SELFTEST] 检测到标记文件 %s，已向前端下发自测指令", flag)
-        return web.json_response({"run": run})
+            try:
+                raw = open(flag, encoding="utf-8", errors="replace").read().strip()
+                if raw.startswith("{"):
+                    cfg = json.loads(raw)
+                    run = bool(cfg.get("run", True))
+                    mode = str(cfg.get("mode") or "safe").lower()
+                    if mode not in ("safe", "full"):
+                        mode = "safe"
+            except Exception:
+                pass
+            if run:
+                log.warning("[SELFTEST] 检测到标记文件 %s（模式=%s），已向前端下发自测指令", flag, mode)
+                # 一次性消费：下发后即删除。否则每次启动应用都会重新跑一遍全量自测
+                # （full 模式会点击删除/清空类按钮，绝不能反复触发）。
+                try:
+                    os.remove(flag)
+                except Exception as e:
+                    log.warning("[SELFTEST] 标记文件删除失败（下次启动会重跑）: %s", e)
+        return web.json_response({"run": run, "mode": mode})
     except Exception as e:
-        return web.json_response({"run": False, "error": str(e)})
+        return web.json_response({"run": False, "mode": "safe", "error": str(e)})
 
 
 async def api_self_test_report(request):
@@ -5409,12 +5459,15 @@ async def api_self_test_report(request):
             json.dump(body, f, ensure_ascii=False, indent=2)
         steps = body.get("steps") or []
         failed = body.get("failedPages") or []
-        log.warning("[SELFTEST] 报告已落盘 %s：共 %d 页，失败 %d 页，错误 %s 条",
-                    out, len(steps), len(failed), body.get("totalErrors"))
-        for s in steps:
-            if s.get("errors") or s.get("suspicious"):
-                log.warning("[SELFTEST] 页面 %s：errors=%s suspicious=%s",
-                            s.get("page"), s.get("errors"), s.get("suspicious"))
+        done = bool(body.get("done"))
+        log.warning("[SELFTEST] %s 报告已落盘 %s：共 %d 页，失败 %d 页，错误 %s 条",
+                    "最终" if done else "增量", out, len(steps), len(failed), body.get("totalErrors"))
+        if done:
+            for s in steps:
+                if s.get("errors") or s.get("suspicious") or (s.get("skipped") or []):
+                    log.warning("[SELFTEST] 页面 %s：动作=%s 错误=%s 可疑=%s 跳过=%s",
+                                s.get("page"), len(s.get("actions") or []),
+                                s.get("errors"), s.get("suspicious"), s.get("skipped"))
         return web.json_response({"ok": True, "path": out})
     except Exception as e:
         log.error("[SELFTEST] 报告落盘失败: %s", e)
