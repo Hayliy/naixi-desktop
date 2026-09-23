@@ -182,8 +182,6 @@ Var hCloseBmp
 Var hCloseBtn
 Var InstallStage
 Var InstallDone
-; 完成后自动翻页的倒计时（tick 数，120ms/tick）。见 !macro AutoAdvanceNext 的说明。
-Var InstallAutoAdvance
 Var ResBatch
 Var ResIdx
 Var BatchStart
@@ -192,8 +190,6 @@ Var BatchTmp
 Var CurPage
 Var unCurPage
 Var unInstallDone
-; 同 InstallAutoAdvance，用于卸载进度页
-Var unInstallAutoAdvance
 Var unInstallStage
 Var unDeleteData
 Var unDeleteChk
@@ -343,33 +339,6 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 !macro AdvanceBack
   GetDlgItem $0 $HWNDPARENT 3
   SendMessage $HWNDPARENT ${WM_COMMAND} 3 $0
-!macroend
-
-; ── 进度页「跑完了就自己翻页」：完成后倒数 ${COUNTER} 个 tick（120ms/tick）再触发一次「下一步」──
-;
-; ★ 修的是用户实际报的体验缺陷：「安装第三步跑完了不走下一步，每次都要我点」。
-; 原因：进度页的计时器在完成时**只被 Kill、不再 Create**（`${If} $InstallDone != 1` 才重建），
-;   于是页面进入静止状态 —— 进度条 100%、文案「安装完成。」都到位了，却必须用户手动点一下
-;   底部的「完成」才翻页。安装本身只要几分钟，用户却以为卡死了。
-; 这里在完成后继续跑 N 个 tick 再自动翻页：**留出约 1 秒**让用户看见 100% 与最终文案，
-;   避免"刚看到 100% 就跳页"显得突兀。
-; 调用方负责判断「什么情况下不该自动翻页」——例如资源完整性告警（$ResBroken=1）时必须停在
-;   本页让用户看到警告并自己确认，绝不能替他翻过去（0.2.4 就是把残缺安装当成功交付的）。
-;
-; 为什么这里用 PostMessage 而不是复用 !macro AdvanceNext（SendMessage）：
-;   本宏在 ${CBFN} 计时器回调里执行，而 SendMessage 会**在回调内部同步完成翻页** ——
-;   页面对话框当场销毁，可调用栈深处还有 nsDialogs 插件的计时器代码要返回，容易踩到
-;   "对话框已销毁"的悬空状态。PostMessage 只把这次点击排进消息队列，等回调返回后由对话框
-;   消息循环处理：翻页时机等价，但不改变调用栈，风险为零。
-; 计时器挂在页面对话框上，翻页时对话框销毁、计时器随之结束，不会带到下一页。
-!macro AutoAdvanceNext COUNTER CBFN
-  IntOp ${COUNTER} ${COUNTER} - 1
-  ${If} ${COUNTER} > 0
-    ${NSD_CreateTimer} ${CBFN} 120
-  ${Else}
-    GetDlgItem $0 $HWNDPARENT 1
-    System::Call "user32::PostMessage(i $HWNDPARENT, i ${WM_COMMAND}, i 1, i $0)"
-  ${EndIf}
 !macroend
 
 ; ── 扁平输入框（去除下沉边框）───
@@ -835,7 +804,6 @@ Function fn_ProgressPage
 
   StrCpy $InstallDone 0
   StrCpy $InstallStage 0
-  StrCpy $InstallAutoAdvance 8
 
   ; 关闭运行中的程序 / 卸载旧版等重活在 fn_DoInstall 首阶段（对话框已显示后）执行，
   ; 避免 nsDialogs::Show 前同步阻塞导致「灰白空窗」闪现（#1）。
@@ -909,10 +877,6 @@ Function fn_InstallTick
   Call fn_DoInstall
   ${If} $InstallDone != 1
     ${NSD_CreateTimer} fn_InstallTick 120
-  ${ElseIf} $ResBroken == 0
-    ; 安装完成且资源完整 ⇒ 约 1 秒后自动翻到「完成」页（用户不必再点）。
-    ; 资源不完整时**故意不翻页**：让用户停在警告文案上自己确认。
-    !insertmacro AutoAdvanceNext $InstallAutoAdvance fn_InstallTick
   ${EndIf}
 FunctionEnd
 
@@ -1208,7 +1172,6 @@ Function un.Progress
   StrCpy $unInstallDone 0
   StrCpy $unInstallStage 0
   StrCpy $unProg 0
-  StrCpy $unInstallAutoAdvance 8
 
   ; 进程占用检测与关闭已前移到 un.ConfirmLeave（离开确认页时执行）。
   ; 原因：若在此处 nsDialogs::Show 之前弹出 MessageBox，会盖在尚未绘制的
@@ -1227,9 +1190,6 @@ Function un.UninstallTick
   Call un.DoUninstallStage
   ${If} $unInstallDone != 1
     ${NSD_CreateTimer} un.UninstallTick 120
-  ${Else}
-    ; 卸载完成 ⇒ 约 1 秒后自动翻到「完成」页（与安装同规则，见 !macro AutoAdvanceNext）
-    !insertmacro AutoAdvanceNext $unInstallAutoAdvance un.UninstallTick
   ${EndIf}
 FunctionEnd
 
