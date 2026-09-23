@@ -6,7 +6,7 @@
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2B-0078D6?logo=windows)
 ![Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20React%2019%20%C2%B7%20Python%203.13-1F4E79)
 ![License](https://img.shields.io/badge/License-Apache%202.0-green)
-![Release](https://img.shields.io/badge/Release-v1.0.1-blue)
+![Release](https://img.shields.io/badge/Release-v1.0.2-blue)
 ![Commits](https://img.shields.io/badge/Commits-575-orange)
 ![LOC](https://img.shields.io/badge/LOC-51k-blueviolet)
 
@@ -238,7 +238,7 @@ naixi-desktop/
 
 ## 快速开始（安装包）
 
-1. 到 [Releases](https://github.com/Hayliy/naixi-desktop/releases) 下载 `naixi-desktop_1.0.1_x64-setup.exe`
+1. 到 [Releases](https://github.com/Hayliy/naixi-desktop/releases) 下载 `naixi-desktop_1.0.2_x64-setup.exe`
 2. 运行安装程序，按向导完成安装（含 WebView2 运行时自动安装）
 3. 从开始菜单或桌面快捷方式启动「奶昔」
 
@@ -321,7 +321,7 @@ npm run tauri dev        # 前端 :1420 HMR；后端 sidecar 绑 127.0.0.1:9845 
 
 ## 已知问题 / 限制
 
-这是 1.0.1 的真实边界，不藏。贡献前请先读，避免在 WIP 模块上白费功夫：
+这是 1.0.2 的真实边界，不藏。贡献前请先读，避免在 WIP 模块上白费功夫：
 
 - **代码签名现状（自签名，如实说明）**：安装包已做 Authenticode 自签名（流程见 [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md)），但自签名证书的根不在 Windows 受信任根库里，**SmartScreen 仍会提示「未知发布者」**——这不是被篡改。签名带来的价值是「完整性与签名主体可核验、固定指纹可公开比对」，因此下载后仍**必须**按[安全与完整性](#安全与完整性)做哈希校验。换受信任 CA 证书后本段会更新。
 - **只发布 NSIS 安装包，不发布 MSI**：`bundle.targets` 已收为 `["nsis"]`（资源聚合改用 7z 后 WiX(MSI) 模板未同步，MSI 会装不出 `desktop_core` 等资源目录）。要恢复 MSI 需先同步 WiX 模板，并同步放开发布卡口 `scripts/release_guard.py` 中的 MSI 断言。
@@ -413,7 +413,7 @@ sha256sum -c --ignore-missing SHA256SUMS.txt
 
 ### 关于代码签名（如实说明）
 
-**当前 1.0.1 安装包使用自签名证书**（尚未购置受信任 CA 的 OV/EV 证书）。自签名的根不被 Windows 信任，因此 SmartScreen 仍会提示「未知发布者」——这是预期行为、不是被篡改，**正因如此，上面两步哈希校验更要照做**。签名带来的额外保证是：包体带 Authenticode 签名，可核验签名主体、指纹与「包是否被改动过」（改动后签名立即失效）。
+**当前 1.0.2 安装包使用自签名证书**（尚未购置受信任 CA 的 OV/EV 证书）。自签名的根不被 Windows 信任，因此 SmartScreen 仍会提示「未知发布者」——这是预期行为、不是被篡改，**正因如此，上面两步哈希校验更要照做**。签名带来的额外保证是：包体带 Authenticode 签名，可核验签名主体、指纹与「包是否被改动过」（改动后签名立即失效）。
 
 核验方法：
 

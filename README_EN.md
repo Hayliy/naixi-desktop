@@ -6,7 +6,7 @@
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2B-0078D6?logo=windows)
 ![Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20React%2019%20%C2%B7%20Python%203.13-1F4E79)
 ![License](https://img.shields.io/badge/License-Apache%202.0-green)
-![Release](https://img.shields.io/badge/Release-v1.0.1-blue)
+![Release](https://img.shields.io/badge/Release-v1.0.2-blue)
 ![Commits](https://img.shields.io/badge/Commits-575-orange)
 ![LOC](https://img.shields.io/badge/LOC-51k-blueviolet)
 
@@ -200,7 +200,7 @@ graph TB
 
 ## Quick Start
 
-1. Download `naixi-desktop_1.0.1_x64-setup.exe` from [Releases](https://github.com/Hayliy/naixi-desktop/releases).
+1. Download `naixi-desktop_1.0.2_x64-setup.exe` from [Releases](https://github.com/Hayliy/naixi-desktop/releases).
 2. Run the installer and follow the wizard (WebView2 runtime is installed automatically).
 3. Launch "奶昔" from the Start menu or desktop shortcut.
 
@@ -271,7 +271,7 @@ These large or copyrighted assets are **not** distributed with the repo:
 
 ## Known Issues / Limitations
 
-The honest boundary of 1.0.1:
+The honest boundary of 1.0.2:
 
 - **Code signing is self-signed.** The installer carries a valid Authenticode signature, but a self-signed root is not
   trusted by Windows, so SmartScreen still warns about an unknown publisher. That is expected, not tampering. What the
@@ -360,7 +360,7 @@ release and run a full scan.
 The app deliberately **exposes** the hash instead of auto-comparing it: a manifest shipped alongside a tampered
 installer cannot be trusted, so the comparison has to be against GitHub Releases, by you.
 
-**Code signing.** The 1.0.1 installer uses a **self-signed certificate** (no trusted-CA OV/EV certificate yet), so
+**Code signing.** The 1.0.2 installer uses a **self-signed certificate** (no trusted-CA OV/EV certificate yet), so
 SmartScreen still warns about an unknown publisher. This is expected. Verification:
 
 1. Download `naixi-selfsign.cer` from the release and import it into "Trusted Root Certification Authorities" (or just
