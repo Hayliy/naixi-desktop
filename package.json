@@ -15,6 +15,7 @@
     "sync:version": "node scripts/sync-version.mjs",
     "check:release-body": "node scripts/check-release-body.mjs",
     "guard": "python scripts/release_guard.py",
+    "verify:gw": "python scripts/verify/gw_route_audit.py && python scripts/verify/gw_data_check.py && node scripts/verify/gw_ssr_check.cjs",
     "pretauri": "node scripts/sync-version.mjs",
     "tauri": "tauri"
   },

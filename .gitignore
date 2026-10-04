@@ -161,3 +161,11 @@ sha256sums.txt
 *.bak.*
 *.bak[0-9]*
 tmp_*.py
+
+# Gateway 页面验证脚本的运行产物
+node_modules/.gw_ssr_tmp/
+scripts/verify/_last_gateway_render.html
+
+# Gateway 页面验证脚本的运行产物
+node_modules/.gw_ssr_tmp/
+scripts/verify/_last_gateway_render.html

@@ -14,6 +14,7 @@ import { ReactFlowProvider } from "@xyflow/react";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import SetupGuide from "@/components/SetupGuide";
 import SettingsPage from "@/components/SettingsPage";
+import GatewayPage from "@/components/GatewayPanel";
 import {
   LayoutDashboard, MessageCircle, BookOpen, Wrench, Brain,
   Bot, Server, Settings, Gamepad, Calendar, FileText,
@@ -33,6 +34,7 @@ const PAGE_TITLES: Record<string, string> = {
   // 左侧导航"连接"用的是 connection 这个 key，而这里原先只有 napcat ⇒ 点「连接」
   // 既取不到标题也取不到图标，标题栏回落到"仪表盘"（看起来像点错了页面）。
   connection: "连接",
+  gateway: "对等互联",
   ops: "运维", live: "直播", scheduler: "自动化",
   logs: "日志", settings: "设置", workflow: "工作流",
   petmemory: "桌宠记忆",
@@ -50,6 +52,7 @@ const PAGE_ICONS: Record<string, React.ReactNode> = {
   cohost: <MessageCircle size={15} className="text-sakura-400" />,
   napcat: <Bot size={15} className="text-sakura-400" />,
   connection: <Bot size={15} className="text-sakura-400" />,
+  gateway: <Network size={15} className="text-sakura-400" />,
   ops: <Server size={15} className="text-sakura-400" />,
   live: <Film size={15} className="text-sakura-400" />,
   scheduler: <Calendar size={15} className="text-sakura-400" />,
@@ -68,6 +71,7 @@ const NAV_ITEMS = [
   { key: "tools",      icon: <Wrench size={16} />,         label: "工具" },
   { key: "memory",     icon: <Brain size={16} />,          label: "记忆" },
   { key: "connection", icon: <Wifi size={16} />,         label: "连接" },
+  { key: "gateway",    icon: <Network size={16} />,      label: "互联" },
   { key: "ops",        icon: <Server size={16} />,         label: "运维" },
   { key: "live",       icon: <Film size={16} />,           label: "直播" },
   { key: "logs",       icon: <FileText size={16} />,       label: "日志" },
@@ -235,6 +239,7 @@ export default function Dashboard() {
           <div style={{ display: activeNav === "tools" ? "block" : "none", height: "100%" }}><ErrorBoundary name="工具"><ToolsPage toolsData={toolsData} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "memory" ? "block" : "none", height: "100%" }}><ErrorBoundary name="记忆"><MemPage /></ErrorBoundary></div>
           <div style={{ display: activeNav === "connection" ? "block" : "none", height: "100%" }}><ErrorBoundary name="连接"><NapcatPage napcat={napcat} /></ErrorBoundary></div>
+          <div style={{ display: activeNav === "gateway" ? "block" : "none" }}><ErrorBoundary name="对等互联"><GatewayPage /></ErrorBoundary></div>
           <div style={{ display: activeNav === "ops" ? "block" : "none", height: "100%" }}><ErrorBoundary name="运维"><OpsPage errors={globalErrors} /></ErrorBoundary></div>
           <div style={{ display: activeNav === "live" ? "block" : "none", height: "100%" }}><ErrorBoundary name="直播"><LivePage /></ErrorBoundary></div>
           <div style={{ display: activeNav === "scheduler" ? "block" : "none", height: "100%" }}><ErrorBoundary name="自动化"><SchedulerPage /></ErrorBoundary></div>

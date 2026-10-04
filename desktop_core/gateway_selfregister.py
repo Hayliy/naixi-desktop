@@ -26,10 +26,12 @@ CAPABILITIES = [
         "description": "返回桌面端注册表里的全部工具及其参数 schema（只读）",
         "endpoint": "/api/tools",
         "trust": "read",
-        "schema": {
-            "type": "object",
-            "properties": {"category": {"type": "string", "description": "按分类过滤，可留空"}},
-        },
+        # 无参 + 显式声明 GET。
+        # api_tools_list 是 add_get 路由、用 request.query.get("category") 读参数，
+        # 登记 schema 非空会让桥接层改走 POST → 405。
+        # http_method 放meta（表结构不变），bridge 认这个字段做方法选择。
+        "meta": {"http_method": "GET", "query_params": ["category"]},
+        "schema": {"type": "object", "properties": {}},
     },
     {
         "id": "desktop.system.resources",
@@ -93,12 +95,21 @@ CAPABILITIES = [
         "description": "列出桌面端全部对外能力（对等互联的发现入口）",
         "endpoint": "/api/gateway/capabilities",
         "trust": "read",
+        # GET 读 query / POST 读 body —— 两种方法语义完全不同：
+        #   GET  列出能力（筛选走 query）
+        #   POST **注册一条能力**（副作用，bridge 绝不能拿它当查询用）
+        # 所以这里登记 schema 只描述 GET 侧的筛选参数，同时在 meta 里显式
+        # 声明 http_method=GET，让 bridge 和前端都不会误走 POST
+        # （2026-10-04 审计发现：原先没声明 http_method，bridge 按「schema 非空→POST」
+        #  判定，模型调这个「只读」能力会真的去注册一条能力（POST 分支有副作用）。）
+        # 放 meta 是不改表结构；capability_register 会把 meta 原样存 JSON。
+        "meta": {"http_method": "GET", "query_params": ["provider", "kind", "include_disabled"]},
         "schema": {
             "type": "object",
             "properties": {
-                "provider": {"type": "string"},
-                "kind": {"type": "string"},
-                "include_disabled": {"type": "string"},
+                "provider": {"type": "string", "description": "按 provider 过滤，可留空"},
+                "kind": {"type": "string", "description": "按 kind 过滤（tool/channel），可留空"},
+                "include_disabled": {"type": "string", "description": "传 1 含已禁用能力，可留空"},
             },
         },
     },
