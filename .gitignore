@@ -175,3 +175,4 @@ scripts/verify/_access_real.json
 
 # Gateway 验证脚本的 access 快照（由 gw_interactive 的 handler 真实调用生成）
 scripts/verify/_access_real.json
+scripts/verify/_offline_snapshot.json

@@ -196,14 +196,29 @@ function build() {
   // ── 关键：手动跑一次真实取数+ 状态推导，证明数据进来后内容正确 ──
   console.log();
   console.log("=== 组件加载完成后的内容（用真实后端数据复算渲染树）===");
-  const st = await (await fetch("http://127.0.0.1:9845/api/gateway/status")).json();
-  const cp = await (await fetch("http://127.0.0.1:9845/api/gateway/capabilities")).json();
-  const caps = cp.capabilities || [];
+  // 后端可能被沙箱回收 -> 回落读离线快照（快照含**真实库里的10 条能力**
+  // 与真实 handler 返回的 access，不是编的假数据）。
+  let st, caps, accessSnap = null;
+  try {
+    st = await (await fetch("http://127.0.0.1:9845/api/gateway/status")).json();
+    const cp = await (await fetch("http://127.0.0.1:9845/api/gateway/capabilities")).json();
+    caps = cp.capabilities || [];
+  } catch (e) {
+    const snapPath = path.join(ROOT, "scripts", "verify", "_offline_snapshot.json");
+    if (!fs.existsSync(snapPath)) throw e;
+    const snap = JSON.parse(fs.readFileSync(snapPath, "utf8"));
+    st = snap.status; caps = snap.caps; accessSnap = snap.access;
+    console.log("  注：后端未运行，用离线快照（真实库数据）");
+  }
   let access = null;
   try {
-    const resp = await fetch("http://127.0.0.1:9845/api/gateway/access");
+    let resp = null;
+    try { resp = await fetch("http://127.0.0.1:9845/api/gateway/access"); } catch { resp = { status: 0 }; }
     if (resp.status === 200) {
       access = await resp.json();
+    } else if (accessSnap) {
+      access = accessSnap;
+      console.log("  注：access 用离线快照");
     } else {
       // 运行中的后端是旧进程（未重启加载新端点）→ 回落读快照。
       // 快照由 scripts/verify/gw_interactive.py 用**同一个 handler** 真实调用生成，
@@ -350,9 +365,24 @@ function build() {
       need(html4.includes("运行中"), "MCP 运行时状态正确");
     }
   }
+  // ═══ 结构断言：侧栏必须与左栏**同级并排**，不是掉在下方 ═══
+  // 曾经把<AccessPanel> 挂在 flex 容器的**外面**（少一层闭合），
+  // 结果它变成父级 block 的子节点 → 竖排到内容下方，完全不是"右侧栏"。
+  // 这类错误 typecheck 抓不到，只有看渲染结构才能发现。
+  need(html4.includes("md:grid-cols-[minmax(0,1fr)_320px]"),
+       "外层是 grid 且定义了两列（左内容 + 右 320px 侧栏）");
+  need(html4.includes("grid-cols-1"),
+       "窄屏堆叠（grid-cols-1），宽屏才并排");
+  // 侧栏根节点：border-l + 不再有 shrink-0（grid 列宽控制）
+  need(html4.includes("border-l border-sakura-100 bg-white flex flex-col min-h-0"),
+       "侧栏根节点是 border-l + min-h-0（在 grid 内由列宽控制宽度）");
+  need(!html4.includes("w-[320px] shrink-0"),
+       "侧栏不再自带 shrink-0（避免在 grid 里被挤压）");
   // 展开时触发按钮应呈选中态（bg-sakura-100 + font-medium）
-  need(html4.includes("bg-sakura-100 text-sakura-600 font-medium"),
-       "展开后触发按钮呈选中态（对齐 SettingsPage tab 选中样式）");
+  need(html4.includes("from-teal-400 to-teal-500 text-white shadow-md"),
+       "展开后触发按钮呈 teal 渐变选中态（一眼可辨已展开）");
+  need(html2.includes("from-sakura-400 to-sakura-500 text-white"),
+       "收起态是 sakura 渐变实心主按钮（与其他页主操作按钮同款，够显眼）");
   // 面板头部带 X 可关闭
   need(html4.includes("开放接入") && html4.includes("MCP"),
        "侧栏头部显示标题与关闭按钮");
@@ -369,6 +399,7 @@ function build() {
   // 留一份 HTML 供人工核对
   const htmlPath = path.join(OUT, "gateway_page.html");
   fs.writeFileSync(htmlPath, html2);
+  fs.writeFileSync(path.join(OUT, "gateway_page_expanded.html"), html4);
   console.log(`\n渲染结果已保存（含真实数据）: ${htmlPath}`);
   process.exit(fails.length ? 1 : 0);
 })().catch((e) => {

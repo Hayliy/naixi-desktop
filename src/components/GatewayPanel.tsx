@@ -329,7 +329,7 @@ function AccessPanel({ access, onClose, onChanged }: {
 }) {
   const mcp = access?.mcp;
   return (
-    <div className="w-[320px] shrink-0 border-l border-sakura-100 bg-white flex flex-col h-full">
+    <div className="border-l border-sakura-100 bg-white flex flex-col min-h-0">
       {/* 头部 */}
       <div className="bg-white flex items-center justify-between px-3 py-2 border-b border-sakura-100 shrink-0">
         <span className="text-xs font-semibold text-sakura-500">开放接入
@@ -622,9 +622,9 @@ export default function GatewayPage() {
         </div>
       </div>
 
-      <div className="flex h-full">
-        {/* ════════ 左栏：状态与能力 ════════ */}
-        <div className="flex-1 min-w-0 overflow-y-auto space-y-3 pr-1">
+      <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_320px] gap-3">
+        {/* ════════ 左：状态与能力 ════════ */}
+        <div className="min-w-0 space-y-3">
           {/* 状态总览 */}
           <div className="grid grid-cols-4 gap-2">
             <div className="bg-white border border-sakura-100 rounded-xl p-3">
@@ -805,12 +805,12 @@ export default function GatewayPage() {
             )}
           </div>
         </div>
-      </div>
-    {/* 右侧栏：点顶部「开放接入」按钮展开（对齐 PetMemoryPage 的左选右显模式） */}
+        {/* 右：开放接入侧栏（点顶部按钮展开，对齐 PetMemoryPage 的左列+右详情结构） */}
       {sideTab === "access" && (
         <AccessPanel access={access} onClose={() => setSideTab(null)}
           onChanged={() => load(true)} />
       )}
+      </div>
     </div>
   );
 }
