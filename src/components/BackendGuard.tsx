@@ -56,9 +56,12 @@ export default function BackendGuard({ children }: { children: ReactNode }) {
     }, 800);
     const to = window.setTimeout(() => {
       if (cancelled) return;
+      // 18s 保底（2026-10-04 从 95s 下调）。正常启动1~3 秒，
+      // 原先 95 秒里页面只有 loading，用户分不清「没起来」还是「页面坏了」。
+      // 超时后立即渲染主应用 + 掉线横幅，让状态可见、可操作。
       setPhase("forced");
       setStatus("down");
-    }, 95000);
+    }, 18000);
     return () => {
       cancelled = true;
       window.clearInterval(boot);
@@ -143,7 +146,7 @@ export default function BackendGuard({ children }: { children: ReactNode }) {
         <div className="fixed top-9 left-0 right-0 z-50 flex items-center gap-2 px-3 py-2 bg-amber-50 border-b border-amber-300 text-amber-800 text-xs">
           <AlertTriangle size={14} className="shrink-0" />
           <span className="flex-1">
-            {errorMsg || "后端未运行，部分功能不可用"}
+            {errorMsg || (isTauri ? "后端未运行，部分功能不可用" : "后端未运行 —— 双击 start_dev.bat 启动（保持窗口不关）")}
           </span>
           {isTauri ? (
             <>
@@ -163,14 +166,21 @@ export default function BackendGuard({ children }: { children: ReactNode }) {
               </button>
             </>
           ) : (
-            <button
-              onClick={restart}
-              disabled={restarting}
-              className="flex items-center gap-1 px-2 py-1 rounded bg-amber-600 text-white text-xs hover:bg-amber-700 disabled:opacity-50"
-            >
-              <RotateCw size={12} className={restarting ? "animate-spin" : ""} />
-              {restarting ? "重启中" : "重启后端"}
-            </button>
+            /* 浏览器模式：后端是独立进程，**死透时前端无法拉起它**
+               （/api/desktop/restart 这个请求本身就发不出去）。
+               所以别给一个注定失败的按钮——直接告诉用户该做什么。 */
+            <span className="flex items-center gap-1.5">
+              <span className="text-[11px] opacity-90">
+                请双击项目根目录的 <code className="px-1 py-px rounded bg-amber-100 font-mono">start_dev.bat</code>
+                ，保持窗口不关
+              </span>
+              <button
+                onClick={() => setBannerDismissed(true)}
+                className="text-amber-500 hover:text-amber-700 text-xs px-1"
+              >
+                关闭
+              </button>
+            </span>
           )}
         </div>
       )}
@@ -180,14 +190,18 @@ export default function BackendGuard({ children }: { children: ReactNode }) {
         <div className="fixed bottom-4 right-4 z-50 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-white/80 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-600 shadow-sm text-xs text-gray-500 dark:text-gray-300 backdrop-blur-sm hover:shadow-md transition-shadow">
           <span className={`inline-block w-2 h-2 rounded-full ${status === "up" ? "bg-green-500" : "bg-red-500"}`} />
           <span className="hidden sm:inline">后端</span>
-          <button
-            onClick={restart}
-            disabled={restarting}
-            title={isTauri ? "重启后端" : "重启后端（浏览器模式）"}
-            className="flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"
-          >
-            <RefreshCw size={12} className={restarting ? "animate-spin" : ""} />
-          </button>
+          {/* 只在 Tauri 下提供重启按钮：浏览器模式后端是独立进程，
+              死透时前端拉不起来（曾给过一个必然失败的按钮）。 */}
+          {isTauri && (
+            <button
+              onClick={restart}
+              disabled={restarting}
+              title="重启后端"
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"
+            >
+              <RefreshCw size={12} className={restarting ? "animate-spin" : ""} />
+            </button>
+          )}
         </div>
       )}
     </>

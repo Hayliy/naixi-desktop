@@ -601,20 +601,22 @@ export default function GatewayPage() {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <p className="text-sm font-semibold text-sakura-600">对等互联</p>
-        <div className="flex items-center gap-1.5">
-          {/* 侧栏触发按钮（对齐 SettingsPage 顶部的 tab 按钮样式：
-              选中态用 bg-sakura-100 + font-medium，未选中是纯文字按钮） */}
+        <div className="flex items-center gap-2">
+          {/* 侧栏触发按钮。用项目里最显眼的主操作按钮样式
+              （与知识库页「添加」按钮同一套：渐变实心 + 白字 + px-3 py-1.5 text-[12px]），
+              选中态改teal 让"已展开"一眼可辨。 */}
           <button onClick={() => setSideTab(t => (t === "access" ? null : "access"))}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] transition-colors ${
+            className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-shadow ${
               sideTab === "access"
-                ? "bg-sakura-100 text-sakura-600 font-medium"
-                : "text-sakura-400 hover:bg-sakura-50 hover:text-sakura-600"
+                ? "bg-gradient-to-br from-teal-400 to-teal-500 text-white shadow-md"
+                : "bg-gradient-to-br from-sakura-400 to-sakura-500 text-white hover:shadow-md"
             }`}>
-            <KeyRound size={11} />
+            <KeyRound size={12} />
             开放接入
+            {sideTab === "access" && <span className="text-[10px] opacity-80">已展开</span>}
           </button>
           <button onClick={() => load(true)} disabled={refreshing}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-sakura-400 hover:bg-sakura-50 hover:text-sakura-600 transition-colors disabled:opacity-50">
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:bg-sakura-50 hover:text-sakura-600 transition-colors disabled:opacity-50">
             <RefreshCw size={11} className={refreshing ? "animate-spin" : ""} /> 刷新
           </button>
         </div>
