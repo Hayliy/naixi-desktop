@@ -2406,6 +2406,153 @@ async def api_gateway_capabilities(request):
     return web.json_response(resp, status=200 if not errs else 400)
 
 
+async def api_gateway_capability_toggle(request):
+    """启用/停用一条能力：POST {"id":"...", "enabled": true|false}。
+
+    为什么要这个端点（2026-10-04）：
+    `capabilities` 表一直有 `enabled` 字段、`capability_register` 也支持写入，
+    但**没有任何接口能单独改它** —— 前端想给用户一个「停用某条能力」的开关，
+    只能靠删掉整条能力（信息全丢）或重新提交全字段（易覆盖并发修改）。
+    这里做**最小增量更新**：先读现状再只改目标字段，避免覆盖他人改动。
+
+    停用后对端`capability_list(include_disabled=False)` 就不再返回它，
+    即刻生效（并广播让对端立即重同步）。
+    """
+    try:
+        from desktop_core import storage as _st
+    except Exception as e:
+        return web.json_response({"ok": False, "error": f"storage 不可用: {e}"}, status=500)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "请求体必须是 JSON"}, status=400)
+
+    cid = (body.get("id") or "").strip()
+    if not cid:
+        return web.json_response({"ok": False, "error": "缺少能力 id"}, status=400)
+    if "enabled" not in body:
+        return web.json_response({"ok": False, "error": "缺少 enabled 字段"}, status=400)
+    enabled = bool(body.get("enabled"))
+
+    # 读现状 → 只改enabled → 整体 upsert（storage 没有 partial update）
+    cur = next((c for c in _st.capability_list(include_disabled=True) if c["id"] == cid), None)
+    if cur is None:
+        return web.json_response({"ok": False, "error": f"能力不存在: {cid}"}, status=404)
+    cur["enabled"] = enabled
+    r = _st.capability_register(cur)
+    if not r.get("ok"):
+        return web.json_response(r, status=400)
+    await _broadcast_capability_changed()
+    return web.json_response({"ok": True, "id": cid, "enabled": enabled})
+
+
+# ── 接入信息聚合（前端「如何让别人连我」的全部素材）────────────────────
+# 用户视角要的不是「后端有几个端点」，而是「我该填什么、填到哪去」。
+# 这个端点一次性给出：对外可达地址、协议端口、鉴权凭据、各客户端配置片段。
+
+
+def _lan_ip() -> str:
+    """取本机在局域网中的 IP（用于告诉用户「同一 WiFi 下的设备填这个」）。
+
+    连不上 UDP 目标时sendto 不抛异常只是发不出去，所以用 8.8.8.8:80探测。
+    探测失败（真无网）才回退 hostname 解析。
+    """
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    except Exception:
+        try:
+            return socket.gethostbyname(socket.gethostname())
+        except Exception:
+            return "127.0.0.1"
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+
+
+async def api_gateway_access(request):
+    """GET /api/gateway/access —— 开放接入所需的全部信息。
+
+    返回：WS/HTTP 端口、局域网 IP、MCP server 运行态与端口、
+    访问 token（只回显是否已配置 + 掩码，不回明文）、
+    以及可直接复制的各客户端配置片段（Claude Code / Cursor / 通用 HTTP）。
+    """
+    st = _GATEWAY_WS_STATE
+    ws_port = st.get("port") or 18400
+    ip = _lan_ip()
+
+    # MCP server 是独立进程，只能探端口判断存活
+    mcp_port = int(os.environ.get("NAIXI_MCP_PORT", "9846"))
+    mcp_alive = False
+    mcp_tools = 0
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://127.0.0.1:{mcp_port}/health",
+                              timeout=aiohttp.ClientTimeout(total=2)) as r:
+                if r.status in (200, 503):
+                    d = await r.json(content_type=None)
+                    mcp_alive = bool(d.get("ok"))
+            async with s.get(f"http://127.0.0.1:{mcp_port}/v1/tools",
+                              timeout=aiohttp.ClientTimeout(total=2)) as r:
+                if r.status == 200:
+                    d = await r.json(content_type=None)
+                    mcp_tools = len(d.get("data", []))
+    except Exception:
+        pass
+
+    # token 只回显「配没配」，不回明文（前端不需要展示明文，
+    # 真要填token 时用户从自己的配置文件里取）
+    tok_raw = os.environ.get("NAIXI_MCP_TOKENS", "").strip()
+    tokens = [t.split(":", 1)[0] for t in tok_raw.split(";") if ":" in t]
+
+    return web.json_response({
+        "ok": True,
+        "provider": GATEWAY_PROVIDER_ID,
+        "http_port": 9845,
+        "ws_port": ws_port,
+        "ws_path": "/ws/gateway",
+        "lan_ip": ip,
+        "localhost_url": f"http://127.0.0.1:{mcp_port}/mcp",
+        "lan_url": f"http://{ip}:{mcp_port}/mcp",
+        "ws_localhost": f"ws://127.0.0.1:{ws_port}/ws/gateway",
+        "ws_lan": f"ws://{ip}:{ws_port}/ws/gateway",
+        "mcp": {
+            "running": mcp_alive,
+            "port": mcp_port,
+            "tools": mcp_tools,
+            "token_configured": bool(tokens),
+            "token_count": len(tokens),
+            # 未配token 且绑 0.0.0.0 时 MCP 会 fail-closed拒绝启动 —— 提前告知
+            "needs_token_for_lan": not tokens,
+        },
+        # 可直接复制的配置片段
+        "configs": {
+            "claude_code": (
+                f'claude mcp add --transport http naixi-desktop '
+                f'http://{ip}:{mcp_port}/mcp'
+            ),
+            "cursor": json.dumps({
+                "mcpServers": {
+                    "naixi-desktop": {"url": f"http://{ip}:{mcp_port}/mcp"}
+                }
+            }, ensure_ascii=False, indent=2),
+            "generic_http": json.dumps({
+                "transport": "streamable-http",
+                "url": f"http://{ip}:{mcp_port}/mcp",
+                "auth": "Authorization: Bearer <你的 token>" if tokens else "(未配 token，本机免鉴权)",
+            }, ensure_ascii=False, indent=2),
+            "ws_internal": (
+                f'# 仅供同机内部对端（如 QQ 机器人）\nws://127.0.0.1:{ws_port}/ws/gateway'
+            ),
+        },
+    })
+
+
 async def api_gateway_capability_delete(request):
     """删除一条能力：POST {"id": "..."}；带 provider 则清空该提供方全部。
 
@@ -4316,6 +4463,8 @@ def setup_routes(app):
     # ── Gateway 能力注册表（Mesh 对等互联） ──
     app.router.add_route("*", "/api/gateway/capabilities", api_gateway_capabilities)
     app.router.add_post("/api/gateway/capability/delete", api_gateway_capability_delete)
+    app.router.add_post("/api/gateway/capability/toggle", api_gateway_capability_toggle)
+    app.router.add_get("/api/gateway/access", api_gateway_access)
     app.router.add_post("/api/gateway/notify", api_gateway_notify)
     app.router.add_post("/api/gateway/pull", api_gateway_pull)
     app.router.add_get("/api/gateway/status", api_gateway_status)

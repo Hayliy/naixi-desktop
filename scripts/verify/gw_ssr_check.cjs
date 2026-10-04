@@ -105,24 +105,75 @@ function build() {
   // loading 初值改 false。数据来自真实后端响应，不是 mock。
   // 注意 esbuild 输出的是 `(0, import_react.useState)(null)` 这种形态，
   // 替换串必须与之一字不差，否则静默不命中（踩过一次）。
-  async function renderWithRealData(st, caps) {
+  async function renderWithRealData(st, caps, access) {
     const base = build();
+    // 组件现在有**三个** useState(null)：status、access、caps。
+    // 用 replaceAll（全局）逐个替换，否则第二个 useState(null) 不会被命中 ——
+    // access 会停在 null，右侧接入面板整块都不渲染（曾踩过静默不命中）。
+    // 注意：`(0, import_react.useState)(true)` 在组件里**不止一处** ——
+    // loading、AddCapabilityForm 的 open、showDisabled 都是 true。
+    // 全局替换会把 open 也改成 false，导致注册表单整块不渲染
+    //（曾因此误判「页面没有可填控件」，实际是验证脚本自己改坏了）。
+    // 所以 true->false 只替换**第一处**（组件根的 loading，声明顺序最先）。
     const subs = [
-      ['(0, import_react.useState)(null)', `(0, import_react.useState)(${JSON.stringify(st)})`],
-      ['(0, import_react.useState)([])', `(0, import_react.useState)(${JSON.stringify(caps)})`],
-      ['(0, import_react.useState)(true)', '(0, import_react.useState)(false)'],
+      ['(0, import_react.useState)(null)', `(0, import_react.useState)(${JSON.stringify(st)})`, -1],
+      ['(0, import_react.useState)([])', `(0, import_react.useState)(${JSON.stringify(caps)})`, -1],
+      // true->false 只改**第 2 处**（组件根的 loading）。实测 esbuild 输出里
+      // useState(true) 共 3 处，按出现顺序：#1 AddCapabilityForm.open、
+      // #2 loading、#3 showDisabled（子组件先于父组件被展开）。
+      // 改错位置会让整页停在 loading（渲染全空）或把表单折叠掉 ——
+      // 两者都会让「页面没有可填控件」的断言误报为产品缺陷。
+      ['(0, import_react.useState)(true)', '(0, import_react.useState)(false)', 'nth:2'],
     ];
     let variant = base;
-    for (const [from, to] of subs) {
-      if (!variant.includes(from)) {
-        console.log(`  WARN 未命中替换串: ${from}`);
-        continue;
+    for (const [from, to, limit] of subs) {
+      if (!variant.includes(from)) { console.log(`  WARN 未命中替换串: ${from}`); continue; }
+      // limit > 0 时只替换前 N 处（避免误伤同形的其它 state）
+      if (typeof limit === "string" && limit.startsWith("nth:")) {
+        // 替换第N 处（1-based），前面的原样保留
+        const nth = parseInt(limit.slice(4), 10);
+        let rest = variant;
+        let head = "";
+        for (let i = 1; i <= nth; i++) {
+          const idx = rest.indexOf(from);
+          if (idx < 0) { head += rest; rest = ""; break; }
+          if (i === nth) {
+            head += rest.slice(0, idx) + to;
+            rest = rest.slice(idx + from.length);
+          } else {
+            head += rest.slice(0, idx + from.length);
+            rest = rest.slice(idx + from.length);
+          }
+        }
+        variant = head + rest;
+      } else if (limit > 0) {
+        let rest = variant;
+        let head = "";
+        for (let i = 0; i < limit; i++) {
+          const idx = rest.indexOf(from);
+          if (idx < 0) break;
+          head += rest.slice(0, idx) + to;
+          rest = rest.slice(idx + from.length);
+        }
+        variant = head + rest;
+      } else {
+        variant = variant.split(from).join(to);
       }
-      variant = variant.replace(from, to);
     }
-    const p = path.join(OUT, `gw_ssr_variant_${Date.now()}.js`);
-    fs.writeFileSync(p, variant);
-    const vmod = require(p);
+    if (access) {
+      // access 是第三个状态位，替换第二处 useState 的注入值
+      const marker = `(0, import_react.useState)(${JSON.stringify(st)})`;
+      const idx2 = variant.indexOf(marker, variant.indexOf(marker) + marker.length);
+      if (idx2 >= 0) {
+        variant = variant.slice(0, idx2) + `(0, import_react.useState)(${JSON.stringify(access)})` +
+                  variant.slice(idx2 + marker.length);
+      } else {
+        console.log("  WARN access 注入位未找到");
+      }
+    }
+    const p2 = path.join(OUT, `gw_ssr_variant_${Date.now()}_${Math.random().toString(36).slice(2)}.js`);
+    fs.writeFileSync(p2, variant);
+    const vmod = require(p2);
     const C = vmod.default || vmod.GatewayPage;
     return ReactDOMServer.renderToStaticMarkup(
       React.createElement(React.Fragment, null, React.createElement(C))
@@ -146,6 +197,24 @@ function build() {
   const st = await (await fetch("http://127.0.0.1:9845/api/gateway/status")).json();
   const cp = await (await fetch("http://127.0.0.1:9845/api/gateway/capabilities")).json();
   const caps = cp.capabilities || [];
+  let access = null;
+  try {
+    const resp = await fetch("http://127.0.0.1:9845/api/gateway/access");
+    if (resp.status === 200) {
+      access = await resp.json();
+    } else {
+      // 运行中的后端是旧进程（未重启加载新端点）→ 回落读快照。
+      // 快照由 scripts/verify/gw_interactive.py 用**同一个 handler** 真实调用生成，
+      // 不是手写的假数据。
+      const snap = path.join(ROOT, "scripts", "verify", "_access_real.json");
+      if (fs.existsSync(snap)) {
+        access = JSON.parse(fs.readFileSync(snap, "utf8"));
+        console.log("  注：后端未重启（" + resp.status + "），access 用真实 handler 快照");
+      } else {
+        console.log("  注：后端未重启且无快照，跳过接入面板断言");
+      }
+    }
+  } catch (e) { console.log("  注：取 access 失败（" + e.message + "）"); }
   const peerCount = st.peer_count ?? 0;
   const readCount = caps.filter((c) => c.trust === "read").length;
   const writeCount = caps.filter((c) => c.trust === "write").length;
@@ -153,12 +222,12 @@ function build() {
   console.log(`  真实数据: ws_started=${st.ws_started} ws_port=${st.ws_port} peers=${peerCount} caps=${caps.length}`);
 
   // 把真实数据注入组件的初始状态再渲染一次（绕过 useEffect）
-  const html2 = await renderWithRealData(st, caps);
+  const html2 = await renderWithRealData(st, caps, access);
 
   const cards = [
     ["控制平面", `WS ${st.ws_port}`],
     ["已连接对端", `${peerCount} 个`],
-    ["暴露能力", `${caps.length} 条`],
+    ["已启用能力", `${caps.length} 条`],
     ["需人工确认", `${confirmCount} 条`],
   ];
   for (const [k, v] of cards) {
@@ -194,7 +263,7 @@ function build() {
         idle_s: 3.2,
       }],
     });
-    const html3 = await renderWithRealData(fakePeerStatus, caps);
+    const html3 = await renderWithRealData(fakePeerStatus, caps, access);
     need(!html3.includes("暂无对端接入"), "有对端时不再显示空态");
     need(html3.includes("qq-naixi"), "渲染出对端名 qq-naixi");
     need(html3.includes("订阅 capability/task/event"), "渲染出订阅主题");
@@ -204,7 +273,7 @@ function build() {
     console.log("  注：peer 数据为构造（当前后端确实无对端接入），字段形状照抄真实响应。");
   }
 
-  need(html2.includes("本端能力"), "有「本端能力」区块标题");
+  need(html2.includes("能力清单"), "有「能力清单」区块标题");
   for (const c of caps) {
     need(html2.includes(c.id), `能力行 ${c.id} 已渲染`);
   }
@@ -219,6 +288,64 @@ function build() {
          `标签「${t}」已渲染`);
   }
   need(html2.includes("不提供直接测试"), "write 能力按钮提示正确");
+
+  // ═══用户视角的硬要求：页面必须有「能填/能选/能复制」的东西 ═══
+  // 上一版只有展示，看起来跟没改一样。这里逐条断言真实交互控件进了 DOM。
+  console.log();
+  console.log("=== 交互控件（用户能填/能选/能复制的东西）===");
+
+  // 计数：input / select / button / textarea / pre(可复制配置)
+  const count = (tag) => (html2.match(new RegExp("<" + tag + "\\b", "g")) || []).length;
+  const nInput = count("input"), nSelect = count("select"), nBtn = count("button");
+  console.log(`  DOM 计数: input=${nInput} select=${nSelect} button=${nBtn}`);
+
+  need(nInput >= 6, `页面有可勾选/可填控件（input ${nInput} 个：含停用+表单 4 文本框+确认勾选）`);
+  need(nSelect >= 3, `页面有下拉选择（select ${nSelect} 个：权限筛选+类型+权限等级）`);
+  need(nBtn >= 12, `页面有可点操作（button ${nBtn} 个）`);
+
+  // 筛选器
+  need(html2.includes("全部权限"), "有权限等级筛选下拉");
+  need(html2.includes("含停用"), "有「含停用」开关");
+
+  // 停用开关的 title 提示（用户知道圆点能点）
+  need(html2.includes("点击停用"), "能力行有停用开关（title 提示）");
+
+  // 编辑能力
+  need(html2.includes("编辑名称"), "能力行有编辑入口");
+
+  // 注册自定义能力表单
+  need(html2.includes("注册自定义能力"), "有「注册自定义能力」入口");
+  need(html2.includes("能力 ID（唯一"), "注册表单有 ID 输入项");
+  need(html2.includes("需要人工确认后才能执行"), "注册表单有确认勾选项");
+
+  // 开放接入面板
+  need(html2.includes("开放接入"), "右侧有「开放接入」区块");
+  need(html2.includes("一键接入配置"), "有「一键接入配置」区块");
+  if (access) {
+    need(html2.includes(access.lan_ip), `显示真实局域网 IP ${access.lan_ip}`);
+    need(html2.includes(access.lan_url), "显示局域网 MCP 地址");
+    need(html2.includes("Claude Code"), "给出 Claude Code 接入配置");
+    need(html2.includes("Cursor"), "给出 Cursor 接入配置");
+    need(html2.includes("通用 HTTP"), "给出通用 HTTP 接入配置");
+    need(html2.includes("内部 WS"), "给出内部 WS 地址");
+    need(html2.includes("复制"), "配置块带复制按钮");
+    // token 未配时必须明确告知用户怎么办
+    if (access.mcp && access.mcp.needs_token_for_lan) {
+      need(html2.includes("NAIXI_MCP_TOKENS"), "未配 token 时提示了配置方式");
+    }
+    // MCP 未运行时必须如实说，并给启动命令
+    if (!access.mcp.running) {
+      need(html2.includes("mcp_server.py"), "MCP 未运行时给出启动命令");
+      need(html2.includes("未启动"), "MCP 状态如实显示「未启动」（不谎报运行）");
+    } else {
+      need(html2.includes("运行中"), "MCP 运行时状态正确");
+    }
+  } else {
+    console.log("  （后端未重启，access 不可用，跳过接入面板断言）");
+  }
+
+  // 已停用的能力要标出来
+  if (html2.includes("已停用")) console.log("  （存在已停用能力，标注已渲染）");
 
   console.log(`\n  实际发起的后端请求 (${ApiCalls.length} 条):`);
   for (const c of ApiCalls) console.log(`    ${c.method} ${c.url}`);

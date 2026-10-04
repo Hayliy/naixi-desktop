@@ -169,3 +169,9 @@ scripts/verify/_last_gateway_render.html
 # Gateway 页面验证脚本的运行产物
 node_modules/.gw_ssr_tmp/
 scripts/verify/_last_gateway_render.html
+
+# Gateway 验证脚本的 access 快照（由 gw_interactive 的 handler 真实调用生成）
+scripts/verify/_access_real.json
+
+# Gateway 验证脚本的 access 快照（由 gw_interactive 的 handler 真实调用生成）
+scripts/verify/_access_real.json
