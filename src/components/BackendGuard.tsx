@@ -18,7 +18,7 @@ type Phase = "booting" | "running" | "forced";
 // 1) 启动期（booting）用 invoke("backend_ready") 探测（Tauri 通道，不走 HTTP），
 //    后端就绪前不渲染主应用、不发任何 HTTP 请求 → 启动期零红色 error。
 // 2) 就绪后（running）渲染主应用，并每 5s 健康检查，失联显示横幅 + 重启入口。
-// 3) 超时保底（forced）：若 95s 仍连不上（后端可能彻底挂了），强制渲染主应用 + 横幅。
+// 3) 超时保底（forced）：若 18s 仍连不上（后端可能彻底挂了），强制渲染主应用 + 横幅（见下方 18s 定时器）。
 export default function BackendGuard({ children }: { children: ReactNode }) {
   const [phase, setPhase] = useState<Phase>("booting");
   const [status, setStatus] = useState<Status>("checking");
@@ -105,7 +105,13 @@ export default function BackendGuard({ children }: { children: ReactNode }) {
         await apiPost("/api/desktop/restart", {});
       }
     } catch (e) {
-      setErrorMsg(typeof e === "string" ? e : "后端启动失败，请查看日志");
+      if (isTauri) {
+        setErrorMsg(typeof e === "string" ? e : "后端启动失败，请查看日志");
+      } else {
+        // 浏览器模式下后端是独立进程，若已离线则 POST 根本发不出去：
+        // 诚实告知去双击 start_dev.bat，而不是假装「重启中」。
+        setErrorMsg("无法连接后端以重启，请双击 start_dev.bat 启动（保持窗口不关）");
+      }
     }
     setTimeout(() => {
       checkBackend().then((ok) => {
@@ -166,13 +172,20 @@ export default function BackendGuard({ children }: { children: ReactNode }) {
               </button>
             </>
           ) : (
-            /* 浏览器模式：后端是独立进程。POST /api/desktop/restart 需要后端在线
-               才能被处理，后端离线时该请求无法送达 —— 所以这条重启路径
-               不适用于后端已离线的情况。这里改为直接说明该怎么启动。 */
+            /* 浏览器模式：后端是独立进程。restart 仅在后端**存活**时可自重启
+               （POST /api/desktop/restart 需后端在线才能被处理）；
+               若后端已离线该请求发不出去，点击会失败并提示双击 start_dev.bat。 */
             <span className="flex items-center gap-1.5">
+              <button
+                onClick={restart}
+                disabled={restarting}
+                className="flex items-center gap-1 px-2 py-1 rounded bg-amber-600 text-white text-xs hover:bg-amber-700 disabled:opacity-50"
+              >
+                <RotateCw size={12} className={restarting ? "animate-spin" : ""} />
+                {restarting ? "重启中" : "重启后端"}
+              </button>
               <span className="text-[11px] opacity-90">
-                请双击项目根目录的 <code className="px-1 py-px rounded bg-amber-100 font-mono">start_dev.bat</code>
-                ，保持窗口不关
+                若无效请双击 <code className="px-1 py-px rounded bg-amber-100 font-mono">start_dev.bat</code>
               </span>
               <button
                 onClick={() => setBannerDismissed(true)}
@@ -190,18 +203,16 @@ export default function BackendGuard({ children }: { children: ReactNode }) {
         <div className="fixed bottom-4 right-4 z-50 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-white/80 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-600 shadow-sm text-xs text-gray-500 dark:text-gray-300 backdrop-blur-sm hover:shadow-md transition-shadow">
           <span className={`inline-block w-2 h-2 rounded-full ${status === "up" ? "bg-green-500" : "bg-red-500"}`} />
           <span className="hidden sm:inline">后端</span>
-          {/* 只在 Tauri 下提供重启按钮：浏览器模式后端是独立进程，
-              死透时前端拉不起来（曾给过一个必然失败的按钮）。 */}
-          {isTauri && (
-            <button
-              onClick={restart}
-              disabled={restarting}
-              title="重启后端"
-              className="flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"
-            >
-              <RefreshCw size={12} className={restarting ? "animate-spin" : ""} />
-            </button>
-          )}
+          {/* 浏览器模式后端是独立进程：restart 仅在后端存活时有效，
+              离线时点击会失败并提示双击 start_dev.bat（见 restart() 的 catch）。 */}
+          <button
+            onClick={restart}
+            disabled={restarting}
+            title="重启后端"
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"
+          >
+            <RefreshCw size={12} className={restarting ? "animate-spin" : ""} />
+          </button>
         </div>
       )}
     </>

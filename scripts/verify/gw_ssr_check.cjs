@@ -372,8 +372,12 @@ function build() {
   // 且隐藏时根本不挂载右栏（无空列）。typecheck 抓不到这类布局错，只能靠结构断言。
   need(html4.includes("flex flex-col lg:flex-row"),
        "外层是 flex 容器，lg 以上并排（对齐 OpsPage 规范）");
-  need(html4.includes("flex-1 min-w-0 space-y-3"),
-       "左栏是 flex-1，单独存在时占满整宽（隐藏态不再留空列）");
+  need(html4.includes("flex-1 min-h-0 flex flex-col lg:flex-row"),
+       "外层 flex 容器承接 h-full（flex-1 min-h-0），左右两栏高度受控、各自滚动");
+  need(html2.includes("h-full flex flex-col gap-3"),
+       "GatewayPage 根节点 h-full + flex-col（高度链从 Dashboard 的 100% 贯通下来）");
+  need(html4.includes("flex-1 min-w-0 min-h-0 overflow-y-auto space-y-3"),
+       "左栏是 flex-1 + min-h-0 + overflow-y-auto（隐藏态占满整宽且可独立滚动）");
   need(html4.includes("lg:w-[320px] lg:flex-shrink-0"),
        "右栏固定 320px 且不收缩（lg 以上为右列）");
   need(html4.includes("border border-sakura-100 rounded-xl"),

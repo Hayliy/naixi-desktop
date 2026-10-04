@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   Network, RefreshCw, Trash2, Shield, ShieldAlert, Loader2, Zap, Cpu, Radio,
-  Plus, Check, X, Copy, KeyRound, ChevronDown, ChevronRight,
+  Plus, Check, X, Copy, KeyRound, ChevronDown, ChevronRight, AlertTriangle,
 } from "lucide-react";
 import { apiGet, apiPost } from "@/lib/api";
 import { useToast } from "@/components/Toast";
@@ -601,7 +601,7 @@ export default function GatewayPage() {
   const mcp = access?.mcp;
 
   return (
-    <div className="space-y-3">
+    <div className="h-full flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <p className="text-sm font-semibold text-sakura-600">对等互联</p>
         <div className="flex items-center gap-2">
@@ -625,11 +625,24 @@ export default function GatewayPage() {
         </div>
       </div>
 
+      {/* 后端未连接时的页内提示（与全局横幅互补，直接出现在本页顶部更醒目）。
+          条件：加载完成且 gateway status 仍为 null（即后端不可达）。 */}
+      {!loading && !status && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+          <AlertTriangle size={14} className="shrink-0" />
+          <span className="flex-1">
+            后端未连接，对等互联功能不可用。请双击项目根目录的 <code className="px-1 py-px rounded bg-amber-100 font-mono">start_dev.bat</code> 启动（保持窗口不关）。
+          </span>
+        </div>
+      )}
+
       {/* 对齐 OpsPage 的已批准规范：flex 容器，lg 以上才并排，右栏固定 320px。
-          隐藏时不挂载右栏 —— 不会像 grid 那样预留空列把左栏挤窄。 */}
-      <div className="flex flex-col lg:flex-row gap-3">
+          隐藏时不挂载右栏 —— 不会像 grid 那样预留空列把左栏挤窄。
+          h-full 链：Dashboard 第 242 行给本页 height:100% → 这里 flex-1 min-h-0
+          承接，左右两栏各自独立滚动，侧栏不再无限撑高。 */}
+      <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-3">
         {/* ════════ 左：状态与能力 ════════ */}
-        <div className="flex-1 min-w-0 space-y-3">
+        <div className="flex-1 min-w-0 min-h-0 overflow-y-auto space-y-3">
           {/* 状态总览 */}
           <div className="grid grid-cols-4 gap-2">
             <div className="bg-white border border-sakura-100 rounded-xl p-3">
