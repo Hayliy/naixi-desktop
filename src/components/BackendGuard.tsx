@@ -146,7 +146,7 @@ export default function BackendGuard({ children }: { children: ReactNode }) {
         <div className="fixed top-9 left-0 right-0 z-50 flex items-center gap-2 px-3 py-2 bg-amber-50 border-b border-amber-300 text-amber-800 text-xs">
           <AlertTriangle size={14} className="shrink-0" />
           <span className="flex-1">
-            {errorMsg || (isTauri ? "后端未运行，部分功能不可用" : "后端未运行 —— 双击 start_dev.bat 启动（保持窗口不关）")}
+            {errorMsg || "后端未运行，部分功能不可用"}
           </span>
           {isTauri ? (
             <>
@@ -166,9 +166,9 @@ export default function BackendGuard({ children }: { children: ReactNode }) {
               </button>
             </>
           ) : (
-            /* 浏览器模式：后端是独立进程，**死透时前端无法拉起它**
-               （/api/desktop/restart 这个请求本身就发不出去）。
-               所以别给一个注定失败的按钮——直接告诉用户该做什么。 */
+            /* 浏览器模式：后端是独立进程。POST /api/desktop/restart 需要后端在线
+               才能被处理，后端离线时该请求无法送达 —— 所以这条重启路径
+               不适用于后端已离线的情况。这里改为直接说明该怎么启动。 */
             <span className="flex items-center gap-1.5">
               <span className="text-[11px] opacity-90">
                 请双击项目根目录的 <code className="px-1 py-px rounded bg-amber-100 font-mono">start_dev.bat</code>
