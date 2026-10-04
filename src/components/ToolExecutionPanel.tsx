@@ -34,20 +34,20 @@ export default function ToolExecutionPanel({ events }: { events: ToolEvent[] }) 
 
   return (
     <div className="space-y-1 my-2">
-      <p className="text-[10px] text-sakura-400 font-medium px-1">工具调用</p>
+      <p className="text-[11px] text-sakura-400 font-medium px-1">工具调用</p>
       <div className="space-y-1">
         {events.map((ev) => (
-          <div key={ev.id} className={`px-2.5 py-1.5 rounded-lg border ${stateColor(ev.state)} text-[11px]`}>
+          <div key={ev.id} className={`px-2.5 py-1.5 rounded-lg border ${stateColor(ev.state)} text-[12px]`}>
             <div className="flex items-center gap-1.5">
               {stateIcon(ev.state)}
               <span className="font-medium text-sakura-600 truncate">{ev.name}</span>
-              {ev.state === "loading" && <span className="text-sakura-400 ml-auto text-[10px]">运行中...</span>}
+              {ev.state === "loading" && <span className="text-sakura-400 ml-auto text-[11px]">运行中...</span>}
             </div>
             {ev.state === "done" && ev.content && (
-              <p className="mt-1 text-[10px] text-sakura-500 line-clamp-2 break-all">{ev.content.slice(0, 120)}</p>
+              <p className="mt-1 text-[11px] text-sakura-500 line-clamp-2 break-all">{ev.content.slice(0, 120)}</p>
             )}
             {ev.state === "error" && (
-              <p className="mt-1 text-[10px] text-red-500">{ev.content?.slice(0, 80) || "执行出错"}</p>
+              <p className="mt-1 text-[11px] text-red-500">{ev.content?.slice(0, 80) || "执行出错"}</p>
             )}
           </div>
         ))}

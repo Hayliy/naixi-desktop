@@ -417,10 +417,10 @@ export default function ChatPage() {
                       {activeKey ? convName(activeKey, msgs, customNames[activeKey], convs.find(c => c.key === activeKey)?.last_msg) : "新对话"}
                     </button>
                   )}
-                  {activeKey && <span className="text-[10px] text-sakura-300 truncate">{activeKey}</span>}
+                  {activeKey && <span className="text-[11px] text-sakura-300 truncate">{activeKey}</span>}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                  <div className="flex items-center gap-1 px-2 py-1 rounded text-[10px] bg-sakura-50 text-sakura-400" title={realTokens ? `输入 ${realTokens.input} · 输出 ${realTokens.output}` : "未获取到用量数据"}>
+                  <div className="flex items-center gap-1 px-2 py-1 rounded text-[11px] bg-sakura-50 text-sakura-400" title={realTokens ? `输入 ${realTokens.input} · 输出 ${realTokens.output}` : "未获取到用量数据"}>
                     <Sparkles size={10} />
                     <span>{realTokens ? `${(realTokens.input! + realTokens.output!) > 1000 ? `${((realTokens.input! + realTokens.output!) / 1000).toFixed(1)}k` : realTokens.input! + realTokens.output!} tokens` : "-"}</span>
                   </div>
@@ -456,39 +456,39 @@ export default function ChatPage() {
                 <div className="flex items-center gap-0.5 flex-wrap">
                   {[{ key: "owner", label: "日常助手", icon: Bot }, { key: "group", label: "创作模式", icon: FileText }, { key: "stranger", label: "快捷问答", icon: FileText }].map(({ key, label, icon: SIcon }) => (
                     <button key={key} onClick={() => setScene(key)}
-                      className={`flex items-center gap-1 px-1.5 py-1 rounded text-[10px] transition-colors ${scene === key ? "bg-gradient-to-r from-sakura-100 to-sakura-200 text-sakura-600 font-medium" : "text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50"}`}>
+                      className={`flex items-center gap-1 px-1.5 py-1 rounded text-[11px] transition-colors ${scene === key ? "bg-gradient-to-r from-sakura-100 to-sakura-200 text-sakura-600 font-medium" : "text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50"}`}>
                       <SIcon size={9} /><span className="max-w-[4rem] truncate">{label}</span>
                       {scene === key && <span className="w-1.5 h-1.5 rounded-full bg-sakura-500" />}
                     </button>
                   ))}
                   {customScenes.map(s => (
                     <button key={s.file} onClick={() => setScene(s.file)}
-                      className={`flex items-center gap-1 px-1.5 py-1 rounded text-[10px] transition-colors ${scene === s.file ? "bg-gradient-to-r from-sakura-100 to-sakura-200 text-sakura-600 font-medium" : "text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50"}`}>
+                      className={`flex items-center gap-1 px-1.5 py-1 rounded text-[11px] transition-colors ${scene === s.file ? "bg-gradient-to-r from-sakura-100 to-sakura-200 text-sakura-600 font-medium" : "text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50"}`}>
                       <FileText size={9} /><span className="max-w-[4rem] truncate">{s.desc}</span>
                       {scene === s.file && <span className="w-1.5 h-1.5 rounded-full bg-sakura-500" />}
                     </button>
                   ))}
                 </div>
                 <button onClick={() => setAgentMode(!agentMode)}
-                  className={`flex items-center gap-1 px-1.5 py-1 rounded text-[10px] transition-colors ${agentMode ? "bg-gradient-to-r from-teal-100 to-green-100 text-teal-600 font-medium" : "text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50"}`}>
+                  className={`flex items-center gap-1 px-1.5 py-1 rounded text-[11px] transition-colors ${agentMode ? "bg-gradient-to-r from-teal-100 to-green-100 text-teal-600 font-medium" : "text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50"}`}>
                   <Cpu size={9} /><span>Agent</span>
                   {agentMode && <span className="w-1.5 h-1.5 rounded-full bg-teal-500" />}
                 </button>
                 {currentExpert && (
                   <button onClick={() => { setCurrentExpert(null); localStorage.removeItem("naixi_expert"); }}
-                    className="flex items-center gap-1 px-1.5 py-1 rounded text-[10px] bg-gradient-to-r from-purple-100 to-pink-100 text-purple-600 font-medium">
+                    className="flex items-center gap-1 px-1.5 py-1 rounded text-[11px] bg-gradient-to-r from-purple-100 to-pink-100 text-purple-600 font-medium">
                     <User size={9} /><span className="max-w-[80px] truncate">{currentExpert.name}</span>
                     <X size={9} className="ml-0.5" />
                   </button>
                 )}
                 {team.length > 0 && (
                   <button onClick={() => { setTeam([]); setTeamName(""); }}
-                    className="flex items-center gap-1 px-1.5 py-1 rounded text-[10px] bg-gradient-to-r from-amber-100 to-orange-100 text-amber-600 font-medium">
+                    className="flex items-center gap-1 px-1.5 py-1 rounded text-[11px] bg-gradient-to-r from-amber-100 to-orange-100 text-amber-600 font-medium">
                     <Users size={9} /><span className="max-w-[100px] truncate">{teamName || `团队 (${team.length}人)`}</span>
                     <X size={9} className="ml-0.5" />
                   </button>
                 )}
-                {fullTrust && <span className="text-[10px] text-red-400 flex items-center gap-0.5"><Shield size={9} />完全信任</span>}
+                {fullTrust && <span className="text-[11px] text-red-400 flex items-center gap-0.5"><Shield size={9} />完全信任</span>}
               </div>
             </div>
 
@@ -500,7 +500,7 @@ export default function ChatPage() {
                 <div className="flex-1 flex items-center gap-1 px-2 py-1 rounded-lg bg-sakura-50 border border-sakura-100">
                   <Search size={10} className="text-sakura-300 shrink-0" />
                   <input value={msgSearch} onChange={e => setMsgSearch(e.target.value)}
-                    className="flex-1 bg-transparent text-[10px] text-sakura-600 outline-none placeholder:text-sakura-300"
+                    className="flex-1 bg-transparent text-[11px] text-sakura-600 outline-none placeholder:text-sakura-300"
                     placeholder="搜索消息..." />
                 </div>
                 <button onClick={() => setShowStarredOnly(!showStarredOnly)} title={showStarredOnly ? "显示全部" : "仅显示收藏"}
@@ -549,7 +549,7 @@ export default function ChatPage() {
 
           {/* 回复引用栏 */}
           {replyToId && (
-            <div className="flex items-center gap-2 px-4 py-1.5 bg-amber-50 border-t border-amber-100 text-[10px] text-amber-600">
+            <div className="flex items-center gap-2 px-4 py-1.5 bg-amber-50 border-t border-amber-100 text-[11px] text-amber-600">
               <Reply size={10} />
               <span className="flex-1 truncate">回复: {msgs.find(m => m.id === replyToId)?.content.slice(0, 80)}</span>
               <button onClick={() => setReplyToId(null)} className="p-0.5 hover:bg-amber-100 rounded"><X size={10} /></button>

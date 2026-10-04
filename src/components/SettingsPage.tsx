@@ -386,17 +386,17 @@ function SettingsAbout() {
                 alt={k}
                 className="h-28 w-28 rounded-lg border border-sakura-100 bg-white object-contain"
               />
-              <span className="mt-1 text-[10px] text-sakura-300">{k === "wechat" ? "微信" : "支付宝"}</span>
+              <span className="mt-1 text-[11px] text-sakura-300">{k === "wechat" ? "微信" : "支付宝"}</span>
             </div>
           ))}
         </div>
-        <p className="mt-2 text-[10px] text-sakura-400">收款人：<span className="font-semibold text-sakura-500">{SPONSOR_REAL_NAME}</span></p>
+        <p className="mt-2 text-[11px] text-sakura-400">收款人：<span className="font-semibold text-sakura-500">{SPONSOR_REAL_NAME}</span></p>
         {tampered ? (
-          <p className="mt-2 rounded bg-red-50 px-2 py-1 text-[10px] font-semibold text-red-600">
+          <p className="mt-2 rounded bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-600">
             ⚠️ 收款码完整性校验未通过，可能被篡改。请只从官方 GitHub Releases 下载安装包，并核对收款人姓名。
           </p>
         ) : (
-          <p className="mt-1 text-[10px] text-amber-500">✅ 收款码完整性校验通过。付款前仍请核对收款人姓名与上方一致再支付——姓名是最后一道人工防线。</p>
+          <p className="mt-1 text-[11px] text-amber-500">✅ 收款码完整性校验通过。付款前仍请核对收款人姓名与上方一致再支付——姓名是最后一道人工防线。</p>
         )}
       </div>
     </Section>
@@ -465,7 +465,7 @@ function SecurityScanCard() {
             <p className={`text-xs font-semibold ${riskColor}`}>{riskText}</p>
             <ul className="mt-1 space-y-1">
               {scan.checks.map((c: any, i: number) => (
-                <li key={i} className="text-[10px] text-gray-600">
+                <li key={i} className="text-[11px] text-gray-600">
                   <span className={c.level === "danger" ? "text-red-600" : c.level === "warn" ? "text-amber-600" : "text-green-600"}>
                     {c.level === "danger" ? "❌" : c.level === "warn" ? "⚠️" : "✅"}
                   </span>{" "}
@@ -473,14 +473,14 @@ function SecurityScanCard() {
                 </li>
               ))}
             </ul>
-            <p className="mt-2 text-[10px] text-gray-500">{scan.note}</p>
+            <p className="mt-2 text-[11px] text-gray-500">{scan.note}</p>
             {(scan.risk === "danger" || scan.risk === "warn") && (
-              <button onClick={doRemediate} disabled={remediating} className="mt-2 rounded bg-red-500 px-3 py-1 text-[11px] font-semibold text-white hover:bg-red-600 disabled:opacity-50">
+              <button onClick={doRemediate} disabled={remediating} className="mt-2 rounded bg-red-500 px-3 py-1 text-[12px] font-semibold text-white hover:bg-red-600 disabled:opacity-50">
                 {remediating ? "急救中…" : "🛡️ 一键急救（移除用户态痕迹）"}
               </button>
             )}
             {remResult && (
-              <div className="mt-2 rounded bg-gray-50 p-2 text-[10px]">
+              <div className="mt-2 rounded bg-gray-50 p-2 text-[11px]">
                 <p className="font-semibold text-gray-700">{remResult.summary}</p>
                 <ul className="mt-1 space-y-0.5">
                   {remResult.actions.map((a: any, i: number) => (
@@ -493,7 +493,7 @@ function SecurityScanCard() {
               </div>
             )}
             {scan.risk === "danger" && (
-              <div className="mt-2 rounded bg-red-50 p-2 text-[10px] text-red-600">
+              <div className="mt-2 rounded bg-red-50 p-2 text-[11px] text-red-600">
                 <p className="font-semibold">应急动作（请立即执行）：</p>
                 <ol className="list-decimal pl-4">
                   <li>断网（拔网线 / 关 Wi-Fi），阻止数据外泄</li>
@@ -534,16 +534,16 @@ function SelfIntegrityCard() {
   return (
     <Section title="安装包完整性 · 本程序哈希" desc="把下面这串 SHA-256 与 GitHub Releases 上 SHA256SUMS.txt 的「主程序」段（naixi-desktop.exe 那一行）比对；不一致即本机程序可能被替换/篡改。随包自带清单的比对无意义（攻击者连清单一起换），故只暴露哈希供你人工核对。">
       <div className="rounded-lg border border-dashed border-sakura-200 bg-sakura-50/40 p-3">
-        {!info && <p className="text-[10px] text-gray-500">读取中…</p>}
+        {!info && <p className="text-[11px] text-gray-500">读取中…</p>}
         {info && (
-          <div className="text-[10px]">
+          <div className="text-[11px]">
             {info.ok ? (
               <>
                 <div className="flex items-start gap-2">
                   <p className="break-all font-mono text-gray-700">SHA-256: {info.sha256}</p>
                   <button
                     onClick={copy}
-                    className="shrink-0 rounded border border-sakura-200 bg-white px-1.5 py-0.5 text-[10px] text-sakura-600 hover:bg-sakura-50"
+                    className="shrink-0 rounded border border-sakura-200 bg-white px-1.5 py-0.5 text-[11px] text-sakura-600 hover:bg-sakura-50"
                   >
                     {copied ? "已复制" : "复制"}
                   </button>
@@ -619,14 +619,14 @@ function FirstAidCard() {
   return (
     <Section title="360系统急救箱 · 官方正版内核强杀" desc="360系统急救箱支持驱动型/MBR 型（内核 rootkit 层）强杀，是清理银狐顽固木马的靠谱专业工具。它是『按需急救』工具，非实时监测；真正的常驻实时防护请用 360安全卫士。">
       <div className="rounded-lg border border-dashed border-sakura-200 bg-sakura-50/40 p-3 space-y-2">
-        <p className="text-[10px] text-gray-600">{status}</p>
+        <p className="text-[11px] text-gray-600">{status}</p>
         <div className="flex flex-wrap gap-2">
           <button onClick={detect} disabled={busy} className={BTN_GHOST}>检测并运行 360急救箱</button>
           <button onClick={fetchBox} disabled={busy} className={BTN_GHOST}>下载并校验 360急救箱（官方最新）</button>
-          <button onClick={runDownloaded} disabled={busy} className="rounded bg-red-500 px-3 py-1 text-[11px] font-semibold text-white hover:bg-red-600 disabled:opacity-50">🛡️ 运行已下载副本</button>
+          <button onClick={runDownloaded} disabled={busy} className="rounded bg-red-500 px-3 py-1 text-[12px] font-semibold text-white hover:bg-red-600 disabled:opacity-50">🛡️ 运行已下载副本</button>
         </div>
         {info && (
-          <div className="text-[10px]">
+          <div className="text-[11px]">
             {info.ok && info.verified ? (
               <div className="rounded bg-green-50 p-2 text-green-700">
                 <p>✅ 已校验为 360 官方正版（数字签名有效）</p>
@@ -644,7 +644,7 @@ function FirstAidCard() {
           <button onClick={() => openUrl("https://weishi.360.cn/jijiuxiang/")} className={BTN_GHOST}>360急救箱官网 ↗</button>
           <button onClick={() => openUrl("https://weishi.360.cn/")} className={BTN_GHOST}>安装 360安全卫士（常驻防护）↗</button>
         </div>
-        <p className="text-[10px] text-amber-600">⚠️ 下载仅来自官方域名 dl.360safe.com，启动前校验数字签名；非 360 签名的文件会被立即删除，防投毒反噬。建议定期从官网手动更新。</p>
+        <p className="text-[11px] text-amber-600">⚠️ 下载仅来自官方域名 dl.360safe.com，启动前校验数字签名；非 360 签名的文件会被立即删除，防投毒反噬。建议定期从官网手动更新。</p>
       </div>
     </Section>
   );
@@ -678,12 +678,12 @@ function SentinelCard() {
           <button onClick={nowScan} disabled={scanning} className={BTN_GHOST}>{scanning ? "扫描中…" : "立即扫描"}</button>
         </div>
         {st && (
-          <p className="mt-1 text-[10px] text-gray-500">
+          <p className="mt-1 text-[11px] text-gray-500">
             监测{st.running ? "运行中" : "已停止"} · 上次自动扫描：{st.last_scan || "—"} · 可疑项：{st.findings}
           </p>
         )}
         {st && st.risk === "danger" && (
-          <p className="mt-2 rounded bg-red-50 px-2 py-1 text-[10px] font-semibold text-red-600">
+          <p className="mt-2 rounded bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-600">
             ⚠️ 发现高危痕迹！请立即断网、修改密码，并运行上方「360系统急救箱」强力模式 + 进安全模式全盘查杀。
           </p>
         )}
@@ -716,7 +716,7 @@ function SettingsUpdate() {
         <input value={src} onChange={e => setSrc(e.target.value)} className={INPUT}
           placeholder="https://example.com/update.json（留空=默认 GitHub）" />
       </SettingRow>
-      <p className="text-[10px] text-sakura-400 mt-1">默认更新源：https://github.com/Hayliy/naixi-desktop/releases</p>
+      <p className="text-[11px] text-sakura-400 mt-1">默认更新源：https://github.com/Hayliy/naixi-desktop/releases</p>
       <SaveBar saving={saving} onSave={save} />
     </Section>
   );

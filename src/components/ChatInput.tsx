@@ -126,7 +126,7 @@ export default function ChatInput({ onSend, streaming, onStop, onCapabilityClick
       <div className="flex items-center gap-1 mb-2 px-0.5">
         {QUICK_ACTIONS.map((a, i) => (
           <button key={i} onClick={() => onCapabilityClick?.(a)}
-            className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] ${a.color} ${a.bg} hover:opacity-80 transition-opacity`}>
+            className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] ${a.color} ${a.bg} hover:opacity-80 transition-opacity`}>
             <a.icon size={11} />
             <span>{a.label}</span>
           </button>
@@ -166,7 +166,7 @@ export default function ChatInput({ onSend, streaming, onStop, onCapabilityClick
       </div>
       <div className="flex items-center justify-between mt-1 px-1">
         {/* 按当前配置动态显示（改键后随之更新），不再写死「Enter 换行 · Ctrl+Enter 发送」 */}
-        <span className="text-[9px] text-sakura-300">
+        <span className="text-[10px] text-sakura-300">
           {k("换行") || "Enter"} 换行 · {k("发送消息") || "Ctrl+Enter"} 发送 · {k("上一条消息") || "↑"} 上一条
         </span>
       </div>

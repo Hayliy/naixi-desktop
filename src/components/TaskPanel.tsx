@@ -56,8 +56,8 @@ export default function TaskPanel({ onClose }: { onClose: () => void }) {
           tasks.map(task => (
             <div key={task.id} className="bg-sakura-50 rounded-lg p-3 border border-sakura-100">
               <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[11px] font-medium text-sakura-600 truncate max-w-[10rem]">{task.description}</span>
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                <span className="text-[12px] font-medium text-sakura-600 truncate max-w-[10rem]">{task.description}</span>
+                <span className={`text-[11px] px-1.5 py-0.5 rounded-full ${
                   task.status === "done" ? "bg-green-100 text-green-600" :
                   task.status === "failed" ? "bg-red-100 text-red-600" :
                   "bg-sakura-100 text-sakura-500"
@@ -72,7 +72,7 @@ export default function TaskPanel({ onClose }: { onClose: () => void }) {
                       {step.status === "done" ? <CheckCircle2 size={10} className="text-green-500 shrink-0" />
                         : step.status === "running" ? <Loader2 size={10} className="text-sakura-400 animate-spin shrink-0" />
                         : <Circle size={10} className="text-sakura-300 shrink-0" />}
-                      <span className="text-[10px] text-sakura-500 truncate">{step.desc}</span>
+                      <span className="text-[11px] text-sakura-500 truncate">{step.desc}</span>
                     </div>
                   ))}
                 </div>

@@ -73,12 +73,12 @@ export default class ErrorBoundary extends React.Component<ErrorBoundaryProps, E
             </button>
           </div>
           <details className="mt-4 max-w-lg text-left w-full" open>
-            <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-gray-600">错误详情（堆栈）</summary>
-            <pre className="mt-2 text-[10px] text-red-500 bg-red-50 p-3 rounded-lg overflow-auto max-h-[200px] whitespace-pre-wrap text-left leading-relaxed">
+            <summary className="text-[11px] text-gray-400 cursor-pointer hover:text-gray-600">错误详情（堆栈）</summary>
+            <pre className="mt-2 text-[11px] text-red-500 bg-red-50 p-3 rounded-lg overflow-auto max-h-[200px] whitespace-pre-wrap text-left leading-relaxed">
               {this.state.error?.stack || "无堆栈信息"}
             </pre>
             {this.state.errorInfo?.componentStack && (
-              <pre className="mt-1 text-[10px] text-amber-600 bg-amber-50 p-3 rounded-lg overflow-auto max-h-[120px] whitespace-pre-wrap text-left leading-relaxed">
+              <pre className="mt-1 text-[11px] text-amber-600 bg-amber-50 p-3 rounded-lg overflow-auto max-h-[120px] whitespace-pre-wrap text-left leading-relaxed">
                 {this.state.errorInfo.componentStack}
               </pre>
             )}

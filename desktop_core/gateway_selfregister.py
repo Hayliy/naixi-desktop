@@ -23,7 +23,9 @@ CAPABILITIES = [
         "id": "desktop.tools.list",
         "kind": "tool",
         "title": "列出桌面端工具",
-        "description": "返回桌面端注册表里的全部工具及其参数 schema（只读）",
+        # 同上：覆盖用户问法（实测「你有什么新能力」时该工具只拿到 0.261，排第 218 名）
+        "description": "返回桌面端注册表里的全部工具及其参数 schema（只读）。"
+                       "当用户问「你有什么新能力」「有哪些工具」「能用什么」时用它列举",
         "endpoint": "/api/tools",
         "trust": "read",
         # 无参 + 显式声明 GET。
@@ -92,7 +94,15 @@ CAPABILITIES = [
         "id": "desktop.gateway.capabilities",
         "kind": "channel",
         "title": "能力清单",
-        "description": "列出桌面端全部对外能力（对等互联的发现入口）",
+        #描述要覆盖用户真实问法（2026-10-04 真机实测修）：
+        # 用户问「你有什么新能力」，原文案只写「列出桌面端全部对外能力（对等互联的发现入口）」，
+        # BGE 对该问句只给 0.366 相似度、排第 50 名，直接被 ToolRAG 门槛砍掉 →
+        # 模型看不到这个工具，改去盲搜 tool_search 连调 3 次后放弃回答。
+        # 嵌入匹配的是**用户怎么问**，不是内部术语，故把常见问法直接写进描述。
+        "description": "列出桌面端全部对外能力（对等互联的发现入口）。"
+                       "当用户问「你有什么新能力」「你能做什么」「有哪些功能」"
+                       "「桌面端能干什么」「新加了哪些能力」时用这个列举，"
+                       "不要凭空回答、不要编造未列出的能力",
         "endpoint": "/api/gateway/capabilities",
         "trust": "read",
         # GET 读 query / POST 读 body —— 两种方法语义完全不同：

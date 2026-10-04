@@ -39,10 +39,10 @@ export default function PreferencesPanel({ onClose }: { onClose: () => void }) {
               <div className="pt-1 border-t border-sakura-100">
                 {avatarGenerating ? (
                   <div className="space-y-1.5">
-                    <p className="text-[10px] text-sakura-400">AI 头像生成中（每张约 5-15 秒）...</p>
+                    <p className="text-[11px] text-sakura-400">AI 头像生成中（每张约 5-15 秒）...</p>
                     <div className="flex items-center gap-2">
                       <Loader2 size={11} className="animate-spin text-sakura-400 shrink-0" />
-                      <span className="text-[10px] text-sakura-500 font-medium">{avatarCount} 个已生成</span>
+                      <span className="text-[11px] text-sakura-500 font-medium">{avatarCount} 个已生成</span>
                     </div>
                     <div className="w-full h-1.5 rounded-full bg-sakura-100 overflow-hidden">
                       <div className="h-full rounded-full bg-gradient-to-r from-sakura-300 to-sakura-500 transition-all"
@@ -73,13 +73,13 @@ export default function PreferencesPanel({ onClose }: { onClose: () => void }) {
                         notify("请先在「模型供应商」中添加画图模型（如阿里百炼 Wanx2.1）", "warning");
                       }
                     }}
-                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white hover:shadow-md transition-shadow"
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white hover:shadow-md transition-shadow"
                   >
                     <Image size={11} />
                     批量生成 50 个头像
                   </button>
                 )}
-                <p className="text-[9px] text-sakura-300 mt-1">使用 Wanx 2.1 生成二次元风格头像，生成后所有图标自动替换</p>
+                <p className="text-[10px] text-sakura-300 mt-1">使用 Wanx 2.1 生成二次元风格头像，生成后所有图标自动替换</p>
               </div>
             </div>
           )}
@@ -117,12 +117,12 @@ function AvatarRow({ label, storageKey, isName, previewKey }: { label: string; s
           {val ? (
             <img src={val} alt={label} className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
           ) : (
-            <div className="w-full h-full flex items-center justify-center text-[8px] text-sakura-400">{previewKey?.[0] || "?"}</div>
+            <div className="w-full h-full flex items-center justify-center text-[10px] text-sakura-400">{previewKey?.[0] || "?"}</div>
           )}
         </div>
       )}
       <input value={val} onChange={e => save(e.target.value)}
-        className={`flex-1 px-2 py-1 rounded border border-sakura-100 bg-sakura-50 text-[10px] text-sakura-600 ${isName ? "" : "font-mono"}`}
+        className={`flex-1 px-2 py-1 rounded border border-sakura-100 bg-sakura-50 text-[11px] text-sakura-600 ${isName ? "" : "font-mono"}`}
         placeholder={isName ? "留空使用默认" : "头像图片 URL（留空自动 DiceBear）"} />
       {val && (
         <button onClick={clear} className="p-0.5 text-sakura-300 hover:text-red-500 shrink-0"><X size={10} /></button>
@@ -150,7 +150,7 @@ function ShortcutsSettings() {
 
   return (
     <div className="space-y-2 text-xs">
-      <p className="text-[10px] text-sakura-400 mb-1">快捷键列表（点击铅笔后按下新键位即录制）</p>
+      <p className="text-[11px] text-sakura-400 mb-1">快捷键列表（点击铅笔后按下新键位即录制）</p>
       <div className="space-y-1">
         {s.map((item, i) => ei === i ? (
           <div key={item.desc} className="flex items-center gap-1">
@@ -163,9 +163,9 @@ function ShortcutsSettings() {
                 }
                 setEi(null);
               }}
-              className="flex-1 px-1.5 py-0.5 rounded border border-sakura-200 bg-white text-[10px] font-mono text-sakura-600 w-20"
+              className="flex-1 px-1.5 py-0.5 rounded border border-sakura-200 bg-white text-[11px] font-mono text-sakura-600 w-20"
               placeholder="按下新键位" autoFocus />
-            <span className="text-[10px] text-sakura-400 flex-1">{item.desc}</span>
+            <span className="text-[11px] text-sakura-400 flex-1">{item.desc}</span>
             <button onClick={() => {
               if (ek && ek !== item.key && !conflict(ek, i)) { const n = [...s]; n[i] = { ...n[i], key: ek }; commit(n); }
               setEi(null); setDupIdx(null);
@@ -174,9 +174,9 @@ function ShortcutsSettings() {
         ) : (
           <div key={item.desc} className="flex items-center justify-between group">
             <span className="flex items-center gap-1.5">
-              <code className="px-1 py-0.5 rounded bg-sakura-50 text-[10px] font-mono text-sakura-500">{item.key}</code>
-              <span className="text-[10px] text-sakura-400">{item.desc}</span>
-              {dupIdx === i && <span className="text-[9px] text-red-500">键位重复，换个键位</span>}
+              <code className="px-1 py-0.5 rounded bg-sakura-50 text-[11px] font-mono text-sakura-500">{item.key}</code>
+              <span className="text-[11px] text-sakura-400">{item.desc}</span>
+              {dupIdx === i && <span className="text-[10px] text-red-500">键位重复，换个键位</span>}
             </span>
             <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100">
               <button onClick={() => { setEi(i); setEk(item.key); setDupIdx(null); }} className="p-0.5 text-sakura-300 hover:text-sakura-500"><Pencil size={9} /></button>
@@ -189,17 +189,17 @@ function ShortcutsSettings() {
         <div className="flex flex-wrap gap-1">
           {missing.map(a => (
             <button key={a.desc} onClick={() => commit([...s, { ...a }])}
-              className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-sakura-100 text-sakura-400 hover:text-sakura-600 hover:bg-sakura-50">
+              className="flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded border border-sakura-100 text-sakura-400 hover:text-sakura-600 hover:bg-sakura-50">
               <Plus size={9} /> 添加：{a.desc}
             </button>
           ))}
         </div>
       )}
       <button onClick={() => commit(SHORTCUT_ACTIONS.map(a => ({ ...a })))}
-        className="w-full mt-1 px-2.5 py-1 rounded-lg text-[10px] border border-sakura-100 text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 transition-colors">
+        className="w-full mt-1 px-2.5 py-1 rounded-lg text-[11px] border border-sakura-100 text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 transition-colors">
         恢复默认
       </button>
-      <div className="text-[9px] text-sakura-300 leading-relaxed">
+      <div className="text-[10px] text-sakura-300 leading-relaxed">
         以上所有快捷键均可改键、<b>即刻生效</b>（无需刷新，键位冲突会提示）。<br />
         「发送消息 / 换行 / 上一条消息」在输入框内生效；其余为全局动作（输入框内不触发，避免打字误触）。
       </div>

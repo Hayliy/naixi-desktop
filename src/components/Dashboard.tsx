@@ -217,10 +217,10 @@ export default function Dashboard() {
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                     </button>
                   </div>
-                  <p className="text-[11px] text-red-500 mt-1 font-mono break-all">{err.msg}</p>
+                  <p className="text-[12px] text-red-500 mt-1 font-mono break-all">{err.msg}</p>
                   <details className="mt-1">
-                    <summary className="text-[10px] text-red-400 cursor-pointer">堆栈</summary>
-                    <pre className="mt-1 text-[10px] text-gray-500 max-h-[120px] overflow-auto whitespace-pre-wrap">{err.stack}</pre>
+                    <summary className="text-[11px] text-red-400 cursor-pointer">堆栈</summary>
+                    <pre className="mt-1 text-[11px] text-gray-500 max-h-[120px] overflow-auto whitespace-pre-wrap">{err.stack}</pre>
                   </details>
                 </div>
               ))}
@@ -273,22 +273,22 @@ export default function Dashboard() {
             <Card className="p-4">
               <p className="text-xs text-sakura-400 mb-0.5">工具总数</p>
               <p className="text-2xl font-bold text-sakura-500">{toolsData?.tools?.length ?? 0}</p>
-              <p className="text-[11px] text-sakura-400 mt-0.5">已注册</p>
+              <p className="text-[12px] text-sakura-400 mt-0.5">已注册</p>
             </Card>
             <Card className="p-4">
               <p className="text-xs text-sakura-400 mb-0.5">记忆总数</p>
               <p className="text-2xl font-bold text-sakura-500">{mem?.total ?? 0}</p>
-              <p className="text-[11px] text-sakura-400 mt-0.5">{mem?.conversations ?? 0} 段对话</p>
+              <p className="text-[12px] text-sakura-400 mt-0.5">{mem?.conversations ?? 0} 段对话</p>
             </Card>
             <Card className="p-4">
               <p className="text-xs text-sakura-400 mb-0.5">供应商</p>
               <p className="text-2xl font-bold text-sakura-500">{stats?.providers?.total ?? 0}</p>
-              <p className="text-[11px] text-green-600 mt-0.5">{stats?.providers?.with_key ?? 0} 个已配密钥</p>
+              <p className="text-[12px] text-green-600 mt-0.5">{stats?.providers?.with_key ?? 0} 个已配密钥</p>
             </Card>
             <Card className="p-4">
               <p className="text-xs text-sakura-400 mb-0.5">数据库表</p>
               <p className="text-2xl font-bold text-sakura-500">{stats?.database?.tables?.length ?? 0}</p>
-              <p className="text-[11px] text-sakura-400 mt-0.5">{stats?.database?.size_mb ?? 0} MB</p>
+              <p className="text-[12px] text-sakura-400 mt-0.5">{stats?.database?.size_mb ?? 0} MB</p>
             </Card>
           </div>
 
@@ -319,7 +319,7 @@ export default function Dashboard() {
                     <Server size={12} className="text-sakura-400 shrink-0" />
                     <span className="text-sakura-600 w-20 shrink-0 truncate font-medium">{p.name}</span>
                     <span className="text-sakura-400 flex-1 truncate">{p.model}</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${p.has_key ? "bg-green-50 text-green-600" : "bg-sakura-50 text-sakura-300"}`}>
+                    <span className={`text-[11px] px-1.5 py-0.5 rounded-full shrink-0 ${p.has_key ? "bg-green-50 text-green-600" : "bg-sakura-50 text-sakura-300"}`}>
                       {p.has_key ? "已配" : "未配"}
                     </span>
                   </div>
@@ -341,7 +341,7 @@ export default function Dashboard() {
                 ))}
                 {kbCategories.length === 0 && <div className="text-center py-8 text-sakura-300 text-xs">暂无分类</div>}
               </div>
-              <div className="mt-2 pt-2 border-t border-sakura-100 text-[10px] text-sakura-300">
+              <div className="mt-2 pt-2 border-t border-sakura-100 text-[11px] text-sakura-300">
                 总计 {kb?.total ?? 0} 条目
               </div>
             </Card>
@@ -399,7 +399,7 @@ export default function Dashboard() {
                     <span className="text-sakura-500 font-medium ml-auto">{d.count}</span>
                   </div>
                 ))}
-                <div className="pt-1 text-[10px] text-sakura-300">总计 {stats?.database?.size_mb ?? 0} MB</div>
+                <div className="pt-1 text-[11px] text-sakura-300">总计 {stats?.database?.size_mb ?? 0} MB</div>
               </div>
             </Card>
 
@@ -410,7 +410,7 @@ export default function Dashboard() {
                     <Sparkles size={12} className="text-sakura-400 shrink-0" />
                     <span className="text-sakura-600 w-32 truncate font-medium">{m.n}</span>
                     <span className="text-sakura-400 flex-1 truncate">{m.r}</span>
-                    {m.p && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-600 shrink-0">{m.p}</span>}
+                    {m.p && <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-600 shrink-0">{m.p}</span>}
                   </div>
                 ))}
                 {MODEL_CONFIG.length === 0 && (
@@ -470,7 +470,7 @@ function HealthGauge({ score, size = "sm" }: { score: number; size?: "sm" | "md"
 }
 
 function MiniSparkline({ data, height = 60 }: { data: { ts: number; score: number }[]; height?: number }) {
-  if (!data || data.length < 2) return <div className="text-[8px] text-sakura-300 flex items-center justify-center" style={{ height }}>数据不足</div>;
+  if (!data || data.length < 2) return <div className="text-[10px] text-sakura-300 flex items-center justify-center" style={{ height }}>数据不足</div>;
   const bars = 60;
   const step = Math.max(1, Math.floor(data.length / bars));
   const sampled: { ts: number; score: number }[] = [];
@@ -498,7 +498,7 @@ function MiniSparkline({ data, height = 60 }: { data: { ts: number; score: numbe
           );
         })}
       </div>
-      <div className="absolute top-0 left-0 bg-white/80 rounded px-1 text-[8px] font-bold font-mono leading-tight"
+      <div className="absolute top-0 left-0 bg-white/80 rounded px-1 text-[10px] font-bold font-mono leading-tight"
         style={{ color: latest.score >= 80 ? "#16a34a" : latest.score >= 60 ? "#ca8a04" : "#dc2626" }}>
         {latest.score}
       </div>
@@ -593,8 +593,8 @@ function KbPage({ kb }: { kb: KbData | null }) {
     <div className="space-y-3">
       {/* 顶栏：标题 + 总数 + 添加 */}
       <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-sakura-600">知识库 <span className="text-sakura-300 font-normal text-[11px]">({total} 条目)</span></p>
-        <button onClick={startAdd} className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-medium bg-gradient-to-br from-sakura-400 to-sakura-500 text-white hover:shadow-md transition-shadow">
+        <p className="text-sm font-semibold text-sakura-600">知识库 <span className="text-sakura-300 font-normal text-[12px]">({total} 条目)</span></p>
+        <button onClick={startAdd} className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-gradient-to-br from-sakura-400 to-sakura-500 text-white hover:shadow-md transition-shadow">
           <Plus size={12} /> 添加
         </button>
       </div>
@@ -603,7 +603,7 @@ function KbPage({ kb }: { kb: KbData | null }) {
       <div className="relative">
         <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sakura-300" />
         <input value={search} onChange={e => setSearch(e.target.value)}
-          className="w-full pl-8 pr-3 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-sakura-50/50 text-sakura-600 placeholder:text-sakura-300 transition-colors"
+          className="w-full pl-8 pr-3 py-1.5 border border-sakura-100 rounded-lg text-[12px] outline-none focus:border-sakura-300 bg-sakura-50/50 text-sakura-600 placeholder:text-sakura-300 transition-colors"
           placeholder="搜索标题或内容..." />
       </div>
 
@@ -612,7 +612,7 @@ function KbPage({ kb }: { kb: KbData | null }) {
         <div className="flex items-center gap-1.5 flex-wrap">
           {catsAll.map((c, i) => (
             <button key={i} onClick={() => setActiveCat(activeCat === c.name ? "" : c.name)}
-              className={`text-[10px] px-2.5 py-1 rounded-full border transition-colors ${
+              className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
                 activeCat === c.name
                   ? "bg-sakura-500 text-white border-sakura-500"
                   : "bg-white text-sakura-500 border-sakura-100 hover:border-sakura-300"
@@ -640,7 +640,7 @@ function KbPage({ kb }: { kb: KbData | null }) {
               <p className="text-xs text-sakura-400 mb-1">
                 {search || activeCat ? "没有匹配的知识条目" : "知识库为空"}
               </p>
-              <p className="text-[10px] text-sakura-300">
+              <p className="text-[11px] text-sakura-300">
                 {search || activeCat ? "试试其他关键词或分类" : "点击右上角「添加」创建第一条知识"}
               </p>
             </div>
@@ -657,17 +657,17 @@ function KbPage({ kb }: { kb: KbData | null }) {
                     <button onClick={() => { setShowAddForm(false); setEditItem(null); setFormTitle(""); setFormContent(""); setFormCategory(""); }} className="p-1 hover:bg-sakura-50 rounded text-sakura-400"><X size={14} /></button>
                   </div>
                   <div>
-                    <label className="block text-[10px] text-sakura-500 font-medium mb-1">标题 <span className="text-red-400">*</span></label>
+                    <label className="block text-[11px] text-sakura-500 font-medium mb-1">标题 <span className="text-red-400">*</span></label>
                     <input value={formTitle} onChange={e => setFormTitle(e.target.value)}
                       className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300" placeholder="知识标题" />
                   </div>
                   <div>
-                    <label className="block text-[10px] text-sakura-500 font-medium mb-1">内容</label>
+                    <label className="block text-[11px] text-sakura-500 font-medium mb-1">内容</label>
                     <textarea value={formContent} onChange={e => setFormContent(e.target.value)}
                       className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 resize-none" rows={6} placeholder="知识内容..." />
                   </div>
                   <div>
-                    <label className="block text-[10px] text-sakura-500 font-medium mb-1">分类（可选）</label>
+                    <label className="block text-[11px] text-sakura-500 font-medium mb-1">分类（可选）</label>
                     <input value={formCategory} onChange={e => setFormCategory(e.target.value)}
                       className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300" placeholder="默认" />
                   </div>
@@ -694,12 +694,12 @@ function KbPage({ kb }: { kb: KbData | null }) {
                   <BookOpen size={12} className="text-sakura-400 shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-[11px] font-medium text-sakura-600 truncate">{item.title}</span>
+                      <span className="text-[12px] font-medium text-sakura-600 truncate">{item.title}</span>
                       {item.category && (
-                        <span className="text-[9px] text-sakura-400 bg-sakura-50 px-1.5 py-0.5 rounded-full shrink-0">{item.category}</span>
+                        <span className="text-[10px] text-sakura-400 bg-sakura-50 px-1.5 py-0.5 rounded-full shrink-0">{item.category}</span>
                       )}
                     </div>
-                    <div className="flex items-center gap-2 text-[9px] text-sakura-300 mt-0.5">
+                    <div className="flex items-center gap-2 text-[10px] text-sakura-300 mt-0.5">
                       <span>{item.created_at?.slice(0, 10) || ""}</span>
                       <span>{item.content ? `${item.content.length} 字` : ""}</span>
                     </div>
@@ -712,9 +712,9 @@ function KbPage({ kb }: { kb: KbData | null }) {
                     {deleteConfirm === item.id ? (
                       <div className="flex items-center gap-0.5">
                         <button onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }}
-                          className="px-1.5 py-0.5 rounded text-[9px] bg-red-500 text-white hover:bg-red-600 transition-colors">确认</button>
+                          className="px-1.5 py-0.5 rounded text-[10px] bg-red-500 text-white hover:bg-red-600 transition-colors">确认</button>
                         <button onClick={(e) => { e.stopPropagation(); setDeleteConfirm(null); }}
-                          className="px-1.5 py-0.5 rounded text-[9px] text-sakura-400 hover:bg-sakura-100 transition-colors">取消</button>
+                          className="px-1.5 py-0.5 rounded text-[10px] text-sakura-400 hover:bg-sakura-100 transition-colors">取消</button>
                       </div>
                     ) : (
                       <button onClick={(e) => { e.stopPropagation(); setDeleteConfirm(item.id); }}
@@ -727,8 +727,8 @@ function KbPage({ kb }: { kb: KbData | null }) {
                 {/* 展开详情 */}
                 {expandedId === item.id && (
                   <div className="px-3 py-2.5 border-t border-sakura-50 bg-sakura-50/30">
-                    <p className="text-[10px] text-sakura-600 leading-relaxed whitespace-pre-wrap">{item.content}</p>
-                    <div className="flex items-center gap-2 mt-1.5 text-[9px] text-sakura-300">
+                    <p className="text-[11px] text-sakura-600 leading-relaxed whitespace-pre-wrap">{item.content}</p>
+                    <div className="flex items-center gap-2 mt-1.5 text-[10px] text-sakura-300">
                       <span>分类: {item.category || "未分类"}</span>
                       <span>创建: {item.created_at || "未知"}</span>
                       {item.updated_at && <span>更新: {item.updated_at}</span>}
@@ -741,7 +741,7 @@ function KbPage({ kb }: { kb: KbData | null }) {
 
           {/* 结果统计 */}
           {filtered.length > 0 && (
-            <div className="text-[9px] text-sakura-300 text-center py-1">
+            <div className="text-[10px] text-sakura-300 text-center py-1">
               共 {filtered.length} 条{search || activeCat ? `（共 ${total} 条）` : ""}
             </div>
           )}
@@ -871,9 +871,9 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
     <div className="space-y-3">
       {/* 顶栏 */}
       <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-sakura-600">工具列表 <span className="text-sakura-300 font-normal text-[11px]">({total} 个)</span></p>
+        <p className="text-sm font-semibold text-sakura-600">工具列表 <span className="text-sakura-300 font-normal text-[12px]">({total} 个)</span></p>
         <button onClick={openMcpDialog}
-          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-medium bg-sakura-50 text-sakura-500 hover:bg-sakura-100 border border-sakura-100 transition-colors">
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium bg-sakura-50 text-sakura-500 hover:bg-sakura-100 border border-sakura-100 transition-colors">
           <Wifi size={10} /> MCP 配置
         </button>
       </div>
@@ -889,8 +889,8 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
                 {catIcon(c.name)}
               </div>
               <div>
-                <p className="text-[11px] font-semibold text-sakura-600">{c.count}</p>
-                <p className="text-[9px] text-sakura-400">{catLabel(c.name)}</p>
+                <p className="text-[12px] font-semibold text-sakura-600">{c.count}</p>
+                <p className="text-[10px] text-sakura-400">{catLabel(c.name)}</p>
               </div>
             </div>
           ))}
@@ -901,7 +901,7 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
       <div className="relative">
         <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sakura-300" />
         <input value={search} onChange={e => setSearch(e.target.value)}
-          className="w-full pl-8 pr-3 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-sakura-50/50 text-sakura-600 placeholder:text-sakura-300 transition-colors"
+          className="w-full pl-8 pr-3 py-1.5 border border-sakura-100 rounded-lg text-[12px] outline-none focus:border-sakura-300 bg-sakura-50/50 text-sakura-600 placeholder:text-sakura-300 transition-colors"
           placeholder="搜索工具名称或描述..." />
       </div>
 
@@ -917,7 +917,7 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
                 <div className="flex items-center gap-1.5">
                   <button onClick={async () => { setConnecting(true); try { const r = await apiPost<{ ok: boolean; tool_count: number }>("/api/mcp/connect", {}); notify(`连接完成，共 ${r.tool_count} 个工具`, "success"); } catch { notify("连接失败", "error"); } setConnecting(false); }}
                     disabled={connecting || Object.keys(mcpServers).length === 0}
-                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-medium bg-teal-50 text-teal-600 hover:bg-teal-100 disabled:opacity-50 transition-colors">
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium bg-teal-50 text-teal-600 hover:bg-teal-100 disabled:opacity-50 transition-colors">
                     {connecting ? <Loader2 size={10} className="animate-spin" /> : <Zap size={10} />} 连接全部
                   </button>
                   <button onClick={() => setShowMcpDialog(false)} className="p-1 hover:bg-sakura-50 rounded text-sakura-400"><X size={14} /></button>
@@ -933,29 +933,29 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
                   {/* 添加/编辑表单 */}
                   {showMcpForm && (
                     <div className="bg-sakura-50 border border-sakura-100 rounded-lg p-3 space-y-2">
-                      <p className="text-[10px] font-semibold text-sakura-500">{mcpEditKey ? "编辑 MCP 服务器" : "添加 MCP 服务器"}</p>
+                      <p className="text-[11px] font-semibold text-sakura-500">{mcpEditKey ? "编辑 MCP 服务器" : "添加 MCP 服务器"}</p>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <p className="text-[9px] text-sakura-400 mb-0.5">名称</p>
+                          <p className="text-[10px] text-sakura-400 mb-0.5">名称</p>
                           <input value={fName} onChange={e => setFName(e.target.value)}
-                            className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-white" placeholder="如: fetch" />
+                            className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[12px] outline-none focus:border-sakura-300 bg-white" placeholder="如: fetch" />
                         </div>
                         <div>
-                          <p className="text-[9px] text-sakura-400 mb-0.5">命令</p>
+                          <p className="text-[10px] text-sakura-400 mb-0.5">命令</p>
                           <input value={fCmd} onChange={e => setFCmd(e.target.value)}
-                            className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-white font-mono" placeholder="如: npx" />
+                            className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[12px] outline-none focus:border-sakura-300 bg-white font-mono" placeholder="如: npx" />
                         </div>
                       </div>
                       <div>
-                        <p className="text-[9px] text-sakura-400 mb-0.5">参数（空格分隔）</p>
+                        <p className="text-[10px] text-sakura-400 mb-0.5">参数（空格分隔）</p>
                         <input value={fArgs} onChange={e => setFArgs(e.target.value)}
-                          className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-white font-mono" placeholder="如: @modelcontextprotocol/server-fetch" />
+                          className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[12px] outline-none focus:border-sakura-300 bg-white font-mono" placeholder="如: @modelcontextprotocol/server-fetch" />
                       </div>
                       <div className="flex items-center gap-1.5 pt-0.5">
                         <button onClick={() => { setShowMcpForm(false); setMcpEditKey(null); }}
-                          className="px-3 py-1.5 rounded text-[10px] text-sakura-400 hover:bg-sakura-50 border border-sakura-100 transition-colors">取消</button>
+                          className="px-3 py-1.5 rounded text-[11px] text-sakura-400 hover:bg-sakura-50 border border-sakura-100 transition-colors">取消</button>
                         <button onClick={saveMcp} disabled={!fName.trim() || !fCmd.trim()}
-                          className="px-3 py-1.5 rounded text-[10px] font-medium bg-sakura-500 text-white disabled:opacity-50 hover:bg-sakura-600 transition-colors">
+                          className="px-3 py-1.5 rounded text-[11px] font-medium bg-sakura-500 text-white disabled:opacity-50 hover:bg-sakura-600 transition-colors">
                           <Check size={10} className="inline mr-0.5" />{mcpEditKey ? "保存" : "添加"}
                         </button>
                       </div>
@@ -969,7 +969,7 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
                         <Wifi size={16} className="text-sakura-300" />
                       </div>
                       <p className="text-xs text-sakura-400 mb-1">未配置 MCP 服务器</p>
-                      <p className="text-[10px] text-sakura-300">点击下方按钮添加</p>
+                      <p className="text-[11px] text-sakura-300">点击下方按钮添加</p>
                     </div>
                   )}
 
@@ -984,8 +984,8 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
                                 <Wifi size={11} />
                               </div>
                               <div className="min-w-0 flex-1">
-                                <p className="text-[11px] font-medium text-sakura-600">{key}</p>
-                                <p className="text-[9px] text-sakura-400 truncate font-mono">{srv.command} {(srv.args || []).join(" ")}</p>
+                                <p className="text-[12px] font-medium text-sakura-600">{key}</p>
+                                <p className="text-[10px] text-sakura-400 truncate font-mono">{srv.command} {(srv.args || []).join(" ")}</p>
                               </div>
                             </div>
                             <div className="flex items-center gap-1 shrink-0">
@@ -999,8 +999,8 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
                               </button>
                               {mcpDelete === key ? (
                                 <div className="flex items-center gap-0.5">
-                                  <button onClick={() => deleteMcp(key)} className="px-1.5 py-0.5 rounded text-[9px] bg-red-500 text-white hover:bg-red-600">确认</button>
-                                  <button onClick={() => setMcpDelete(null)} className="px-1.5 py-0.5 rounded text-[9px] text-sakura-400 hover:bg-sakura-100">取消</button>
+                                  <button onClick={() => deleteMcp(key)} className="px-1.5 py-0.5 rounded text-[10px] bg-red-500 text-white hover:bg-red-600">确认</button>
+                                  <button onClick={() => setMcpDelete(null)} className="px-1.5 py-0.5 rounded text-[10px] text-sakura-400 hover:bg-sakura-100">取消</button>
                                 </div>
                               ) : (
                                 <button onClick={() => setMcpDelete(key)} className="p-1.5 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500 transition-colors" title="删除">
@@ -1017,7 +1017,7 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
                   {/* 添加按钮 */}
                   {!showMcpForm && (
                     <button onClick={() => { setShowMcpForm(true); setMcpEditKey(null); setFName(""); setFCmd(""); setFArgs(""); }}
-                      className="w-full flex items-center justify-center gap-1 px-3 py-2 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+                      className="w-full flex items-center justify-center gap-1 px-3 py-2 rounded-lg text-[11px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
                       <Plus size={11} /> 添加服务器
                     </button>
                   )}
@@ -1047,7 +1047,7 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
               <p className="text-xs text-sakura-400 mb-1">
                 {search || activeCat ? "没有匹配的工具" : "暂无可用工具"}
               </p>
-              <p className="text-[10px] text-sakura-300">
+              <p className="text-[11px] text-sakura-300">
                 {search || activeCat ? "试试其他关键词或分类" : "工具将在注册后自动出现"}
               </p>
             </div>
@@ -1067,21 +1067,21 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-[11px] font-semibold text-sakura-600 truncate">{t.name}</span>
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full shrink-0 border ${catCls}`}>{catLabel(t.category)}</span>
+                      <span className="text-[12px] font-semibold text-sakura-600 truncate">{t.name}</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 border ${catCls}`}>{catLabel(t.category)}</span>
                       {t.param_count > 0 && (
-                        <span className="text-[9px] text-sakura-300">{t.param_count} 参数</span>
+                        <span className="text-[10px] text-sakura-300">{t.param_count} 参数</span>
                       )}
                     </div>
-                    <p className="text-[10px] text-sakura-400 mt-0.5 truncate">{t.description}</p>
+                    <p className="text-[11px] text-sakura-400 mt-0.5 truncate">{t.description}</p>
                   </div>
                   {isExpanded ? <ChevronUp size={11} className="text-sakura-300 shrink-0" /> : <ChevronDown size={11} className="text-sakura-300 shrink-0" />}
                 </div>
                 {/* 展开详情：完整描述 + 参数列表 */}
                 {isExpanded && (
                   <div className="px-3 py-2.5 border-t border-sakura-50 bg-sakura-50/30 space-y-2">
-                    <p className="text-[10px] text-sakura-600 leading-relaxed">{t.description}</p>
-                    <div className="flex items-center gap-3 text-[9px] text-sakura-400">
+                    <p className="text-[11px] text-sakura-600 leading-relaxed">{t.description}</p>
+                    <div className="flex items-center gap-3 text-[10px] text-sakura-400">
                       <span><span className="text-sakura-500 font-medium">分类:</span> {catLabel(t.category)}</span>
                       <span><span className="text-sakura-500 font-medium">参数:</span> {t.param_count} 个</span>
                       <span><span className="text-sakura-500 font-medium">类型:</span> function</span>
@@ -1089,16 +1089,16 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
                     {/* 参数详情 */}
                     {t.params && t.params.length > 0 && (
                       <div>
-                        <p className="text-[9px] font-semibold text-sakura-500 mb-1">参数列表</p>
+                        <p className="text-[10px] font-semibold text-sakura-500 mb-1">参数列表</p>
                         <div className="space-y-0.5">
                           {t.params.map((p: any, pi: number) => (
-                            <div key={pi} className="flex items-center gap-2 px-2 py-1 rounded bg-white/60 text-[10px]">
+                            <div key={pi} className="flex items-center gap-2 px-2 py-1 rounded bg-white/60 text-[11px]">
                               <span className="font-mono font-medium text-sakura-600 w-28 shrink-0 truncate">{p.name}</span>
-                              <span className="text-sakura-400 w-16 shrink-0 text-[9px]">{p.type}</span>
+                              <span className="text-sakura-400 w-16 shrink-0 text-[10px]">{p.type}</span>
                               {p.required ? (
-                                <span className="text-red-400 text-[9px] shrink-0">必填</span>
+                                <span className="text-red-400 text-[10px] shrink-0">必填</span>
                               ) : (
-                                <span className="text-sakura-300 text-[9px] shrink-0">可选</span>
+                                <span className="text-sakura-300 text-[10px] shrink-0">可选</span>
                               )}
                               <span className="text-sakura-400 flex-1 truncate">{p.description}</span>
                             </div>
@@ -1107,7 +1107,7 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
                       </div>
                     )}
                     {(!t.params || t.params.length === 0) && (
-                      <p className="text-[9px] text-sakura-300 italic">该工具无需参数</p>
+                      <p className="text-[10px] text-sakura-300 italic">该工具无需参数</p>
                     )}
                   </div>
                 )}
@@ -1117,7 +1117,7 @@ function ToolsPage({ toolsData }: { toolsData: { tools: { name: string; desc: st
 
           {/* 底部统计 */}
           {filtered.length > 0 && (
-            <div className="text-[9px] text-sakura-300 text-center py-1">
+            <div className="text-[10px] text-sakura-300 text-center py-1">
               共 {filtered.length} 个工具{search || activeCat ? `（总共 ${total} 个）` : ""}
             </div>
           )}
@@ -1263,14 +1263,14 @@ function MemPage() {
           <button onClick={() => { setViewingConv(null); setConvMsgs([]); }}
             className="p-1 rounded hover:bg-sakura-50 text-sakura-400 transition-colors"><ChevronLeft size={14} /></button>
           <p className="text-sm font-semibold text-sakura-600 truncate flex-1">{viewingConv}</p>
-          <span className="text-[10px] text-sakura-400">{convMsgs.length} 条</span>
+          <span className="text-[11px] text-sakura-400">{convMsgs.length} 条</span>
           <button onClick={() => exportConv(viewingConv, convMsgs)} className="p-1.5 rounded hover:bg-sakura-50 text-sakura-300 hover:text-sakura-500 transition-colors" title="导出对话"><Download size={11} /></button>
           <button onClick={() => deleteConv(viewingConv)} className="p-1.5 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500 transition-colors" title="删除对话"><Trash2 size={11} /></button>
         </div>
         <div className="flex items-center gap-1.5">
           {[{k:"all",l:"全部"},{k:"7d",l:"近7天"},{k:"30d",l:"近30天"}].map(t => (
             <button key={t.k} onClick={() => setTimeFilter(t.k)}
-              className={`text-[10px] px-2 py-1 rounded-full border transition-colors ${timeFilter===t.k?"bg-sakura-500 text-white border-sakura-500":"bg-white text-sakura-500 border-sakura-100 hover:border-sakura-300"}`}>{t.l}</button>
+              className={`text-[11px] px-2 py-1 rounded-full border transition-colors ${timeFilter===t.k?"bg-sakura-500 text-white border-sakura-500":"bg-white text-sakura-500 border-sakura-100 hover:border-sakura-300"}`}>{t.l}</button>
           ))}
         </div>
         {convLoading ? (
@@ -1279,7 +1279,7 @@ function MemPage() {
           <div className="text-center py-10 text-xs text-sakura-400">该时间范围内暂无消息</div>
         ) : groups.map((g, gi) => (
           <div key={gi}>
-            <div className="flex items-center gap-2 mb-1"><span className="text-[10px] font-medium text-sakura-500">{g.label}</span><span className="text-[9px] text-sakura-300">{g.items.length} 条</span><div className="flex-1 border-t border-sakura-100" /></div>
+            <div className="flex items-center gap-2 mb-1"><span className="text-[11px] font-medium text-sakura-500">{g.label}</span><span className="text-[10px] text-sakura-300">{g.items.length} 条</span><div className="flex-1 border-t border-sakura-100" /></div>
             <div className="space-y-1">
               {g.items.map((m: any, mi: number) => (
                 <div key={mi} className="flex items-start gap-2 px-2.5 py-2 bg-white border border-sakura-100 rounded-lg group">
@@ -1288,10 +1288,10 @@ function MemPage() {
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-[9px] font-medium text-sakura-500">{m.role==="user"?"用户":"奶昔"}</span>
-                      <span className="text-[8px] text-sakura-300">{safeTime(m.time).slice(11,16)}</span>
+                      <span className="text-[10px] font-medium text-sakura-500">{m.role==="user"?"用户":"奶昔"}</span>
+                      <span className="text-[10px] text-sakura-300">{safeTime(m.time).slice(11,16)}</span>
                     </div>
-                    <p className="text-[10px] text-sakura-600 mt-0.5 whitespace-pre-wrap">{m.content}</p>
+                    <p className="text-[11px] text-sakura-600 mt-0.5 whitespace-pre-wrap">{m.content}</p>
                   </div>
                   <button onClick={async () => { const ok = await copyClipboardText(m.content || ""); notify(ok ? "已复制" : "复制失败：请手动选中文本复制", ok ? "success" : "error"); }}
                     className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-sakura-50 text-sakura-300 hover:text-sakura-500 transition-all shrink-0"><Copy size={10} /></button>
@@ -1313,7 +1313,7 @@ function MemPage() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {[{l:"总记忆",v:stats.total},{l:"对话数",v:stats.conversations},{l:"近7天活跃",v:stats.recent_7d},{l:"分类",v:stats.categories?.length||0}].map((c,i) => (
             <div key={i} className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5">
-              <p className="text-[9px] text-sakura-400">{c.l}</p>
+              <p className="text-[10px] text-sakura-400">{c.l}</p>
               <p className="text-sm font-semibold text-sakura-600">{c.v}</p>
             </div>
           ))}
@@ -1322,22 +1322,22 @@ function MemPage() {
       {!loading && stats?.categories?.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap">
           {stats.categories.map((c: any, i: number) => (
-            <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-sakura-50 text-sakura-500 border border-sakura-100">{c.name} <span className="opacity-60">{c.count}</span></span>
+            <span key={i} className="text-[11px] px-2 py-0.5 rounded-full bg-sakura-50 text-sakura-500 border border-sakura-100">{c.name} <span className="opacity-60">{c.count}</span></span>
           ))}
         </div>
       )}
       {!loading && categories.length > 0 && !search && (
         <div>
-          <p className="text-[10px] font-medium text-sakura-500 mb-1">所有对话</p>
+          <p className="text-[11px] font-medium text-sakura-500 mb-1">所有对话</p>
           <div className="space-y-1">
             {categories.map((c: any, i: number) => (
               <div key={i} className="flex items-center gap-2 px-3 py-2 bg-white border border-sakura-100 rounded-lg group cursor-pointer hover:bg-sakura-50/50 transition-colors" onClick={() => openConv(c.key)}>
                 <div className="w-6 h-6 rounded flex items-center justify-center bg-gradient-to-br from-sakura-400 to-sakura-500 text-white"><MessageCircle size={11} /></div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-[11px] font-medium text-sakura-600 truncate">{c.label}</p>
-                  <p className="text-[9px] text-sakura-400 truncate">{c.last_msg||"暂无消息"}</p>
+                  <p className="text-[12px] font-medium text-sakura-600 truncate">{c.label}</p>
+                  <p className="text-[10px] text-sakura-400 truncate">{c.last_msg||"暂无消息"}</p>
                 </div>
-                <div className="text-right shrink-0 mr-1"><p className="text-[10px] font-semibold text-sakura-500">{c.count}</p><p className="text-[8px] text-sakura-300">条</p></div>
+                <div className="text-right shrink-0 mr-1"><p className="text-[11px] font-semibold text-sakura-500">{c.count}</p><p className="text-[10px] text-sakura-300">条</p></div>
                 <button onClick={(e) => { e.stopPropagation(); deleteConv(c.key); }} className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-50 text-sakura-300 hover:text-red-500 transition-all shrink-0" title="删除对话"><Trash2 size={10} /></button>
               </div>
             ))}
@@ -1348,11 +1348,11 @@ function MemPage() {
         <div className="relative flex-1">
           <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sakura-300" />
           <input value={search} onChange={e => setSearch(e.target.value)}
-            className="w-full pl-8 pr-3 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-sakura-50/50 text-sakura-600 placeholder:text-sakura-300 transition-colors"
+            className="w-full pl-8 pr-3 py-1.5 border border-sakura-100 rounded-lg text-[12px] outline-none focus:border-sakura-300 bg-sakura-50/50 text-sakura-600 placeholder:text-sakura-300 transition-colors"
             placeholder="搜索记忆内容..." />
         </div>
         <select value={searchConvFilter} onChange={e => { setSearchConvFilter(e.target.value); setSearchPage(1); }}
-          className="px-2 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-white text-sakura-500 shrink-0">
+          className="px-2 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-white text-sakura-500 shrink-0">
           <option value="">全部对话</option>
           <option value="auto:">自动</option>
           <option value="test">测试</option>
@@ -1362,25 +1362,25 @@ function MemPage() {
         <div className="text-center py-8"><div className="w-5 h-5 border-2 border-sakura-200 border-t-sakura-500 rounded-full animate-spin mx-auto" /><p className="text-xs text-sakura-400 mt-2">加载中...</p></div>
       ) : (<>
         {!search && stats?.recent?.length > 0 && (
-          <div><p className="text-[10px] font-medium text-sakura-500 mb-1">最近记忆</p>
+          <div><p className="text-[11px] font-medium text-sakura-500 mb-1">最近记忆</p>
             <div className="space-y-1">{stats.recent.map((r: any, i: number) => (
               <div key={i} className="flex items-start gap-2 px-2.5 py-2 bg-white border border-sakura-100 rounded-lg cursor-pointer hover:bg-sakura-50/50" onClick={() => openConv(r.conv)}>
                 <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${r.role==="user"?"bg-pink-100":"bg-sakura-100"}`}>
                   <Brain size={10} className={r.role==="user"?"text-pink-400":"text-sakura-400"} />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5"><span className="text-[9px] font-medium text-sakura-500">{r.role==="user"?"用户":"奶昔"}</span><span className="text-[8px] text-sakura-300 truncate">{r.conv}</span></div>
-                  <p className="text-[10px] text-sakura-600 mt-0.5 truncate">{r.content}</p>
+                  <div className="flex items-center gap-1.5"><span className="text-[10px] font-medium text-sakura-500">{r.role==="user"?"用户":"奶昔"}</span><span className="text-[10px] text-sakura-300 truncate">{r.conv}</span></div>
+                  <p className="text-[11px] text-sakura-600 mt-0.5 truncate">{r.content}</p>
                 </div>
-                <span className="text-[8px] text-sakura-300 shrink-0">{safeTime(r.time).slice(5,16)}</span>
+                <span className="text-[10px] text-sakura-300 shrink-0">{safeTime(r.time).slice(5,16)}</span>
               </div>
             ))}</div>
           </div>
         )}
         {search && items.length===0 && searchTotal===0 && (
-          <div className="text-center py-10"><div className="w-10 h-10 rounded-full bg-sakura-50 flex items-center justify-center mx-auto mb-2"><Brain size={16} className="text-sakura-300" /></div><p className="text-xs text-sakura-400">没有找到匹配的记忆</p><p className="text-[10px] text-sakura-300 mt-1">试试其他关键词</p></div>
+          <div className="text-center py-10"><div className="w-10 h-10 rounded-full bg-sakura-50 flex items-center justify-center mx-auto mb-2"><Brain size={16} className="text-sakura-300" /></div><p className="text-xs text-sakura-400">没有找到匹配的记忆</p><p className="text-[11px] text-sakura-300 mt-1">试试其他关键词</p></div>
         )}
-        {items.length > 0 && (<div className="space-y-1"><p className="text-[10px] text-sakura-400 mb-1">找到 {searchTotal} 条结果</p>
+        {items.length > 0 && (<div className="space-y-1"><p className="text-[11px] text-sakura-400 mb-1">找到 {searchTotal} 条结果</p>
           {items.map((item) => (
             <div key={item.id} className="bg-white border border-sakura-100 rounded-lg overflow-hidden">
               <div className="flex items-start gap-2 px-3 py-2.5 cursor-pointer hover:bg-sakura-50/30 transition-colors" onClick={() => setExpandedId(expandedId===item.id?null:item.id)}>
@@ -1388,15 +1388,15 @@ function MemPage() {
                   <Brain size={10} className={item.role==="user"?"text-pink-400":"text-sakura-400"} />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5"><span className="text-[10px] font-medium text-sakura-600">{item.role==="user"?"用户":"奶昔"}</span><span className="text-[8px] text-sakura-300 px-1.5 py-0.5 rounded bg-sakura-50">{item.conv?.startsWith("auto:")?"自动":"对话"}</span></div>
-                  <p className="text-[10px] text-sakura-500 mt-0.5 line-clamp-2">{item.content}</p>
-                  <span className="text-[8px] text-sakura-300 mt-0.5 block">{safeTime(item.time)}</span>
+                  <div className="flex items-center gap-1.5"><span className="text-[11px] font-medium text-sakura-600">{item.role==="user"?"用户":"奶昔"}</span><span className="text-[10px] text-sakura-300 px-1.5 py-0.5 rounded bg-sakura-50">{item.conv?.startsWith("auto:")?"自动":"对话"}</span></div>
+                  <p className="text-[11px] text-sakura-500 mt-0.5 line-clamp-2">{item.content}</p>
+                  <span className="text-[10px] text-sakura-300 mt-0.5 block">{safeTime(item.time)}</span>
                 </div>
               </div>
               {expandedId===item.id && (
                 <div className="px-3 py-2 border-t border-sakura-50 bg-sakura-50/30">
-                  <p className="text-[10px] text-sakura-600 leading-relaxed whitespace-pre-wrap">{item.content}</p>
-                  <div className="flex items-center gap-2 mt-1.5 text-[9px] text-sakura-400">
+                  <p className="text-[11px] text-sakura-600 leading-relaxed whitespace-pre-wrap">{item.content}</p>
+                  <div className="flex items-center gap-2 mt-1.5 text-[10px] text-sakura-400">
                     <span>对话: {item.conv}</span><span>角色: {item.role}</span><span>时间: {safeTime(item.time)}</span>
                   </div>
                 </div>
@@ -1408,11 +1408,11 @@ function MemPage() {
             <div className="flex items-center justify-center gap-1 pt-1">
               <button onClick={() => doSearch(search, searchConvFilter, Math.max(1, searchPage - 1))}
                 disabled={searchPage <= 1}
-                className="px-2 py-1 rounded text-[9px] border border-sakura-100 text-sakura-500 disabled:opacity-30 hover:bg-sakura-50 transition-colors">上一页</button>
-              <span className="text-[9px] text-sakura-400 px-1">{searchPage} / {Math.ceil(searchTotal / PAGE_SIZE)}</span>
+                className="px-2 py-1 rounded text-[10px] border border-sakura-100 text-sakura-500 disabled:opacity-30 hover:bg-sakura-50 transition-colors">上一页</button>
+              <span className="text-[10px] text-sakura-400 px-1">{searchPage} / {Math.ceil(searchTotal / PAGE_SIZE)}</span>
               <button onClick={() => doSearch(search, searchConvFilter, searchPage + 1)}
                 disabled={searchPage >= Math.ceil(searchTotal / PAGE_SIZE)}
-                className="px-2 py-1 rounded text-[9px] border border-sakura-100 text-sakura-500 disabled:opacity-30 hover:bg-sakura-50 transition-colors">下一页</button>
+                className="px-2 py-1 rounded text-[10px] border border-sakura-100 text-sakura-500 disabled:opacity-30 hover:bg-sakura-50 transition-colors">下一页</button>
             </div>
           )}
         </div>)}
@@ -1532,33 +1532,33 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
           <p className="text-sm font-semibold text-sakura-600">{conn.name}</p>
         </div>
         <div className="bg-white border border-sakura-100 rounded-xl p-3 space-y-2.5">
-          <p className="text-[10px] font-medium text-sakura-600">连接配置</p>
+          <p className="text-[11px] font-medium text-sakura-600">连接配置</p>
           {conn.fields.map((f: any, i: number) => (
             <div key={i}>
-              <p className="text-[9px] text-sakura-500 mb-0.5">{f.l}</p>
+              <p className="text-[10px] text-sakura-500 mb-0.5">{f.l}</p>
               <input value={vals[f.k] || ""} onChange={e => { vals[f.k] = e.target.value; setFExtra(JSON.stringify(vals)); }}
-                className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-sakura-50 text-sakura-600 font-mono"
+                className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-sakura-50 text-sakura-600 font-mono"
                 placeholder={f.p} />
             </div>
           ))}
           <div className="flex items-center gap-2 pt-1">
             <button onClick={() => setFEnabled(!fEnabled)}
-              className={`px-2.5 py-1 rounded text-[9px] font-medium transition-colors ${fEnabled ? "bg-sakura-100 text-sakura-600" : "bg-sakura-50 text-sakura-400"}`}>
+              className={`px-2.5 py-1 rounded text-[10px] font-medium transition-colors ${fEnabled ? "bg-sakura-100 text-sakura-600" : "bg-sakura-50 text-sakura-400"}`}>
               {fEnabled ? "已启用" : "已禁用"}
             </button>
             <div className="flex-1" />
-            <button onClick={() => setConfigMode(null)} className="px-3 py-1.5 rounded text-[9px] text-sakura-400 hover:bg-sakura-50 border border-sakura-100">取消</button>
-            <button onClick={saveConfig} className="px-3 py-1.5 rounded text-[9px] font-medium bg-gradient-to-br from-sakura-400 to-sakura-500 text-white">保存</button>
+            <button onClick={() => setConfigMode(null)} className="px-3 py-1.5 rounded text-[10px] text-sakura-400 hover:bg-sakura-50 border border-sakura-100">取消</button>
+            <button onClick={saveConfig} className="px-3 py-1.5 rounded text-[10px] font-medium bg-gradient-to-br from-sakura-400 to-sakura-500 text-white">保存</button>
             <button onClick={testPlatform} disabled={testing}
-              className="px-3 py-1.5 rounded text-[9px] font-medium bg-teal-50 text-teal-600 hover:bg-teal-100 disabled:opacity-50 transition-colors">
+              className="px-3 py-1.5 rounded text-[10px] font-medium bg-teal-50 text-teal-600 hover:bg-teal-100 disabled:opacity-50 transition-colors">
               {testing ? <Loader2 size={9} className="animate-spin inline" /> : "测试"}
             </button>
           </div>
           {testResult && (
-            <p className={`text-[9px] ${testResult.includes("连通") ? "text-green-600" : "text-red-500"}`}>{testResult}</p>
+            <p className={`text-[10px] ${testResult.includes("连通") ? "text-green-600" : "text-red-500"}`}>{testResult}</p>
           )}
         </div>
-        <p className="text-[9px] text-sakura-400 font-mono bg-sakura-50 px-2.5 py-1.5 rounded-lg">
+        <p className="text-[10px] text-sakura-400 font-mono bg-sakura-50 px-2.5 py-1.5 rounded-lg">
           Webhook: /api/webhook/{configMode}
         </p>
       </div>
@@ -1571,7 +1571,7 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
       {/* 如实说明：目前只有 QQ(NapCat) 有真实桥接（探测 3000/3001 端口）；
           其余平台仅把配置保存到本地库，尚未实现收发实现 —— 不写清楚的话，
           用户会以为"配置完就能用"，属于最容易踩的信任坑。 */}
-      <div className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 leading-relaxed">
+      <div className="text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 leading-relaxed">
         提示：当前仅 <b>QQ / NapCat</b> 具备真实消息桥接（应用会探测本机 3000/3001 端口）。
         其余平台目前<strong>只保存配置、尚未实现收发</strong>，配好也不会收到消息。
       </div>
@@ -1580,8 +1580,8 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
       ) : (
         <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
           <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
-            <span className="text-[10px] font-medium text-sakura-500">平台连接</span>
-            <span className="text-[8px] text-sakura-300">{conns.filter(c => c.enabled).length}/{conns.length} 已启用</span>
+            <span className="text-[11px] font-medium text-sakura-500">平台连接</span>
+            <span className="text-[10px] text-sakura-300">{conns.filter(c => c.enabled).length}/{conns.length} 已启用</span>
           </div>
           <div className="divide-y divide-sakura-50">
             {conns.map(conn => {
@@ -1592,15 +1592,15 @@ function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
                   <MessageCircle size={13} className="text-sakura-400 shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-[11px] font-medium text-sakura-600">{conn.name}</span>
-                      <span className={`text-[8px] px-1 py-0.5 rounded ${connected ? "bg-sakura-100 text-sakura-600" : "bg-sakura-50 text-sakura-400"}`}>
+                      <span className="text-[12px] font-medium text-sakura-600">{conn.name}</span>
+                      <span className={`text-[10px] px-1 py-0.5 rounded ${connected ? "bg-sakura-100 text-sakura-600" : "bg-sakura-50 text-sakura-400"}`}>
                         {connected ? (isQQ ? "运行中" : "已启用") : "未启用"}
                       </span>
                     </div>
-                    <p className="text-[8px] text-sakura-400 truncate">{conn.desc}</p>
+                    <p className="text-[10px] text-sakura-400 truncate">{conn.desc}</p>
                   </div>
                   <button onClick={() => openConfig(conn)}
-                    className="px-2.5 py-1 rounded text-[9px] font-medium bg-white border border-sakura-100 text-sakura-400 hover:text-sakura-600 hover:border-sakura-300 transition-colors shrink-0">
+                    className="px-2.5 py-1 rounded text-[10px] font-medium bg-white border border-sakura-100 text-sakura-400 hover:text-sakura-600 hover:border-sakura-300 transition-colors shrink-0">
                     配置
                   </button>
                 </div>
@@ -1715,34 +1715,34 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
         <div className="bg-white border border-sakura-100 rounded-xl p-3 flex items-center gap-3">
           <HealthGauge score={score} size="sm" />
           <div>
-            <p className="text-[9px] text-sakura-400">健康评分</p>
+            <p className="text-[10px] text-sakura-400">健康评分</p>
             <p className={"text-xs font-bold " + (score >= 80 ? "text-green-600" : score >= 60 ? "text-yellow-600" : "text-red-600")}>
               {score >= 80 ? "良好" : score >= 60 ? "异常" : "严重"}
             </p>
           </div>
         </div>
         <div className="bg-white border border-sakura-100 rounded-xl p-3">
-          <p className="text-[9px] text-sakura-400">24h 可用性</p>
+          <p className="text-[10px] text-sakura-400">24h 可用性</p>
           <p className={"text-xs font-bold " + (uptime >= 99.9 ? "text-green-600" : uptime >= 99 ? "text-yellow-600" : "text-red-600")}>{uptime}%</p>
-          <p className="text-[8px] text-sakura-300 mt-0.5">SLO ≥99.9%</p>
+          <p className="text-[10px] text-sakura-300 mt-0.5">SLO ≥99.9%</p>
         </div>
         <div className="bg-white border border-sakura-100 rounded-xl p-3">
-          <p className="text-[9px] text-sakura-400">运行时长</p>
+          <p className="text-[10px] text-sakura-400">运行时长</p>
           <p className="text-xs font-bold text-sakura-700">{fmtUptime}</p>
-          <p className="text-[8px] text-sakura-300 mt-0.5">PID {health?.backend?.pid}</p>
+          <p className="text-[10px] text-sakura-300 mt-0.5">PID {health?.backend?.pid}</p>
         </div>
         <div className="bg-white border border-sakura-100 rounded-xl p-3">
-          <p className="text-[9px] text-sakura-400">活跃告警</p>
+          <p className="text-[10px] text-sakura-400">活跃告警</p>
           <p className={"text-xs font-bold " + (activeIncidents > 0 ? "text-red-600" : "text-green-600")}>{activeIncidents > 0 ? activeIncidents + " 个" : "无"}</p>
-          <p className="text-[8px] text-sakura-300 mt-0.5">{health?.services_ok ?? 0}/{health?.services_total ?? 0} 服务在线</p>
+          <p className="text-[10px] text-sakura-300 mt-0.5">{health?.services_ok ?? 0}/{health?.services_total ?? 0} 服务在线</p>
         </div>
       </div>
 
       {health?.score_trend && health.score_trend.length > 1 && (
         <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
           <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
-            <span className="text-[10px] font-medium text-sakura-500">评分趋势（近24h）</span>
-            <span className="text-[8px] text-sakura-400">
+            <span className="text-[11px] font-medium text-sakura-500">评分趋势（近24h）</span>
+            <span className="text-[10px] text-sakura-400">
               最高{Math.max(...health.score_trend.map((d: any) => d.score))} · 最低{Math.min(...health.score_trend.map((d: any) => d.score))}
             </span>
           </div>
@@ -1755,12 +1755,12 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
       <div className="flex flex-col xl:flex-row gap-3 sm:gap-4">
         <div className="flex-1 bg-white border border-sakura-100 rounded-xl overflow-hidden">
           <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
-            <span className="text-[10px] font-medium text-sakura-500">告警中心</span>
-            {activeIncidents > 0 && <span className="text-[8px] text-red-500">{activeIncidents} 个未处理</span>}
+            <span className="text-[11px] font-medium text-sakura-500">告警中心</span>
+            {activeIncidents > 0 && <span className="text-[10px] text-red-500">{activeIncidents} 个未处理</span>}
           </div>
           <div className="divide-y divide-sakura-50 max-h-[200px] overflow-y-auto">
             {incidents.length === 0 && incidentHistory.length === 0 ? (
-              <div className="px-3 py-4 text-center"><p className="text-[10px] text-sakura-300">暂无告警记录</p></div>
+              <div className="px-3 py-4 text-center"><p className="text-[11px] text-sakura-300">暂无告警记录</p></div>
             ) : (
               <>
                 {incidents.map((inc) => (
@@ -1768,10 +1768,10 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
                     <CircleAlert size={13} className="text-red-500 mt-0.5 shrink-0" />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <span className="text-[11px] font-medium text-red-700">{inc.title}</span>
+                        <span className="text-[12px] font-medium text-red-700">{inc.title}</span>
                       </div>
-                      <p className="text-[8px] text-sakura-400 truncate mt-0.5">{inc.message}</p>
-                      <p className="text-[8px] text-sakura-300 mt-0.5">{new Date(inc.ts * 1000).toLocaleString("zh-CN")}</p>
+                      <p className="text-[10px] text-sakura-400 truncate mt-0.5">{inc.message}</p>
+                      <p className="text-[10px] text-sakura-300 mt-0.5">{new Date(inc.ts * 1000).toLocaleString("zh-CN")}</p>
                     </div>
                   </div>
                 ))}
@@ -1780,13 +1780,13 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
                     <CheckCircle size={13} className="text-green-500 mt-0.5 shrink-0" />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <span className="text-[11px] font-medium text-sakura-500 line-through">{inc.title}</span>
-                        <span className="text-[8px] px-1 py-0.5 rounded bg-sakura-50 text-sakura-400">{inc.auto_healed ? "已自愈" : "已处理"}</span>
+                        <span className="text-[12px] font-medium text-sakura-500 line-through">{inc.title}</span>
+                        <span className="text-[10px] px-1 py-0.5 rounded bg-sakura-50 text-sakura-400">{inc.auto_healed ? "已自愈" : "已处理"}</span>
                       </div>
-                      <p className="text-[8px] text-sakura-300 mt-0.5">{new Date(inc.ts * 1000).toLocaleString("zh-CN")}{inc.duration_seconds > 0 ? " · " + inc.duration_seconds + "s" : ""}</p>
+                      <p className="text-[10px] text-sakura-300 mt-0.5">{new Date(inc.ts * 1000).toLocaleString("zh-CN")}{inc.duration_seconds > 0 ? " · " + inc.duration_seconds + "s" : ""}</p>
                     </div>
                     <button onClick={() => handleDelete("incidents", inc.id)}
-                      className="px-2 py-1 rounded text-[8px] font-medium bg-white border border-sakura-100 text-sakura-400 hover:text-red-500 hover:border-red-200 transition-colors shrink-0 opacity-0 group-hover:opacity-100">
+                      className="px-2 py-1 rounded text-[10px] font-medium bg-white border border-sakura-100 text-sakura-400 hover:text-red-500 hover:border-red-200 transition-colors shrink-0 opacity-0 group-hover:opacity-100">
                       删除
                     </button>
                   </div>
@@ -1798,7 +1798,7 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
 
         <div className="xl:w-[280px] xl:flex-shrink-0 bg-white border border-sakura-100 rounded-xl overflow-hidden">
           <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
-            <span className="text-[10px] font-medium text-sakura-500">巡检摘要</span>
+            <span className="text-[11px] font-medium text-sakura-500">巡检摘要</span>
             {inspecting && <Loader2 size={10} className="animate-spin text-sakura-400" />}
           </div>
           <div className="p-3 space-y-2">
@@ -1806,7 +1806,7 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
               <>
                 <div className="flex items-center gap-1.5">
                   <span className={"inline-block w-2 h-2 rounded-full " + (inspections[0].result === "pass" ? "bg-green-500" : inspections[0].result === "warning" ? "bg-yellow-500" : "bg-red-500")} />
-                  <span className="text-[11px] font-medium text-sakura-600">
+                  <span className="text-[12px] font-medium text-sakura-600">
                     评分 {inspections[0].score}/100
                     {inspections[0].issues_found > 0 ? " · " + inspections[0].issues_found + " 个问题" : " · 正常"}
                   </span>
@@ -1816,7 +1816,7 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
                     {Object.entries(inspections[0].details.system).map(([k, v]: [string, any]) => (
                       <div key={k} className="bg-sakura-50 rounded-lg p-1.5 text-center">
                         <p className="text-[7px] text-sakura-400">{k === "cpu" ? "CPU" : k === "memory" ? "内存" : "磁盘"}</p>
-                        <p className={"text-[10px] font-mono font-bold " + (v > 90 ? "text-red-600" : v > 80 ? "text-yellow-600" : "text-sakura-700")}>{v}%</p>
+                        <p className={"text-[11px] font-mono font-bold " + (v > 90 ? "text-red-600" : v > 80 ? "text-yellow-600" : "text-sakura-700")}>{v}%</p>
                       </div>
                     ))}
                   </div>
@@ -1824,7 +1824,7 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
                 {(inspections[0] as any).issues && (inspections[0] as any).issues.length > 0 && (
                   <div className="bg-red-50/30 rounded-lg p-2 space-y-0.5">
                     {(inspections[0] as any).issues.map((issue: any, i: number) => (
-                      <div key={i} className="flex items-start gap-1.5 text-[8px]">
+                      <div key={i} className="flex items-start gap-1.5 text-[10px]">
                         <span className={"w-1.5 h-1.5 rounded-full mt-0.5 shrink-0 " + (issue.severity === "critical" ? "bg-red-500" : issue.severity === "warning" ? "bg-yellow-500" : "bg-blue-400")} />
                         <span className={issue.severity === "critical" ? "text-red-600" : issue.severity === "warning" ? "text-yellow-700" : "text-sakura-500"}>{issue.item}：{issue.value}</span>
                       </div>
@@ -1834,7 +1834,7 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
               </>
             ) : null}
             <button onClick={handleInspect} disabled={inspecting}
-              className="w-full py-2 rounded-lg text-[10px] font-medium bg-sakura-500 text-white hover:bg-sakura-600 disabled:opacity-50 transition-colors">
+              className="w-full py-2 rounded-lg text-[11px] font-medium bg-sakura-500 text-white hover:bg-sakura-600 disabled:opacity-50 transition-colors">
               {inspecting ? "巡检中..." : "执行巡检"}
             </button>
           </div>
@@ -1844,27 +1844,27 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
       <div className="flex flex-col xl:flex-row gap-3 sm:gap-4">
         <div className="flex-1 bg-white border border-sakura-100 rounded-xl overflow-hidden">
           <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
-            <span className="text-[10px] font-medium text-sakura-500">自愈历史</span>
+            <span className="text-[11px] font-medium text-sakura-500">自愈历史</span>
             {healing && <Loader2 size={10} className="animate-spin text-sakura-400" />}
           </div>
           <div className="divide-y divide-sakura-50 max-h-[200px] overflow-y-auto">
             {heals.length === 0 ? (
-              <div className="px-3 py-3 text-center"><p className="text-[10px] text-sakura-300">尚无自愈记录</p></div>
+              <div className="px-3 py-3 text-center"><p className="text-[11px] text-sakura-300">尚无自愈记录</p></div>
             ) : heals.map((h) => (
               <div key={h.id} className="flex items-start gap-2.5 px-3 py-2 group hover:bg-sakura-50/30 transition-colors">
                 <div className={"w-1.5 h-1.5 rounded-full mt-2 shrink-0 " + (h.result === "success" ? "bg-green-500" : "bg-red-500")} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] font-medium text-sakura-600">{h.action}</span>
-                    <span className={"text-[8px] px-1 py-0.5 rounded " + (h.result === "success" ? "bg-sakura-100 text-sakura-600" : "bg-red-50 text-red-600")}>
+                    <span className="text-[12px] font-medium text-sakura-600">{h.action}</span>
+                    <span className={"text-[10px] px-1 py-0.5 rounded " + (h.result === "success" ? "bg-sakura-100 text-sakura-600" : "bg-red-50 text-red-600")}>
                       {h.result === "success" ? "成功" : "失败"}
                     </span>
                   </div>
-                  <p className="text-[8px] text-sakura-400 truncate mt-0.5">{h.message}</p>
-                  <p className="text-[8px] text-sakura-300 mt-0.5">{new Date(h.ts * 1000).toLocaleString("zh-CN")}{h.duration_ms > 0 ? " · " + h.duration_ms + "ms" : ""}</p>
+                  <p className="text-[10px] text-sakura-400 truncate mt-0.5">{h.message}</p>
+                  <p className="text-[10px] text-sakura-300 mt-0.5">{new Date(h.ts * 1000).toLocaleString("zh-CN")}{h.duration_ms > 0 ? " · " + h.duration_ms + "ms" : ""}</p>
                 </div>
                 <button onClick={() => handleDelete("self_heals", h.id)}
-                  className="px-2 py-1 rounded text-[8px] font-medium bg-white border border-sakura-100 text-sakura-400 hover:text-red-500 hover:border-red-200 transition-colors shrink-0 opacity-0 group-hover:opacity-100">
+                  className="px-2 py-1 rounded text-[10px] font-medium bg-white border border-sakura-100 text-sakura-400 hover:text-red-500 hover:border-red-200 transition-colors shrink-0 opacity-0 group-hover:opacity-100">
                   删除
                 </button>
               </div>
@@ -1872,7 +1872,7 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
           </div>
           <div className="px-3 py-2 border-t border-sakura-100">
             <button onClick={handleHeal} disabled={healing}
-              className="w-full py-2 rounded-lg text-[11px] font-medium border border-sakura-200 text-sakura-600 hover:bg-sakura-50 disabled:opacity-50 transition-colors">
+              className="w-full py-2 rounded-lg text-[12px] font-medium border border-sakura-200 text-sakura-600 hover:bg-sakura-50 disabled:opacity-50 transition-colors">
               {healing ? "自愈执行中..." : "执行自动自愈"}
             </button>
           </div>
@@ -1880,26 +1880,26 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
 
         <div className="xl:w-[280px] xl:flex-shrink-0 bg-white border border-sakura-100 rounded-xl overflow-hidden">
           <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
-            <span className="text-[10px] font-medium text-sakura-500">系统养护</span>
+            <span className="text-[11px] font-medium text-sakura-500">系统养护</span>
           </div>
           <div className="p-3 space-y-2">
             <div className="grid grid-cols-3 gap-1.5">
               <button onClick={() => handleMaintenance(["log_cleanup"])} disabled={maintaining}
-                className="py-2 rounded-lg text-[10px] font-medium border border-sakura-200 text-sakura-600 hover:bg-sakura-50 disabled:opacity-50 transition-colors">日志</button>
+                className="py-2 rounded-lg text-[11px] font-medium border border-sakura-200 text-sakura-600 hover:bg-sakura-50 disabled:opacity-50 transition-colors">日志</button>
               <button onClick={() => handleMaintenance(["db_vacuum"])} disabled={maintaining}
-                className="py-2 rounded-lg text-[10px] font-medium border border-sakura-200 text-sakura-600 hover:bg-sakura-50 disabled:opacity-50 transition-colors">数据库</button>
+                className="py-2 rounded-lg text-[11px] font-medium border border-sakura-200 text-sakura-600 hover:bg-sakura-50 disabled:opacity-50 transition-colors">数据库</button>
               <button onClick={() => handleMaintenance(["cache_cleanup"])} disabled={maintaining}
-                className="py-2 rounded-lg text-[10px] font-medium border border-sakura-200 text-sakura-600 hover:bg-sakura-50 disabled:opacity-50 transition-colors">缓存</button>
+                className="py-2 rounded-lg text-[11px] font-medium border border-sakura-200 text-sakura-600 hover:bg-sakura-50 disabled:opacity-50 transition-colors">缓存</button>
             </div>
             <button onClick={() => handleMaintenance()} disabled={maintaining}
-              className="w-full py-2 rounded-lg text-[11px] font-medium bg-sakura-500 text-white hover:bg-sakura-600 disabled:opacity-50 transition-colors">
+              className="w-full py-2 rounded-lg text-[12px] font-medium bg-sakura-500 text-white hover:bg-sakura-600 disabled:opacity-50 transition-colors">
               {maintaining ? "养护执行中..." : "全部养护"}
             </button>
             {maintResult && (
               <div className="bg-sakura-50 rounded-lg p-2 space-y-0.5">
-                <p className="text-[9px] font-medium text-sakura-600">结果：</p>
+                <p className="text-[10px] font-medium text-sakura-600">结果：</p>
                 {Object.entries(maintResult.actions || {}).map(([k, v]: [string, any]) => (
-                  <p key={k} className={"text-[8px] " + (v.ok ? "text-green-600" : "text-red-600")}>{v.ok ? "OK" : "FAIL"} {k}：{v.message}</p>
+                  <p key={k} className={"text-[10px] " + (v.ok ? "text-green-600" : "text-red-600")}>{v.ok ? "OK" : "FAIL"} {k}：{v.message}</p>
                 ))}
               </div>
             )}
@@ -1910,24 +1910,24 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
       <div className="flex flex-col xl:flex-row gap-3 sm:gap-4">
         <div className="flex-1 bg-white border border-sakura-100 rounded-xl overflow-hidden">
           <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
-            <span className="text-[10px] font-medium text-sakura-500">变更记录</span>
+            <span className="text-[11px] font-medium text-sakura-500">变更记录</span>
           </div>
           <div className="divide-y divide-sakura-50 max-h-[200px] overflow-y-auto">
             {changelog.length === 0 ? (
-              <div className="px-3 py-3 text-center"><p className="text-[10px] text-sakura-300">无变更记录</p></div>
+              <div className="px-3 py-3 text-center"><p className="text-[11px] text-sakura-300">无变更记录</p></div>
             ) : changelog.map((c) => (
               <div key={c.id} className="flex items-start gap-2.5 px-3 py-2 group hover:bg-sakura-50/30 transition-colors">
                 <div className={"w-1 h-1 rounded-full mt-2 shrink-0 " + (c.result === "ok" ? "bg-green-500" : c.action === "巡检" ? "bg-blue-400" : c.action === "自愈" ? "bg-purple-400" : "bg-sakura-400")} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] font-medium text-sakura-600">{c.action}</span>
-                    <span className="text-[8px] text-sakura-500">{c.target}</span>
+                    <span className="text-[12px] font-medium text-sakura-600">{c.action}</span>
+                    <span className="text-[10px] text-sakura-500">{c.target}</span>
                   </div>
-                  <p className="text-[8px] text-sakura-400 truncate mt-0.5">{c.detail}</p>
-                  <p className="text-[8px] text-sakura-300 mt-0.5">{new Date(c.ts * 1000).toLocaleString("zh-CN")}</p>
+                  <p className="text-[10px] text-sakura-400 truncate mt-0.5">{c.detail}</p>
+                  <p className="text-[10px] text-sakura-300 mt-0.5">{new Date(c.ts * 1000).toLocaleString("zh-CN")}</p>
                 </div>
                 <button onClick={() => handleDelete("changelog", c.id)}
-                  className="px-2 py-1 rounded text-[8px] font-medium bg-white border border-sakura-100 text-sakura-400 hover:text-red-500 hover:border-red-200 transition-colors shrink-0 opacity-0 group-hover:opacity-100">
+                  className="px-2 py-1 rounded text-[10px] font-medium bg-white border border-sakura-100 text-sakura-400 hover:text-red-500 hover:border-red-200 transition-colors shrink-0 opacity-0 group-hover:opacity-100">
                   删除
                 </button>
               </div>
@@ -1938,16 +1938,16 @@ function OpsPage({ errors }: { errors: { msg: string; stack: string; time: numbe
         {recentErrors.length > 0 && (
           <div className="xl:w-[280px] xl:flex-shrink-0 bg-white border border-red-200 rounded-xl overflow-hidden">
             <div className="px-3 py-2 border-b border-red-100 bg-red-50/30 flex items-center justify-between">
-              <span className="text-[10px] font-medium text-red-500">最近错误</span>
-              <span className="text-[8px] text-red-400">{recentErrors.length} 条</span>
+              <span className="text-[11px] font-medium text-red-500">最近错误</span>
+              <span className="text-[10px] text-red-400">{recentErrors.length} 条</span>
             </div>
             <div className="divide-y divide-red-50 max-h-[200px] overflow-y-auto">
               {recentErrors.map((e, i) => (
                 <div key={i} className="flex items-start gap-2.5 px-3 py-2">
                   <div className="w-1.5 h-1.5 rounded-full bg-red-400 mt-1.5 shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <p className="text-[10px] text-red-600 font-mono truncate">{e.msg}</p>
-                    <p className="text-[8px] text-sakura-400 mt-0.5">{new Date(e.time).toLocaleString("zh-CN")}</p>
+                    <p className="text-[11px] text-red-600 font-mono truncate">{e.msg}</p>
+                    <p className="text-[10px] text-sakura-400 mt-0.5">{new Date(e.time).toLocaleString("zh-CN")}</p>
                   </div>
                 </div>
               ))}
@@ -2260,7 +2260,7 @@ function LivePage() {
               <p className={"text-[13px] font-bold "+(s?.connected?"text-green-700":s?.running?"text-amber-700":"text-sakura-600")}>
                 {s?.connected ? "直播中" : s?.running ? "引擎运行中" : "未启动"}
               </p>
-              <p className="text-[10px] text-sakura-400 mt-0.5">
+              <p className="text-[11px] text-sakura-400 mt-0.5">
                 {s?.connected ? "直播间 "+s?.room_id+" · 运行 "+utxt : s?.running ? "等待 B站 连接" : "启动引擎后开始直播"}
               </p>
             </div>
@@ -2269,27 +2269,27 @@ function LivePage() {
 
         <div className="flex flex-col gap-1.5">
           {!s?.running ? (
-            <button onClick={()=>act("/api/live/start",{app_id:appId,code:code,access_key_id:accessKeyId,access_key_secret:accessKeySecret,room_id:roomId,rtmp_url:rtmpUrl,dashscope_api_key:dashscopeKey},"引擎已启动")} className="px-3 py-1.5 rounded-lg text-[10px] font-medium bg-sakura-500 text-white hover:bg-sakura-600">启动引擎</button>
+            <button onClick={()=>act("/api/live/start",{app_id:appId,code:code,access_key_id:accessKeyId,access_key_secret:accessKeySecret,room_id:roomId,rtmp_url:rtmpUrl,dashscope_api_key:dashscopeKey},"引擎已启动")} className="px-3 py-1.5 rounded-lg text-[11px] font-medium bg-sakura-500 text-white hover:bg-sakura-600">启动引擎</button>
           ) : (
-            <button onClick={()=>act("/api/live/stop",{},"已停止")} className="px-3 py-1.5 rounded-lg text-[10px] font-medium bg-red-500 text-white hover:bg-red-600">停止引擎</button>
+            <button onClick={()=>act("/api/live/stop",{},"已停止")} className="px-3 py-1.5 rounded-lg text-[11px] font-medium bg-red-500 text-white hover:bg-red-600">停止引擎</button>
           )}
           {s?.running && !s?.connected && (
-            <button onClick={()=>act("/api/live/connect",{app_id:appId,access_key_id:accessKeyId,access_key_secret:accessKeySecret,room_id:roomId},"已连接")} className="px-3 py-1.5 rounded-lg text-[10px] font-medium bg-blue-500 text-white hover:bg-blue-600">连接 B站</button>
+            <button onClick={()=>act("/api/live/connect",{app_id:appId,access_key_id:accessKeyId,access_key_secret:accessKeySecret,room_id:roomId},"已连接")} className="px-3 py-1.5 rounded-lg text-[11px] font-medium bg-blue-500 text-white hover:bg-blue-600">连接 B站</button>
           )}
           {s?.connected && (
-            <button onClick={()=>act("/api/live/disconnect",{},"已断开")} className="px-3 py-1.5 rounded-lg text-[10px] font-medium bg-sakura-400 text-white hover:bg-sakura-500">断开 B站</button>
+            <button onClick={()=>act("/api/live/disconnect",{},"已断开")} className="px-3 py-1.5 rounded-lg text-[11px] font-medium bg-sakura-400 text-white hover:bg-sakura-500">断开 B站</button>
           )}
         </div>
       </div>
 
       <div className="flex items-center gap-2">
-        <button onClick={()=>setShowConfig(!showConfig)} className={"px-3 py-1.5 rounded-lg text-[10px] border "+(showConfig?"bg-sakura-100 border-sakura-300 text-sakura-600":"bg-white border-sakura-100 text-sakura-500 hover:border-sakura-300")}>
+        <button onClick={()=>setShowConfig(!showConfig)} className={"px-3 py-1.5 rounded-lg text-[11px] border "+(showConfig?"bg-sakura-100 border-sakura-300 text-sakura-600":"bg-white border-sakura-100 text-sakura-500 hover:border-sakura-300")}>
           B站配置
         </button>
-        <button onClick={()=>setShowRtmp(!showRtmp)} className={"px-3 py-1.5 rounded-lg text-[10px] border "+(showRtmp?"bg-sakura-100 border-sakura-300 text-sakura-600":"bg-white border-sakura-100 text-sakura-500 hover:border-sakura-300")}>
+        <button onClick={()=>setShowRtmp(!showRtmp)} className={"px-3 py-1.5 rounded-lg text-[11px] border "+(showRtmp?"bg-sakura-100 border-sakura-300 text-sakura-600":"bg-white border-sakura-100 text-sakura-500 hover:border-sakura-300")}>
           RTMP 推流
         </button>
-        <button onClick={()=>setShowStage(!showStage)} className={"px-3 py-1.5 rounded-lg text-[10px] border "+(showStage?"bg-sakura-100 border-sakura-300 text-sakura-600":"bg-white border-sakura-100 text-sakura-500 hover:border-sakura-300")}>
+        <button onClick={()=>setShowStage(!showStage)} className={"px-3 py-1.5 rounded-lg text-[11px] border "+(showStage?"bg-sakura-100 border-sakura-300 text-sakura-600":"bg-white border-sakura-100 text-sakura-500 hover:border-sakura-300")}>
           多角色舞台
         </button>
       </div>
@@ -2297,25 +2297,25 @@ function LivePage() {
       {/* WebSocket 连接状态面板 */}
       <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
         <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
-          <span className="text-[10px] font-medium text-sakura-500">WebSocket 连接状态</span>
+          <span className="text-[11px] font-medium text-sakura-500">WebSocket 连接状态</span>
           <div className="flex items-center gap-2">
-            <button onClick={togglePet} className={`text-[8px] px-2 py-1 rounded transition-colors ${s?.pet_running ? 'bg-purple-100 text-purple-600 hover:bg-purple-200' : 'bg-purple-500 text-white hover:bg-purple-600'}`}>{s?.pet_running ? '关闭桌宠' : '桌宠'}</button>
-            <button onClick={openStageWindow} className="text-[8px] px-2 py-1 rounded bg-indigo-500 text-white hover:bg-indigo-600 transition-colors">舞台窗口</button>
-            <button onClick={()=>act("/api/live/connect",{app_id:appId,code:code,access_key_id:accessKeyId,access_key_secret:accessKeySecret,room_id:roomId},"连接成功")} disabled={!appId||!accessKeyId||!code} className="text-[8px] px-2 py-1 rounded bg-blue-500 text-white disabled:opacity-40 hover:bg-blue-600 transition-colors">测试连接</button>
-            {s?.connected && <span className="text-[8px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded">已连接</span>}
-            {!s?.connected && s?.running && <span className="text-[8px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded">等待连接</span>}
-            {!s?.connected && !s?.running && <span className="text-[8px] bg-sakura-100 text-sakura-500 px-1.5 py-0.5 rounded">未启动</span>}
+            <button onClick={togglePet} className={`text-[10px] px-2 py-1 rounded transition-colors ${s?.pet_running ? 'bg-purple-100 text-purple-600 hover:bg-purple-200' : 'bg-purple-500 text-white hover:bg-purple-600'}`}>{s?.pet_running ? '关闭桌宠' : '桌宠'}</button>
+            <button onClick={openStageWindow} className="text-[10px] px-2 py-1 rounded bg-indigo-500 text-white hover:bg-indigo-600 transition-colors">舞台窗口</button>
+            <button onClick={()=>act("/api/live/connect",{app_id:appId,code:code,access_key_id:accessKeyId,access_key_secret:accessKeySecret,room_id:roomId},"连接成功")} disabled={!appId||!accessKeyId||!code} className="text-[10px] px-2 py-1 rounded bg-blue-500 text-white disabled:opacity-40 hover:bg-blue-600 transition-colors">测试连接</button>
+            {s?.connected && <span className="text-[10px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded">已连接</span>}
+            {!s?.connected && s?.running && <span className="text-[10px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded">等待连接</span>}
+            {!s?.connected && !s?.running && <span className="text-[10px] bg-sakura-100 text-sakura-500 px-1.5 py-0.5 rounded">未启动</span>}
             <input ref={fileRef} type="file" accept=".model3.json,.vrm" onChange={afterImport} className="hidden" />
           </div>
         </div>
-        <div className="p-3 grid grid-cols-2 gap-3 text-[10px]">
+        <div className="p-3 grid grid-cols-2 gap-3 text-[11px]">
           <div>
             <span className="text-sakura-400">连接状态</span>
             <p className="text-sakura-600 font-medium">{s?.connected ? "已连接到 B站" : s?.running ? "引擎运行中，等待连接..." : "未连接"}</p>
           </div>
           <div>
             <span className="text-sakura-400">场次 ID</span>
-            <p className="text-sakura-600 font-medium font-mono text-[9px]">{s?.game_id || "—"}</p>
+            <p className="text-sakura-600 font-medium font-mono text-[10px]">{s?.game_id || "—"}</p>
           </div>
           <div>
             <span className="text-sakura-400">直播间</span>
@@ -2336,7 +2336,7 @@ function LivePage() {
         </div>
         {s?.last_error && (
           <div className="px-3 py-2 border-t border-red-100 bg-red-50">
-            <p className="text-[9px] text-red-500">错误: {s.last_error}</p>
+            <p className="text-[10px] text-red-500">错误: {s.last_error}</p>
           </div>
         )}
       </div>
@@ -2352,65 +2352,65 @@ function LivePage() {
                 <button onClick={() => setShowConfig(false)} className="p-1 hover:bg-sakura-50 rounded text-sakura-400"><X size={14} /></button>
               </div>
               <div>
-                <label className="block text-[10px] text-sakura-500 font-medium mb-1">App ID</label>
+                <label className="block text-[11px] text-sakura-500 font-medium mb-1">App ID</label>
                 <input value={appId} onChange={e=>setAppId(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white" placeholder="从 B站 开放平台获取" />
               </div>
               <div>
-                <label className="block text-[10px] text-sakura-500 font-medium mb-1">Access Key ID</label>
+                <label className="block text-[11px] text-sakura-500 font-medium mb-1">Access Key ID</label>
                 <input value={accessKeyId} onChange={e=>setAccessKeyId(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="B站 Access Key ID" />
               </div>
               <div>
-                <label className="block text-[10px] text-sakura-500 font-medium mb-1">Access Key Secret</label>
+                <label className="block text-[11px] text-sakura-500 font-medium mb-1">Access Key Secret</label>
                 <input value={accessKeySecret} onChange={e=>setAccessKeySecret(e.target.value)} type="password" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="B站 Access Key Secret" />
               </div>
               <div>
-                <label className="block text-[10px] text-sakura-500 font-medium mb-1">主播身份码</label>
+                <label className="block text-[11px] text-sakura-500 font-medium mb-1">主播身份码</label>
                 <input value={code} onChange={e=>setCode(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white" placeholder="从直播中心获取" />
               </div>
               <div>
-                <label className="block text-[10px] text-sakura-500 font-medium mb-1">语言模型 API Key（TTS 语音用）</label>
+                <label className="block text-[11px] text-sakura-500 font-medium mb-1">语言模型 API Key（TTS 语音用）</label>
                 <div className="flex gap-1.5">
                   <input value={dashscopeKey} onChange={e=>setDashscopeKey(e.target.value)} type="password" className="flex-1 px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="留空则用对话页面的音频供应商或 Edge-TTS" />
                   <button onClick={async ()=>{ try { const r: any = await apiPost('/api/live/test-tts',{tts_model:ttsModel,tts_voice:ttsVoice,tts_api_url:ttsApiUrl,dashscope_api_key:dashscopeKey}); notify(r.ok?'TTS 连接成功':'TTS 失败: '+r.error, r.ok?'success':'error'); } catch { notify('请求失败','error'); }}} disabled={!dashscopeKey && !ttsModel} className="px-3 py-2 rounded-lg text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-40 transition-colors shrink-0">测试</button>
                 </div>
               </div>
               <div>
-                <label className="block text-[10px] text-sakura-500 font-medium mb-1">语音模型名（如 cosyvoice-v3-flash / qwen-audio-3.0-tts-flash）</label>
+                <label className="block text-[11px] text-sakura-500 font-medium mb-1">语音模型名（如 cosyvoice-v3-flash / qwen-audio-3.0-tts-flash）</label>
                 <input value={ttsModel} onChange={e=>setTtsModel(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="留空=默认 cosyvoice-v3-flash" />
               </div>
               <div>
-                <label className="block text-[10px] text-sakura-500 font-medium mb-1">音色（如 longfeifei_v3 / longanhuan_v3.6）</label>
+                <label className="block text-[11px] text-sakura-500 font-medium mb-1">音色（如 longfeifei_v3 / longanhuan_v3.6）</label>
                 <input value={ttsVoice} onChange={e=>setTtsVoice(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="留空=按模型家族自动选默认音色" />
               </div>
               <div>
-                <label className="block text-[10px] text-sakura-500 font-medium mb-1">语音 API 地址（可留空用默认）</label>
+                <label className="block text-[11px] text-sakura-500 font-medium mb-1">语音 API 地址（可留空用默认）</label>
                 <input value={ttsApiUrl} onChange={e=>setTtsApiUrl(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="留空=百炼默认语音合成端点" />
               </div>
               <div>
-                <label className="block text-[10px] text-sakura-500 font-medium mb-1">桌宠对话模型（填了即生效，写入模型供应商设置）</label>
+                <label className="block text-[11px] text-sakura-500 font-medium mb-1">桌宠对话模型（填了即生效，写入模型供应商设置）</label>
                 <input value={chatModel} onChange={e=>setChatModel(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="如 qwen-plus / deepseek-chat，覆盖当前对话供应商的模型" />
               </div>
               <div>
-                <label className="block text-[10px] text-sakura-500 font-medium mb-1">直播间 ID（可选）</label>
+                <label className="block text-[11px] text-sakura-500 font-medium mb-1">直播间 ID（可选）</label>
                 <input value={roomId} onChange={e=>setRoomId(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white" placeholder="留空自动" />
               </div>
               <div className="rounded-lg border border-sakura-100 bg-sakura-50/40 p-3 space-y-2">
-                <p className="text-[10px] font-medium text-sakura-600 mb-1">视觉模型（桌宠"看"视频/游戏 的眼睛，必填才能陪看吐槽/自主游戏）</p>
+                <p className="text-[11px] font-medium text-sakura-600 mb-1">视觉模型（桌宠"看"视频/游戏 的眼睛，必填才能陪看吐槽/自主游戏）</p>
                 <div>
-                  <label className="block text-[10px] text-sakura-500 font-medium mb-1">视觉模型名</label>
+                  <label className="block text-[11px] text-sakura-500 font-medium mb-1">视觉模型名</label>
                   <input value={visionModel} onChange={e=>setVisionModel(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="如 qwen-vl-plus / qwen-vl-max" />
                 </div>
                 <div>
-                  <label className="block text-[10px] text-sakura-500 font-medium mb-1">API Key</label>
+                  <label className="block text-[11px] text-sakura-500 font-medium mb-1">API Key</label>
                   <input value={visionApiKey} onChange={e=>setVisionApiKey(e.target.value)} type="password" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="与语言模型可同厂商(百炼)" />
                 </div>
                 <div>
-                  <label className="block text-[10px] text-sakura-500 font-medium mb-1">API 地址（可留空用默认）</label>
+                  <label className="block text-[11px] text-sakura-500 font-medium mb-1">API 地址（可留空用默认）</label>
                   <input value={visionApiUrl} onChange={e=>setVisionApiUrl(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="留空=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions" />
                 </div>
               </div>
               <div>
-                <details className="text-[10px]">
+                <details className="text-[11px]">
                   <summary className="text-sakura-500 font-medium cursor-pointer hover:text-sakura-600">直播互动提示词（点击展开编辑）</summary>
                   <textarea value={livePrompt} onChange={e=>setLivePrompt(e.target.value)} className="w-full mt-2 px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white resize-none font-mono leading-relaxed" rows={8} placeholder="修改这里的提示词可自定义主播人设..." />
                 </details>
@@ -2436,7 +2436,7 @@ function LivePage() {
                 <button onClick={() => setShowRtmp(false)} className="p-1 hover:bg-sakura-50 rounded text-sakura-400"><X size={14} /></button>
               </div>
               <div>
-                <label className="block text-[10px] text-sakura-500 font-medium mb-1">RTMP 地址</label>
+                <label className="block text-[11px] text-sakura-500 font-medium mb-1">RTMP 地址</label>
                 <input value={rtmpUrl} onChange={e=>setRtmpUrl(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" placeholder="rtmp://..." />
               </div>
               <div className="flex items-center gap-2 pt-2">
@@ -2451,8 +2451,8 @@ function LivePage() {
 
       <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
         <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
-          <span className="text-[10px] font-medium text-sakura-500">Agent 流水线</span>
-          {s?.connected && <span className="text-[8px] text-green-500 flex items-center gap-1"><div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />运行中</span>}
+          <span className="text-[11px] font-medium text-sakura-500">Agent 流水线</span>
+          {s?.connected && <span className="text-[10px] text-green-500 flex items-center gap-1"><div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />运行中</span>}
         </div>
         <div className="divide-y divide-sakura-50">
           {s?.agents && Object.entries(s.agents).map(([id,a]:[string,any],i:number,arr:any[])=>(
@@ -2461,22 +2461,22 @@ function LivePage() {
                 <div className={"w-2 h-2 rounded-full shrink-0 "+(a.status==="running"?"bg-green-500 animate-pulse":a.status==="ready"?"bg-blue-400":a.status==="error"?"bg-red-400":"bg-sakura-300")} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] font-medium text-sakura-600">{a.name}</span>
-                    <span className={"text-[8px] px-1 py-0.5 rounded "+(a.status==="running"?"bg-green-50 text-green-600":a.status==="ready"?"bg-blue-50 text-blue-500":a.status==="error"?"bg-red-50 text-red-500":"bg-sakura-100 text-sakura-500")}>{a.status==="running"?"运行中":a.status==="ready"?"就绪":a.status==="error"?"异常":"停止"}</span>
+                    <span className="text-[12px] font-medium text-sakura-600">{a.name}</span>
+                    <span className={"text-[10px] px-1 py-0.5 rounded "+(a.status==="running"?"bg-green-50 text-green-600":a.status==="ready"?"bg-blue-50 text-blue-500":a.status==="error"?"bg-red-50 text-red-500":"bg-sakura-100 text-sakura-500")}>{a.status==="running"?"运行中":a.status==="ready"?"就绪":a.status==="error"?"异常":"停止"}</span>
                   </div>
-                  <p className="text-[8px] text-sakura-400 mt-0.5">{a.desc}</p>
+                  <p className="text-[10px] text-sakura-400 mt-0.5">{a.desc}</p>
                 </div>
                 {i<arr.length-1 && <div className={"transition-transform "+(expandedAgent===id?"rotate-180":"")}><ChevronDown size={10} className="text-sakura-300 shrink-0" /></div>}
               </div>
               {/* 展开详情 */}
               {expandedAgent===id && (
                 <div className="px-8 pb-2.5 pt-1 space-y-1 bg-sakura-50/30">
-                  <div className="flex items-center gap-3 text-[9px] text-sakura-400">
+                  <div className="flex items-center gap-3 text-[10px] text-sakura-400">
                     <span>状态: <strong className={a.status==="running"?"text-green-600":a.status==="error"?"text-red-500":"text-sakura-500"}>{a.status==="running"?"运行中":a.status==="ready"?"就绪":a.status==="error"?"异常":"停止"}</strong></span>
                     <span>功能: {a.desc}</span>
                   </div>
                   {a.status==="error" && s?.errors?.slice(-1).map((e:string,i:number)=>(
-                    <p key={i} className="text-[8px] text-red-400 break-all">{e}</p>
+                    <p key={i} className="text-[10px] text-red-400 break-all">{e}</p>
                   ))}
                 </div>
               )}
@@ -2488,12 +2488,12 @@ function LivePage() {
       {s?.connected && (
         <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
           <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
-            <span className="text-[10px] font-medium text-sakura-500">弹幕预览</span>
-            <div className="text-[8px] text-sakura-400">{s?.danmaku_count||0} 条 ({s?.danmaku_rate||0}/s)</div>
+            <span className="text-[11px] font-medium text-sakura-500">弹幕预览</span>
+            <div className="text-[10px] text-sakura-400">{s?.danmaku_count||0} 条 ({s?.danmaku_rate||0}/s)</div>
           </div>
           <div className="max-h-[160px] overflow-y-auto p-2 space-y-1">
-            {danmaku.length===0 ? <p className="text-[9px] text-sakura-300 text-center py-4">暂无弹幕</p> : danmaku.slice(-30).reverse().map((d:any,i:number)=>(
-              <div key={i} className="flex items-start gap-2 text-[9px]">
+            {danmaku.length===0 ? <p className="text-[10px] text-sakura-300 text-center py-4">暂无弹幕</p> : danmaku.slice(-30).reverse().map((d:any,i:number)=>(
+              <div key={i} className="flex items-start gap-2 text-[10px]">
                 <span className="text-sakura-300 shrink-0 w-12">{d.time_str}</span>
                 <span className="text-sakura-500 font-medium shrink-0">{d.user}</span>
                 <span className="text-sakura-600 break-all">{d.text}</span>
@@ -2505,8 +2505,8 @@ function LivePage() {
 
       {s?.last_error && (
         <div className="bg-red-50 border border-red-200 rounded-xl p-3">
-          <p className="text-[9px] text-red-500 font-medium">错误</p>
-          <p className="text-[9px] text-red-400 mt-0.5">{s.last_error}</p>
+          <p className="text-[10px] text-red-500 font-medium">错误</p>
+          <p className="text-[10px] text-red-400 mt-0.5">{s.last_error}</p>
         </div>
       )}
       {/* 多角色舞台侧边栏 */}
@@ -2521,9 +2521,9 @@ function LivePage() {
               </div>
           {/* 当前角色列表 */}
           <div className="space-y-2">
-            <p className="text-[10px] font-medium text-sakura-500">当前角色（{connectors.length}）</p>
+            <p className="text-[11px] font-medium text-sakura-500">当前角色（{connectors.length}）</p>
             {connectors.length === 0 ? (
-              <p className="text-[10px] text-sakura-300 py-1">暂无角色在台</p>
+              <p className="text-[11px] text-sakura-300 py-1">暂无角色在台</p>
             ) : (
               <div className="space-y-1.5">
                 {/* 排序：真人(0) → 奶昔(1) → 外部角色(2)，同组内保持后端原始顺序 */}
@@ -2542,22 +2542,22 @@ function LivePage() {
                   <div key={c.agent_id} className="rounded-lg border border-sakura-100 p-2 space-y-1.5">
                     <div className="flex items-center gap-2.5">
                       <span className={"w-2 h-2 rounded-full shrink-0 " + (c.quarantined ? "bg-red-400" : "bg-green-400")} />
-                      <span className="text-[11px] font-medium text-sakura-600 truncate flex-1">{c.name}</span>
-                      {c.builtin && <span className="text-[8px] text-sakura-300 shrink-0">内置</span>}
-                      {c.quarantined && <span className="text-[8px] text-red-400 shrink-0">限流隔离中</span>}
-                      <span className={"text-[8px] px-1.5 py-0.5 rounded shrink-0 " + liveTransportBadge(c.transport).cls}>{liveTransportBadge(c.transport).label}</span>
+                      <span className="text-[12px] font-medium text-sakura-600 truncate flex-1">{c.name}</span>
+                      {c.builtin && <span className="text-[10px] text-sakura-300 shrink-0">内置</span>}
+                      {c.quarantined && <span className="text-[10px] text-red-400 shrink-0">限流隔离中</span>}
+                      <span className={"text-[10px] px-1.5 py-0.5 rounded shrink-0 " + liveTransportBadge(c.transport).cls}>{liveTransportBadge(c.transport).label}</span>
                       {!c.builtin && (
-                        <button onClick={() => unregisterAgent(c.agent_id)} className="text-[9px] text-red-400 hover:text-red-500 shrink-0">下台</button>
+                        <button onClick={() => unregisterAgent(c.agent_id)} className="text-[10px] text-red-400 hover:text-red-500 shrink-0">下台</button>
                       )}
                     </div>
                     {/* 模型绑定：每个角色绑定各自 VTS 模型，避免指令串模型冲突 */}
                     <div className="flex items-center gap-2">
-                      <span className="text-[9px] text-sakura-400 shrink-0 w-12">{c.human_controlled ? '真人模型' : '绑定模型'}</span>
+                      <span className="text-[10px] text-sakura-400 shrink-0 w-12">{c.human_controlled ? '真人模型' : '绑定模型'}</span>
                       <select
                         value={c.model_id || ''}
                         disabled={c.human_controlled}
                         onChange={e => bindModel(c.agent_id, e.target.value)}
-                        className="flex-1 px-2 py-1 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-white disabled:bg-sakura-50 disabled:text-sakura-300"
+                        className="flex-1 px-2 py-1 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-white disabled:bg-sakura-50 disabled:text-sakura-300"
                       >
                         <option value="">（VTS 当前模型）</option>
                         {Object.entries(vtsModels.models || {}).map(([gid, name]) => (
@@ -2568,18 +2568,18 @@ function LivePage() {
                     {/* 渲染后端切换：vts=VTS实例池 / vmc=VMC协议 / self=自研Live2D */}
                     {!c.human_controlled && (
                       <div className="flex items-center gap-2">
-                        <span className="text-[9px] text-sakura-400 shrink-0 w-12">渲染后端</span>
+                        <span className="text-[10px] text-sakura-400 shrink-0 w-12">渲染后端</span>
                         <select
                           value={backendKind}
                           onChange={e => setAgentBackend(c.agent_id, e.target.value)}
-                          className="px-2 py-1 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-white"
+                          className="px-2 py-1 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-white"
                         >
                           <option value="vts">VTube Studio</option>
                           <option value="self">自研渲染（桌宠）</option>
                           <option value="vmc">VMC 协议</option>
                         </select>
                         {backendKind !== 'vts' && (
-                          <span className={`text-[9px] ${backend.connected ? 'text-emerald-500' : 'text-sakura-300'}`}>
+                          <span className={`text-[10px] ${backend.connected ? 'text-emerald-500' : 'text-sakura-300'}`}>
                             {backend.connected ? '已连接' : '待连接'}{backend.port ? ` · 端口 ${backend.port}` : ''}
                           </span>
                         )}
@@ -2588,18 +2588,18 @@ function LivePage() {
                     {/* VTS 实例状态：端口 + 当前模型（多实例按 8001+i 分配，仅 vts 后端显示） */}
                     {!c.human_controlled && backendKind === 'vts' && (
                       <div className="flex items-center gap-2">
-                        <span className="text-[9px] text-sakura-400 shrink-0 w-12">VTS</span>
+                        <span className="text-[10px] text-sakura-400 shrink-0 w-12">VTS</span>
                         {vtsInst ? (
-                          <span className={`text-[9px] ${vtsInst.authenticated ? 'text-emerald-500' : 'text-sakura-300'}`}>
+                          <span className={`text-[10px] ${vtsInst.authenticated ? 'text-emerald-500' : 'text-sakura-300'}`}>
                             端口 {vtsInst.port} · {vtsInst.authenticated ? (vtsCur ? `当前：${vtsCur}` : '已连接') : '未授权（VTS 中点击确认）'}
                           </span>
                         ) : (
-                          <span className="text-[9px] text-sakura-300">实例未连接（在 VTS 中开启 API）</span>
+                          <span className="text-[10px] text-sakura-300">实例未连接（在 VTS 中开启 API）</span>
                         )}
                       </div>
                     )}
                     {c.human_controlled && (
-                      <p className="text-[8px] text-sakura-300 leading-relaxed">真人模型由真人完全操控，奶昔不写入任何 VTS 数据（口型/表情/动作）</p>
+                      <p className="text-[10px] text-sakura-300 leading-relaxed">真人模型由真人完全操控，奶昔不写入任何 VTS 数据（口型/表情/动作）</p>
                     )}
                   </div>
                   );
@@ -2611,23 +2611,23 @@ function LivePage() {
           {/* 层3 真人语音闭环：麦克风采集 → VAD → ASR → 自动上麦 */}
           <div className="rounded-lg border border-sakura-200 bg-sakura-50/40 p-2.5 space-y-2">
             <div className="flex items-center justify-between gap-2">
-              <p className="text-[10px] font-medium text-sakura-600 flex items-center gap-1"><Mic size={13} /> 直播联动·麦克风（跟着直播姬的麦）</p>
-              <button onClick={toggleHumanVoice} className={`shrink-0 px-2.5 py-1 rounded-lg text-[10px] font-medium transition-colors flex items-center gap-1 ${humanVoiceOn ? 'bg-rose-500 text-white hover:bg-rose-600' : 'bg-sakura-500 text-white hover:bg-sakura-600'}`}>
+              <p className="text-[11px] font-medium text-sakura-600 flex items-center gap-1"><Mic size={13} /> 直播联动·麦克风（跟着直播姬的麦）</p>
+              <button onClick={toggleHumanVoice} className={`shrink-0 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors flex items-center gap-1 ${humanVoiceOn ? 'bg-rose-500 text-white hover:bg-rose-600' : 'bg-sakura-500 text-white hover:bg-sakura-600'}`}>
                 {humanVoiceOn ? <><MicOff size={12} /> 关闭</> : <><Mic size={12} /> 开启</>}
               </button>
             </div>
-            <p className="text-[9px] text-sakura-400 leading-relaxed">正确路线：在直播姬里点开麦克风后，奶昔用共享模式读取<strong>同一路物理麦克风</strong>——你对着麦说话，桌宠就当作真人副播发言自动接话/做被搭话反应。如果直播姬绑的是系统默认输入，下方留空即可；若直播姬绑了独立声卡/虚拟麦，请在下方选它实际使用的那一路。</p>
+            <p className="text-[10px] text-sakura-400 leading-relaxed">正确路线：在直播姬里点开麦克风后，奶昔用共享模式读取<strong>同一路物理麦克风</strong>——你对着麦说话，桌宠就当作真人副播发言自动接话/做被搭话反应。如果直播姬绑的是系统默认输入，下方留空即可；若直播姬绑了独立声卡/虚拟麦，请在下方选它实际使用的那一路。</p>
             {/* 识别引擎选择：云端百炼(噪声鲁棒) / 本地vosk(离线隐私) */}
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[9px] text-sakura-400">识别引擎：</span>
-              <div className="flex rounded-lg overflow-hidden border border-sakura-200 text-[10px]">
+              <span className="text-[10px] text-sakura-400">识别引擎：</span>
+              <div className="flex rounded-lg overflow-hidden border border-sakura-200 text-[11px]">
                 <button onClick={() => changeHumanVoiceProvider('cloud')} className={`px-2.5 py-1 transition-colors ${humanVoiceProvider === 'cloud' ? 'bg-sakura-500 text-white' : 'bg-white text-sakura-500 hover:bg-sakura-50'}`}>云端百炼</button>
                 <button onClick={() => changeHumanVoiceProvider('local')} className={`px-2.5 py-1 transition-colors ${humanVoiceProvider === 'local' ? 'bg-sakura-500 text-white' : 'bg-white text-sakura-500 hover:bg-sakura-50'}`}>本地vosk</button>
               </div>
-              <span className="text-[9px] text-sakura-300">{humanVoiceProvider === 'cloud' ? '云端大模型·噪声下稳·需联网' : '离线隐私·断网可用·噪声下较弱'}</span>
+              <span className="text-[10px] text-sakura-300">{humanVoiceProvider === 'cloud' ? '云端大模型·噪声下稳·需联网' : '离线隐私·断网可用·噪声下较弱'}</span>
             </div>
             {/* 麦克风设备选择：下拉列出真实可用输入设备，留空=系统默认（默认已自动选物理麦） */}
-            <select value={humanVoiceDevice} onChange={e => { const v = e.target.value; setHumanVoiceDevice(v); humanVoiceDeviceRef.current = v; deviceManuallyChangedRef.current = true; }} className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[10px] outline-none focus:border-sakura-300 bg-white">
+            <select value={humanVoiceDevice} onChange={e => { const v = e.target.value; setHumanVoiceDevice(v); humanVoiceDeviceRef.current = v; deviceManuallyChangedRef.current = true; }} className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-white">
               <option value="">{`系统默认输入（当前：${audioDevices.default_name || '—'}）`}</option>
               {(audioDevices.inputs || []).map((d: any) => {
                 // 系统设备名可能含换行/回车（部分驱动），清理成单行；超出长度截断避免下拉过宽
@@ -2639,9 +2639,9 @@ function LivePage() {
                 return <option key={d.index} value={String(d.index)}>{disp}{tag}{isPhysical ? ' ★物理麦' : ''} ·{d.index}</option>;
               })}
             </select>
-            <p className="text-[9px] text-sakura-300">直播姬用哪路麦就选哪路。<span className="text-rose-400">★物理麦</span> 是最佳选择；系统默认当前常是虚拟麦（收不到人声），建议明确选物理麦。</p>
+            <p className="text-[10px] text-sakura-300">直播姬用哪路麦就选哪路。<span className="text-rose-400">★物理麦</span> 是最佳选择；系统默认当前常是虚拟麦（收不到人声），建议明确选物理麦。</p>
             {/* 状态行 */}
-            <div className="flex items-center gap-2 text-[9px]">
+            <div className="flex items-center gap-2 text-[10px]">
               <span className={`inline-flex items-center gap-1 ${humanVoiceStatus?.model_ready ? 'text-emerald-500' : 'text-sakura-400'}`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${humanVoiceStatus?.model_ready ? 'bg-emerald-500' : 'bg-sakura-300'}`} /> 模型{ humanVoiceStatus?.model_ready ? '已就绪' : (humanVoiceStatus?.state === 'downloading' ? '下载中…' : '未就绪') }</span>
               <span className="text-sakura-300">·</span>
@@ -2651,7 +2651,7 @@ function LivePage() {
 
           {/* 人类副播上麦 */}
           <div className="space-y-2">
-            <p className="text-[10px] font-medium text-sakura-500">人类副播（手动上麦）</p>
+            <p className="text-[11px] font-medium text-sakura-500">人类副播（手动上麦）</p>
             <div className="flex gap-2">
               <input value={humanText} onChange={e => setHumanText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') humanSpeak(); }} placeholder="输入一句让副播说出口…" className="flex-1 px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white" />
               <button onClick={humanSpeak} disabled={!humanText.trim()} className="px-3 py-2 rounded-lg text-xs font-medium bg-sakura-500 text-white hover:bg-sakura-600 disabled:opacity-40 transition-colors shrink-0">上麦</button>
@@ -2663,52 +2663,52 @@ function LivePage() {
             {/* 反向连入（外部连奶昔，推荐）：外部 agent 用凭证主动连引擎 */}
             <div className="rounded-lg border border-sakura-200 bg-sakura-50/40 p-2.5 space-y-2">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-[10px] font-medium text-sakura-600">外部连奶昔（反向连入 · 推荐）</p>
-                <button onClick={genCred} className="shrink-0 px-2.5 py-1 rounded-lg text-[10px] font-medium bg-sakura-500 text-white hover:bg-sakura-600 transition-colors">生成接入凭证</button>
+                <p className="text-[11px] font-medium text-sakura-600">外部连奶昔（反向连入 · 推荐）</p>
+                <button onClick={genCred} className="shrink-0 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-sakura-500 text-white hover:bg-sakura-600 transition-colors">生成接入凭证</button>
               </div>
-              <p className="text-[9px] text-sakura-400 leading-relaxed">外部 agent 用本凭证主动连引擎 <code className="font-mono">/api/live/ws_agent</code>，连上即自动上台、断开即下台（标记 WS 反向连入），无需在此手填。复制凭证给外部 agent 即可。</p>
+              <p className="text-[10px] text-sakura-400 leading-relaxed">外部 agent 用本凭证主动连引擎 <code className="font-mono">/api/live/ws_agent</code>，连上即自动上台、断开即下台（标记 WS 反向连入），无需在此手填。复制凭证给外部 agent 即可。</p>
               {cred && (
                 <div className="rounded-lg border border-sakura-100 bg-white p-2.5 space-y-2">
-                  <p className="text-[10px] font-medium text-sakura-600">已生成凭证（复制给外部 agent）</p>
-                  <div className="space-y-1 text-[10px]">
+                  <p className="text-[11px] font-medium text-sakura-600">已生成凭证（复制给外部 agent）</p>
+                  <div className="space-y-1 text-[11px]">
                     <div className="flex items-center gap-2"><span className="text-sakura-400 w-14 shrink-0">本机端点</span><code className="flex-1 truncate font-mono text-sakura-600">{cred.endpoint}</code><button onClick={() => copyText(cred.endpoint)} className="shrink-0 text-sakura-400 hover:text-sakura-600">复制</button></div>
                     <div className="flex items-center gap-2"><span className="text-sakura-400 w-14 shrink-0">局域网</span><code className="flex-1 truncate font-mono text-sakura-600">{cred.lan_endpoint}</code><button onClick={() => copyText(cred.lan_endpoint)} className="shrink-0 text-sakura-400 hover:text-sakura-600">复制</button></div>
                     <div className="flex items-center gap-2"><span className="text-sakura-400 w-14 shrink-0">密钥</span><code className="flex-1 truncate font-mono text-sakura-600">{cred.token}</code><button onClick={() => copyText(cred.token)} className="shrink-0 text-sakura-400 hover:text-sakura-600">复制</button></div>
                   </div>
-                  <button onClick={() => setShowSample(s => !s)} className="text-[10px] text-sakura-500 hover:text-sakura-700 underline underline-offset-2">{showSample ? '收起' : '查看'}外部 agent 连接示例</button>
-                  {showSample && <pre className="text-[9px] leading-relaxed bg-sakura-50 border border-sakura-100 rounded-lg p-2 overflow-x-auto whitespace-pre font-mono text-sakura-600 max-h-64">{cred.sample}</pre>}
+                  <button onClick={() => setShowSample(s => !s)} className="text-[11px] text-sakura-500 hover:text-sakura-700 underline underline-offset-2">{showSample ? '收起' : '查看'}外部 agent 连接示例</button>
+                  {showSample && <pre className="text-[10px] leading-relaxed bg-sakura-50 border border-sakura-100 rounded-lg p-2 overflow-x-auto whitespace-pre font-mono text-sakura-600 max-h-64">{cred.sample}</pre>}
                 </div>
               )}
             </div>
             {/* 正向连入（奶昔连外部）：外部 agent 提供 HTTP/WS 端点，引擎主动推事件 */}
             <div className="rounded-lg border border-sakura-100 p-2.5 space-y-2.5">
-              <p className="text-[10px] font-medium text-sakura-500">让奶昔连外部（正向连入）</p>
-              <p className="text-[9px] text-sakura-300 leading-relaxed">外部 agent 提供一个 HTTP POST 或 WebSocket 端点，奶昔主动把弹幕/线索事件推过去，外部返回文本即上台发言。远程端点需填 token 鉴权。</p>
+              <p className="text-[11px] font-medium text-sakura-500">让奶昔连外部（正向连入）</p>
+              <p className="text-[10px] text-sakura-300 leading-relaxed">外部 agent 提供一个 HTTP POST 或 WebSocket 端点，奶昔主动把弹幕/线索事件推过去，外部返回文本即上台发言。远程端点需填 token 鉴权。</p>
               <div className="space-y-2.5">
                 <div>
-                  <label className="block text-[10px] text-sakura-500 font-medium mb-1">agent_id</label>
+                  <label className="block text-[11px] text-sakura-500 font-medium mb-1">agent_id</label>
                   <input value={regForm.agent_id} onChange={e => setRegForm({ ...regForm, agent_id: e.target.value })} placeholder="唯一标识" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white" />
                 </div>
                 <div>
-                  <label className="block text-[10px] text-sakura-500 font-medium mb-1">显示名</label>
+                  <label className="block text-[11px] text-sakura-500 font-medium mb-1">显示名</label>
                   <input value={regForm.name} onChange={e => setRegForm({ ...regForm, name: e.target.value })} placeholder="展示用名称" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white" />
                 </div>
                 <div>
-                  <label className="block text-[10px] text-sakura-500 font-medium mb-1">端点</label>
+                  <label className="block text-[11px] text-sakura-500 font-medium mb-1">端点</label>
                   <input value={regForm.endpoint} onChange={e => setRegForm({ ...regForm, endpoint: e.target.value })} placeholder="http:// 或 ws:// 端点" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" />
                 </div>
                 <div>
-                  <label className="block text-[10px] text-sakura-500 font-medium mb-1">类型</label>
+                  <label className="block text-[11px] text-sakura-500 font-medium mb-1">类型</label>
                   <select value={regForm.type} onChange={e => setRegForm({ ...regForm, type: e.target.value })} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white">
                     <option value="http">HTTP</option>
                     <option value="ws">WebSocket</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[10px] text-sakura-500 font-medium mb-1">token（远程必填）</label>
+                  <label className="block text-[11px] text-sakura-500 font-medium mb-1">token（远程必填）</label>
                   <input value={regForm.token} onChange={e => setRegForm({ ...regForm, token: e.target.value })} placeholder="鉴权 token" className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white font-mono" />
                 </div>
-                {regMsg && <p className="text-[9px] text-red-400">{regMsg}</p>}
+                {regMsg && <p className="text-[10px] text-red-400">{regMsg}</p>}
                 <button onClick={registerAgent} className="w-full px-3 py-2 rounded-lg text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 transition-colors">接入角色</button>
               </div>
             </div>
@@ -2953,10 +2953,10 @@ function SchedulerPage() {
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm font-semibold text-sakura-600">自动化</p>
-          <p className="text-[10px] text-sakura-400 mt-0.5">定时执行任务，自动产出结果</p>
+          <p className="text-[11px] text-sakura-400 mt-0.5">定时执行任务，自动产出结果</p>
         </div>
         <button type="button" onClick={() => setShowCreate(true)}
-          className="flex items-center gap-1 px-3.5 py-2 rounded-lg text-[11px] font-medium bg-sakura-500 text-white hover:bg-sakura-600 transition-colors shadow-sm">
+          className="flex items-center gap-1 px-3.5 py-2 rounded-lg text-[12px] font-medium bg-sakura-500 text-white hover:bg-sakura-600 transition-colors shadow-sm">
           <Plus size={12} /> 创建
         </button>
       </div>
@@ -2973,7 +2973,7 @@ function SchedulerPage() {
             <div className="w-9 h-9 rounded-lg bg-sakura-50 flex items-center justify-center text-sakura-400">{card.icon}</div>
             <div>
               <p className="text-xl font-semibold text-sakura-600">{card.value}</p>
-              <p className="text-[10px] text-sakura-400">{card.label}</p>
+              <p className="text-[11px] text-sakura-400">{card.label}</p>
             </div>
           </div>
         ))}
@@ -2983,12 +2983,12 @@ function SchedulerPage() {
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
           <input value={search} onChange={e => { setSearch(e.target.value); setPage(1); }}
-            className="w-full pl-7 pr-2.5 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-sakura-50/50 text-sakura-600 placeholder:text-sakura-300 transition-colors"
+            className="w-full pl-7 pr-2.5 py-1.5 border border-sakura-100 rounded-lg text-[12px] outline-none focus:border-sakura-300 bg-sakura-50/50 text-sakura-600 placeholder:text-sakura-300 transition-colors"
             placeholder="搜索自动化..." />
           <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-sakura-300" />
         </div>
         <select value={filter} onChange={e => { setFilter(e.target.value); setPage(1); }}
-          className="px-2 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-white text-sakura-500">
+          className="px-2 py-1.5 border border-sakura-100 rounded-lg text-[12px] outline-none focus:border-sakura-300 bg-white text-sakura-500">
           <option value="all">全部</option>
           <option value="schedule">定时</option>
           <option value="webhook">Webhook</option>
@@ -3006,38 +3006,38 @@ function SchedulerPage() {
                 <button onClick={() => { setShowCreate(false); setEditId(null); }} className="p-1 hover:bg-sakura-50 rounded text-sakura-400"><X size={14} /></button>
               </div>
               <div>
-                <label className="block text-[10px] text-sakura-500 font-medium mb-1">名称 <span className="text-red-400">*</span></label>
+                <label className="block text-[11px] text-sakura-500 font-medium mb-1">名称 <span className="text-red-400">*</span></label>
                 <input value={formName} onChange={e => setFormName(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300" placeholder="如：每日新闻摘要" />
               </div>
               <div>
-                <label className="block text-[10px] text-sakura-500 font-medium mb-1">描述</label>
+                <label className="block text-[11px] text-sakura-500 font-medium mb-1">描述</label>
                 <textarea value={formDesc} onChange={e => setFormDesc(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 resize-none" rows={2} placeholder="描述这个自动化任务做什么..." />
               </div>
               <div>
-                <label className="block text-[10px] text-sakura-500 font-medium mb-1">关联工作流 <span className="text-red-400">*</span></label>
+                <label className="block text-[11px] text-sakura-500 font-medium mb-1">关联工作流 <span className="text-red-400">*</span></label>
                 <select value={formWorkflow} onChange={e => setFormWorkflow(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 bg-white">
                   <option value="">选择工作流...</option>
                   {workflows.map((w: any) => (<option key={w.id} value={w.id}>{w.name}</option>))}
                 </select>
               </div>
               <div>
-                <label className="block text-[10px] text-sakura-500 font-medium mb-1">触发方式</label>
+                <label className="block text-[11px] text-sakura-500 font-medium mb-1">触发方式</label>
                 <div className="flex gap-2">
                   {[
                     { key: "schedule", label: "定时", icon: <Calendar size={12} /> },
                     { key: "webhook", label: "Webhook", icon: <Zap size={12} /> },
                   ].map(t => (
                     <button key={t.key} onClick={() => setFormTrigger(t.key)}
-                      className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-[11px] border transition-colors ${formTrigger === t.key ? "bg-sakura-100 border-sakura-300 text-sakura-600" : "bg-white border-sakura-100 text-sakura-400 hover:border-sakura-200"}`}>
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] border transition-colors ${formTrigger === t.key ? "bg-sakura-100 border-sakura-300 text-sakura-600" : "bg-white border-sakura-100 text-sakura-400 hover:border-sakura-200"}`}>
                       {t.icon} {t.label}
                     </button>
                   ))}
                 </div>
               </div>
               <div>
-                <label className="block text-[10px] text-sakura-500 font-medium mb-1">{formTrigger === "schedule" ? "Cron 表达式" : "Webhook 端点"}</label>
+                <label className="block text-[11px] text-sakura-500 font-medium mb-1">{formTrigger === "schedule" ? "Cron 表达式" : "Webhook 端点"}</label>
                 <input value={formConfig} onChange={e => setFormConfig(e.target.value)} className="w-full px-3 py-2 border border-sakura-100 rounded-lg text-xs outline-none focus:border-sakura-300 font-mono" placeholder={formTrigger === "schedule" ? "0 9 * * *" : "/webhook/xxx"} />
-                {formTrigger === "schedule" && <p className="text-[9px] text-sakura-300 mt-1">分 时 日 月 周，如 0 9 * * * = 每天 9:00</p>}
+                {formTrigger === "schedule" && <p className="text-[10px] text-sakura-300 mt-1">分 时 日 月 周，如 0 9 * * * = 每天 9:00</p>}
               </div>
               <div className="flex items-center gap-2 pt-2">
                 <button onClick={() => { setShowCreate(false); setEditId(null); setFormName(""); setFormDesc(""); setFormWorkflow(""); setFormConfig("0 9 * * *"); }} className="flex-1 px-3 py-2 rounded-lg text-xs border border-sakura-100 text-sakura-400 hover:bg-sakura-50 transition-colors">取消</button>
@@ -3051,7 +3051,7 @@ function SchedulerPage() {
 
       {/* ═══ 任务列表 ═══ */}
       <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-        <div className="grid grid-cols-[1.5fr_1fr_0.8fr_0.8fr_110px] gap-2 px-4 py-2.5 border-b border-sakura-100 text-[10px] text-sakura-400 font-medium bg-sakura-50/50">
+        <div className="grid grid-cols-[1.5fr_1fr_0.8fr_0.8fr_110px] gap-2 px-4 py-2.5 border-b border-sakura-100 text-[11px] text-sakura-400 font-medium bg-sakura-50/50">
           <span>名称</span><span>触发方式</span><span>状态</span><span>上次运行</span><span className="text-right">操作</span>
         </div>
         {paged.length === 0 ? (
@@ -3060,17 +3060,17 @@ function SchedulerPage() {
               <Calendar size={16} className="text-sakura-300" />
             </div>
             <p className="text-xs text-sakura-400 mb-1">{search ? "没有匹配的自动化" : "还没有自动任务"}</p>
-            <p className="text-[10px] text-sakura-300">点击右上角「创建」添加</p>
+            <p className="text-[11px] text-sakura-300">点击右上角「创建」添加</p>
           </div>
         ) : paged.map((a: any) => (
           <div key={a.id} className="border-b border-sakura-50 last:border-b-0">
             <div className="grid grid-cols-[1.5fr_1fr_0.8fr_0.8fr_110px] gap-2 px-4 py-3 hover:bg-sakura-50/30 transition-colors items-center">
               <div className="min-w-0">
                 <span className="text-[12px] font-medium text-sakura-600 truncate block cursor-pointer hover:text-sakura-700" onClick={() => openExecModal(a)} title="查看执行记录">{a.name}</span>
-                {a.description && <span className="text-[10px] text-sakura-400 truncate block mt-0.5">{a.description}</span>}
-                {!a.description && a.prompt && <span className="text-[10px] text-sakura-300 truncate block mt-0.5">Prompt: {a.prompt.slice(0, 60)}</span>}
+                {a.description && <span className="text-[11px] text-sakura-400 truncate block mt-0.5">{a.description}</span>}
+                {!a.description && a.prompt && <span className="text-[11px] text-sakura-300 truncate block mt-0.5">Prompt: {a.prompt.slice(0, 60)}</span>}
               </div>
-              <div className="flex items-center gap-1.5 text-[11px]">
+              <div className="flex items-center gap-1.5 text-[12px]">
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${a.trigger_type === "schedule" ? "bg-green-400" : a.trigger_type === "webhook" ? "bg-blue-400" : "bg-gray-300"}`} />
                 <span className="text-sakura-500">{triggerLabel(a)}</span>
               </div>
@@ -3080,7 +3080,7 @@ function SchedulerPage() {
                   <div className="w-7 h-4 bg-sakura-200 rounded-full peer peer-checked:bg-green-400 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all" />
                 </label>
               </div>
-              <div className="text-[10px] text-sakura-400">
+              <div className="text-[11px] text-sakura-400">
                 <span className={a.last_result === "success" ? "text-green-500" : a.last_result === "failed" ? "text-red-400" : "text-sakura-300"}>
                   {a.last_result === "success" ? "成功" : a.last_result === "failed" ? "失败" : "—"}
                 </span>
@@ -3097,7 +3097,7 @@ function SchedulerPage() {
         ))}
         {/* 分页 */}
         {pageTotal > 1 && (
-          <div className="flex items-center justify-between px-4 py-2 border-t border-sakura-50 text-[10px] text-sakura-400">
+          <div className="flex items-center justify-between px-4 py-2 border-t border-sakura-50 text-[11px] text-sakura-400">
             <span>共 {filtered.length} 条</span>
             <div className="flex items-center gap-1">
               <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1} className="px-2 py-1 rounded hover:bg-sakura-50 disabled:opacity-30 transition-colors">上一页</button>
@@ -3119,12 +3119,12 @@ function SchedulerPage() {
               <div className="w-8 h-8 rounded-full bg-red-50 flex items-center justify-center shrink-0"><CircleAlert size={16} className="text-red-400" /></div>
               <div>
                 <p className="text-sm font-semibold text-sakura-600">确认删除</p>
-                <p className="text-[11px] text-sakura-400 mt-1">确定要删除「{deleteTarget.name}」吗？<br />此操作不可恢复。</p>
+                <p className="text-[12px] text-sakura-400 mt-1">确定要删除「{deleteTarget.name}」吗？<br />此操作不可恢复。</p>
               </div>
             </div>
             <div className="flex justify-end gap-2 mt-4">
-              <button onClick={() => { setShowDeleteModal(false); setDeleteTarget(null); }} className="px-3 py-1.5 rounded-lg text-[11px] border border-sakura-100 text-sakura-400 hover:bg-sakura-50">取消</button>
-              <button onClick={confirmDelete} className="px-3 py-1.5 rounded-lg text-[11px] bg-red-500 text-white hover:bg-red-600">删除</button>
+              <button onClick={() => { setShowDeleteModal(false); setDeleteTarget(null); }} className="px-3 py-1.5 rounded-lg text-[12px] border border-sakura-100 text-sakura-400 hover:bg-sakura-50">取消</button>
+              <button onClick={confirmDelete} className="px-3 py-1.5 rounded-lg text-[12px] bg-red-500 text-white hover:bg-red-600">删除</button>
             </div>
           </div>
         </div>
@@ -3140,7 +3140,7 @@ function SchedulerPage() {
               <button onClick={() => setShowExecModal(false)} className="p-1 hover:bg-sakura-50 rounded text-sakura-400"><X size={14} /></button>
             </div>
             <div className="px-5 py-2 border-b border-sakura-50 shrink-0">
-              <select value={execFilter} onChange={e => setExecFilter(e.target.value)} className="px-2 py-1 border border-sakura-100 rounded text-[10px] outline-none text-sakura-500">
+              <select value={execFilter} onChange={e => setExecFilter(e.target.value)} className="px-2 py-1 border border-sakura-100 rounded text-[11px] outline-none text-sakura-500">
                 <option value="">全部状态</option>
                 <option value="success">成功</option>
                 <option value="failed">失败</option>
@@ -3149,9 +3149,9 @@ function SchedulerPage() {
             </div>
             <div className="flex-1 overflow-y-auto px-5 py-3 space-y-1.5">
               {execRuns.filter(r => !execFilter || r.status === execFilter).length === 0 ? (
-                <p className="text-center text-[11px] text-sakura-300 py-8">暂无执行记录</p>
+                <p className="text-center text-[12px] text-sakura-300 py-8">暂无执行记录</p>
               ) : execRuns.filter(r => !execFilter || r.status === execFilter).map((r: any) => (
-                <div key={r.id} className="flex items-center gap-3 text-[11px] py-1.5 px-2 rounded hover:bg-sakura-50 group">
+                <div key={r.id} className="flex items-center gap-3 text-[12px] py-1.5 px-2 rounded hover:bg-sakura-50 group">
                   <span className={`w-2 h-2 rounded-full shrink-0 ${r.status === "success" ? "bg-green-400" : r.status === "failed" ? "bg-red-400" : "bg-amber-400"}`} />
                   <span className="text-sakura-500 min-w-[6rem] font-mono">{r.started_at?.slice(5, 16) || r.created_at?.slice(5, 16) || "--"}</span>
                   <span className={`font-medium ${r.status === "success" ? "text-green-600" : r.status === "failed" ? "text-red-500" : "text-amber-500"}`}>{r.status === "success" ? "成功" : r.status === "failed" ? "失败" : r.status}</span>
@@ -3162,7 +3162,7 @@ function SchedulerPage() {
               ))}
             </div>
             {execRuns.length > 0 && (
-              <div className="px-5 py-2 border-t border-sakura-50 text-[9px] text-sakura-300 shrink-0">
+              <div className="px-5 py-2 border-t border-sakura-50 text-[10px] text-sakura-300 shrink-0">
                 共 {execRuns.length} 条记录
               </div>
             )}
@@ -3207,7 +3207,7 @@ function LogsPage() {
   return (
     <div className="space-y-4">
       <p className="text-sm font-semibold text-sakura-500">日志（3 秒自动刷新）</p>
-      <pre className="bg-[#1a1a2e] text-green-400 text-[11px] p-4 rounded-xl overflow-auto max-h-[70vh] font-mono leading-relaxed">{logs || "加载中..."}</pre>
+      <pre className="bg-[#1a1a2e] text-green-400 text-[12px] p-4 rounded-xl overflow-auto max-h-[70vh] font-mono leading-relaxed">{logs || "加载中..."}</pre>
     </div>
   );
 }
@@ -3276,7 +3276,7 @@ function PetMemoryPage() {
         >
           <RefreshCw size={13} className={loading ? "animate-spin" : ""} /> 刷新
         </button>
-        {lastLoad && <span className="text-[11px] text-sakura-300">最后更新 {lastLoad}</span>}
+        {lastLoad && <span className="text-[12px] text-sakura-300">最后更新 {lastLoad}</span>}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -3295,12 +3295,12 @@ function PetMemoryPage() {
                   <span className="font-medium text-sakura-600 dark:text-sakura-300">
                     {o.viewer_id === "" ? "（主人/通用）" : o.viewer_id}
                   </span>
-                  <span className="text-[10px] text-sakura-300">
+                  <span className="text-[11px] text-sakura-300">
                     画像 {o.profile} · 事件 {o.episodes}
                   </span>
                 </div>
                 {o.last_ts > 0 && (
-                  <div className="text-[10px] text-sakura-300 mt-0.5">
+                  <div className="text-[11px] text-sakura-300 mt-0.5">
                     最近活跃 {new Date(o.last_ts * 1000).toLocaleString("zh-CN")}
                   </div>
                 )}
@@ -3316,19 +3316,19 @@ function PetMemoryPage() {
           {detail && (
             <div className="space-y-3 flex-1 min-h-0 overflow-auto">
               <div>
-                <p className="text-[11px] font-medium text-sakura-400 mb-1">关于对方的画像（注入每次对话）</p>
-                <pre className="bg-sakura-50 text-sakura-600 text-[11px] p-3 rounded-lg whitespace-pre-wrap">{detail.profile || "（暂无画像，多聊几次后会由 LLM 抽取）"}</pre>
+                <p className="text-[12px] font-medium text-sakura-400 mb-1">关于对方的画像（注入每次对话）</p>
+                <pre className="bg-sakura-50 text-sakura-600 text-[12px] p-3 rounded-lg whitespace-pre-wrap">{detail.profile || "（暂无画像，多聊几次后会由 LLM 抽取）"}</pre>
               </div>
               <div>
-                <p className="text-[11px] font-medium text-sakura-400 mb-1">近期事件流（旧→新，最多 50）</p>
+                <p className="text-[12px] font-medium text-sakura-400 mb-1">近期事件流（旧→新，最多 50）</p>
                 <div className="space-y-1">
                   {detail.episodes.map((e, i) => (
-                    <div key={i} className="text-[11px] text-sakura-600 bg-sakura-50 rounded p-2">
+                    <div key={i} className="text-[12px] text-sakura-600 bg-sakura-50 rounded p-2">
                       <span className="text-sakura-400 mr-2">{new Date((e.ts || 0) * 1000).toLocaleTimeString("zh-CN")}</span>
                       {e.content}
                     </div>
                   ))}
-                  {detail.episodes.length === 0 && <p className="text-sakura-300 text-[11px]">暂无事件流。</p>}
+                  {detail.episodes.length === 0 && <p className="text-sakura-300 text-[12px]">暂无事件流。</p>}
                 </div>
               </div>
             </div>
@@ -3407,17 +3407,17 @@ function ScenePage() {
             <input type="checkbox" checked={auto} onChange={(e) => toggleAuto(e.target.checked)} />
             自动感知（截屏OCR，{auto ? "运行中" : "已停止"}）
           </label>
-          {err && <span className="text-[11px] text-red-400">{err}</span>}
+          {err && <span className="text-[12px] text-red-400">{err}</span>}
         </div>
       </div>
 
       {last && (
         <div className="bg-white border border-sakura-100 rounded-xl p-4">
-          <p className="text-[11px] font-medium text-sakura-400 mb-1">桌宠反应</p>
+          <p className="text-[12px] font-medium text-sakura-400 mb-1">桌宠反应</p>
           <div className="text-sm text-sakura-600 bg-sakura-50 rounded-lg p-3">
             {last.reply || "（桌宠没啥反应）"}
           </div>
-          <div className="text-[10px] text-sakura-300 mt-1">
+          <div className="text-[11px] text-sakura-300 mt-1">
             情绪 {last.emotion} · 动作 {last.action || "—"}（同步在桌宠窗口显示字幕+语音）
           </div>
         </div>
@@ -3490,10 +3490,10 @@ function CohostPage() {
         >
           断开
         </button>
-        <span className={`text-[11px] px-2 py-1 rounded ${connected ? "bg-green-50 text-green-600" : "bg-sakura-100 text-sakura-400"}`}>
+        <span className={`text-[12px] px-2 py-1 rounded ${connected ? "bg-green-50 text-green-600" : "bg-sakura-100 text-sakura-400"}`}>
           {connected ? "已连接" : "未连接"}
         </span>
-        {status?.last_error && <span className="text-[11px] text-red-300">{status.last_error}</span>}
+        {status?.last_error && <span className="text-[12px] text-red-300">{status.last_error}</span>}
       </div>
 
       <div className="bg-white border border-sakura-100 rounded-xl p-4">
@@ -3503,7 +3503,7 @@ function CohostPage() {
             <p className="text-xs text-sakura-300">连接后，观众弹幕会在这里实时显示，桌宠会自然接话并用语音+字幕回应。</p>
           )}
           {danmaku.map((d, i) => (
-            <div key={i} className="text-[11px] text-sakura-600 bg-sakura-50 rounded p-2">
+            <div key={i} className="text-[12px] text-sakura-600 bg-sakura-50 rounded p-2">
               <span className="text-sakura-400 mr-2">{d.user}</span>
               {d.text}
               {d.time_str && <span className="text-sakura-300 ml-2">{d.time_str}</span>}

@@ -228,7 +228,7 @@ export default function SetupGuide({ onClose, standalone }: { onClose: () => voi
             <p className="text-sm font-medium text-sakura-600">连接到消息平台</p>
             <p className="text-xs text-sakura-400">将工作流发布为 API，在目标平台上配置 webhook 回调</p>
             <div className="bg-sakura-50 border border-sakura-200 rounded-xl px-4 py-3">
-              <p className="text-[11px] text-sakura-500 mb-1">你的 webhook 地址</p>
+              <p className="text-[12px] text-sakura-500 mb-1">你的 webhook 地址</p>
               <div className="flex items-center gap-2">
                 <code className="flex-1 px-3 py-2 bg-white border border-sakura-200 rounded-lg text-xs font-mono text-sakura-700 truncate">{webhookUrl}</code>
                 <button onClick={() => { void copyClipboardText(webhookUrl); }}
@@ -302,7 +302,7 @@ export default function SetupGuide({ onClose, standalone }: { onClose: () => voi
                       }
                     } catch {}
                   }}
-                    className="text-[10px] text-sakura-400 hover:text-sakura-500 underline">恢复默认</button>
+                    className="text-[11px] text-sakura-400 hover:text-sakura-500 underline">恢复默认</button>
                 </div>
                 <textarea
                   value={p.prompt}
@@ -416,7 +416,7 @@ function SetupSteps({
               }`}
             >
               <p className="text-xs font-medium text-gray-700">{p.name}</p>
-              <p className="text-[10px] text-gray-400 mt-0.5 leading-relaxed">{p.desc}</p>
+              <p className="text-[11px] text-gray-400 mt-0.5 leading-relaxed">{p.desc}</p>
             </button>
           ))}
         </div>
@@ -457,11 +457,11 @@ function SetupSteps({
               </div>
               {fetchedModels.length > 0 && (
                 <div className="mt-2 p-2 border border-lavender-100 rounded-lg bg-lavender-50/50 max-h-[180px] overflow-y-auto">
-                  <div className="text-[10px] text-lavender-400 mb-1">API 返回的可用模型（点击选用）</div>
+                  <div className="text-[11px] text-lavender-400 mb-1">API 返回的可用模型（点击选用）</div>
                   <div className="flex flex-wrap gap-1.5">
                     {fetchedModels.map((m: any, i: number) => (
                       <button key={i} onClick={() => setModelName(m.id)}
-                        className={`text-[10px] px-2 py-1 rounded-full border transition-colors ${modelName === m.id ? "bg-lavender-100 border-lavender-300 text-lavender-600" : "bg-white border-gray-200 text-gray-600 hover:border-lavender-200"}`}>
+                        className={`text-[11px] px-2 py-1 rounded-full border transition-colors ${modelName === m.id ? "bg-lavender-100 border-lavender-300 text-lavender-600" : "bg-white border-gray-200 text-gray-600 hover:border-lavender-200"}`}>
                         {m.owned_by === "error" ? "⚠ " : ""}{m.id}
                       </button>
                     ))}
@@ -500,7 +500,7 @@ function SetupSteps({
 
         {/* webhook URL */}
         <div className="bg-sakura-50 border border-sakura-200 rounded-xl px-4 py-3">
-          <p className="text-[11px] text-sakura-500 mb-1">你的 webhook 地址（工作流触发入口）</p>
+          <p className="text-[12px] text-sakura-500 mb-1">你的 webhook 地址（工作流触发入口）</p>
           <div className="flex items-center gap-2">
             <code className="flex-1 px-3 py-2 bg-white border border-sakura-200 rounded-lg text-xs font-mono text-sakura-700 truncate">
               {webhookUrl}

@@ -142,7 +142,7 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
           <Search size={11} className="text-sakura-300 shrink-0" />
           <input value={search} onChange={e => setSearch(e.target.value)}
             onKeyDown={e => e.key === "Enter" && handleSearch()}
-            placeholder="搜索知识库..." className="flex-1 bg-transparent text-[11px] text-sakura-600 outline-none placeholder:text-sakura-300" />
+            placeholder="搜索知识库..." className="flex-1 bg-transparent text-[12px] text-sakura-600 outline-none placeholder:text-sakura-300" />
         </div>
       </div>
 
@@ -151,12 +151,12 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
         <div className="px-3 py-2 border-b border-sakura-100 shrink-0">
           <div className="flex flex-wrap gap-1">
             <button onClick={() => { setFilterCat(""); closeForm(); }}
-              className={`px-2 py-0.5 rounded text-[10px] transition-colors ${!filterCat ? 'bg-sakura-200 text-sakura-600' : 'text-sakura-400 hover:bg-sakura-50'}`}>
+              className={`px-2 py-0.5 rounded text-[11px] transition-colors ${!filterCat ? 'bg-sakura-200 text-sakura-600' : 'text-sakura-400 hover:bg-sakura-50'}`}>
               全部
             </button>
             {allCats.filter(c => c.name && c.name !== "未分类").map((c, i) => (
               <button key={i} onClick={() => { setFilterCat(c.name); closeForm(); }}
-                className={`px-2 py-0.5 rounded text-[10px] transition-colors ${filterCat === c.name ? 'bg-sakura-200 text-sakura-600' : 'text-sakura-400 hover:bg-sakura-50'}`}>
+                className={`px-2 py-0.5 rounded text-[11px] transition-colors ${filterCat === c.name ? 'bg-sakura-200 text-sakura-600' : 'text-sakura-400 hover:bg-sakura-50'}`}>
                 {c.name}
               </button>
             ))}
@@ -170,15 +170,15 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
         {!showForm && !showImport && items.length > 0 && (
           <div className="flex gap-1.5">
             <button onClick={() => { closeForm(); setShowForm(true); }}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
               <Plus size={10} /> 添加条目
             </button>
             <button onClick={() => { closeForm(); setShowImport(true); }}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
               <Globe size={10} /> 网页导入
             </button>
             <button onClick={() => { closeForm(); setShowGitImport(true); }}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
               <Folder size={10} /> GitHub 导入
             </button>
           </div>
@@ -187,14 +187,14 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
         {/* 导入卡片 */}
         {showImport && (
           <div className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs">
-            <p className="text-[10px] font-semibold text-sakura-500">从网页导入</p>
+            <p className="text-[11px] font-semibold text-sakura-500">从网页导入</p>
             <input value={importUrl} onChange={e => setImportUrl(e.target.value)}
-              placeholder="https://..." className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
+              placeholder="https://..." className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] outline-none" />
             <div className="flex items-center gap-1">
               <button onClick={() => setShowImport(false)}
-                className="px-3 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
+                className="px-3 py-1 rounded text-[11px] text-sakura-400 hover:bg-sakura-50">取消</button>
               <button onClick={handleImportUrl} disabled={loading}
-                className="flex items-center gap-1 px-3 py-1 rounded text-[10px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
+                className="flex items-center gap-1 px-3 py-1 rounded text-[11px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
                 <Globe size={10} /> 导入
               </button>
             </div>
@@ -204,20 +204,20 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
         {/* GitHub 导入卡片 */}
         {showGitImport && (
           <div className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs">
-            <p className="text-[10px] font-semibold text-sakura-500">从 GitHub 导入</p>
+            <p className="text-[11px] font-semibold text-sakura-500">从 GitHub 导入</p>
             <input value={ghRepo} onChange={e => setGhRepo(e.target.value)}
-              placeholder="仓库（如: owner/repo）" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
+              placeholder="仓库（如: owner/repo）" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] outline-none" />
             <div className="flex gap-1">
               <input value={ghBranch} onChange={e => setGhBranch(e.target.value)}
-                placeholder="分支（默认 main）" className="flex-1 px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
+                placeholder="分支（默认 main）" className="flex-1 px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] outline-none" />
               <input value={ghPath} onChange={e => setGhPath(e.target.value)}
-                placeholder="路径（如: docs）" className="flex-1 px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
+                placeholder="路径（如: docs）" className="flex-1 px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] outline-none" />
             </div>
             <div className="flex items-center gap-1">
               <button onClick={() => setShowGitImport(false)}
-                className="px-3 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
+                className="px-3 py-1 rounded text-[11px] text-sakura-400 hover:bg-sakura-50">取消</button>
               <button onClick={handleGitImport} disabled={loading || !ghRepo.trim()}
-                className="flex items-center gap-1 px-3 py-1 rounded text-[10px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
+                className="flex items-center gap-1 px-3 py-1 rounded text-[11px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
                 <Folder size={10} /> 导入
               </button>
             </div>
@@ -227,19 +227,19 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
         {/* 空状态 */}
         {items.length === 0 && !showForm && !showImport && !showGitImport && (
           <div className="flex flex-col items-center justify-center py-12 text-sakura-300 space-y-2">
-            <p className="text-[10px]">{search ? "未找到匹配的知识" : "知识库为空"}</p>
+            <p className="text-[11px]">{search ? "未找到匹配的知识" : "知识库为空"}</p>
             {!search && (
               <div className="flex gap-1.5">
                 <button onClick={() => { closeForm(); setShowForm(true); }}
-                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
                   <Plus size={10} /> 添加条目
                 </button>
                 <button onClick={() => { setShowImport(true); }}
-                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
                   <Globe size={10} /> 网页导入
                 </button>
                 <button onClick={() => { setShowGitImport(true); }}
-                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
                   <Folder size={10} /> GitHub 导入
                 </button>
               </div>
@@ -250,19 +250,19 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
         {/* 新建表单 — 列表顶部 */}
         {showForm && !editId && (
           <div className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs">
-            <p className="text-[10px] font-semibold text-sakura-500">新建条目</p>
+            <p className="text-[11px] font-semibold text-sakura-500">新建条目</p>
             <input value={fTitle} onChange={e => setFTitle(e.target.value)}
-              placeholder="标题" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
+              placeholder="标题" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] outline-none" />
             <textarea value={fContent} onChange={e => setFContent(e.target.value)}
-              placeholder="内容" rows={3} className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] resize-none outline-none" />
+              placeholder="内容" rows={3} className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] resize-none outline-none" />
             <input value={fCat} onChange={e => setFCat(e.target.value)}
               placeholder="分类"
-              className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
+              className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] outline-none" />
             <div className="flex items-center gap-1">
               <button onClick={closeForm}
-                className="px-3 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
+                className="px-3 py-1 rounded text-[11px] text-sakura-400 hover:bg-sakura-50">取消</button>
               <button onClick={handleSave} disabled={loading}
-                className="flex items-center gap-1 px-3 py-1 rounded text-[10px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
+                className="flex items-center gap-1 px-3 py-1 rounded text-[11px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
                 <Check size={10} /> 添加
               </button>
             </div>
@@ -276,12 +276,12 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
               <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1 space-y-0.5">
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] font-medium text-sakura-600 truncate max-w-[10rem]">{item.title}</span>
-                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white text-sakura-400 border border-sakura-100 shrink-0">{item.category}</span>
+                  <span className="text-[12px] font-medium text-sakura-600 truncate max-w-[10rem]">{item.title}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white text-sakura-400 border border-sakura-100 shrink-0">{item.category}</span>
                   {item.source_url && <span title={item.source_url}><Globe size={9} className="text-sakura-300 shrink-0" /></span>}
                 </div>
                 {item.content && (
-                  <p className="text-[10px] text-sakura-400 leading-relaxed line-clamp-2">{item.content}</p>
+                  <p className="text-[11px] text-sakura-400 leading-relaxed line-clamp-2">{item.content}</p>
                 )}
               </div>
               <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -298,19 +298,19 @@ export default function KnowledgePanel({ onClose }: { onClose: () => void }) {
           </div>
           {item.id === editId && showForm && (
             <div className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs mt-1">
-              <p className="text-[10px] font-semibold text-sakura-500">编辑条目</p>
+              <p className="text-[11px] font-semibold text-sakura-500">编辑条目</p>
               <input value={fTitle} onChange={e => setFTitle(e.target.value)}
-                placeholder="标题" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
+                placeholder="标题" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] outline-none" />
               <textarea value={fContent} onChange={e => setFContent(e.target.value)}
-                placeholder="内容" rows={3} className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] resize-none outline-none" />
+                placeholder="内容" rows={3} className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] resize-none outline-none" />
               <input value={fCat} onChange={e => setFCat(e.target.value)}
                 placeholder="分类"
-                className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
+                className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] outline-none" />
               <div className="flex items-center gap-1">
                 <button onClick={closeForm}
-                  className="px-3 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
+                  className="px-3 py-1 rounded text-[11px] text-sakura-400 hover:bg-sakura-50">取消</button>
                 <button onClick={handleSave} disabled={loading}
-                  className="flex items-center gap-1 px-3 py-1 rounded text-[10px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
+                  className="flex items-center gap-1 px-3 py-1 rounded text-[11px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
                   <Check size={10} /> 保存
                 </button>
               </div>
@@ -402,7 +402,7 @@ function KbMcpSection() {
         className="flex items-center gap-1.5 w-full px-3 py-2 text-xs font-semibold text-sakura-500 hover:text-sakura-600 hover:bg-sakura-50 transition-colors">
         {collapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
         <Link size={12} /> 外部知识源
-        <span className="text-[10px] text-sakura-300 font-normal">({mcpKeys.length})</span>
+        <span className="text-[11px] text-sakura-300 font-normal">({mcpKeys.length})</span>
       </button>
 
       {!collapsed && (
@@ -410,7 +410,7 @@ function KbMcpSection() {
           {/* 连接按钮 */}
           {mcpKeys.length > 0 && (
             <button onClick={handleConnectMcp}
-              className="w-full px-3 py-1.5 rounded-lg text-[11px] bg-gradient-to-br from-teal-400 to-teal-500 text-white hover:shadow-md transition-shadow">
+              className="w-full px-3 py-1.5 rounded-lg text-[12px] bg-gradient-to-br from-teal-400 to-teal-500 text-white hover:shadow-md transition-shadow">
               连接 MCP 服务器
             </button>
           )}
@@ -418,18 +418,18 @@ function KbMcpSection() {
           {/* 添加/编辑表单 */}
           {(showForm || editingKey) && (
             <div className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs">
-              <p className="text-[10px] font-semibold text-sakura-500">{editingKey ? "编辑" : "添加"}外部知识源</p>
+              <p className="text-[11px] font-semibold text-sakura-500">{editingKey ? "编辑" : "添加"}外部知识源</p>
               <input value={mcpName} onChange={e => setMcpName(e.target.value)}
-                placeholder="名称（如: fetch）" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] outline-none" />
+                placeholder="名称（如: fetch）" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] outline-none" />
               <input value={mcpCmd} onChange={e => setMcpCmd(e.target.value)}
-                placeholder="启动命令（如: uvx）" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] font-mono outline-none" />
+                placeholder="启动命令（如: uvx）" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] font-mono outline-none" />
               <input value={mcpArgs} onChange={e => setMcpArgs(e.target.value)}
-                placeholder="参数如: mcp-server-fetch（空格分隔）" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] font-mono outline-none" />
+                placeholder="参数如: mcp-server-fetch（空格分隔）" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] font-mono outline-none" />
               <div className="flex items-center gap-1 pt-0.5">
                 <button onClick={resetForm}
-                  className="px-3 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
+                  className="px-3 py-1 rounded text-[11px] text-sakura-400 hover:bg-sakura-50">取消</button>
                 <button onClick={handleSaveMcp} disabled={!mcpName.trim() || !mcpCmd.trim()}
-                  className="flex items-center gap-1 px-3 py-1 rounded text-[10px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
+                  className="flex items-center gap-1 px-3 py-1 rounded text-[11px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
                   <Check size={10} /> {editingKey ? "保存" : "添加"}
                 </button>
               </div>
@@ -439,7 +439,7 @@ function KbMcpSection() {
           {/* 添加按钮 */}
           {!showForm && !editingKey && (
             <button onClick={() => { setShowForm(true); }}
-              className="flex items-center gap-1 w-full px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+              className="flex items-center gap-1 w-full px-2.5 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
               <Plus size={10} /> 添加外部知识源
             </button>
           )}
@@ -449,8 +449,8 @@ function KbMcpSection() {
             {mcpKeys.map(key => (
               <div key={key} className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-sakura-50 border border-sakura-100">
                 <div className="flex-1 min-w-0">
-                  <p className="text-[11px] font-medium text-sakura-600 truncate">{key}</p>
-                  <p className="text-[10px] text-sakura-400 truncate font-mono">{servers[key].command} {servers[key].args?.join(" ")}</p>
+                  <p className="text-[12px] font-medium text-sakura-600 truncate">{key}</p>
+                  <p className="text-[11px] text-sakura-400 truncate font-mono">{servers[key].command} {servers[key].args?.join(" ")}</p>
                 </div>
                 <button onClick={() => handleTestMcp(key)}
                   className="p-1 rounded hover:bg-teal-50 text-sakura-300 hover:text-teal-500 transition-colors shrink-0" title="测试连接">

@@ -204,7 +204,7 @@ export default function AutomationPanel({ onClose, onNavigate }: { onClose: () =
         {/* 新建按钮 */}
         {!showForm && (
           <button onClick={() => { setEditId(null); setShowForm(true); setFName(""); setFPrompt(""); setFSchedType("recurring"); setFPreset("FREQ=DAILY"); setFOnceAt(""); setFModel(""); setFValidFrom(""); setFValidUntil(""); }}
-            className="flex items-center gap-1 w-full px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+            className="flex items-center gap-1 w-full px-2.5 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
             <Plus size={10} /> 新建自动化
           </button>
         )}
@@ -212,35 +212,35 @@ export default function AutomationPanel({ onClose, onNavigate }: { onClose: () =
         {/* 新建表单（仅在创建模式显示在顶部） */}
         {showForm && !editId && (
           <div key="form" className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs">
-            <p className="text-[10px] font-semibold text-sakura-500">新建自动化</p>
+            <p className="text-[11px] font-semibold text-sakura-500">新建自动化</p>
             <div>
-              <p className="text-[9px] text-sakura-400 mb-0.5">名称</p>
-              <input className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px]" value={fName} onChange={e => setFName(e.target.value)} placeholder="如：每日新闻摘要" />
+              <p className="text-[10px] text-sakura-400 mb-0.5">名称</p>
+              <input className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px]" value={fName} onChange={e => setFName(e.target.value)} placeholder="如：每日新闻摘要" />
             </div>
             <div>
-              <p className="text-[9px] text-sakura-400 mb-0.5">执行内容（Prompt）</p>
-              <textarea className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] resize-none" rows={3} value={fPrompt} onChange={e => setFPrompt(e.target.value)} placeholder="到时间后自动发送的内容..." />
+              <p className="text-[10px] text-sakura-400 mb-0.5">执行内容（Prompt）</p>
+              <textarea className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] resize-none" rows={3} value={fPrompt} onChange={e => setFPrompt(e.target.value)} placeholder="到时间后自动发送的内容..." />
             </div>
             <div>
-              <p className="text-[9px] text-sakura-400 mb-0.5">调度方式</p>
+              <p className="text-[10px] text-sakura-400 mb-0.5">调度方式</p>
               <div className="flex gap-1">
                 <button onClick={() => setFSchedType("recurring")}
-                  className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] border ${fSchedType === "recurring" ? "bg-sakura-100 border-sakura-300 text-sakura-600" : "bg-white border-sakura-100 text-sakura-400"}`}>
+                  className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] border ${fSchedType === "recurring" ? "bg-sakura-100 border-sakura-300 text-sakura-600" : "bg-white border-sakura-100 text-sakura-400"}`}>
                   <Repeat size={10} /> 重复
                 </button>
                 <button onClick={() => setFSchedType("once")}
-                  className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] border ${fSchedType === "once" ? "bg-sakura-100 border-sakura-300 text-sakura-600" : "bg-white border-sakura-100 text-sakura-400"}`}>
+                  className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] border ${fSchedType === "once" ? "bg-sakura-100 border-sakura-300 text-sakura-600" : "bg-white border-sakura-100 text-sakura-400"}`}>
                   <Calendar size={10} /> 一次
                 </button>
               </div>
             </div>
             {fSchedType === "recurring" ? (
               <div>
-                <p className="text-[9px] text-sakura-400 mb-0.5">频率</p>
+                <p className="text-[10px] text-sakura-400 mb-0.5">频率</p>
                 <div className="flex flex-wrap gap-1">
                   {SCHEDULE_PRESETS.map(p => (
                     <button key={p.rrule} onClick={() => setFPreset(p.rrule)}
-                      className={`px-2 py-0.5 rounded text-[10px] border ${fPreset === p.rrule ? "bg-sakura-100 border-sakura-300 text-sakura-600" : "bg-white border-sakura-100 text-sakura-400 hover:border-sakura-200"}`}>
+                      className={`px-2 py-0.5 rounded text-[11px] border ${fPreset === p.rrule ? "bg-sakura-100 border-sakura-300 text-sakura-600" : "bg-white border-sakura-100 text-sakura-400 hover:border-sakura-200"}`}>
                       {p.label}
                     </button>
                   ))}
@@ -248,28 +248,28 @@ export default function AutomationPanel({ onClose, onNavigate }: { onClose: () =
               </div>
             ) : (
               <div>
-                <p className="text-[9px] text-sakura-400 mb-0.5">执行时间</p>
-                <input type="datetime-local" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-white text-sakura-600 text-[10px]" value={fOnceAt} onChange={e => setFOnceAt(e.target.value)} />
+                <p className="text-[10px] text-sakura-400 mb-0.5">执行时间</p>
+                <input type="datetime-local" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-white text-sakura-600 text-[11px]" value={fOnceAt} onChange={e => setFOnceAt(e.target.value)} />
               </div>
             )}
             <div>
-              <p className="text-[9px] text-sakura-400 mb-0.5">模型（留空用默认）</p>
-              <input className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px]" value={fModel} onChange={e => setFModel(e.target.value)} placeholder="如：agnes-2.0-flash" />
+              <p className="text-[10px] text-sakura-400 mb-0.5">模型（留空用默认）</p>
+              <input className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px]" value={fModel} onChange={e => setFModel(e.target.value)} placeholder="如：agnes-2.0-flash" />
             </div>
             <div className="flex gap-2">
               <div className="flex-1">
-                <p className="text-[9px] text-sakura-400 mb-0.5">有效起始（可选）</p>
-                <input type="date" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-white text-sakura-600 text-[10px]" value={fValidFrom} onChange={e => setFValidFrom(e.target.value)} />
+                <p className="text-[10px] text-sakura-400 mb-0.5">有效起始（可选）</p>
+                <input type="date" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-white text-sakura-600 text-[11px]" value={fValidFrom} onChange={e => setFValidFrom(e.target.value)} />
               </div>
               <div className="flex-1">
-                <p className="text-[9px] text-sakura-400 mb-0.5">有效截止（可选）</p>
-                <input type="date" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-white text-sakura-600 text-[10px]" value={fValidUntil} onChange={e => setFValidUntil(e.target.value)} />
+                <p className="text-[10px] text-sakura-400 mb-0.5">有效截止（可选）</p>
+                <input type="date" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-white text-sakura-600 text-[11px]" value={fValidUntil} onChange={e => setFValidUntil(e.target.value)} />
               </div>
             </div>
             <div className="flex items-center gap-1 pt-0.5">
-              <button onClick={closeForm} className="px-2.5 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
+              <button onClick={closeForm} className="px-2.5 py-1 rounded text-[11px] text-sakura-400 hover:bg-sakura-50">取消</button>
               <button onClick={handleSave} disabled={loading || !fName.trim()}
-                className="flex items-center gap-1 px-3 py-1 rounded text-[10px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
+                className="flex items-center gap-1 px-3 py-1 rounded text-[11px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
                 <Check size={10} /> {editId ? "保存" : "创建"}
               </button>
             </div>
@@ -288,15 +288,15 @@ export default function AutomationPanel({ onClose, onNavigate }: { onClose: () =
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0 space-y-0.5" onClick={() => setExpandedId(expandedId === a.id ? null : a.id)}>
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] font-medium text-sakura-600 truncate">{a.name}</span>
-                    <span className={`text-[9px] px-1 py-0.5 rounded ${a.status === "active" ? "bg-green-100 text-green-600" : "bg-sakura-100 text-sakura-400"}`}>
+                    <span className="text-[12px] font-medium text-sakura-600 truncate">{a.name}</span>
+                    <span className={`text-[10px] px-1 py-0.5 rounded ${a.status === "active" ? "bg-green-100 text-green-600" : "bg-sakura-100 text-sakura-400"}`}>
                       {a.status === "active" ? "运行中" : "已暂停"}
                     </span>
                   </div>
-                  <div className="flex items-center gap-2 text-[9px] text-sakura-400">
+                  <div className="flex items-center gap-2 text-[10px] text-sakura-400">
                     <span className="flex items-center gap-0.5"><Clock size={8} /> 下次: {nextRun(a)}</span>
                     <span className="flex items-center gap-0.5"><History size={8} /> {a.history?.length || 0} 次</span>
-                    {a.model && <span className="text-[8px] text-indigo-400">{a.model}</span>}
+                    {a.model && <span className="text-[10px] text-indigo-400">{a.model}</span>}
                   </div>
                 </div>
                 <div className="flex items-center gap-0.5 shrink-0">
@@ -315,35 +315,35 @@ export default function AutomationPanel({ onClose, onNavigate }: { onClose: () =
             {/* ═══ 编辑模式（卡片下方展开） ═══ */}
             {editId === a.id && (
               <div className="bg-white border border-sakura-200 rounded-lg p-2.5 space-y-1.5 text-xs mt-1">
-                <p className="text-[10px] font-semibold text-sakura-500">编辑自动化</p>
+                <p className="text-[11px] font-semibold text-sakura-500">编辑自动化</p>
                 <div>
-                  <p className="text-[9px] text-sakura-400 mb-0.5">名称</p>
-                  <input className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px]" value={fName} onChange={e => setFName(e.target.value)} />
+                  <p className="text-[10px] text-sakura-400 mb-0.5">名称</p>
+                  <input className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px]" value={fName} onChange={e => setFName(e.target.value)} />
                 </div>
                 <div>
-                  <p className="text-[9px] text-sakura-400 mb-0.5">执行内容（Prompt）</p>
-                  <textarea className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px] resize-none" rows={3} value={fPrompt} onChange={e => setFPrompt(e.target.value)} />
+                  <p className="text-[10px] text-sakura-400 mb-0.5">执行内容（Prompt）</p>
+                  <textarea className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px] resize-none" rows={3} value={fPrompt} onChange={e => setFPrompt(e.target.value)} />
                 </div>
                 <div>
-                  <p className="text-[9px] text-sakura-400 mb-0.5">调度方式</p>
+                  <p className="text-[10px] text-sakura-400 mb-0.5">调度方式</p>
                   <div className="flex gap-1">
                     <button onClick={() => setFSchedType("recurring")}
-                      className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] border ${fSchedType === "recurring" ? "bg-sakura-100 border-sakura-300 text-sakura-600" : "bg-white border-sakura-100 text-sakura-400"}`}>
+                      className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] border ${fSchedType === "recurring" ? "bg-sakura-100 border-sakura-300 text-sakura-600" : "bg-white border-sakura-100 text-sakura-400"}`}>
                       <Repeat size={10} /> 重复
                     </button>
                     <button onClick={() => setFSchedType("once")}
-                      className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] border ${fSchedType === "once" ? "bg-sakura-100 border-sakura-300 text-sakura-600" : "bg-white border-sakura-100 text-sakura-400"}`}>
+                      className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] border ${fSchedType === "once" ? "bg-sakura-100 border-sakura-300 text-sakura-600" : "bg-white border-sakura-100 text-sakura-400"}`}>
                       <Calendar size={10} /> 一次
                     </button>
                   </div>
                 </div>
                 {fSchedType === "recurring" ? (
                   <div>
-                    <p className="text-[9px] text-sakura-400 mb-0.5">频率</p>
+                    <p className="text-[10px] text-sakura-400 mb-0.5">频率</p>
                     <div className="flex flex-wrap gap-1">
                       {SCHEDULE_PRESETS.map(p => (
                         <button key={p.rrule} onClick={() => setFPreset(p.rrule)}
-                          className={`px-2 py-0.5 rounded text-[10px] border ${fPreset === p.rrule ? "bg-sakura-100 border-sakura-300 text-sakura-600" : "bg-white border-sakura-100 text-sakura-400 hover:border-sakura-200"}`}>
+                          className={`px-2 py-0.5 rounded text-[11px] border ${fPreset === p.rrule ? "bg-sakura-100 border-sakura-300 text-sakura-600" : "bg-white border-sakura-100 text-sakura-400 hover:border-sakura-200"}`}>
                           {p.label}
                         </button>
                       ))}
@@ -351,28 +351,28 @@ export default function AutomationPanel({ onClose, onNavigate }: { onClose: () =
                   </div>
                 ) : (
                   <div>
-                    <p className="text-[9px] text-sakura-400 mb-0.5">执行时间</p>
-                    <input type="datetime-local" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-white text-sakura-600 text-[10px]" value={fOnceAt} onChange={e => setFOnceAt(e.target.value)} />
+                    <p className="text-[10px] text-sakura-400 mb-0.5">执行时间</p>
+                    <input type="datetime-local" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-white text-sakura-600 text-[11px]" value={fOnceAt} onChange={e => setFOnceAt(e.target.value)} />
                   </div>
                 )}
                 <div className="flex gap-2">
                   <div className="flex-1">
-                    <p className="text-[9px] text-sakura-400 mb-0.5">模型</p>
-                    <input className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[10px]" value={fModel} onChange={e => setFModel(e.target.value)} placeholder="留空用默认" />
+                    <p className="text-[10px] text-sakura-400 mb-0.5">模型</p>
+                    <input className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-sakura-50 text-sakura-600 text-[11px]" value={fModel} onChange={e => setFModel(e.target.value)} placeholder="留空用默认" />
                   </div>
                   <div className="flex-1">
-                    <p className="text-[9px] text-sakura-400 mb-0.5">有效起始</p>
-                    <input type="date" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-white text-sakura-600 text-[10px]" value={fValidFrom} onChange={e => setFValidFrom(e.target.value)} />
+                    <p className="text-[10px] text-sakura-400 mb-0.5">有效起始</p>
+                    <input type="date" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-white text-sakura-600 text-[11px]" value={fValidFrom} onChange={e => setFValidFrom(e.target.value)} />
                   </div>
                   <div className="flex-1">
-                    <p className="text-[9px] text-sakura-400 mb-0.5">有效截止</p>
-                    <input type="date" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-white text-sakura-600 text-[10px]" value={fValidUntil} onChange={e => setFValidUntil(e.target.value)} />
+                    <p className="text-[10px] text-sakura-400 mb-0.5">有效截止</p>
+                    <input type="date" className="w-full px-2 py-1.5 rounded border border-sakura-100 bg-white text-sakura-600 text-[11px]" value={fValidUntil} onChange={e => setFValidUntil(e.target.value)} />
                   </div>
                 </div>
                 <div className="flex items-center gap-1 pt-0.5">
-                  <button onClick={closeForm} className="px-2.5 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
+                  <button onClick={closeForm} className="px-2.5 py-1 rounded text-[11px] text-sakura-400 hover:bg-sakura-50">取消</button>
                   <button onClick={handleSave} disabled={loading || !fName.trim()}
-                    className="flex items-center gap-1 px-3 py-1 rounded text-[10px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
+                    className="flex items-center gap-1 px-3 py-1 rounded text-[11px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white disabled:opacity-50">
                     <Check size={10} /> 保存
                   </button>
                 </div>
@@ -381,9 +381,9 @@ export default function AutomationPanel({ onClose, onNavigate }: { onClose: () =
             {/* 执行历史 */}
             {expandedId === a.id && a.history && a.history.length > 0 && editId !== a.id && (
               <div className="mx-2 mb-1 px-2.5 py-2 rounded bg-white border border-sakura-100 space-y-1">
-                <p className="text-[9px] text-sakura-400 font-medium">执行记录</p>
+                <p className="text-[10px] text-sakura-400 font-medium">执行记录</p>
                 {a.history.slice(-5).reverse().map((h, i) => (
-                  <div key={i} className="flex items-start gap-1 text-[9px] text-sakura-500">
+                  <div key={i} className="flex items-start gap-1 text-[10px] text-sakura-500">
                     {h.status === "success" ? <Check size={9} className="text-green-500 shrink-0 mt-0.5" /> : <CircleAlert size={9} className="text-red-400 shrink-0 mt-0.5" />}
                     <span className="shrink-0 font-mono">{h.time}</span>
                     {h.result && <span className="text-sakura-400 line-clamp-1">{h.result}</span>}

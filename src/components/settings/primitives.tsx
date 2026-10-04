@@ -40,7 +40,7 @@ export function InfoRow({ label, value, mono }: { label: string; value: ReactNod
   return (
     <div className="flex items-start justify-between gap-6 py-3 border-t border-sakura-200/50">
       <span className="text-sm text-sakura-500 shrink-0">{label}</span>
-      <span className={`text-sm text-sakura-600 text-right ${mono ? "font-mono text-[11px] break-all" : ""}`}>{value}</span>
+      <span className={`text-sm text-sakura-600 text-right ${mono ? "font-mono text-[12px] break-all" : ""}`}>{value}</span>
     </div>
   );
 }

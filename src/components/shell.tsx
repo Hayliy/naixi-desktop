@@ -24,7 +24,7 @@ export function Sidebar({ items, activeNav, onNavChange, version }: {
     <aside className="w-48 min-w-[12rem] bg-white border-r border-sakura-100 flex flex-col">
       <div className="px-4 pt-5 pb-4 border-b border-sakura-100">
         <h1 className="text-base font-bold text-sakura-500 tracking-wide">奶昔</h1>
-        <p className="text-[11px] text-sakura-300 mt-0.5">Naixi</p>
+        <p className="text-[12px] text-sakura-300 mt-0.5">Naixi</p>
       </div>
       <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
         {items.map((item) => (
@@ -47,7 +47,7 @@ export function Sidebar({ items, activeNav, onNavChange, version }: {
         <div className="p-3 border-t border-sakura-100">
           <div className="flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-green-500" />
-            <span className="text-[11px] text-sakura-400">{version}</span>
+            <span className="text-[12px] text-sakura-400">{version}</span>
           </div>
         </div>
       )}

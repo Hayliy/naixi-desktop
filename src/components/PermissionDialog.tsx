@@ -36,9 +36,9 @@ export default function PermissionDialog({ reqId, name, args, onClose }: {
             <span className="font-medium text-sakura-700">奶昔</span> 想要执行以下操作：
           </p>
           <div className="px-3 py-2.5 rounded-lg bg-amber-50 border border-amber-200">
-            <p className="text-[11px] font-medium text-amber-800">{name}</p>
+            <p className="text-[12px] font-medium text-amber-800">{name}</p>
             {cmdText && (
-              <code className="block mt-1 text-[11px] text-amber-700 font-mono break-all bg-amber-100/50 px-2 py-1 rounded">
+              <code className="block mt-1 text-[12px] text-amber-700 font-mono break-all bg-amber-100/50 px-2 py-1 rounded">
                 {typeof cmdText === "string" ? cmdText : JSON.stringify(cmdText)}
               </code>
             )}
@@ -49,17 +49,17 @@ export default function PermissionDialog({ reqId, name, args, onClose }: {
             <label className="flex items-center gap-2 cursor-pointer group" onClick={(e) => e.stopPropagation()}>
               <input type="checkbox" checked={alwaysAllow} onChange={e => setAlwaysAllow(e.target.checked)}
                 className="w-3.5 h-3.5 rounded border-sakura-300 text-amber-500 focus:ring-amber-300" />
-              <span className="text-[11px] text-sakura-400 group-hover:text-sakura-600 transition-colors">始终允许（本次会话）</span>
+              <span className="text-[12px] text-sakura-400 group-hover:text-sakura-600 transition-colors">始终允许（本次会话）</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer group" onClick={(e) => e.stopPropagation()}>
               <input type="checkbox" checked={trustAll} onChange={e => setTrustAll(e.target.checked)}
                 className="w-3.5 h-3.5 rounded border-sakura-300 text-red-400 focus:ring-red-300" />
               <ShieldCheck size={12} className="text-red-400 shrink-0" />
-              <span className="text-[11px] text-sakura-400 group-hover:text-red-500 transition-colors">完全信任奶昔（不再询问）</span>
+              <span className="text-[12px] text-sakura-400 group-hover:text-red-500 transition-colors">完全信任奶昔（不再询问）</span>
             </label>
           </div>
 
-          <p className="text-[11px] text-sakura-400">确认执行此操作？你可以随时拒绝。</p>
+          <p className="text-[12px] text-sakura-400">确认执行此操作？你可以随时拒绝。</p>
         </div>
         <div className="flex justify-end gap-2 px-5 py-3 border-t border-sakura-100">
           <button onClick={handleDeny}

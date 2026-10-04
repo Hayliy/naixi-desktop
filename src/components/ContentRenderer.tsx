@@ -25,7 +25,7 @@ function TextBlock({ text }: { text: string }) {
   if (!text) return null;
   const lines = text.split("\n");
   return (
-    <div className="text-xs leading-relaxed whitespace-pre-wrap [&_strong]:font-semibold [&_strong]:text-sakura-700 [&_em]:italic [&_code]:bg-sakura-100 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[11px] [&_code]:font-mono [&_a]:text-sakura-600 [&_a]:underline [&_a:hover]:text-sakura-800 [&_hr]:border-sakura-100 [&_hr]:my-2 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_blockquote]:border-l-2 [&_blockquote]:border-sakura-300 [&_blockquote]:pl-3 [&_blockquote]:text-sakura-400 [&_blockquote]:italic [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-sakura-600 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-sakura-500 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-sakura-500 [&_p]:my-1">
+    <div className="text-xs leading-relaxed whitespace-pre-wrap [&_strong]:font-semibold [&_strong]:text-sakura-700 [&_em]:italic [&_code]:bg-sakura-100 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[12px] [&_code]:font-mono [&_a]:text-sakura-600 [&_a]:underline [&_a:hover]:text-sakura-800 [&_hr]:border-sakura-100 [&_hr]:my-2 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_blockquote]:border-l-2 [&_blockquote]:border-sakura-300 [&_blockquote]:pl-3 [&_blockquote]:text-sakura-400 [&_blockquote]:italic [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-sakura-600 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-sakura-500 [&_h3]:text-xs [&_h3]:font-medium [&_h3]:text-sakura-500 [&_p]:my-1">
       {lines.map((line, i) => {
         // 标题
         if (line.startsWith("### ")) return <h3 key={i}>{renderInline(line.slice(4))}</h3>;
@@ -101,7 +101,7 @@ function CodeBlock({ text, language }: { text: string; language?: string }) {
   };
   return (
     <div className="my-1 rounded-lg overflow-hidden border border-sakura-100">
-      <div className="flex items-center justify-between px-3 py-1.5 bg-sakura-50 text-[10px] text-sakura-400">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-sakura-50 text-[11px] text-sakura-400">
         <span>{language || "code"}</span>
         <button onClick={handleCopy} className="flex items-center gap-1 hover:text-sakura-600 transition-colors">
           {copied ? <Check size={11} /> : <Copy size={11} />}
@@ -140,7 +140,7 @@ function FileBlock({ name, size }: { name?: string; size?: number }) {
     <div className="my-1 flex items-center gap-2 px-3 py-2 rounded-lg border border-sakura-100 bg-sakura-50 text-xs">
       <File size={14} className="text-sakura-400 shrink-0" />
       <span className="text-sakura-600 truncate flex-1">{name || "文件"}</span>
-      {size ? <span className="text-sakura-300 text-[10px]">{(size / 1024).toFixed(1)} KB</span> : null}
+      {size ? <span className="text-sakura-300 text-[11px]">{(size / 1024).toFixed(1)} KB</span> : null}
     </div>
   );
 }
@@ -173,12 +173,12 @@ function ReasoningBlock({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="my-1">
-      <button onClick={() => setOpen(!open)} className="flex items-center gap-1 text-[10px] text-sakura-400 hover:text-sakura-500 transition-colors">
+      <button onClick={() => setOpen(!open)} className="flex items-center gap-1 text-[11px] text-sakura-400 hover:text-sakura-500 transition-colors">
         {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
         <span>{open ? "收起思考过程" : "展开思考过程"}</span>
       </button>
       {open && (
-        <div className="mt-1 px-3 py-2 rounded-lg bg-sakura-50 border border-sakura-100 text-[11px] text-sakura-400 italic whitespace-pre-wrap">
+        <div className="mt-1 px-3 py-2 rounded-lg bg-sakura-50 border border-sakura-100 text-[12px] text-sakura-400 italic whitespace-pre-wrap">
           {text}
         </div>
       )}
@@ -206,17 +206,17 @@ function ToolUseBlock({ name, args, state }: { name: string; args?: Record<strin
 
   return (
     <div className={`my-1 rounded-lg border overflow-hidden ${bgColor}`}>
-      <div className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] ${textColor}">
-        {isRunning ? <Loader2 size={11} className="animate-spin" /> : isError ? <span className="w-[11px] h-[11px] flex items-center justify-center text-[10px] font-bold bg-red-100 rounded-full">!</span> : <Check size={11} />}
+      <div className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] ${textColor}">
+        {isRunning ? <Loader2 size={11} className="animate-spin" /> : isError ? <span className="w-[11px] h-[11px] flex items-center justify-center text-[11px] font-bold bg-red-100 rounded-full">!</span> : <Check size={11} />}
         <span className="font-medium">{name}</span>
         {args && Object.keys(args).length > 0 && (
-          <span className="text-sakura-400 ml-auto text-[10px] truncate max-w-[200px]">
+          <span className="text-sakura-400 ml-auto text-[11px] truncate max-w-[200px]">
             {JSON.stringify(args).slice(0, 80)}{JSON.stringify(args).length > 80 ? "..." : ""}
           </span>
         )}
       </div>
       {isError && (
-        <div className="px-3 py-1.5 text-[10px] text-red-500 bg-red-50 border-t border-red-100 font-mono">
+        <div className="px-3 py-1.5 text-[11px] text-red-500 bg-red-50 border-t border-red-100 font-mono">
           工具执行失败，LLM 将尝试其他方案
         </div>
       )}
@@ -232,15 +232,15 @@ function ToolResultBlock({ content }: { content?: string }) {
     <div className={`my-1 px-3 py-1.5 rounded-lg border overflow-hidden ${isError ? "border-red-100 bg-red-50" : "border-green-100 bg-green-50"}`}>
       <div className="flex items-center gap-1 mb-0.5">
         {isError ? (
-          <span className="w-[11px] h-[11px] flex items-center justify-center text-[10px] font-bold text-red-500">!</span>
+          <span className="w-[11px] h-[11px] flex items-center justify-center text-[11px] font-bold text-red-500">!</span>
         ) : (
           <Check size={11} className="text-green-600" />
         )}
-        <span className={`text-[11px] font-medium ${isError ? "text-red-600" : "text-green-700"}`}>
+        <span className={`text-[12px] font-medium ${isError ? "text-red-600" : "text-green-700"}`}>
           {isError ? "工具出错" : "工具返回"}
         </span>
       </div>
-      <pre className={`text-[10px] mt-0.5 whitespace-pre-wrap font-mono overflow-x-auto ${isError ? "text-red-500" : "text-green-600"}`}>
+      <pre className={`text-[11px] mt-0.5 whitespace-pre-wrap font-mono overflow-x-auto ${isError ? "text-red-500" : "text-green-600"}`}>
         {content.slice(0, 300)}{content.length > 300 ? "\n...(内容过长已截断)" : ""}
       </pre>
     </div>
@@ -250,9 +250,9 @@ function ToolResultBlock({ content }: { content?: string }) {
 /* ─── status ─── */
 function StatusBlock({ text, state }: { text?: string; state?: "loading" | "done" | "error" }) {
   const colorMap = { loading: "text-blue-500", done: "text-green-500", error: "text-red-500" };
-  const iconMap = { loading: <Loader2 size={11} className="animate-spin" />, done: <Check size={11} />, error: <span className="w-[11px] h-[11px] flex items-center justify-center text-[10px] font-bold">!</span> };
+  const iconMap = { loading: <Loader2 size={11} className="animate-spin" />, done: <Check size={11} />, error: <span className="w-[11px] h-[11px] flex items-center justify-center text-[11px] font-bold">!</span> };
   return (
-    <div className={`my-1 flex items-center gap-1.5 text-[11px] ${colorMap[state || "loading"] || "text-sakura-400"}`}>
+    <div className={`my-1 flex items-center gap-1.5 text-[12px] ${colorMap[state || "loading"] || "text-sakura-400"}`}>
       {iconMap[state || "loading"]}
       <span>{text || "处理中..."}</span>
     </div>

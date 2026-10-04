@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { cn, apiPost, apiGet, getDiagnostics, type DiagnosticsData } from "@/lib/api";
 import { useToast } from "@/components/Toast";
 import { APP_FALLBACK_VERSION } from "@/lib/version";
+import { useZoom, ZOOM_MIN, ZOOM_MAX } from "@/lib/zoom";
 
 /**
  * 自绘顶栏（奶昔桌面端 · 适配真实功能面）
@@ -38,6 +39,7 @@ function DevRow({ label, value }: { label: string; value: string }) {
 
 export function TopBar({ onNavigate }: { onNavigate: (k: string) => void }) {
   const { notify } = useToast();
+  const [zoom, zoomIn, zoomOut, zoomReset] = useZoom();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [altOn, setAltOn] = useState(false);
   const [maximized, setMaximized] = useState(false);
@@ -397,7 +399,7 @@ export function TopBar({ onNavigate }: { onNavigate: (k: string) => void }) {
                 )}
               >
                 <span>{col.label}</span>
-                <span className={cn("ml-0.5 text-[11px] text-sakura-300", altOn && "underline underline-offset-2")}>
+                <span className={cn("ml-0.5 text-[12px] text-sakura-300", altOn && "underline underline-offset-2")}>
                   ({col.accel.toUpperCase()})
                 </span>
               </button>
@@ -413,7 +415,7 @@ export function TopBar({ onNavigate }: { onNavigate: (k: string) => void }) {
                         className="flex w-full items-center justify-between gap-5 px-3.5 py-1.5 text-left text-[12px] text-sakura-500 hover:bg-sakura-50"
                       >
                         <span>{it.label}</span>
-                        {it.shortcut && <span className="text-[11px] text-sakura-300">{it.shortcut}</span>}
+                        {it.shortcut && <span className="text-[12px] text-sakura-300">{it.shortcut}</span>}
                       </button>
                     )
                   )}
@@ -425,6 +427,41 @@ export function TopBar({ onNavigate }: { onNavigate: (k: string) => void }) {
 
         {/* 拖拽区：菜单与窗口按钮之间的空白 */}
         <div data-tauri-drag-region className="h-full flex-1" />
+
+        {/* 界面缩放（2026-10-04）：项目里小于 12px 的字号有 1154 处，
+            逐个改不现实；用全局缩放档位让用户自己调，一处生效全局。 */}
+        <div className="flex h-full items-center gap-0.5 px-1 text-sakura-400">
+          <button
+            onClick={zoomOut}
+            disabled={zoom <= ZOOM_MIN}
+            title={`缩小界面（当前 ${Math.round(zoom * 100)}%）`}
+            className="flex h-7 w-7 items-center justify-center rounded hover:bg-sakura-50 hover:text-sakura-600 disabled:opacity-30"
+          >
+            <span className="text-[15px] leading-none font-medium">A</span>
+            <svg width="9" height="9" viewBox="0 0 12 12" className="-ml-0.5 mt-2">
+              <line x1="3" y1="6" x2="9" y2="6" stroke="currentColor" strokeWidth="1.6" />
+            </svg>
+          </button>
+          <button
+            onClick={zoomReset}
+            title={`重置为100%（当前 ${Math.round(zoom * 100)}%）· 点击复位`}
+            className="min-w-[2.6rem] px-1 text-[12px] tabular-nums hover:text-sakura-600"
+          >
+            {Math.round(zoom * 100)}%
+          </button>
+          <button
+            onClick={zoomIn}
+            disabled={zoom >= ZOOM_MAX}
+            title={`放大界面（当前 ${Math.round(zoom * 100)}%）`}
+            className="flex h-7 w-7 items-center justify-center rounded hover:bg-sakura-50 hover:text-sakura-600 disabled:opacity-30"
+          >
+            <span className="text-[15px] leading-none font-medium">A</span>
+            <svg width="9" height="9" viewBox="0 0 12 12" className="-ml-0.5 mt-2">
+              <line x1="3" y1="6" x2="9" y2="6" stroke="currentColor" strokeWidth="1.6" />
+              <line x1="6" y1="3" x2="6" y2="9" stroke="currentColor" strokeWidth="1.6" />
+            </svg>
+          </button>
+        </div>
 
         {/* 窗口按钮 */}
         <div className="flex h-full">

@@ -8,7 +8,7 @@ export default function ModelSelector({ availableModels, modelKey, onModelChange
   const selected = availableModels.find(m => m.key === modelKey);
   return (
     <div className="relative group">
-      <button className="flex items-center gap-1 px-2 py-1 rounded text-[10px] bg-sakura-50 text-sakura-500 hover:bg-sakura-100 transition-colors">
+      <button className="flex items-center gap-1 px-2 py-1 rounded text-[11px] bg-sakura-50 text-sakura-500 hover:bg-sakura-100 transition-colors">
         <Layers size={10} />
         <span className="max-w-[8rem] truncate">{selected?.label || modelKey}</span>
       </button>

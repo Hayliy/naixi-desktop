@@ -106,7 +106,7 @@ function BaseNode({ data, selected }: NodeProps) {
         <span>{label}</span>
       </div>
       {data && (data as any).config && (
-        <div className="mt-1 text-[10px] text-gray-400 truncate max-w-[140px]">
+        <div className="mt-1 text-[11px] text-gray-400 truncate max-w-[140px]">
           {Object.entries((data as any).config || {}).slice(0, 2).map(([k, v]) => (
             <div key={k} className="truncate">{k}: {String(v).slice(0, 20)}</div>
           ))}
@@ -953,7 +953,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
             </button>
             {showWorkflowList && (
               <div className="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 z-50 min-w-[180px] max-h-[280px] overflow-y-auto">
-                <div className="px-3 py-2 text-[10px] text-gray-400 uppercase tracking-wider border-b border-gray-100">工作流列表</div>
+                <div className="px-3 py-2 text-[11px] text-gray-400 uppercase tracking-wider border-b border-gray-100">工作流列表</div>
                 {workflows.length === 0 && (
                   <div className="px-3 py-4 text-xs text-center text-gray-400">暂无保存的工作流</div>
                 )}
@@ -966,7 +966,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                     }`}
                   >
                     <span className="truncate flex-1">{w.name}</span>
-                    {w.id === workflowId && <span className="text-[10px] text-sakura-400 ml-1">当前</span>}
+                    {w.id === workflowId && <span className="text-[11px] text-sakura-400 ml-1">当前</span>}
                   </div>
                 ))}
               </div>
@@ -1197,7 +1197,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                       <summary className="text-gray-400 cursor-pointer hover:text-gray-600 select-none">可用运算符</summary>
                       <div className="mt-1 flex flex-wrap gap-1">
                         {["contains","not_contains","start_with","end_with","is","is_not","empty","not_empty","eq","neq","gt","lt","gte","lte","in","not_in"].map(op =>
-                          <span key={op} className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{op}</span>
+                          <span key={op} className="text-[11px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{op}</span>
                         )}
                       </div>
                     </details>
@@ -1544,17 +1544,17 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                 </button>
                 {runResult && (
                   <div className="mt-3 space-y-2">
-                    <p className="text-green-600 text-[10px] font-medium">运行完成</p>
-                    <div className="text-gray-400 text-[10px]">耗时: {runResult.timing?.total || "?"}ms</div>
+                    <p className="text-green-600 text-[11px] font-medium">运行完成</p>
+                    <div className="text-gray-400 text-[11px]">耗时: {runResult.timing?.total || "?"}ms</div>
                     {(runResult.nodes_snapshot || runResult.node_results || []).map((ns: any, i: number) => (
                       <div key={i} className="p-2 rounded border border-gray-100 bg-gray-50">
                         <div className="flex items-center justify-between mb-1">
                           <span className="text-gray-600 font-medium text-xs">{ns.id || ns.name || `节点 ${i}`}</span>
-                          <span className={`text-[10px] ${ns.status === "success" ? "text-green-500" : ns.status === "error" ? "text-red-500" : "text-gray-400"}`}>
+                          <span className={`text-[11px] ${ns.status === "success" ? "text-green-500" : ns.status === "error" ? "text-red-500" : "text-gray-400"}`}>
                             {ns.status === "success" ? "成功" : ns.status === "error" ? "错误" : ns.status || "?"}
                           </span>
                         </div>
-                        <div className="text-gray-400 text-[10px] break-all font-mono">
+                        <div className="text-gray-400 text-[11px] break-all font-mono">
                           {ns.output ? JSON.stringify(ns.output).slice(0, 200) : ns.error || "无输出"}
                         </div>
                       </div>
@@ -1567,7 +1567,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
             {/* 变量 */}
             {rightTab === "vars" && (
               <div className="space-y-2">
-                <p className="text-gray-500 text-[10px]">通用变量（点击复制）</p>
+                <p className="text-gray-500 text-[11px]">通用变量（点击复制）</p>
                 <div className="grid grid-cols-2 gap-1">
                   {[
                     { key: "{{input}}", desc: "工作流输入" },
@@ -1575,14 +1575,14 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                   ].map(v => (
                     <div key={v.key} onClick={() => void copyClipboardText(v.key)}
                       className="p-1.5 rounded border border-gray-100 hover:border-sakura-200 hover:bg-sakura-50 cursor-pointer transition-colors">
-                      <code className="text-[9px] font-mono text-sakura-600 bg-sakura-50 px-1 py-0.5 rounded">{v.key}</code>
-                      <p className="text-[9px] text-gray-400 mt-0.5">{v.desc}</p>
+                      <code className="text-[10px] font-mono text-sakura-600 bg-sakura-50 px-1 py-0.5 rounded">{v.key}</code>
+                      <p className="text-[10px] text-gray-400 mt-0.5">{v.desc}</p>
                     </div>
                   ))}
                 </div>
                 {nodes.length > 0 && (
                   <>
-                    <p className="text-gray-500 text-[10px] pt-1 border-t border-gray-100">节点变量（点击复制）</p>
+                    <p className="text-gray-500 text-[11px] pt-1 border-t border-gray-100">节点变量（点击复制）</p>
                     <div className="space-y-1">
                       {nodes.map(n => {
                         const ntype = (n.data as any)?.type || "";
@@ -1595,27 +1595,27 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                             <summary className="flex items-center gap-1.5 cursor-pointer text-gray-500 hover:text-gray-700 py-0.5">
                               <span className="w-1.5 h-1.5 rounded-full bg-sakura-300 shrink-0" />
                               <span className="font-medium text-gray-700">{label}</span>
-                              <span className="text-[9px] text-gray-400">({ntype})</span>
-                              <code className="text-[9px] font-mono text-sakura-500 ml-auto">{nodeVar}</code>
+                              <span className="text-[10px] text-gray-400">({ntype})</span>
+                              <code className="text-[10px] font-mono text-sakura-500 ml-auto">{nodeVar}</code>
                             </summary>
                             <div className="ml-3 mt-0.5 space-y-0.5">
                               <div onClick={() => void copyClipboardText(nodeVar)}
                                 className="flex items-center justify-between px-1.5 py-0.5 rounded hover:bg-sakura-50 cursor-pointer">
-                                <code className="text-[9px] font-mono text-sakura-400">{nodeVar}</code>
-                                <span className="text-[8px] text-gray-300">节点全部输出</span>
+                                <code className="text-[10px] font-mono text-sakura-400">{nodeVar}</code>
+                                <span className="text-[10px] text-gray-300">节点全部输出</span>
                               </div>
                               {outputKeys.slice(0, 6).map(k => {
                                 const fullVar = `{{${n.id}.${k}}}`;
                                 return (
                                   <div key={k} onClick={() => void copyClipboardText(fullVar)}
                                     className="flex items-center justify-between px-1.5 py-0.5 rounded hover:bg-sakura-50 cursor-pointer">
-                                    <code className="text-[9px] font-mono text-gray-500">{fullVar}</code>
-                                    <span className="text-[8px] text-gray-300 truncate max-w-[60px]">{typeof config[k] === 'string' ? config[k].slice(0, 12) : typeof config[k]}</span>
+                                    <code className="text-[10px] font-mono text-gray-500">{fullVar}</code>
+                                    <span className="text-[10px] text-gray-300 truncate max-w-[60px]">{typeof config[k] === 'string' ? config[k].slice(0, 12) : typeof config[k]}</span>
                                   </div>
                                 );
                               })}
                               {outputKeys.length > 6 && (
-                                <p className="text-[8px] text-gray-300 px-1">+{outputKeys.length - 6} 更多字段</p>
+                                <p className="text-[10px] text-gray-300 px-1">+{outputKeys.length - 6} 更多字段</p>
                               )}
                             </div>
                           </details>
@@ -1631,28 +1631,28 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
             {rightTab === "runs" && (
               <>
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-gray-500 text-[10px]">最近运行记录</span>
+                  <span className="text-gray-500 text-[11px]">最近运行记录</span>
                   <button onClick={() => { if (workflowId) loadRuns(); }} className="text-gray-400 hover:text-sakura-500" title="刷新">
                     <RefreshCw size={11} />
                   </button>
                 </div>
                 {runsData.length === 0 ? (
-                  <p className="text-gray-300 text-[10px] text-center py-4">暂无运行记录</p>
+                  <p className="text-gray-300 text-[11px] text-center py-4">暂无运行记录</p>
                 ) : (
                   <div className="space-y-1">
                     {runsData.map((r: any, i: number) => (
                       <div key={r.id || i} className="p-2 rounded border border-gray-100 hover:border-sakura-200 cursor-pointer transition-colors">
                         <div className="flex items-center justify-between">
-                          <span className="text-gray-600 text-[10px] font-medium">{r.status || "unknown"}</span>
-                          <span className="text-gray-300 text-[9px]">{r.started_at ? new Date(r.started_at).toLocaleString() : ""}</span>
+                          <span className="text-gray-600 text-[11px] font-medium">{r.status || "unknown"}</span>
+                          <span className="text-gray-300 text-[10px]">{r.started_at ? new Date(r.started_at).toLocaleString() : ""}</span>
                         </div>
-                        {r.error && <p className="text-red-400 text-[9px] mt-0.5 truncate">{r.error}</p>}
+                        {r.error && <p className="text-red-400 text-[10px] mt-0.5 truncate">{r.error}</p>}
                         {(() => {
                           let outText = r.output || r.final_output || "";
                           if (typeof outText === "string") { try { const p = JSON.parse(outText); outText = p; } catch {} }
-                          return <p className="text-gray-400 text-[9px] mt-0.5 truncate">{typeof outText === "object" ? JSON.stringify(outText).slice(0, 80) : String(outText).slice(0, 80)}</p>;
+                          return <p className="text-gray-400 text-[10px] mt-0.5 truncate">{typeof outText === "object" ? JSON.stringify(outText).slice(0, 80) : String(outText).slice(0, 80)}</p>;
                         })()}
-                        <div className="text-gray-300 text-[9px] mt-0.5">耗时: {r.timing?.total ? `${r.timing.total}ms` : "?"}</div>
+                        <div className="text-gray-300 text-[10px] mt-0.5">耗时: {r.timing?.total ? `${r.timing.total}ms` : "?"}</div>
                       </div>
                     ))}
                   </div>
@@ -1674,7 +1674,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
               setRightTab(k);
               if (k === "runs" && workflowId) loadRuns();
             }}
-              className={`flex items-center justify-center w-7 h-7 rounded text-[11px] ${
+              className={`flex items-center justify-center w-7 h-7 rounded text-[12px] ${
                 rightTab === k ? "bg-sakura-100 text-sakura-600" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
               }`} title={label}>
               <Icon size={14} />
@@ -1775,7 +1775,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                       <div className="flex-1 relative">
                         <input id="api-key-display" readOnly value={publishResult.api_key}
                           type={showKey ? "text" : "password"}
-                          className="w-full text-[10px] font-mono bg-white px-2 py-1.5 pr-8 border border-gray-200 rounded-md outline-none" />
+                          className="w-full text-[11px] font-mono bg-white px-2 py-1.5 pr-8 border border-gray-200 rounded-md outline-none" />
                         <button onClick={() => setShowKey(!showKey)}
                           className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 text-gray-300 hover:text-sakura-500 transition-colors">
                           {showKey ? <EyeOff size={13} /> : <Eye size={13} />}
@@ -1785,12 +1785,12 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                         className="shrink-0 px-3 py-1.5 rounded text-xs bg-sakura-100 text-sakura-600 hover:bg-sakura-200">复制</button>
                     </div>
                     <div className="flex items-center gap-2 mt-2">
-                      <button onClick={() => setShowRegenConfirm(true)} className="text-[10px] px-2 py-1 rounded bg-amber-100 text-amber-600 hover:bg-amber-200 transition-colors">
+                      <button onClick={() => setShowRegenConfirm(true)} className="text-[11px] px-2 py-1 rounded bg-amber-100 text-amber-600 hover:bg-amber-200 transition-colors">
                         重新生成
                       </button>
-                      <span className="text-[9px] text-gray-300">重新生成后旧 Key 立即失效</span>
+                      <span className="text-[10px] text-gray-300">重新生成后旧 Key 立即失效</span>
                     </div>
-                    <p className="text-[9px] text-gray-400 mt-2">
+                    <p className="text-[10px] text-gray-400 mt-2">
                       调用方式: curl -H {'"Authorization: Bearer <Key>"'} {window.location.origin}/api/webhook/{workflowId}
                     </p>
                   </div>
@@ -1811,12 +1811,12 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                             }
                           } catch (e: any) { notify("创建失败", "error"); }
                         }}
-                        className="text-[10px] px-2 py-0.5 rounded bg-sakura-100 text-sakura-600 hover:bg-sakura-200"
+                        className="text-[11px] px-2 py-0.5 rounded bg-sakura-100 text-sakura-600 hover:bg-sakura-200"
                       >
                         新建密钥
                       </button>
                     </div>
-                    <div className="space-y-1 max-h-[160px] overflow-y-auto text-[10px]">
+                    <div className="space-y-1 max-h-[160px] overflow-y-auto text-[11px]">
                       {keysList.length === 0 ? (
                         <span className="text-gray-400">暂无密钥</span>
                       ) : keysList.map(k => (
@@ -1824,24 +1824,24 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
                               <span className="font-medium text-gray-700 truncate max-w-[60px]">{k.name || '未命名'}</span>
-                              <code className="text-[8px] font-mono text-gray-400 truncate">{k.key.substring(0, 20)}...</code>
+                              <code className="text-[10px] font-mono text-gray-400 truncate">{k.key.substring(0, 20)}...</code>
                             </div>
                             <div className="flex items-center gap-2 mt-0.5">
                               <button
                                 onClick={() => handleToggleKey(k.id, k.enabled)}
-                                className={`text-[9px] px-1.5 py-0.5 rounded ${k.enabled ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-400'}`}
+                                className={`text-[10px] px-1.5 py-0.5 rounded ${k.enabled ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-400'}`}
                               >
                                 {k.enabled ? '启用' : '禁用'}
                               </button>
                               <button
                                 onClick={async () => { const ok = await copyClipboardText(k.key); notify(ok ? "已复制" : "复制失败：请手动选中文本复制", ok ? "success" : "error"); }}
-                                className="text-[9px] text-gray-400 hover:text-gray-600"
+                                className="text-[10px] text-gray-400 hover:text-gray-600"
                               >
                                 复制
                               </button>
                               <button
                                 onClick={() => setShowDeleteKeyConfirm(k.id)}
-                                className="text-[9px] text-red-400 hover:text-red-600"
+                                className="text-[10px] text-red-400 hover:text-red-600"
                               >
                                 删除
                               </button>
@@ -1857,7 +1857,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                 {publishResult?.api_key && (
                   <div className="bg-gray-50 rounded-lg p-3">
                     <div className="text-xs text-gray-500 mb-1">调用统计（近7天）</div>
-                    <div className="text-[10px] text-gray-500">
+                    <div className="text-[11px] text-gray-500">
                       {usageStats ? (
                         <>
                           总调用: <b className="text-gray-700">{usageStats.total_calls || 0}</b> 次
@@ -1973,7 +1973,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                       <div className="flex items-center justify-between">
                         <div>
                           <span className="text-sm font-medium text-gray-700">{tpl.name}</span>
-                          <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">{tpl.category}</span>
+                          <span className="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">{tpl.category}</span>
                         </div>
                         <span className="text-xs text-gray-400">{tpl.usage_count || 0} 次使用</span>
                       </div>
@@ -2015,13 +2015,13 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                     } catch {}
                   }
                 }}>
-                  <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-gray-600 select-none">
+                  <summary className="text-[11px] text-gray-400 cursor-pointer hover:text-gray-600 select-none">
                     GitHub Token 设置（可选，提高 API 限流）
                   </summary>
                   <div className="mt-2 space-y-2">
                     <div className="flex items-center gap-2">
                       <input id="gh-token-input"
-                        className="flex-1 px-2 py-1.5 border border-gray-200 rounded-md text-[10px] font-mono outline-none focus:border-sakura-300"
+                        className="flex-1 px-2 py-1.5 border border-gray-200 rounded-md text-[11px] font-mono outline-none focus:border-sakura-300"
                         placeholder="已加密存储，展开时自动加载"
                         type="password"
                       />
@@ -2039,7 +2039,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                         } catch (e: any) {
                           notify(`连接失败: ${e?.message || "网络错误"}`, "error");
                         }
-                      }} className="shrink-0 px-2 py-1.5 rounded text-[10px] bg-emerald-100 text-emerald-600 hover:bg-emerald-200">
+                      }} className="shrink-0 px-2 py-1.5 rounded text-[11px] bg-emerald-100 text-emerald-600 hover:bg-emerald-200">
                         测试连接
                       </button>
                       <button onClick={async () => {
@@ -2054,7 +2054,7 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                         } catch (e: any) {
                           notify("保存失败: " + (e?.message || "未知错误"), "error");
                         }
-                      }} className="shrink-0 px-2 py-1.5 rounded text-[10px] bg-sakura-100 text-sakura-600 hover:bg-sakura-200">
+                      }} className="shrink-0 px-2 py-1.5 rounded text-[11px] bg-sakura-100 text-sakura-600 hover:bg-sakura-200">
                         保存
                       </button>
                       <button onClick={async () => {
@@ -2067,11 +2067,11 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                         } catch (e: any) {
                           notify("清除失败: " + (e?.message || "未知错误"), "error");
                         }
-                      }} className="shrink-0 px-2 py-1.5 rounded text-[10px] bg-red-50 text-red-400 hover:bg-red-100">
+                      }} className="shrink-0 px-2 py-1.5 rounded text-[11px] bg-red-50 text-red-400 hover:bg-red-100">
                         清除
                       </button>
                     </div>
-                    <p className="text-[9px] text-gray-300">去 <a href="https://github.com/settings/tokens" target="_blank" className="text-sakura-400 hover:text-sakura-500" rel="noreferrer">github.com/settings/tokens</a> 生成 Classic Token，只需勾选 public_repo</p>
+                    <p className="text-[10px] text-gray-300">去 <a href="https://github.com/settings/tokens" target="_blank" className="text-sakura-400 hover:text-sakura-500" rel="noreferrer">github.com/settings/tokens</a> 生成 Classic Token，只需勾选 public_repo</p>
                   </div>
                 </details>
 
@@ -2082,10 +2082,10 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
                         <div className="flex items-center justify-between mb-1">
                           <div>
                             <span className="text-sm font-medium text-gray-700">{tpl.name}</span>
-                            <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-500">{tpl.category}</span>
+                            <span className="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-500">{tpl.category}</span>
                           </div>
                           {tpl.usage_count > 0 && (
-                            <span className="text-[10px] text-gray-400">{tpl.usage_count} stars</span>
+                            <span className="text-[11px] text-gray-400">{tpl.usage_count} stars</span>
                           )}
                         </div>
                         <p className="text-xs text-gray-400 mb-2">{tpl.description}</p>

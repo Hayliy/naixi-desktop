@@ -47,7 +47,7 @@ export default function CapabilityInput({ action, config, onSend, onClose }: {
         {need && !hasProvider && (
           <div className="mx-5 mt-4 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200">
             <p className="text-[12px] font-medium text-amber-800">未配置 {need.label}</p>
-            <p className="text-[11px] text-amber-600 mt-1">
+            <p className="text-[12px] text-amber-600 mt-1">
               发送后将由聊天 LLM 处理，效果取决于模型能力。
               如需专用 {need.label}，请添加类型为「{need.type}」的供应商（例如：{need.example}）。
             </p>
@@ -61,7 +61,7 @@ export default function CapabilityInput({ action, config, onSend, onClose }: {
             onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); handleSend(); } }} />
         </div>
         <div className="px-5 py-3 border-t border-sakura-100 flex items-center justify-between">
-          <span className="text-[11px] text-sakura-400">Ctrl+Enter 发送</span>
+          <span className="text-[12px] text-sakura-400">Ctrl+Enter 发送</span>
           <div className="flex gap-2">
             <button onClick={onClose} className="px-4 py-2 rounded-lg text-xs text-sakura-400 hover:bg-sakura-50 transition-colors">取消</button>
             <button onClick={handleSend} disabled={!text.trim()}

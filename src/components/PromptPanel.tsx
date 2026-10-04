@@ -154,11 +154,11 @@ export default function PromptPanel({
 
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 text-xs">
         <button onClick={startCreate}
-          className="flex items-center gap-1 w-full px-2.5 py-1.5 rounded-lg text-[10px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
+          className="flex items-center gap-1 w-full px-2.5 py-1.5 rounded-lg text-[11px] text-sakura-400 hover:text-sakura-500 hover:bg-sakura-50 border border-dashed border-sakura-200 transition-colors">
           <Plus size={10} /> 新建
         </button>
         {savedMsg && (
-          <div className={`text-[10px] ${savedMsg.includes("失败") ? "text-red-500" : "text-green-500"}`}>{savedMsg}</div>
+          <div className={`text-[11px] ${savedMsg.includes("失败") ? "text-red-500" : "text-green-500"}`}>{savedMsg}</div>
         )}
         {loading ? (
         <div className="flex items-center justify-center py-8"><Sparkles size={16} className="text-sakura-300 animate-pulse" /></div>
@@ -166,7 +166,7 @@ export default function PromptPanel({
         <>
           {/* 场景选择 */}
           <div className="space-y-1.5">
-            <p className="text-[11px] font-medium text-sakura-400">当前场景</p>
+            <p className="text-[12px] font-medium text-sakura-400">当前场景</p>
             <div className="grid grid-cols-3 gap-1.5">
               {SCENE_META.map(({ scene, label, icon: Icon }) => {
                 const p = scenePrompts.find(x => x.scene === scene);
@@ -184,7 +184,7 @@ export default function PromptPanel({
                         onSceneChange(scene);
                       }
                     }}
-                    className={`flex flex-col items-center gap-1 px-2 py-2 rounded-lg text-[10px] transition-colors border relative ${
+                    className={`flex flex-col items-center gap-1 px-2 py-2 rounded-lg text-[11px] transition-colors border relative ${
                       active
                         ? "bg-gradient-to-br from-sakura-100 to-sakura-100 border-sakura-200 text-sakura-600 font-medium"
                         : "bg-white border-sakura-100 text-sakura-400 hover:border-sakura-200"
@@ -192,7 +192,7 @@ export default function PromptPanel({
                   >
                     <Icon size={12} className={active ? "text-sakura-500" : "text-sakura-300"} />
                     <span className="truncate w-full text-center">{label}</span>
-                    {p && <span className="text-[9px] text-sakura-300">{p.lines}行</span>}
+                    {p && <span className="text-[10px] text-sakura-300">{p.lines}行</span>}
                     {active && (
                       <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-sakura-200 flex items-center justify-center" title="点击编辑">
                         <svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-sakura-500"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
@@ -232,7 +232,7 @@ export default function PromptPanel({
           {/* 自定义/其他提示词 */}
           {otherPrompts.length > 0 && (
             <div className="space-y-1.5">
-              <p className="text-[11px] font-medium text-sakura-400">其他提示词</p>
+              <p className="text-[12px] font-medium text-sakura-400">其他提示词</p>
               <div className="space-y-1.5">
                 {otherPrompts.map(p => (
                   <PromptCard
@@ -279,12 +279,12 @@ function PromptCard({
       <div className="flex items-center gap-2 px-2.5 py-2">
         <Icon size={12} className={active ? "text-sakura-500" : "text-sakura-300"} />
         <div className="flex-1 min-w-0">
-          <p className={`text-[11px] truncate ${active ? "text-sakura-600 font-medium" : "text-sakura-500"}`}>{prompt.desc}</p>
-          <p className="text-[9px] text-sakura-300">{prompt.lines}行 · {prompt.char_count}字符</p>
+          <p className={`text-[12px] truncate ${active ? "text-sakura-600 font-medium" : "text-sakura-500"}`}>{prompt.desc}</p>
+          <p className="text-[10px] text-sakura-300">{prompt.lines}行 · {prompt.char_count}字符</p>
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
           {!isScene && onActivate && (
-            <button onClick={onActivate} className={`p-1 rounded text-[9px] ${active ? "text-sakura-500 bg-sakura-50" : "text-sakura-300 hover:text-sakura-500"}`}>
+            <button onClick={onActivate} className={`p-1 rounded text-[10px] ${active ? "text-sakura-500 bg-sakura-50" : "text-sakura-300 hover:text-sakura-500"}`}>
               {active ? "已用" : "启用"}
             </button>
           )}
@@ -303,7 +303,7 @@ function PromptCard({
       </div>
       {expanded && (
         <div className="px-2.5 pb-2">
-          <pre className="text-[10px] text-sakura-600 whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto bg-sakura-50 rounded p-2">
+          <pre className="text-[11px] text-sakura-600 whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto bg-sakura-50 rounded p-2">
             {prompt.content || "(空)"}
           </pre>
         </div>
@@ -328,29 +328,29 @@ function PromptEditor({
 }) {
   return (
     <div className="bg-sakura-50 border border-sakura-100 rounded-lg p-2.5 space-y-2">
-      <p className="text-[11px] font-medium text-sakura-500">{isCreating ? "新建提示词" : "编辑提示词"}</p>
+      <p className="text-[12px] font-medium text-sakura-500">{isCreating ? "新建提示词" : "编辑提示词"}</p>
       {isCreating && (
         <input
-          className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[11px] text-sakura-600"
+          className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[12px] text-sakura-600"
           placeholder="提示词名称"
           value={title}
           onChange={e => onTitleChange(e.target.value)}
         />
       )}
       <textarea
-        className="w-full h-32 px-2 py-1.5 rounded border border-sakura-100 bg-white text-[10px] font-mono text-sakura-600 resize-none"
+        className="w-full h-32 px-2 py-1.5 rounded border border-sakura-100 bg-white text-[11px] font-mono text-sakura-600 resize-none"
         placeholder="在这里编写提示词内容..."
         value={content}
         onChange={e => onContentChange(e.target.value)}
       />
       <div className="flex gap-1.5 justify-end">
-        <button onClick={onCancel} className="px-2.5 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-100 transition-colors">
+        <button onClick={onCancel} className="px-2.5 py-1 rounded text-[11px] text-sakura-400 hover:bg-sakura-100 transition-colors">
           取消
         </button>
         <button
           onClick={onSave}
           disabled={saving || (isCreating && !title.trim())}
-          className="flex items-center gap-1 px-2.5 py-1 rounded text-[10px] bg-gradient-to-r from-sakura-400 to-sakura-500 text-white disabled:opacity-40 transition-shadow"
+          className="flex items-center gap-1 px-2.5 py-1 rounded text-[11px] bg-gradient-to-r from-sakura-400 to-sakura-500 text-white disabled:opacity-40 transition-shadow"
         >
           {saving ? "保存中..." : <><Save size={9} /> {isCreating ? "创建" : "保存"}</>}
         </button>

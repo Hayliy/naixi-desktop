@@ -54,7 +54,7 @@ export default function DetailPanel({ activeKey, messageCount, tokenEstimate, mo
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <p className="text-[11px] font-medium text-sakura-400 mb-1.5">{title}</p>
+      <p className="text-[12px] font-medium text-sakura-400 mb-1.5">{title}</p>
       <div className="space-y-1">{children}</div>
     </div>
   );
@@ -62,7 +62,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function Row({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
-    <div className="flex items-center gap-1.5 text-[11px]">
+    <div className="flex items-center gap-1.5 text-[12px]">
       <span className="text-sakura-300 shrink-0">{icon}</span>
       <span className="text-sakura-400">{label}</span>
       <span className="text-sakura-600 ml-auto truncate max-w-[100px]">{value}</span>

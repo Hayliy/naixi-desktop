@@ -186,7 +186,7 @@ export default function GatewayPage() {
       <div className="flex items-center justify-between">
         <p className="text-sm font-semibold text-sakura-600">对等互联</p>
         <button onClick={() => load(true)} disabled={refreshing}
-          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] text-sakura-400 hover:bg-sakura-50 hover:text-sakura-600 transition-colors disabled:opacity-50">
+          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-sakura-400 hover:bg-sakura-50 hover:text-sakura-600 transition-colors disabled:opacity-50">
           <RefreshCw size={11} className={refreshing ? "animate-spin" : ""} /> 刷新
         </button>
       </div>
@@ -194,36 +194,36 @@ export default function GatewayPage() {
       {/* 状态总览 */}
       <div className="grid grid-cols-4 gap-2">
         <div className="bg-white border border-sakura-100 rounded-xl p-3">
-          <p className="text-[9px] text-sakura-400">控制平面</p>
+          <p className="text-[10px] text-sakura-400">控制平面</p>
           <p className={`text-xs font-bold ${wsOn ? "text-green-600" : "text-red-600"}`}>
             {wsOn ? "运行中" : "未启动"}
           </p>
-          <p className="text-[8px] text-sakura-300 mt-0.5 font-mono">
+          <p className="text-[10px] text-sakura-300 mt-0.5 font-mono">
             WS {status?.ws_port ?? "-"}
           </p>
         </div>
         <div className="bg-white border border-sakura-100 rounded-xl p-3">
-          <p className="text-[9px] text-sakura-400">已连接对端</p>
+          <p className="text-[10px] text-sakura-400">已连接对端</p>
           <p className={`text-xs font-bold ${peerCount > 0 ? "text-green-600" : "text-sakura-400"}`}>
             {peerCount} 个
           </p>
-          <p className="text-[8px] text-sakura-300 mt-0.5">
+          <p className="text-[10px] text-sakura-300 mt-0.5">
             {peerCount > 0 ? "互联已建立" : "独立运行中"}
           </p>
         </div>
         <div className="bg-white border border-sakura-100 rounded-xl p-3">
-          <p className="text-[9px] text-sakura-400">暴露能力</p>
+          <p className="text-[10px] text-sakura-400">暴露能力</p>
           <p className="text-xs font-bold text-sakura-700">{caps.length} 条</p>
-          <p className="text-[8px] text-sakura-300 mt-0.5">
+          <p className="text-[10px] text-sakura-300 mt-0.5">
             只读 {readCount} · 可写 {writeCount}
           </p>
         </div>
         <div className="bg-white border border-sakura-100 rounded-xl p-3">
-          <p className="text-[9px] text-sakura-400">需人工确认</p>
+          <p className="text-[10px] text-sakura-400">需人工确认</p>
           <p className={`text-xs font-bold ${confirmCount > 0 ? "text-yellow-600" : "text-sakura-400"}`}>
             {confirmCount} 条
           </p>
-          <p className="text-[8px] text-sakura-300 mt-0.5">确认后才执行</p>
+          <p className="text-[10px] text-sakura-300 mt-0.5">确认后才执行</p>
         </div>
       </div>
 
@@ -231,15 +231,15 @@ export default function GatewayPage() {
       <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
         <div className="flex items-center gap-2 px-3 py-2 border-b border-sakura-100">
           <Radio size={12} className="text-sakura-400" />
-          <span className="text-[11px] font-semibold text-sakura-600">
+          <span className="text-[12px] font-semibold text-sakura-600">
             对端
             <span className="text-sakura-300 font-normal ml-1">({peers.length})</span>
           </span>
         </div>
         {peers.length === 0 ? (
           <div className="px-3 py-6 text-center">
-            <p className="text-[11px] text-sakura-400">暂无对端接入</p>
-            <p className="text-[10px] text-sakura-300 mt-1">
+            <p className="text-[12px] text-sakura-400">暂无对端接入</p>
+            <p className="text-[11px] text-sakura-300 mt-1">
               桌面端仍可独立运行；对端接入后能力会自动双向同步
             </p>
           </div>
@@ -249,13 +249,13 @@ export default function GatewayPage() {
               className="flex items-center gap-2 px-3 py-2 border-b border-sakura-50 last:border-0 hover:bg-sakura-50/50">
               <span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
               <div className="flex-1 min-w-0">
-                <p className="text-[11px] font-medium text-sakura-600 truncate">{p.provider}</p>
-                <p className="text-[10px] text-sakura-400 truncate font-mono">
+                <p className="text-[12px] font-medium text-sakura-600 truncate">{p.provider}</p>
+                <p className="text-[11px] text-sakura-400 truncate font-mono">
                   {p.remote || "本机"}
                   {p.subs?.length ? ` · 订阅 ${p.subs.join("/")}` : ""}
                 </p>
               </div>
-              <span className="text-[10px] text-sakura-300 shrink-0">{fmtIdle(p.idle_s)}</span>
+              <span className="text-[11px] text-sakura-300 shrink-0">{fmtIdle(p.idle_s)}</span>
             </div>
           ))
         )}
@@ -265,15 +265,15 @@ export default function GatewayPage() {
       <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
         <div className="flex items-center gap-2 px-3 py-2 border-b border-sakura-100">
           <Network size={12} className="text-sakura-400" />
-          <span className="text-[11px] font-semibold text-sakura-600">
+          <span className="text-[12px] font-semibold text-sakura-600">
             本端能力
             <span className="text-sakura-300 font-normal ml-1">({caps.length})</span>
           </span>
-          <span className="text-[10px] text-sakura-300 ml-auto">对端可发现并调用</span>
+          <span className="text-[11px] text-sakura-300 ml-auto">对端可发现并调用</span>
         </div>
         {caps.length === 0 ? (
           <div className="px-3 py-6 text-center">
-            <p className="text-[11px] text-sakura-400">未注册任何能力</p>
+            <p className="text-[12px] text-sakura-400">未注册任何能力</p>
           </div>
         ) : (
           caps.map((c) => {
@@ -284,23 +284,23 @@ export default function GatewayPage() {
                 <ts.Icon size={12} className="shrink-0 text-sakura-300" />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
-                    <p className="text-[11px] font-medium text-sakura-600 truncate">{c.title}</p>
-                    <span className={`text-[8px] px-1.5 py-px rounded border shrink-0 ${ts.cls}`}>
+                    <p className="text-[12px] font-medium text-sakura-600 truncate">{c.title}</p>
+                    <span className={`text-[10px] px-1.5 py-px rounded border shrink-0 ${ts.cls}`}>
                       {ts.label}
                     </span>
                     {c.requires_confirm && (
-                      <span className="text-[8px] px-1.5 py-px rounded border border-yellow-100 bg-yellow-50 text-yellow-600 shrink-0">
+                      <span className="text-[10px] px-1.5 py-px rounded border border-yellow-100 bg-yellow-50 text-yellow-600 shrink-0">
                         需确认
                       </span>
                     )}
                     {c.kind === "channel" && (
-                      <span className="text-[8px] px-1.5 py-px rounded border border-sakura-100 bg-sakura-50 text-sakura-500 shrink-0">
+                      <span className="text-[10px] px-1.5 py-px rounded border border-sakura-100 bg-sakura-50 text-sakura-500 shrink-0">
                         通道
                       </span>
                     )}
                   </div>
-                  <p className="text-[10px] text-sakura-400 truncate font-mono">{c.id}</p>
-                  <p className="text-[10px] text-sakura-300 truncate">{c.description}</p>
+                  <p className="text-[11px] text-sakura-400 truncate font-mono">{c.id}</p>
+                  <p className="text-[11px] text-sakura-300 truncate">{c.description}</p>
                 </div>
                 <button onClick={() => handleTest(c)} disabled={busyId === c.id}
                   className="p-1 rounded hover:bg-teal-50 text-sakura-300 hover:text-teal-500 transition-colors shrink-0 disabled:opacity-40"
@@ -322,7 +322,7 @@ export default function GatewayPage() {
 
       {/* 说明 */}
       <div className="bg-sakura-50 border border-sakura-100 rounded-xl px-3 py-2.5">
-        <p className="text-[10px] text-sakura-500 leading-relaxed">
+        <p className="text-[11px] text-sakura-500 leading-relaxed">
           桌面端作为常驻 Hub，对端（QQ 机器人）主动接入。
           能力调用走 HTTP <span className="font-mono">:9845</span>，
           订阅通知走 WS <span className="font-mono">:{status?.ws_port ?? 18400}</span>，

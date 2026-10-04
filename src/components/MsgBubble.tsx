@@ -113,7 +113,7 @@ export default function MsgBubble({ msg, onEdit, onRegenerate, onDelete, onStar,
       <div className={`max-w-[75%] min-w-0 ${isUser ? "items-end" : "items-start"} flex flex-col relative`}>
         {/* 专家团队模式：显示名称 */}
         {expertName && !isUser && (
-          <span className="text-[9px] text-sakura-400 mb-0.5 ml-1">{expertName}</span>
+          <span className="text-[10px] text-sakura-400 mb-0.5 ml-1">{expertName}</span>
         )}
         {/* 快捷删除按钮：悬浮在气泡右上角，hover 时显示 */}
         {onDelete && (
@@ -139,7 +139,7 @@ export default function MsgBubble({ msg, onEdit, onRegenerate, onDelete, onStar,
           )}
         </div>
         <div className="flex items-center gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          <span className="text-[10px] text-sakura-300">{fmtTime(msg.time)}</span>
+          <span className="text-[11px] text-sakura-300">{fmtTime(msg.time)}</span>
           {/* 朗读 */}
           {displayContent && (
             <button onClick={toggleSpeak} className="p-0.5 rounded hover:bg-sakura-50 text-sakura-300 hover:text-sakura-500" title={speaking ? "停止朗读" : "朗读"}>
@@ -203,7 +203,7 @@ function AvatarImage({ src: initialSrc, alt }: { src: string; alt: string }) {
   // 每次缓存更新时重新解析 URL（_avatarMap 可能已变化）
   const src = version === 0 ? initialSrc : getAvatarUrl(alt);
   if (!src || failed) {
-    return <span className="text-[9px] font-medium">{alt[0] || "?"}</span>;
+    return <span className="text-[10px] font-medium">{alt[0] || "?"}</span>;
   }
   return <img key={version} src={src} alt={alt} className="w-full h-full object-cover"
     onError={() => setFailed(true)} />;

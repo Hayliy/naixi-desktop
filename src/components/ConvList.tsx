@@ -50,14 +50,14 @@ export default function ConvList({
         {/* 分组/标签过滤器 */}
         {(filterGroup || filterTag || allGroups.length > 0 || allTags.length > 0) && (
           <div className="flex flex-wrap gap-1">
-            {filterGroup && <button onClick={() => setFilterGroup("")} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] bg-sakura-100 text-sakura-500"><Folder size={9} /> {filterGroup} <X size={8} /></button>}
-            {filterTag && <button onClick={() => setFilterTag("")} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] bg-amber-100 text-amber-600"><Tag size={9} /> {filterTag} <X size={8} /></button>}
+            {filterGroup && <button onClick={() => setFilterGroup("")} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] bg-sakura-100 text-sakura-500"><Folder size={9} /> {filterGroup} <X size={8} /></button>}
+            {filterTag && <button onClick={() => setFilterTag("")} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-600"><Tag size={9} /> {filterTag} <X size={8} /></button>}
             {/* 未筛选时显示所有可用分组/标签供点击筛选 */}
             {!filterGroup && !filterTag && allGroups.slice(0, 5).map(g => (
-              <button key={g} onClick={() => setFilterGroup(g)} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] bg-sakura-50 text-sakura-400 hover:bg-sakura-100"><Folder size={9} />{g}</button>
+              <button key={g} onClick={() => setFilterGroup(g)} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] bg-sakura-50 text-sakura-400 hover:bg-sakura-100"><Folder size={9} />{g}</button>
             ))}
             {!filterGroup && !filterTag && allTags.slice(0, 8).map(t => (
-              <button key={t} onClick={() => setFilterTag(t)} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] bg-amber-50 text-amber-500 hover:bg-amber-100"><Tag size={9} />{t}</button>
+              <button key={t} onClick={() => setFilterTag(t)} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] bg-amber-50 text-amber-500 hover:bg-amber-100"><Tag size={9} />{t}</button>
             ))}
           </div>
         )}
@@ -97,9 +97,9 @@ export default function ConvList({
                 <div className="flex-1 min-w-0 pr-4">
                   <div className="flex items-center justify-between gap-1">
                     <span className="text-xs font-medium text-sakura-600 truncate">{customNames[c.key] || convName(c.key, undefined, undefined, c.last_msg)}</span>
-                    <span className="text-[10px] text-sakura-300 shrink-0">{fmtTime(c.last_time)}</span>
+                    <span className="text-[11px] text-sakura-300 shrink-0">{fmtTime(c.last_time)}</span>
                   </div>
-                  <p className="text-[11px] text-sakura-400 truncate mt-0.5">{c.last_msg}</p>
+                  <p className="text-[12px] text-sakura-400 truncate mt-0.5">{c.last_msg}</p>
                 </div>
               </div>
             </button>
@@ -130,7 +130,7 @@ export default function ConvList({
             {/* 现有标签 */}
             <div className="flex flex-wrap gap-1 mb-2">
               {(tags[showTagModal] || []).map(t => (
-                <span key={t} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-600">
+                <span key={t} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] bg-amber-100 text-amber-600">
                   {t}
                   <button onClick={() => {
                     const next = { ...tags };
@@ -143,7 +143,7 @@ export default function ConvList({
             {/* 添加标签 */}
             <div className="flex items-center gap-1">
               <input value={tagInput} onChange={e => setTagInput(e.target.value)}
-                className="flex-1 px-2 py-1 rounded border border-sakura-100 bg-sakura-50 text-[10px] text-sakura-600 outline-none"
+                className="flex-1 px-2 py-1 rounded border border-sakura-100 bg-sakura-50 text-[11px] text-sakura-600 outline-none"
                 placeholder="新标签" onKeyDown={e => {
                   if (e.key === "Enter" && tagInput.trim()) {
                     const next = { ...tags };
@@ -159,11 +159,11 @@ export default function ConvList({
                   saveTags(next);
                   setTagInput("");
                 }
-              }} className="px-2 py-1 rounded text-[10px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white">添加</button>
+              }} className="px-2 py-1 rounded text-[11px] bg-gradient-to-br from-sakura-400 to-sakura-500 text-white">添加</button>
             </div>
             {/* 分组 */}
             <div className="mt-3 pt-3 border-t border-sakura-100">
-              <p className="text-[10px] text-sakura-400 mb-1">分组</p>
+              <p className="text-[11px] text-sakura-400 mb-1">分组</p>
               <div className="flex flex-wrap gap-1 mb-1.5">
                 {allGroups.map(g => (
                   <button key={g} onClick={() => {
@@ -173,14 +173,14 @@ export default function ConvList({
                     else { next[showTagModal] = [...cur, g]; }
                     saveGroups(next);
                   }}
-                    className={`px-1.5 py-0.5 rounded text-[10px] transition-colors ${(groups[showTagModal] || []).includes(g) ? "bg-sakura-200 text-sakura-600" : "bg-sakura-50 text-sakura-400 hover:bg-sakura-100"}`}>
+                    className={`px-1.5 py-0.5 rounded text-[11px] transition-colors ${(groups[showTagModal] || []).includes(g) ? "bg-sakura-200 text-sakura-600" : "bg-sakura-50 text-sakura-400 hover:bg-sakura-100"}`}>
                     <Folder size={9} className="inline mr-0.5" />{g}
                   </button>
                 ))}
               </div>
               <div className="flex items-center gap-1">
                 <input value={groupInput} onChange={e => setGroupInput(e.target.value)}
-                  className="flex-1 px-2 py-1 rounded border border-sakura-100 bg-sakura-50 text-[10px] text-sakura-600 outline-none"
+                  className="flex-1 px-2 py-1 rounded border border-sakura-100 bg-sakura-50 text-[11px] text-sakura-600 outline-none"
                   placeholder="新分组" onKeyDown={e => {
                     if (e.key === "Enter" && groupInput.trim()) {
                       const next = { ...groups };
@@ -194,7 +194,7 @@ export default function ConvList({
                   next[showTagModal] = [...(next[showTagModal] || []), groupInput.trim()];
                   saveGroups(next);
                   setGroupInput("");
-                }} className="px-2 py-1 rounded text-[10px] bg-gradient-to-br from-purple-400 to-purple-500 text-white">添加</button>
+                }} className="px-2 py-1 rounded text-[11px] bg-gradient-to-br from-purple-400 to-purple-500 text-white">添加</button>
               </div>
             </div>
           </div>

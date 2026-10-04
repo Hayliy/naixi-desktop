@@ -177,17 +177,17 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
 
       {/* 当前组队 */}
       <div className="px-3 py-2 border-b border-sakura-100 shrink-0">
-        <p className="text-[10px] text-sakura-400 mb-1.5">当前组队 ({team.length}人)</p>
+        <p className="text-[11px] text-sakura-400 mb-1.5">当前组队 ({team.length}人)</p>
         {team.length === 0 ? (
-          <p className="text-[10px] text-sakura-300 italic py-2">从下方选择专家添加到团队</p>
+          <p className="text-[11px] text-sakura-300 italic py-2">从下方选择专家添加到团队</p>
         ) : (
           <div className="space-y-1 mb-2 max-h-[120px] overflow-y-auto pr-0.5">
             {team.map((m, i) => (
               <div key={i} className="flex items-center gap-1 px-2 py-1 rounded bg-sakura-50 border border-sakura-100 text-xs">
                 <img src={getAvatarUrl(m.name)} alt={m.name}
                   className="w-4 h-4 rounded-full bg-sakura-100 shrink-0" loading="lazy" />
-                <span className="w-4 h-4 rounded flex items-center justify-center text-[8px] font-bold bg-sakura-200 text-sakura-500 shrink-0">{i + 1}</span>
-                <span className="flex-1 text-[10px] text-sakura-600 truncate">{m.name}</span>
+                <span className="w-4 h-4 rounded flex items-center justify-center text-[10px] font-bold bg-sakura-200 text-sakura-500 shrink-0">{i + 1}</span>
+                <span className="flex-1 text-[11px] text-sakura-600 truncate">{m.name}</span>
                 <button onClick={() => moveMember(i, -1)} disabled={i === 0}
                   className="p-0.5 text-sakura-300 hover:text-sakura-500 disabled:opacity-20"><ArrowUp size={9} /></button>
                 <button onClick={() => moveMember(i, 1)} disabled={i === team.length - 1}
@@ -200,14 +200,14 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
         )}
         <div className="flex items-center gap-1.5">
           <input value={teamName} onChange={e => setTeamName(e.target.value)}
-            className="flex-1 px-2 py-1 rounded border border-sakura-100 bg-sakura-50 text-[10px] text-sakura-600 placeholder:text-sakura-300"
+            className="flex-1 px-2 py-1 rounded border border-sakura-100 bg-sakura-50 text-[11px] text-sakura-600 placeholder:text-sakura-300"
             placeholder="团队名称（可选）" />
           <button onClick={savePreset} disabled={team.length === 0}
             className="p-1 rounded text-sakura-300 hover:text-sakura-500 disabled:opacity-30" title="保存团队">
             <Save size={12} />
           </button>
           <button onClick={startTeam} disabled={team.length === 0}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] bg-gradient-to-r from-sakura-400 to-sakura-500 text-white disabled:opacity-40">
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] bg-gradient-to-r from-sakura-400 to-sakura-500 text-white disabled:opacity-40">
             <Play size={10} /> 启动团队
           </button>
         </div>
@@ -217,7 +217,7 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
       {presets.length > 0 && (
         <div className="px-3 py-2 border-b border-sakura-100 shrink-0">
           <button onClick={() => setShowPresets(!showPresets)}
-            className="flex items-center gap-1 text-[10px] text-sakura-400 hover:text-sakura-500 w-full">
+            className="flex items-center gap-1 text-[11px] text-sakura-400 hover:text-sakura-500 w-full">
             <Users size={10} /> 已保存团队 ({presets.length})
             {showPresets ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
           </button>
@@ -225,7 +225,7 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
             <div className="mt-1 space-y-1 max-h-[100px] overflow-y-auto pr-0.5">
               {presets.map(p => (
                 <div key={p.name} className="flex items-center gap-1 px-2 py-1 rounded bg-sakura-50 text-xs">
-                  <span className="flex-1 text-[10px] text-sakura-600 truncate">{p.name} ({p.members.length}人)</span>
+                  <span className="flex-1 text-[11px] text-sakura-600 truncate">{p.name} ({p.members.length}人)</span>
                   <button onClick={() => loadPreset(p)}
                     className="p-0.5 text-sakura-300 hover:text-sakura-500"><Check size={9} /></button>
                   <button onClick={() => deletePreset(p.name)}
@@ -241,15 +241,15 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
       <div className="px-3 py-2 border-b border-sakura-100 shrink-0">
         <div className="flex items-center gap-1 mb-1.5">
           <input value={search} onChange={e => setSearch(e.target.value)}
-            className="flex-1 px-2 py-1 rounded border border-sakura-100 bg-sakura-50 text-[10px] text-sakura-600 placeholder:text-sakura-300"
+            className="flex-1 px-2 py-1 rounded border border-sakura-100 bg-sakura-50 text-[11px] text-sakura-600 placeholder:text-sakura-300"
             placeholder="搜索专家..." />
         </div>
         <div className="flex flex-wrap gap-1">
           <button onClick={() => setCategory("")}
-            className={`px-1.5 py-0.5 rounded text-[9px] ${!category ? "bg-sakura-200 text-sakura-600" : "bg-sakura-50 text-sakura-400 hover:bg-sakura-100"}`}>全部</button>
+            className={`px-1.5 py-0.5 rounded text-[10px] ${!category ? "bg-sakura-200 text-sakura-600" : "bg-sakura-50 text-sakura-400 hover:bg-sakura-100"}`}>全部</button>
           {cats.map(c => (
             <button key={c} onClick={() => setCategory(c)}
-              className={`px-1.5 py-0.5 rounded text-[9px] ${category === c ? "bg-sakura-200 text-sakura-600" : "bg-sakura-50 text-sakura-400 hover:bg-sakura-100"}`}>{c}</button>
+              className={`px-1.5 py-0.5 rounded text-[10px] ${category === c ? "bg-sakura-200 text-sakura-600" : "bg-sakura-50 text-sakura-400 hover:bg-sakura-100"}`}>{c}</button>
           ))}
         </div>
       </div>
@@ -257,29 +257,29 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
       {/* 添加/编辑表单 */}
       {showForm && (
         <div className="px-3 py-2 border-b border-sakura-100 shrink-0 bg-sakura-50/50">
-          <p className="text-[10px] font-medium text-sakura-500 mb-1.5">{editIdx >= 0 ? "编辑专家" : "添加自定义专家"}</p>
+          <p className="text-[11px] font-medium text-sakura-500 mb-1.5">{editIdx >= 0 ? "编辑专家" : "添加自定义专家"}</p>
           <div className="space-y-1.5">
             <input value={fName} onChange={e => setFName(e.target.value)}
-              className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[10px] text-sakura-600" placeholder="专家名称（如：架构师）" />
+              className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[11px] text-sakura-600" placeholder="专家名称（如：架构师）" />
             <input value={fNickname} onChange={e => setFNickname(e.target.value)}
-              className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[10px] text-sakura-600" placeholder="显示昵称（可选，留空用名称）" />
+              className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[11px] text-sakura-600" placeholder="显示昵称（可选，留空用名称）" />
             <input value={fCat} onChange={e => setFCat(e.target.value)}
-              className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[10px] text-sakura-600" placeholder="分类（如：代码开发）" />
+              className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[11px] text-sakura-600" placeholder="分类（如：代码开发）" />
             <input value={fAvatar} onChange={e => setFAvatar(e.target.value)}
-              className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[10px] text-sakura-600 font-mono" placeholder="头像 URL（可选，留空自动生成）" />
+              className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[11px] text-sakura-600 font-mono" placeholder="头像 URL（可选，留空自动生成）" />
             {fAvatar && (
               <img src={fAvatar} alt="预览" className="w-8 h-8 rounded-full border border-sakura-100"
                 onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
             )}
             <input value={fCat} onChange={e => setFCat(e.target.value)}
-              className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[10px] text-sakura-600" placeholder="分类（如：代码开发）" />
+              className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[11px] text-sakura-600" placeholder="分类（如：代码开发）" />
             <textarea value={fPrompt} onChange={e => setFPrompt(e.target.value)}
-              className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[10px] text-sakura-600 resize-none" rows={3} placeholder="专家提示词..." />
+              className="w-full px-2 py-1 rounded border border-sakura-100 bg-white text-[11px] text-sakura-600 resize-none" rows={3} placeholder="专家提示词..." />
             <div className="flex justify-end gap-1.5">
               <button onClick={() => setShowForm(false)}
-                className="px-2 py-1 rounded text-[10px] text-sakura-400 hover:bg-sakura-50">取消</button>
+                className="px-2 py-1 rounded text-[11px] text-sakura-400 hover:bg-sakura-50">取消</button>
               <button onClick={saveCustom}
-                className="px-3 py-1 rounded text-[10px] bg-sakura-400 text-white">{editIdx >= 0 ? "保存" : "添加"}</button>
+                className="px-3 py-1 rounded text-[11px] bg-sakura-400 text-white">{editIdx >= 0 ? "保存" : "添加"}</button>
             </div>
           </div>
         </div>
@@ -288,7 +288,7 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
       {/* 添加专家按钮 */}
       <div className="px-2 pt-1.5 pb-0.5 shrink-0">
         <button onClick={() => openForm()}
-          className="flex items-center gap-1 text-[10px] text-sakura-400 hover:text-sakura-500 w-full px-2 py-1 rounded hover:bg-sakura-50">
+          className="flex items-center gap-1 text-[11px] text-sakura-400 hover:text-sakura-500 w-full px-2 py-1 rounded hover:bg-sakura-50">
           <Plus size={10} /> 添加自定义专家
         </button>
       </div>
@@ -296,9 +296,9 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
       {/* 专家列表 */}
       <div className="flex-1 overflow-y-auto min-h-0 px-3 py-3 space-y-3">
         {loading ? (
-          <p className="text-[10px] text-sakura-300 text-center py-4">加载中...</p>
+          <p className="text-[11px] text-sakura-300 text-center py-4">加载中...</p>
         ) : filtered.length === 0 ? (
-          <p className="text-[10px] text-sakura-300 text-center py-4">无匹配专家</p>
+          <p className="text-[11px] text-sakura-300 text-center py-4">无匹配专家</p>
         ) : (
           filtered.slice(0, 60).map((expert, i) => {
             const isCustom = i < customExperts.length;
@@ -312,11 +312,11 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
                   <button onClick={() => toggleExpand(expert.name)}
                     className="flex-1 flex items-center gap-2 min-w-0 text-left">
                     <div className="flex-1 min-w-0">
-                      <p className="text-[10px] text-sakura-600 truncate flex items-center gap-1">
+                      <p className="text-[11px] text-sakura-600 truncate flex items-center gap-1">
                         {expert.name}
-                        {isCustom && <span className="text-[8px] text-purple-400 font-medium shrink-0">[自定义]</span>}
+                        {isCustom && <span className="text-[10px] text-purple-400 font-medium shrink-0">[自定义]</span>}
                       </p>
-                      <p className="text-[9px] text-sakura-400">{expert.category}</p>
+                      <p className="text-[10px] text-sakura-400">{expert.category}</p>
                     </div>
                   </button>
                   {isCustom && (
@@ -334,7 +334,7 @@ export default function TeamPanel({ onClose, onApplyTeam }: {
                   </button>
                 </div>
                 {isExpanded && (
-                  <div className="mx-2 mb-1 px-2.5 py-2 rounded bg-sakura-50 border border-sakura-100 text-[9px] text-sakura-500 leading-relaxed whitespace-pre-wrap">
+                  <div className="mx-2 mb-1 px-2.5 py-2 rounded bg-sakura-50 border border-sakura-100 text-[10px] text-sakura-500 leading-relaxed whitespace-pre-wrap">
                     {expert.prompt.length > 500 ? expert.prompt.slice(0, 500) + "..." : expert.prompt}
                   </div>
                 )}
