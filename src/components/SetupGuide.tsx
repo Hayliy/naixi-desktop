@@ -35,7 +35,7 @@ const API_PROVIDERS = [
     desc: "无限期免费，1M 上下文，30 RPM",
     url: "https://apihub.agnes-ai.com/v1/chat/completions",
     keyUrl: "https://platform.agnes-ai.com/",
-    modelHint: "agnes-2.0-flash",
+    modelHint: "agnes-3.0-flash",
   },
   {
     id: "openai",

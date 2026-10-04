@@ -30,7 +30,7 @@ const PROVIDER_TYPES = [
   { value: "iflytek", label: "科大讯飞星火 (Spark)", host: "https://spark-api.xf-yun.com/v3.5/chat" },
   { value: "baichuan", label: "百川智能 (Baichuan)", host: "https://api.baichuan-ai.com/v1" },
   { value: "lingyi", label: "零一万物 Yi (Yi-6B/34B)", host: "https://api.lingyiwanwu.com/v1" },
-  { value: "ling", label: "百灵 Ling (Ling-2.6)", host: "https://api.ant-ling.com/v1" },
+  { value: "ling", label: "百灵 Ling (Ling-3.1)", host: "https://api.ant-ling.com/v1" },
   // ─── 本地 ───
   { value: "ollama", label: "Ollama 本地模型", host: "http://127.0.0.1:11434/v1" },
   { value: "custom", label: "自定义 (兼容 OpenAI 格式)", host: "" },

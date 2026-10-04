@@ -540,6 +540,25 @@ def init_tables():
                 created_at TEXT DEFAULT (datetime('now'))
             );
             CREATE INDEX IF NOT EXISTS idx_agent_memory_av ON agent_memory(agent_id, viewer_id, type, ts);
+
+            -- 能力注册表（Gateway Mesh）：声明本端对外暴露的能力，供对端发现与调用。
+            -- 设计依据：业界 AgentSkills / OpenClaw 的插件声明式注册（trust + requires_confirm）。
+            -- trust 取值：read / write / dangerous。QQ 侧禁止直接触发 dangerous，必须人工确认。
+            CREATE TABLE IF NOT EXISTS capabilities (
+                id TEXT PRIMARY KEY,              -- 全局唯一，形如 desktop.tools.screenshot
+                provider TEXT NOT NULL DEFAULT '', -- 提供方实例 id（desktop-9845 / qq-naixi）
+                kind TEXT NOT NULL DEFAULT 'tool', -- tool / workflow / channel / mcp / model
+                title TEXT NOT NULL DEFAULT '',
+                description TEXT NOT NULL DEFAULT '',
+                endpoint TEXT NOT NULL DEFAULT '', -- HTTP 调用路径（相对或绝对）
+                trust TEXT NOT NULL DEFAULT 'read',-- read / write / dangerous
+                requires_confirm INTEGER NOT NULL DEFAULT 0,
+                schema TEXT NOT NULL DEFAULT '',   -- JSON 字符串：入参 schema
+                meta TEXT NOT NULL DEFAULT '',    -- JSON 字符串：附加信息
+                enabled INTEGER NOT NULL DEFAULT 1,
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_cap_provider ON capabilities(provider, kind, enabled);
         """)
         # executescript 建表后必须显式提交，否则下面的迁移函数用独立连接读 meta 会报 no such table
         conn.commit()
@@ -1576,3 +1595,118 @@ def hotkey_get_active_map() -> dict:
         return {r["combo"].lower(): {"kind": r["kind"], "label": r["label"]} for r in rows}
     finally:
         conn.close()
+
+
+# ── 能力注册表（Gateway Mesh） ──
+
+# 合法的 trust 等级。dangerous 表示有副作用或不可逆，调用方必须人工确认。
+VALID_TRUST = ("read", "write", "dangerous")
+VALID_KINDS = ("tool", "workflow", "channel", "mcp", "model")
+
+
+def capability_register(cap: dict) -> dict:
+    """注册/更新一条能力（同 id覆盖）。
+
+    做严格字段校验：trust / kind 走白名单，避免对端塞进未知等级导致
+    调用方无法判断该不该要求人工确认。
+    """
+    cid = (cap.get("id") or "").strip()
+    if not cid:
+        return {"ok": False, "error": "缺少能力 id"}
+    trust = (cap.get("trust") or "read").strip().lower()
+    if trust not in VALID_TRUST:
+        return {"ok": False, "error": f"trust 必须是 {VALID_TRUST} 之一，收到: {trust}"}
+    kind = (cap.get("kind") or "tool").strip().lower()
+    if kind not in VALID_KINDS:
+        return {"ok": False, "error": f"kind 必须是 {VALID_KINDS} 之一，收到: {kind}"}
+
+    def _j(v):
+        if isinstance(v, str):
+            return v
+        try:
+            return json.dumps(v or {}, ensure_ascii=False)
+        except Exception:
+            return "{}"
+
+    conn = _get_conn()
+    try:
+        conn.execute(
+            """INSERT OR REPLACE INTO capabilities
+               (id, provider, kind, title, description, endpoint, trust,
+                requires_confirm, schema, meta, enabled, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?, datetime('now'))""",
+            (cid,
+             (cap.get("provider") or "").strip(),
+             kind,
+             (cap.get("title") or "").strip(),
+             (cap.get("description") or "").strip(),
+             (cap.get("endpoint") or "").strip(),
+             trust,
+             1 if cap.get("requires_confirm") else 0,
+             _j(cap.get("schema")),
+             _j(cap.get("meta")),
+             0 if cap.get("enabled") is False else 1),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "id": cid}
+
+
+def capability_list(provider: str = "", kind: str = "", include_disabled: bool = False) -> list:
+    """列出能力。对端启动时调这个拉取本端能力清单。"""
+    sql = "SELECT * FROM capabilities"
+    where, params = [], []
+    if provider:
+        where.append("provider=?")
+        params.append(provider)
+    if kind:
+        where.append("kind=?")
+        params.append(kind)
+    if not include_disabled:
+        where.append("enabled=1")
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY provider, kind, id"
+
+    conn = _get_conn()
+    try:
+        rows = conn.execute(sql, tuple(params)).fetchall()
+    finally:
+        conn.close()
+
+    out = []
+    for r in rows:
+        d = dict(r)
+        for k in ("schema", "meta"):
+            try:
+                d[k] = json.loads(d.get(k) or "{}")
+            except Exception:
+                d[k] = {}
+        d["requires_confirm"] = bool(d.get("requires_confirm"))
+        d["enabled"] = bool(d.get("enabled"))
+        out.append(d)
+    return out
+
+
+def capability_remove(cid: str) -> dict:
+    conn = _get_conn()
+    try:
+        cur = conn.execute("DELETE FROM capabilities WHERE id=?", (cid,))
+        conn.commit()
+        n = cur.rowcount
+    finally:
+        conn.close()
+    return {"ok": True, "removed": n}
+
+
+def capability_clear_provider(provider: str) -> dict:
+    """清空某提供方的全部能力（对端重连时先清后拉，避免残留已下线的能力）。"""
+    conn = _get_conn()
+    try:
+        cur = conn.execute("DELETE FROM capabilities WHERE provider=?", (provider,))
+        conn.commit()
+        n = cur.rowcount
+    finally:
+        conn.close()
+    return {"ok": True, "removed": n}

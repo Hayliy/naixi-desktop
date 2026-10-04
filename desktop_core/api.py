@@ -215,6 +215,10 @@ from desktop_core import tools
 
 log = logging.getLogger("desktop")
 
+# Gateway 控制平面启动状态：{'started':bool,'port':int|None,'runner':AppRunner|None,'hub':GatewayHub|None}
+# 供 _start_gateway_ws 幂等判断与运维查询，避免重复启动撞端口（实测 10048 被 except 吞掉后极难察觉）。
+_GATEWAY_WS_STATE: dict = {"started": False, "port": None, "runner": None, "hub": None}
+
 # ── 来源信任判定（防跨站/DNS 重绑定攻击本机后端） ──
 # 后端只绑定 127.0.0.1，主要威胁是用户浏览器里的恶意网页向 127.0.0.1:9845 发跨域请求。
 # 规则：无 Origin（curl/服务端调用）放行；Origin 为 tauri/本机回环则信任；其余外部站点一律拒绝。
@@ -2346,6 +2350,251 @@ async def api_conversation_message_delete(request):
     return web.json_response({"ok": ok})
 
 
+# ══ Gateway 能力注册表（Mesh 对等互联· 第一步）══════════════════════════
+# 设计对齐业界 OpenClaw / AgentSkills：声明式能力注册 + trust 分级 + 人工确认边界。
+# 桌面端与 QQ 侧各存各的能力表（避免 DB 文件锁冲突），启动时经HTTP 互相拉取。
+# 传输层约定：能力**调用**走同步 HTTP（带超时，天然防死锁），
+#             WS 18400 只做订阅/通知/探活——控制面与数据面分离。
+
+GATEWAY_PROVIDER_ID = "desktop-9845"
+
+
+async def api_gateway_capabilities(request):
+    """能力注册表 —— GET 列出本端能力，POST 注册/更新一条。
+
+    GET  ?provider=&kind=&include_disabled=1
+    POST {"id":"desktop.tools.screenshot","kind":"tool","title":...,
+          "endpoint":"/api/...","trust":"read","requires_confirm":false,
+          "schema":{...},"meta":{...}}
+    """
+    try:
+        from desktop_core import storage as _st
+    except Exception as e:
+        return web.json_response({"error": f"storage 不可用: {e}"}, status=500)
+
+    if request.method == "GET":
+        q = request.rel_url.query
+        caps = _st.capability_list(
+            provider=q.get("provider", ""),
+            kind=q.get("kind", ""),
+            include_disabled=q.get("include_disabled", "") in ("1", "true", "True"),
+        )
+        return web.json_response({"ok": True, "provider": GATEWAY_PROVIDER_ID,
+                                  "count": len(caps), "capabilities": caps})
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "请求体必须是 JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"ok": False, "error": "请求体必须是对象"}, status=400)
+
+    # 单条 upsert，或 {items:[...]} 批量
+    items = body.get("items") if isinstance(body.get("items"), list) else [body]
+    ok_n, errs = 0, []
+    for it in items:
+        it = dict(it or {})
+        it.setdefault("provider", GATEWAY_PROVIDER_ID)
+        r = _st.capability_register(it)
+        if r.get("ok"):
+            ok_n += 1
+        else:
+            errs.append(r.get("error", "未知错误"))
+    resp = {"ok": not errs, "registered": ok_n, "total": len(items)}
+    if errs:
+        resp["errors"] = errs
+    return web.json_response(resp, status=200 if not errs else 400)
+
+
+async def api_gateway_capability_delete(request):
+    """删除一条能力：POST {"id": "..."}；带 provider 则清空该提供方全部。
+
+    变更后主动广播 capability 事件，让对端立即重同步（不必等定时轮询）。
+    """
+    try:
+        from desktop_core import storage as _st
+    except Exception as e:
+        return web.json_response({"ok": False, "error": f"storage 不可用: {e}"}, status=500)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "请求体必须是 JSON"}, status=400)
+    if body.get("provider"):
+        r = _st.capability_clear_provider(body["provider"])
+    else:
+        cid = (body.get("id") or "").strip()
+        if not cid:
+            return web.json_response({"ok": False, "error": "缺少 id 或 provider"}, status=400)
+        r = _st.capability_remove(cid)
+    await _broadcast_capability_changed()
+    return web.json_response(r)
+
+
+async def _broadcast_capability_changed() -> int:
+    """广播能力表已变更。对端（QQ 侧）收到后立即重同步。失败静默——通知是增强不是必需。"""
+    try:
+        from desktop_core import gateway_hub
+        return await gateway_hub.HUB.broadcast("capability", {
+            "provider": GATEWAY_PROVIDER_ID, "ts": time.time()})
+    except Exception:
+        return 0
+
+
+async def api_gateway_notify(request):
+    """主动通知对端「我的能力变了」。POST {} → 广播 capability 事件。
+
+    供桌面端内部在自注册、插件增删后调用，实现秒级同步。
+    """
+    n = await _broadcast_capability_changed()
+    return web.json_response({"ok": True, "notified_peers": n})
+
+
+async def api_gateway_status(request):
+    """控制平面运行状态（运维用）：监听端口、已连对端数、Hub 存活情况。"""
+    try:
+        from desktop_core import gateway_hub
+        hub = gateway_hub.HUB
+        peers = hub.peer_list()
+    except Exception as e:
+        return web.json_response({"ok": False, "error": f"gateway_hub 不可用: {e}"})
+    st = _GATEWAY_WS_STATE
+    return web.json_response({
+        "ok": True,
+        "ws_started": bool(st.get("started")),
+        "ws_port": st.get("port"),
+        "peers": peers,
+        "peer_count": len(peers),
+    })
+
+
+# ── Gateway 记忆互通（桌面端为唯一真相源）────────────────────────────
+# 两边记忆系统字段完全不同（桌面端 agent_memory 144 行带viewer_id/decay/importance；
+# QQ 侧 memories仅 8 行 key-value），**不做双向同步**——同步必然腐化。
+# 方案：QQ 侧通过这里读写桌面端记忆，桌面端不可达时 QQ 侧用本地库兜底（降级而非中断）。
+
+
+async def api_gateway_memory_add(request):
+    """对端写入记忆：POST {agent_id,viewer_id,type,content,importance}"""
+    try:
+        from desktop_core import storage as _st
+    except Exception as e:
+        return web.json_response({"ok": False, "error": f"storage 不可用: {e}"}, status=500)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "请求体必须是 JSON"}, status=400)
+    content = (body.get("content") or "").strip()
+    if not content:
+        return web.json_response({"ok": False, "error": "content 不能为空"}, status=400)
+    mtype = (body.get("type") or "episodic").strip()
+    if mtype not in ("episodic", "profile"):
+        return web.json_response({"ok": False, "error": "type 只能是 episodic 或 profile"}, status=400)
+    try:
+        importance = float(body.get("importance", 1.0))
+    except Exception:
+        importance = 1.0
+    try:
+        _st.init_tables()
+        mid = _st.mem_add(
+            agent_id=(body.get("agent_id") or "naixi").strip(),
+            viewer_id=(body.get("viewer_id") or "").strip(),
+            mtype=mtype,
+            content=content,
+            importance=importance,
+        )
+    except Exception as e:
+        return web.json_response({"ok": False, "error": f"写入失败: {type(e).__name__}: {e}"}, status=500)
+    return web.json_response({"ok": True, "id": mid})
+
+
+async def api_gateway_memory_query(request):
+    """对端查询记忆：POST {agent_id,viewer_id,query,limit} → 统一文本摘要"""
+    try:
+        from desktop_core import storage as _st
+    except Exception as e:
+        return web.json_response({"ok": False, "error": f"storage 不可用: {e}"}, status=500)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "请求体必须是 JSON"}, status=400)
+    agent_id = (body.get("agent_id") or "naixi").strip()
+    viewer_id = (body.get("viewer_id") or "").strip()
+    query = (body.get("query") or "").strip()
+    try:
+        limit = min(50, max(1, int(body.get("limit", 10))))
+    except Exception:
+        limit = 10
+    try:
+        _st.init_tables()
+        ctx = _st.mem_build_context(agent_id, viewer_id, max_chars=1200)
+        items = _st.mem_recent(agent_id, viewer_id, limit=limit) or []
+        # mem_relevant 返回的是**拼接好的文本**（参数 top_n，不是 limit），只在有 query 时用
+        relevant = ""
+        if query:
+            try:
+                relevant = _st.mem_relevant(agent_id, viewer_id, query, top_n=limit) or ""
+            except Exception as _e:
+                log.debug("[Gateway] mem_relevant 失败(退回 mem_recent): %s", _e)
+    except Exception as e:
+        return web.json_response({"ok": False, "error": f"查询失败: {type(e).__name__}: {e}"}, status=500)
+    return web.json_response({
+        "ok": True, "count": len(items), "items": items,
+        "context": ctx, "relevant": relevant, "source": "desktop-9845",
+    })
+
+
+async def api_gateway_pull(request):
+    """从对端拉取能力并合并到本地表（先清该provider 再写，避免残留已下线能力）。
+
+    POST {"peer": "http://127.0.0.1:19845", "provider": "qq-naixi", "replace": true}
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "请求体必须是 JSON"}, status=400)
+    peer = (body.get("peer") or "").rstrip("/")
+    if not peer:
+        return web.json_response({"ok": False, "error": "缺少 peer 地址"}, status=400)
+    provider = (body.get("provider") or "").strip()
+    replace = body.get("replace", True)
+
+    import aiohttp
+    url = f"{peer}/api/gateway/capabilities"
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(url, timeout=aiohttp.ClientTimeout(total=8)) as r:
+                if r.status != 200:
+                    return web.json_response({"ok": False, "error": f"对端返回 HTTP {r.status}"}, status=502)
+                data = await r.json(content_type=None)
+    except Exception as e:
+        return web.json_response({"ok": False, "error": f"拉取失败: {type(e).__name__}: {e}"}, status=502)
+
+    caps = data.get("capabilities") or []
+    if not caps:
+        return web.json_response({"ok": True, "provider": provider, "imported": 0,
+                                  "error": "对端没有返回任何能力"})
+
+    from desktop_core import storage as _st
+    if replace and provider:
+        _st.capability_clear_provider(provider)
+    ok_n, errs = 0, []
+    for c in caps:
+        c = dict(c)
+        # provider 一律以**调用方指定**的为准，绝不采信对端自报值。
+        # 否则：对端可以谎报 provider 污染本端命名空间，且 replace/clear
+        # 清不到（自环测试时真实踩过：导入 8 条却clear 到 0 条）。
+        c["provider"] = provider or c.get("provider") or "unknown"
+        r = _st.capability_register(c)
+        if r.get("ok"):
+            ok_n += 1
+        else:
+            errs.append(f"{c.get('id')}: {r.get('error')}")
+    resp = {"ok": not errs, "provider": provider, "imported": ok_n, "peer_total": len(caps)}
+    if errs:
+        resp["errors"] = errs[:5]
+    return web.json_response(resp)
+
+
 async def api_providers(request):
     """返回已保存的 API 提供商配置（兼容 Chat 页面的 ProviderSettings）"""
     raw = meta_get("desktop_config")
@@ -4064,6 +4313,14 @@ def setup_routes(app):
     app.router.add_post("/api/desktop/models", api_desktop_list_models)
     app.router.add_get("/api/stats", api_stats)
     app.router.add_get("/api/desktop/platforms", api_desktop_platforms)
+    # ── Gateway 能力注册表（Mesh 对等互联） ──
+    app.router.add_route("*", "/api/gateway/capabilities", api_gateway_capabilities)
+    app.router.add_post("/api/gateway/capability/delete", api_gateway_capability_delete)
+    app.router.add_post("/api/gateway/notify", api_gateway_notify)
+    app.router.add_post("/api/gateway/pull", api_gateway_pull)
+    app.router.add_get("/api/gateway/status", api_gateway_status)
+    app.router.add_post("/api/gateway/memory/add", api_gateway_memory_add)
+    app.router.add_post("/api/gateway/memory/query", api_gateway_memory_query)
     app.router.add_get("/api/database/stats", api_database_stats)
     app.router.add_post("/api/chat/stream", api_chat_stream)
     app.router.add_post("/api/agent/stream", api_chat_stream)
@@ -4990,6 +5247,67 @@ async def _launch_startup_tasks(app):
     # 自动化任务调度循环（此前定时任务只落库永不执行）
     asyncio.create_task(_automation_scheduler())
     log.info("启动钩子：自动化调度循环已启动（30s 扫描周期）")
+    # Gateway 控制平面（WS，默认 18400，对等互联 Mesh）。
+    # 独立端口、独立 app，失败不影响主服务。端口可用 GATEWAY_WS_PORT 覆盖。
+    asyncio.create_task(_start_gateway_ws())
+
+
+async def _start_gateway_ws():
+    """单独起一个 aiohttp 服务承载 Gateway WS（默认 18400）。
+
+    为什么另起端口而不是挂在 9845：
+      9845 是业务后端（Tauri sidecar，生命周期随应用），控制平面需独立于业务存活，
+      便于两台机器上各跑一个实例互连；分端口也便于运维——只查互联问题不用翻业务日志。
+
+    幂等与自愈（实测踩过的坑）：
+      · 不加幂等保护时，任何第二处尝试启动（例如测试脚本手动起）都会撞 10048，
+        且异常被 except 吞掉只留一行 warning，极难察觉。
+      · Windows 上进程被强杀后端口可能残留占用几十秒，直接失败会让互联静默不可用。
+      故：模块级 _GATEWAY_WS_STATE 记录已启动；端口被占时自动向后试探最多 8 个端口。
+      失败仅记录日志，绝不影响主服务启动（互联是增强能力，不是必需项）。
+    """
+    global _GATEWAY_WS_STATE
+    if _GATEWAY_WS_STATE.get("started"):
+        return
+    _GATEWAY_WS_STATE["started"] = True
+
+    from aiohttp import web as _aw
+    try:
+        from desktop_core import gateway_hub
+    except Exception as e:
+        _GATEWAY_WS_STATE["started"] = False
+        log.warning("[Gateway] 模块不可用，跳过 WS 启动: %s", e)
+        return
+
+    base_port = gateway_hub.WS_PORT
+    last_err = None
+    for offset in range(8):                # 18400, 18401 ... 18407
+        port = base_port + offset
+        runner = None
+        try:
+            app = _aw.Application()
+            gateway_hub.register_routes(app)
+            runner = _aw.AppRunner(app)
+            await runner.setup()
+            await _aw.TCPSite(runner, "127.0.0.1", port).start()
+            _GATEWAY_WS_STATE.update({"port": port, "runner": runner, "hub": gateway_hub.HUB})
+            if offset:
+                log.warning("[Gateway] %d 被占用，改用 %d", base_port, port)
+            log.info("[Gateway] 控制平面已监听: ws://127.0.0.1:%d%s", port, gateway_hub.WS_PATH)
+            return
+        except OSError as e:
+            last_err = e
+            if runner is not None:
+                try:
+                    await runner.cleanup()
+                except Exception:
+                    pass
+            continue                        # 端口被占 → 试下一个
+        except Exception as e:
+            last_err = e
+            break
+    _GATEWAY_WS_STATE["started"] = False
+    log.warning("[Gateway] 控制平面启动失败（不影响主服务）: %s", last_err)
 
 
 async def api_live_connector_bind(request):

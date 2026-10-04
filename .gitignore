@@ -154,3 +154,10 @@ _ocr_big/
 # 发布哈希清单：只随 GitHub Release 上传，仓库内不留（旧清单会与最新 Release 不一致）
 SHA256SUMS.txt
 sha256sums.txt
+
+# 带时间戳的备份文件（形如 api.py.bak.20261004_122824）。
+# 注意：`*.bak` 匹配不到这些——它只认以 .bak 结尾，而这些 bak 后面还跟了时间戳。
+*.bak
+*.bak.*
+*.bak[0-9]*
+tmp_*.py
