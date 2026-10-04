@@ -316,6 +316,146 @@ function CapEditor({ cap, onClose, onSaved }: {
   );
 }
 
+
+/* ── 开放接入面板 ──
+   结构对齐 ConnectionPanel（项目既有的隐藏式右侧栏）：
+   `w-[320px] shrink-0 border-l bg-white` + 头部带 X 关闭。
+   由 GatewayPage 右侧图标条切换显隐（sideTab）。
+   放进这个面板的都是**用户能直接操作**的东西：注册能力、填参数、复制接入配置。 */
+function AccessPanel({ access, onClose, onChanged }: {
+  access: AccessInfo | null;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const mcp = access?.mcp;
+  return (
+    <div className="w-[320px] shrink-0 border-l border-sakura-100 bg-white flex flex-col h-full">
+      {/* 头部 */}
+      <div className="bg-white flex items-center justify-between px-3 py-2 border-b border-sakura-100 shrink-0">
+        <span className="text-xs font-semibold text-sakura-500">开放接入
+          <span className="text-sakura-300 font-normal ml-1">MCP</span>
+        </span>
+        <button onClick={onClose} className="p-0.5 hover:bg-sakura-50 rounded text-sakura-300">
+          <X size={13} />
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+      {/* MCP 状态 */}
+      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-sakura-100">
+          <KeyRound size={12} className="text-sakura-400" />
+          <span className="text-[12px] font-semibold text-sakura-600">开放接入 · MCP</span>
+          <span className={`ml-auto text-[10px] px-1.5 py-px rounded border ${
+            mcp?.running
+              ? "text-green-600 bg-green-50 border-green-100"
+              : "text-sakura-400 bg-sakura-50 border-sakura-100"}`}>
+            {mcp?.running ? `运行中 · ${mcp.tools} 工具` : "未启动"}
+          </span>
+        </div>
+        <div className="p-3 space-y-2">
+          <p className="text-[11px] text-sakura-500 leading-relaxed">
+            任何支持 MCP 的客户端（Claude Code / Cursor / Cline / 自己写的脚本）
+            填下面的地址就能调用本机能力，不需要装任何东西。
+          </p>
+          {!mcp?.running && (
+            <div className="rounded-lg bg-yellow-50 border border-yellow-100 px-2 py-1.5">
+              <p className="text-[10px] text-yellow-700 leading-relaxed">
+                MCP 服务未运行。启动命令：
+                <code className="block mt-1 font-mono text-[10px] text-yellow-800">
+                  python desktop_core/mcp_server.py
+                </code>
+              </p>
+            </div>
+          )}
+          {mcp?.needs_token_for_lan && (
+            <div className="rounded-lg bg-yellow-50 border border-yellow-100 px-2 py-1.5">
+              <p className="text-[10px] text-yellow-700 leading-relaxed">
+                未配置访问 token —— 当前仅本机免鉴权。
+                要让局域网/云端的设备连入，必须先设置环境变量
+                <code className="font-mono"> NAIXI_MCP_TOKENS</code>
+                （格式 <code className="font-mono">token1:*</code>），
+                否则服务会拒绝绑定非本机地址。
+              </p>
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-1.5 text-[10px]">
+            <div className="rounded-lg bg-sakura-50 px-2 py-1.5">
+              <p className="text-sakura-400">本机地址</p>
+              <p className="font-mono text-sakura-600 truncate">{access?.localhost_url ?? "-"}</p>
+            </div>
+            <div className="rounded-lg bg-sakura-50 px-2 py-1.5">
+              <p className="text-sakura-400">局域网地址</p>
+              <p className="font-mono text-sakura-600 truncate">{access?.lan_url ?? "-"}</p>
+            </div>
+            <div className="rounded-lg bg-sakura-50 px-2 py-1.5">
+              <p className="text-sakura-400">局域网 IP</p>
+              <p className="font-mono text-sakura-600 truncate">{access?.lan_ip ?? "-"}</p>
+            </div>
+            <div className="rounded-lg bg-sakura-50 px-2 py-1.5">
+              <p className="text-sakura-400">访问凭据</p>
+              <p className="font-mono text-sakura-600 truncate">
+                {mcp?.token_configured ? `已配 ${mcp.token_count} 个` : "免鉴权"}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 配置片段 —— 核心：给用户能直接拿走的东西 */}
+      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-sakura-100">
+          <Copy size={12} className="text-sakura-400" />
+          <span className="text-[12px] font-semibold text-sakura-600">一键接入配置</span>
+        </div>
+        <div className="p-2.5 space-y-2">
+          {access?.configs?.claude_code && (
+            <CopyBlock label="Claude Code" value={access.configs.claude_code}
+              hint="终端执行" />
+          )}
+          {access?.configs?.cursor && (
+            <CopyBlock label="Cursor" value={access.configs.cursor}
+              hint="粘进 mcp.json" />
+          )}
+          {access?.configs?.generic_http && (
+            <CopyBlock label="通用 HTTP" value={access.configs.generic_http}
+              hint="任意语言客户端" />
+          )}
+          {access?.configs?.ws_internal && (
+            <CopyBlock label="内部 WS" value={access.configs.ws_internal}
+              hint="同机脚本用" />
+          )}
+        </div>
+      </div>
+
+      {/* 自定义能力 */}
+      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-sakura-100">
+          <Plus size={12} className="text-sakura-400" />
+          <span className="text-[12px] font-semibold text-sakura-600">扩展能力</span>
+        </div>
+        <div className="p-2.5">
+          <AddCapabilityForm onDone={onChanged} />
+        </div>
+      </div>
+
+      {/* 说明 */}
+      <div className="bg-sakura-50 border border-sakura-100 rounded-xl px-3 py-2.5">
+        <p className="text-[11px] text-sakura-500 leading-relaxed">
+          <Cpu size={10} className="inline mr-1" />
+          能力调用走 HTTP <span className="font-mono">:{access?.http_port ?? 9845}</span>，
+          订阅通知走 WS <span className="font-mono">:{access?.ws_port ?? 18400}</span>，
+          两条通道分离以避免双向往返死锁。
+          <span className="text-yellow-600"> 可写能力不提供直接测试</span>——
+          调用方只能发起提议，用户确认后才真正执行。
+          左侧圆点可停用能力，对端即刻不再看到它。
+        </p>
+      </div>
+      </div>
+    </div>
+  );
+}
+
 export default function GatewayPage() {
   const { notify } = useToast();
   const [status, setStatus] = useState<any>(null);
@@ -327,6 +467,9 @@ export default function GatewayPage() {
   const [showDisabled, setShowDisabled] = useState(true);
   const [trustFilter, setTrustFilter] = useState<Trust | "all">("all");
   const [editingId, setEditingId] = useState("");
+  // 隐藏式右侧栏的显隐（对齐 Chat.tsx 的 sideTab 模式）：
+  // 平时不占宽度，点右侧图标条才展开。
+  const [sideTab, setSideTab] = useState<string | null>(null);
 
   const load = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true);
@@ -458,15 +601,28 @@ export default function GatewayPage() {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <p className="text-sm font-semibold text-sakura-600">对等互联</p>
-        <button onClick={() => load(true)} disabled={refreshing}
-          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-sakura-400 hover:bg-sakura-50 hover:text-sakura-600 transition-colors disabled:opacity-50">
-          <RefreshCw size={11} className={refreshing ? "animate-spin" : ""} /> 刷新
-        </button>
+        <div className="flex items-center gap-1.5">
+          {/* 侧栏触发按钮（对齐 SettingsPage 顶部的 tab 按钮样式：
+              选中态用 bg-sakura-100 + font-medium，未选中是纯文字按钮） */}
+          <button onClick={() => setSideTab(t => (t === "access" ? null : "access"))}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] transition-colors ${
+              sideTab === "access"
+                ? "bg-sakura-100 text-sakura-600 font-medium"
+                : "text-sakura-400 hover:bg-sakura-50 hover:text-sakura-600"
+            }`}>
+            <KeyRound size={11} />
+            开放接入
+          </button>
+          <button onClick={() => load(true)} disabled={refreshing}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-sakura-400 hover:bg-sakura-50 hover:text-sakura-600 transition-colors disabled:opacity-50">
+            <RefreshCw size={11} className={refreshing ? "animate-spin" : ""} /> 刷新
+          </button>
+        </div>
       </div>
 
-      <div className="flex gap-3 items-start">
+      <div className="flex h-full">
         {/* ════════ 左栏：状态与能力 ════════ */}
-        <div className="flex-1 min-w-0 space-y-3">
+        <div className="flex-1 min-w-0 overflow-y-auto space-y-3 pr-1">
           {/* 状态总览 */}
           <div className="grid grid-cols-4 gap-2">
             <div className="bg-white border border-sakura-100 rounded-xl p-3">
@@ -518,7 +674,7 @@ export default function GatewayPage() {
               <div className="px-3 py-5 text-center">
                 <p className="text-[12px] text-sakura-400">暂无对端接入</p>
                 <p className="text-[11px] text-sakura-300 mt-1">
-                  桌面端仍可独立运行 —— 用右侧「开放接入」把地址给别人即可
+                  桌面端仍可独立运行 —— 点上方「开放接入」把地址给别人即可
                 </p>
               </div>
             ) : (
@@ -647,121 +803,12 @@ export default function GatewayPage() {
             )}
           </div>
         </div>
-
-        {/* ════════ 右栏：开放接入面板（可填/可选/可复制）═══════ */}
-        <div className="w-[300px] shrink-0 space-y-3">
-          {/* MCP 状态 */}
-          <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-sakura-100">
-              <KeyRound size={12} className="text-sakura-400" />
-              <span className="text-[12px] font-semibold text-sakura-600">开放接入 · MCP</span>
-              <span className={`ml-auto text-[10px] px-1.5 py-px rounded border ${
-                mcp?.running
-                  ? "text-green-600 bg-green-50 border-green-100"
-                  : "text-sakura-400 bg-sakura-50 border-sakura-100"}`}>
-                {mcp?.running ? `运行中 · ${mcp.tools} 工具` : "未启动"}
-              </span>
-            </div>
-            <div className="p-3 space-y-2">
-              <p className="text-[11px] text-sakura-500 leading-relaxed">
-                任何支持 MCP 的客户端（Claude Code / Cursor / Cline / 自己写的脚本）
-                填下面的地址就能调用本机能力，不需要装任何东西。
-              </p>
-              {!mcp?.running && (
-                <div className="rounded-lg bg-yellow-50 border border-yellow-100 px-2 py-1.5">
-                  <p className="text-[10px] text-yellow-700 leading-relaxed">
-                    MCP 服务未运行。启动命令：
-                    <code className="block mt-1 font-mono text-[10px] text-yellow-800">
-                      python desktop_core/mcp_server.py
-                    </code>
-                  </p>
-                </div>
-              )}
-              {mcp?.needs_token_for_lan && (
-                <div className="rounded-lg bg-yellow-50 border border-yellow-100 px-2 py-1.5">
-                  <p className="text-[10px] text-yellow-700 leading-relaxed">
-                    未配置访问 token —— 当前仅本机免鉴权。
-                    要让局域网/云端的设备连入，必须先设置环境变量
-                    <code className="font-mono"> NAIXI_MCP_TOKENS</code>
-                    （格式 <code className="font-mono">token1:*</code>），
-                    否则服务会拒绝绑定非本机地址。
-                  </p>
-                </div>
-              )}
-              <div className="grid grid-cols-2 gap-1.5 text-[10px]">
-                <div className="rounded-lg bg-sakura-50 px-2 py-1.5">
-                  <p className="text-sakura-400">本机地址</p>
-                  <p className="font-mono text-sakura-600 truncate">{access?.localhost_url ?? "-"}</p>
-                </div>
-                <div className="rounded-lg bg-sakura-50 px-2 py-1.5">
-                  <p className="text-sakura-400">局域网地址</p>
-                  <p className="font-mono text-sakura-600 truncate">{access?.lan_url ?? "-"}</p>
-                </div>
-                <div className="rounded-lg bg-sakura-50 px-2 py-1.5">
-                  <p className="text-sakura-400">局域网 IP</p>
-                  <p className="font-mono text-sakura-600 truncate">{access?.lan_ip ?? "-"}</p>
-                </div>
-                <div className="rounded-lg bg-sakura-50 px-2 py-1.5">
-                  <p className="text-sakura-400">访问凭据</p>
-                  <p className="font-mono text-sakura-600 truncate">
-                    {mcp?.token_configured ? `已配 ${mcp.token_count} 个` : "免鉴权"}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* 配置片段 —— 核心：给用户能直接拿走的东西 */}
-          <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-sakura-100">
-              <Copy size={12} className="text-sakura-400" />
-              <span className="text-[12px] font-semibold text-sakura-600">一键接入配置</span>
-            </div>
-            <div className="p-2.5 space-y-2">
-              {access?.configs?.claude_code && (
-                <CopyBlock label="Claude Code" value={access.configs.claude_code}
-                  hint="终端执行" />
-              )}
-              {access?.configs?.cursor && (
-                <CopyBlock label="Cursor" value={access.configs.cursor}
-                  hint="粘进 mcp.json" />
-              )}
-              {access?.configs?.generic_http && (
-                <CopyBlock label="通用 HTTP" value={access.configs.generic_http}
-                  hint="任意语言客户端" />
-              )}
-              {access?.configs?.ws_internal && (
-                <CopyBlock label="内部 WS" value={access.configs.ws_internal}
-                  hint="同机脚本用" />
-              )}
-            </div>
-          </div>
-
-          {/* 自定义能力 */}
-          <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-sakura-100">
-              <Plus size={12} className="text-sakura-400" />
-              <span className="text-[12px] font-semibold text-sakura-600">扩展能力</span>
-            </div>
-            <div className="p-2.5">
-              <AddCapabilityForm onDone={() => load(true)} />
-            </div>
-          </div>
-
-          {/* 说明 */}
-          <div className="bg-sakura-50 border border-sakura-100 rounded-xl px-3 py-2.5">
-            <p className="text-[11px] text-sakura-500 leading-relaxed">
-              <Cpu size={10} className="inline mr-1" />
-              能力调用走 HTTP <span className="font-mono">:{access?.http_port ?? 9845}</span>，
-              订阅通知走 WS <span className="font-mono">:{access?.ws_port ?? 18400}</span>，
-              两条通道分离以避免双向往返死锁。
-              <span className="text-yellow-600"> 可写能力不提供直接测试</span>——
-              调用方只能发起提议，用户确认后才真正执行。
-              左侧圆点可停用能力，对端即刻不再看到它。
-            </p>
-          </div>
-        </div>
       </div>
+    {/* 右侧栏：点顶部「开放接入」按钮展开（对齐 PetMemoryPage 的左选右显模式） */}
+      {sideTab === "access" && (
+        <AccessPanel access={access} onClose={() => setSideTab(null)}
+          onChanged={() => load(true)} />
+      )}
     </div>
   );
 }

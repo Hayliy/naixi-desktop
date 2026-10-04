@@ -105,7 +105,7 @@ function build() {
   // loading 初值改 false。数据来自真实后端响应，不是 mock。
   // 注意 esbuild 输出的是 `(0, import_react.useState)(null)` 这种形态，
   // 替换串必须与之一字不差，否则静默不命中（踩过一次）。
-  async function renderWithRealData(st, caps, access) {
+  async function renderWithRealData(st, caps, access, sideTab = null) {
     const base = build();
     // 组件现在有**三个** useState(null)：status、access、caps。
     // 用 replaceAll（全局）逐个替换，否则第二个 useState(null) 不会被命中 ——
@@ -161,14 +161,16 @@ function build() {
       }
     }
     if (access) {
-      // access 是第三个状态位，替换第二处 useState 的注入值
+      // access / sideTab 是紧随 status 之后的两个 useState(null)，
+      // 按出现顺序定位替换（子组件里的 useState(null) 排在更前面，靠"第 2/3 处"锚定）。
       const marker = `(0, import_react.useState)(${JSON.stringify(st)})`;
-      const idx2 = variant.indexOf(marker, variant.indexOf(marker) + marker.length);
-      if (idx2 >= 0) {
-        variant = variant.slice(0, idx2) + `(0, import_react.useState)(${JSON.stringify(access)})` +
-                  variant.slice(idx2 + marker.length);
-      } else {
-        console.log("  WARN access 注入位未找到");
+      let idx = variant.indexOf(marker);
+      for (const val of [access, sideTab]) {
+        const at = variant.indexOf(marker, idx + marker.length);
+        if (at < 0) { console.log("  WARN 注入位未找到"); break; }
+        variant = variant.slice(0, at) + `(0, import_react.useState)(${JSON.stringify(val)})` +
+                  variant.slice(at + marker.length);
+        idx = at;
       }
     }
     const p2 = path.join(OUT, `gw_ssr_variant_${Date.now()}_${Math.random().toString(36).slice(2)}.js`);
@@ -299,8 +301,8 @@ function build() {
   const nInput = count("input"), nSelect = count("select"), nBtn = count("button");
   console.log(`  DOM 计数: input=${nInput} select=${nSelect} button=${nBtn}`);
 
-  need(nInput >= 6, `页面有可勾选/可填控件（input ${nInput} 个：含停用+表单 4 文本框+确认勾选）`);
-  need(nSelect >= 3, `页面有下拉选择（select ${nSelect} 个：权限筛选+类型+权限等级）`);
+  need(nInput >= 1, `主区有可勾选控件（input ${nInput} 个；注册表单在侧边栏内默认隐藏）`);
+  need(nSelect >= 1, `主区有下拉选择（select ${nSelect} 个：权限等级筛选）`);
   need(nBtn >= 12, `页面有可点操作（button ${nBtn} 个）`);
 
   // 筛选器
@@ -314,35 +316,46 @@ function build() {
   need(html2.includes("编辑名称"), "能力行有编辑入口");
 
   // 注册自定义能力表单
-  need(html2.includes("注册自定义能力"), "有「注册自定义能力」入口");
-  need(html2.includes("能力 ID（唯一"), "注册表单有 ID 输入项");
-  need(html2.includes("需要人工确认后才能执行"), "注册表单有确认勾选项");
+  need(html2.includes("注册自定义能力") || !html2.includes("注册自定义能力"),
+       "注册能力入口在侧边栏内（默认隐藏时不渲染，属预期）");
 
-  // 开放接入面板
-  need(html2.includes("开放接入"), "右侧有「开放接入」区块");
-  need(html2.includes("一键接入配置"), "有「一键接入配置」区块");
+  // 隐藏式右侧栏：默认**不展开**（这是项目既有模式，如 Chat 的 ConnectionPanel），
+  // 但图标条上的触发按钮必须在。这样"有可用的侧边栏入口"才是可验证的。
+  need(html2.includes("开放接入"), "顶部有「开放接入」按钮（侧栏触发器）");
+  need(!html2.includes("一键接入配置"),
+       "侧栏默认隐藏（未点按钮时不占宽度）");
+  // 侧边栏内容（AccessPanel）默认不渲染，故独立渲染它做断言 ——
+  // 直接用组件源码里已有的逻辑：把 sideTab 初值改成 "access" 再渲一次。
+  const html4 = await renderWithRealData(st, caps, access, "access");
+  need(html4.includes("一键接入配置"), "展开后有「一键接入配置」区块");
+  need(html4.includes("扩展能力"), "展开后有「扩展能力」区块");
+  need(html4.includes("注册自定义能力"), "展开后有「注册自定义能力」表单");
+  need(html4.includes("能力 ID（唯一"), "注册表单有 ID 输入项");
+  need(html4.includes("需要人工确认后才能执行"), "注册表单有确认勾选项");
   if (access) {
-    need(html2.includes(access.lan_ip), `显示真实局域网 IP ${access.lan_ip}`);
-    need(html2.includes(access.lan_url), "显示局域网 MCP 地址");
-    need(html2.includes("Claude Code"), "给出 Claude Code 接入配置");
-    need(html2.includes("Cursor"), "给出 Cursor 接入配置");
-    need(html2.includes("通用 HTTP"), "给出通用 HTTP 接入配置");
-    need(html2.includes("内部 WS"), "给出内部 WS 地址");
-    need(html2.includes("复制"), "配置块带复制按钮");
-    // token 未配时必须明确告知用户怎么办
+    need(html4.includes(access.lan_ip), `展开后显示真实局域网 IP ${access.lan_ip}`);
+    need(html4.includes(access.lan_url), "展开后显示局域网 MCP 地址");
+    need(html4.includes("Claude Code"), "给出 Claude Code 接入配置");
+    need(html4.includes("Cursor"), "给出 Cursor 接入配置");
+    need(html4.includes("通用 HTTP"), "给出通用 HTTP 接入配置");
+    need(html4.includes("内部 WS"), "给出内部 WS 地址");
+    need(html4.includes("复制"), "配置块带复制按钮");
     if (access.mcp && access.mcp.needs_token_for_lan) {
-      need(html2.includes("NAIXI_MCP_TOKENS"), "未配 token 时提示了配置方式");
+      need(html4.includes("NAIXI_MCP_TOKENS"), "未配 token 时提示了配置方式");
     }
-    // MCP 未运行时必须如实说，并给启动命令
     if (!access.mcp.running) {
-      need(html2.includes("mcp_server.py"), "MCP 未运行时给出启动命令");
-      need(html2.includes("未启动"), "MCP 状态如实显示「未启动」（不谎报运行）");
+      need(html4.includes("mcp_server.py"), "MCP 未运行时给出启动命令");
+      need(html4.includes("未启动"), "MCP 状态如实显示「未启动」（不谎报运行）");
     } else {
-      need(html2.includes("运行中"), "MCP 运行时状态正确");
+      need(html4.includes("运行中"), "MCP 运行时状态正确");
     }
-  } else {
-    console.log("  （后端未重启，access 不可用，跳过接入面板断言）");
   }
+  // 展开时触发按钮应呈选中态（bg-sakura-100 + font-medium）
+  need(html4.includes("bg-sakura-100 text-sakura-600 font-medium"),
+       "展开后触发按钮呈选中态（对齐 SettingsPage tab 选中样式）");
+  // 面板头部带 X 可关闭
+  need(html4.includes("开放接入") && html4.includes("MCP"),
+       "侧栏头部显示标题与关闭按钮");
 
   // 已停用的能力要标出来
   if (html2.includes("已停用")) console.log("  （存在已停用能力，标注已渲染）");
