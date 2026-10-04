@@ -366,18 +366,25 @@ function build() {
     }
   }
   // ═══ 结构断言：侧栏必须与左栏**同级并排**，不是掉在下方 ═══
-  // 曾经把<AccessPanel> 挂在 flex 容器的**外面**（少一层闭合），
-  // 结果它变成父级 block 的子节点 → 竖排到内容下方，完全不是"右侧栏"。
-  // 这类错误 typecheck 抓不到，只有看渲染结构才能发现。
-  need(html4.includes("md:grid-cols-[minmax(0,1fr)_320px]"),
-       "外层是 grid 且定义了两列（左内容 + 右 320px 侧栏）");
-  need(html4.includes("grid-cols-1"),
-       "窄屏堆叠（grid-cols-1），宽屏才并排");
-  // 侧栏根节点：border-l + 不再有 shrink-0（grid 列宽控制）
-  need(html4.includes("border-l border-sakura-100 bg-white flex flex-col min-h-0"),
-       "侧栏根节点是 border-l + min-h-0（在 grid 内由列宽控制宽度）");
-  need(!html4.includes("w-[320px] shrink-0"),
-       "侧栏不再自带 shrink-0（避免在 grid 里被挤压）");
+  // 早期两个错误：① 把 <AccessPanel> 挂在 flex 容器外面（少闭合）→ 掉到下方竖排；
+  // ② 用 grid + 固定两列，但隐藏态仍预留 320px 空列把左栏挤窄。
+  // 现对齐 OpsPage 规范：flex 容器 + 右栏 lg:w-[320px] lg:flex-shrink-0，
+  // 且隐藏时根本不挂载右栏（无空列）。typecheck 抓不到这类布局错，只能靠结构断言。
+  need(html4.includes("flex flex-col lg:flex-row"),
+       "外层是 flex 容器，lg 以上并排（对齐 OpsPage 规范）");
+  need(html4.includes("flex-1 min-w-0 space-y-3"),
+       "左栏是 flex-1，单独存在时占满整宽（隐藏态不再留空列）");
+  need(html4.includes("lg:w-[320px] lg:flex-shrink-0"),
+       "右栏固定 320px 且不收缩（lg 以上为右列）");
+  need(html4.includes("border border-sakura-100 rounded-xl"),
+       "右栏是 bg-white 全边框圆角卡片（与 OpsPage 右栏同款）");
+  need(!html4.includes("minmax(0,1fr)_320px"),
+       "已彻底弃用会预留空列的断点 grid 类（左栏内部的小 grid 仍允许）");
+  // 隐藏态：左栏占满、右栏完全不挂载
+  need(!html2.includes("lg:w-[320px] lg:flex-shrink-0"),
+       "隐藏态根本不挂载右栏（无 DOM、无空列）");
+  need(!html2.includes("一键接入配置"),
+       "隐藏态不含面板内容（确认未渲染）");
   // 展开时触发按钮应呈选中态（bg-sakura-100 + font-medium）
   need(html4.includes("from-teal-400 to-teal-500 text-white shadow-md"),
        "展开后触发按钮呈 teal 渐变选中态（一眼可辨已展开）");

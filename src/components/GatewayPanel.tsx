@@ -328,8 +328,11 @@ function AccessPanel({ access, onClose, onChanged }: {
   onChanged: () => void;
 }) {
   const mcp = access?.mcp;
+  // 右栏本体：对齐 OpsPage 右栏样式（bg-white + 全边框圆角卡片）。
+  // 响应式宽度 lg:w-[320px] lg:flex-shrink-0 —— 平时不挂这个组件，点按钮才挂上，
+  // 所以隐藏态不会留空列。
   return (
-    <div className="border-l border-sakura-100 bg-white flex flex-col min-h-0">
+    <div className="lg:w-[320px] lg:flex-shrink-0 bg-white border border-sakura-100 rounded-xl flex flex-col min-h-0 overflow-hidden">
       {/* 头部 */}
       <div className="bg-white flex items-center justify-between px-3 py-2 border-b border-sakura-100 shrink-0">
         <span className="text-xs font-semibold text-sakura-500">开放接入
@@ -467,8 +470,8 @@ export default function GatewayPage() {
   const [showDisabled, setShowDisabled] = useState(true);
   const [trustFilter, setTrustFilter] = useState<Trust | "all">("all");
   const [editingId, setEditingId] = useState("");
-  // 隐藏式右侧栏的显隐（对齐 Chat.tsx 的 sideTab 模式）：
-  // 平时不占宽度，点右侧图标条才展开。
+  // 隐藏式右侧栏的显隐（点顶部「开放接入」按钮切换）。
+  // 隐藏时不挂载右栏组件，故不占任何宽度（无空列）。
   const [sideTab, setSideTab] = useState<string | null>(null);
 
   const load = useCallback(async (silent = false) => {
@@ -622,9 +625,11 @@ export default function GatewayPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_320px] gap-3">
+      {/* 对齐 OpsPage 的已批准规范：flex 容器，lg 以上才并排，右栏固定 320px。
+          隐藏时不挂载右栏 —— 不会像 grid 那样预留空列把左栏挤窄。 */}
+      <div className="flex flex-col lg:flex-row gap-3">
         {/* ════════ 左：状态与能力 ════════ */}
-        <div className="min-w-0 space-y-3">
+        <div className="flex-1 min-w-0 space-y-3">
           {/* 状态总览 */}
           <div className="grid grid-cols-4 gap-2">
             <div className="bg-white border border-sakura-100 rounded-xl p-3">
@@ -805,7 +810,8 @@ export default function GatewayPage() {
             )}
           </div>
         </div>
-        {/* 右：开放接入侧栏（点顶部按钮展开，对齐 PetMemoryPage 的左列+右详情结构） */}
+        {/* 右：开放接入侧栏（点顶部按钮展开，对齐 OpsPage 右栏规范）。
+            AccessPanel 根节点自带 lg:w-[320px] lg:flex-shrink-0，故此处直接作为 flex 右子元素。 */}
       {sideTab === "access" && (
         <AccessPanel access={access} onClose={() => setSideTab(null)}
           onChanged={() => load(true)} />
