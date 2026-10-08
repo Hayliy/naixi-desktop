@@ -650,9 +650,9 @@ export async function maybeRunSelfTest(): Promise<void> {
       showBanner(`开关返回 ${r.status}（url=${url}）`, true);
       return;
     }
-    showBanner(`已取到开关，开始全量自测（url=${url}）`);
     const j = (await r.json()) as { run?: boolean; mode?: SelfTestMode };
-    if (!j.run) return;
+    if (!j.run) return; // 未开闸：静默返回，不显示任何横幅
+    showBanner(`已取到开关，开始全量自测（url=${url}）`);
     const mode: SelfTestMode = j.mode === "full" ? "full" : "safe";
     console.log(`[SELFTEST] 收到自测指令（模式=${mode}），开始遍历全部页面`);
     const report = await runSelfTest(NAV_LABELS, mode);
