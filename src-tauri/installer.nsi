@@ -239,6 +239,7 @@ Var ResWriteInit
 Var ResWriteRetry
 Var ResCleanPend
 Var ResCleanWait
+Var ResWriteTotal
 
 Name "奶昔 · 桌面智能体"
 BrandingText " "
@@ -1555,6 +1556,7 @@ Function fn_DoInstall
     StrCpy $ResWriteDone 0
     StrCpy $ResWriteCurFail 0
     StrCpy $ResWriteRetry 0
+    StrCpy $ResWriteTotal 0
     Call fn_Pump
     ; ── 覆盖安装修复（移到此处：对话框已显示，避免「灰白空窗」#1）──
     ; 1) 杀整棵进程树（主程序 + Python 子进程），释放文件锁
@@ -1653,7 +1655,8 @@ naixi_exe_written:
     Return
   ${EndIf}
   ${If} $InstallStage == 2
-    ; 资源聚合包（多卷 7z）：按体积均分 N 卷，逐卷后台解压，每卷完成推进进度条(40→68)，
+    ; 资源聚合包（多卷 7z）：按体积均分 N 卷，逐卷后台解压。
+    ; 进度分段：**写入资源 40→52**（逐文件，见下）→ **逐卷解压 52→68**（本段）。
     ; 根治「只有 0%→100% 跳变」（build.rs 打 res_part_*.7z；part_count.txt 记录卷数）。
     ${If} $ResBatch == 0
       ; ── 一次性初始化（仅第一次进入 stage2/ResBatch0 时跑）──
@@ -1708,15 +1711,18 @@ naixi_exe_written:
         ${EndIf}
       ${EndIf}
       ${If} $ResCleanPend == 1
+        ; ★ 秒数心跳：清理上万个小文件可能要几十秒，静态文案 + 不动的百分比 =
+        ;   用户观感「卡住」。每 5 tick(≈1s) 刷新一次已用秒数。
+        IntOp $R3 $ResCleanWait / 5
         ${If} ${FileExists} "$INSTDIR\resources\python-embed\*.*"
-          ${NSD_SetText} $hProgressStatus "正在清理旧版本文件..."
+          ${NSD_SetText} $hProgressStatus "正在清理旧版本文件...（已用 $R3 秒）"
           Call fn_Pump
           StrCpy $R0 200
           Call fn_SleepPump
           Return
         ${EndIf}
         ${If} ${FileExists} "$INSTDIR\resources\desktop_core\*.*"
-          ${NSD_SetText} $hProgressStatus "正在清理旧版本文件..."
+          ${NSD_SetText} $hProgressStatus "正在清理旧版本文件...（已用 $R3 秒）"
           Call fn_Pump
           StrCpy $R0 200
           Call fn_SleepPump
@@ -1730,6 +1736,15 @@ naixi_exe_written:
       ;   ★ /nonfatal：任一文件被占只置错误标志、不弹系统框（2026-10-08 客机 _bundle\7z.dll 锁定后确立）。
       StrCpy $ResWriteDone 1
       StrCpy $ResWriteCurFail 0
+      ; 资源总数（编译期由模板在最后一项写入；拿不到就保持 0，下面按 0 走"不推进"分支）
+      {{#each resources}}
+        {{#if @last}}
+        StrCpy $ResWriteTotal {{@index}}
+        {{/if}}
+      {{/each}}
+      ${If} $ResWriteTotal > 0
+        IntOp $ResWriteTotal $ResWriteTotal + 1
+      ${EndIf}
       {{#each resources}}
         ${If} $ResWriteIdx == {{@index}}
           StrCpy $ResWriteDone 0
@@ -1746,8 +1761,25 @@ naixi_exe_written:
           ; 本文件写成功：推进到下一个资源文件
           StrCpy $ResWriteRetry 0
           IntOp $ResWriteIdx $ResWriteIdx + 1
-          IntFmt $R7 "%02d" $ResWriteIdx
-          ${NSD_SetText} $hProgressStatus "正在写入安装资源... (第 $R7 个文件)"
+          ; ★★ 进度条必须跟着推进：只改文案不动百分比 ⇒ 450MB 写入期间数字一直停在 40，
+          ;    用户观感就是「卡在 40% 不动」（2026-10-09 实测反馈）。写入阶段占 40→52。
+          StrCpy $R8 40
+          ${If} $ResWriteTotal > 0
+            IntOp $R8 $ResWriteIdx * 12
+            IntOp $R8 $R8 / $ResWriteTotal
+            IntOp $R8 $R8 + 40
+            ${If} $R8 > 52
+              StrCpy $R8 52
+            ${EndIf}
+          ${EndIf}
+          !insertmacro SetInstallProgress $R8
+          ${NSD_SetText} $hProgressStatus "正在写入安装资源... ($ResWriteIdx/$ResWriteTotal)"
+          ; 每 5 个文件落一条诊断日志，便于事后确认写入确实在推进（不是死等）
+          IntOp $R3 $ResWriteIdx % 5
+          ${If} $R3 == 0
+            StrCpy $R7 "stage2 res write idx=$ResWriteIdx/$ResWriteTotal"
+            Call fn_Dbg
+          ${EndIf}
           Call fn_Pump
           Return
         ${Else}
@@ -1822,10 +1854,11 @@ naixi_exe_written:
         ${If} $ResFlag == "FAIL"
           StrCpy $ResFail 1
         ${EndIf}
-        ; 本卷完成：按已完成卷数推进总进度（stage2 占 40→68）
-        IntOp $R8 $CurPart * 28
+        ; 本卷完成：按已完成卷数推进总进度。
+        ; 分段：写入 40→52（见上面逐文件写入），解压 52→68 —— 否则解压一开始进度会倒退。
+        IntOp $R8 $CurPart * 16
         IntOp $R8 $R8 / $PartTotal
-        IntOp $R8 $R8 + 40
+        IntOp $R8 $R8 + 52
         !insertmacro SetInstallProgress $R8
         ${If} $CurPart < $PartTotal
           IntOp $CurPart $CurPart + 1
