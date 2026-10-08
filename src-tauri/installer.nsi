@@ -197,6 +197,10 @@ Var BatchStart
 Var BatchEnd
 Var BatchTmp
 Var CurPage
+; 静默安装（/S）标志与循环护栏：见下方 Section "Main" 的说明。
+; SilentInstall 在 .onInit 里按 /S 参数置 1；SilentGuard 防状态机死循环。
+Var SilentInstall
+Var SilentGuard
 Var unCurPage
 Var unInstallDone
 Var unInstallStage
@@ -1369,7 +1373,37 @@ FunctionEnd
 ; Sections (install logic)
 ; ════════════════════════════════════════════
 
+; ─── 主安装段 ───
+; ★ 静默安装修复（2026-10-08，Hyper-V 客机 /S 实测发现的交付级缺陷）：
+;   本项目的安装逻辑全部在 fn_DoInstall 里，由 fn_InstallTick 定时器反复调用推进
+;   $InstallStage 状态机（0→5），而该定时器**只在 fn_ProgressPage 这个自定义页面上创建**。
+;   静默模式（/S）不加载自定义页面 ⇒ 定时器永不创建 ⇒ fn_DoInstall 一次都不跑
+;   ⇒ 安装器 **exit 0 却什么都没装**（客机实测：版本号不变、无引擎、4 个新端点全 404）。
+;   正解：静默模式下由本 Section 主动循环调用，直到 $InstallDone。
+;   交互模式仍由 GUI 定时器驱动（fn_ProgressPage → fn_InstallTick），行为不变。
 Section "Main" SEC01
+  ${If} $SilentInstall == 1
+    StrCpy $InstallStage 0
+    StrCpy $InstallDone 0
+    ; 上限 600 次防御：单次调用只推进一级，且解压阶段靠轮询 flag 消耗轮次。
+    ; 420MB / 31 卷在真机上需要几百轮，600 足够；超限则报错退出而不是死循环。
+    ; ★ NSIS 无 IntVar 指令（实测 makensis 报 Invalid command: "IntVar"），
+    ;   整数变量用 StrCpy 置初值 + IntOp 累加，与本文件既有写法一致。
+    StrCpy $SilentGuard 0
+    ${DoWhile} $InstallDone != 1
+      ; ★ 必须留出间隔：GUI 模式靠 fn_InstallTick 的 120ms 定时器给 7z 解压留时间，
+      ;   stage 2 的轮询分支（$ResBatch == 1）自身**不含 Sleep**。
+      ;   静默模式若无间隔地狂循环，600 次护栏会在几毫秒内耗尽，
+      ;   实测只等到 1 个 res_done flag（31 卷里的第 1 卷）就中止 —— 表现为"装到一半卡住"。
+      Sleep 200
+      Call fn_DoInstall
+      IntOp $SilentGuard $SilentGuard + 1
+      ${If} $SilentGuard > 36000
+        MessageBox MB_OK "静默安装超时（内部轮次 $SilentGuard）。请改用交互式安装。"
+        Abort
+      ${EndIf}
+    ${Loop}
+  ${EndIf}
 SectionEnd
 
 ; ─── WebView2 运行时检测与安装 ───
@@ -1489,6 +1523,14 @@ Function fn_DoInstall
       {{#each resources_dirs}}
         CreateDirectory "$INSTDIR\\{{this}}"
       {{/each}}
+      ; ★ 显式建 engines（v1.1.0 新增：本地推理引擎随包下发）。
+      ;   上面的 resources_dirs 模板块只覆盖 tauri.conf.json bundle.resources 的 glob
+      ;   （当前仅 sidecar 与 resources\_bundle），engines 是 7z 卷内的路径、不在其中。
+      ;   7z x -y 本会自动创建，但显式声明可避免解压失败时残留半成品目录。
+      ; ⚠ 本注释刻意不写 Handlebars 双花括号：注释里的模板块语法会被模板引擎当真，
+      ;   导致后面的闭合标签变成"多余标签"而报 invalid handlebars syntax。
+      CreateDirectory "$INSTDIR\resources\engines\llama-cpp"
+      CreateDirectory "$INSTDIR\resources\engines\convert"
       ${NSD_SetText} $hProgressStatus "写入安装包资源..."
       {{#each resources}}
         File /a "/oname={{this.[1]}}" "{{no-escape @key}}"
@@ -1750,6 +1792,14 @@ FunctionEnd
 
 Function .onInit
   InitPluginsDir
+  ; ★ 静默模式识别（Section "Main" 依赖此标志）。
+  ;   NSIS 的 ${Silent} 是 LogicLib 提供的布尔常量（/S 或 /SILENT 为真），
+  ;   本项目卸载段已在用（见 ${IfNot} ${Silent}）。此处转成自有 Var 供主流程判断。
+  ;   必须在任何自定义页面创建之前判断，否则 /S 下仍会弹窗。
+  StrCpy $SilentInstall 0
+  ${If} ${Silent}
+    StrCpy $SilentInstall 1
+  ${EndIf}
   SetOutPath $PLUGINSDIR
   File "${NAIXI_SRC_TAURI}\installer\banner.bmp"
   File "${NAIXI_SRC_TAURI}\installer\num1_on.bmp"
