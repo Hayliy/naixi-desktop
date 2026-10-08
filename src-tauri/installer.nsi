@@ -229,6 +229,16 @@ Var hCurDetail
 Var BatchTmp2
 Var CurPart
 Var PartTotal
+; ── 资源逐文件写入状态（2026-10-09 修「8%/40% 界面卡死」）──
+; 旧版把 37 个资源文件（含 ~450MB res_part 卷）在**同一个 tick** 里一次性 File 写完，
+; UI 线程被一次性阻塞十几~几十秒 ⇒ 窗口「无响应」、字体不重绘。改为每 tick 只写一个文件。
+Var ResWriteIdx
+Var ResWriteDone
+Var ResWriteCurFail
+Var ResWriteInit
+Var ResWriteRetry
+Var ResCleanPend
+Var ResCleanWait
 
 Name "奶昔 · 桌面智能体"
 BrandingText " "
@@ -1468,6 +1478,44 @@ Function fn_Dbg
   FileClose $9
 FunctionEnd
 
+; ── 消息泵（2026-10-09 修「安装到 8%/40% 界面卡死、字体不渲染、拖动无响应」）──
+; 根因：安装逻辑全跑在 UI 线程上（fn_InstallTick 定时器里同步 Call fn_DoInstall），
+;   单个 tick 里的阻塞调用（nsExec / 大文件 File 写入 / RMDir / 纯 Sleep）期间不处理
+;   消息队列 ⇒ 窗口不重绘（字体像"卡没了"）、被 Windows 判定「无响应」。
+; 关键前提：fn_InstallTick 进 fn_DoInstall 前已 ${NSD_KillTimer}，故此处泵消息
+;   **不会重入安装逻辑**（不会重复触发 fn_InstallTick）。
+; 只保护本函数用到的 $0/$1，其余寄存器不动。
+Function fn_Pump
+  Push $0
+  Push $1
+  System::Alloc 64            ; MSG 结构体（x64 实测 48 字节，多给些）
+  Pop $1
+  StrCmp $1 0 naixi_pump_end
+naixi_pump_loop:
+  ; PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE=1)
+  System::Call 'user32::PeekMessageW(p r1, p 0, i 0, i 0, i 1) i .r0'
+  IntCmp $0 0 naixi_pump_end
+  System::Call 'user32::TranslateMessage(p r1)'
+  System::Call 'user32::DispatchMessage(p r1)'
+  Goto naixi_pump_loop
+naixi_pump_end:
+  System::Free $1
+  Pop $1
+  Pop $0
+FunctionEnd
+
+; 分片休眠 + 泵消息（替代裸 Sleep N，避免纯睡眠期间窗口无响应）。
+; 入参 $R0 = 毫秒；本函数会把 $R0 递减到 0。
+Function fn_SleepPump
+naixi_sleeppump_loop:
+  IntCmp $R0 0 naixi_sleeppump_done naixi_sleeppump_done 0
+  IntOp $R0 $R0 - 50
+  Call fn_Pump
+  Sleep 50
+  Goto naixi_sleeppump_loop
+naixi_sleeppump_done:
+FunctionEnd
+
 ; ── 确保主程序文件可写（v1.1.0 加固，2026-10-08 真机复现后确立）──
 ; 用户常在奶昔运行中双击安装器：旧实例持有 $INSTDIR\naixi-desktop.exe，
 ; 于是 File 写不进去 → Windows 弹「无法打开要写入的文件」框 → 安装卡死在 25%。
@@ -1486,7 +1534,8 @@ naixi_ensure_loop:
   Pop $R0
   StrCpy $R7 "ensure round=$R8 kill_rc=$R0"
   Call fn_Dbg
-  Sleep 600
+  StrCpy $R0 600
+  Call fn_SleepPump
   IntCmp $R8 20 0 naixi_ensure_loop
   Return
 naixi_ensure_done:
@@ -1500,6 +1549,13 @@ Function fn_DoInstall
     ${NSD_SetText} $hProgressStatus "准备安装..."
     !insertmacro SetInstallProgress 8
     StrCpy $ResBatch 0
+    ; 资源逐文件写入状态复位（stage 2 用；详见 fn_DoInstall stage 2）
+    StrCpy $ResWriteInit 0
+    StrCpy $ResWriteIdx 0
+    StrCpy $ResWriteDone 0
+    StrCpy $ResWriteCurFail 0
+    StrCpy $ResWriteRetry 0
+    Call fn_Pump
     ; ── 覆盖安装修复（移到此处：对话框已显示，避免「灰白空窗」#1）──
     ; 1) 杀整棵进程树（主程序 + Python 子进程），释放文件锁
     ;    ★ 完整路径 + 记录返回码：旧版用裸 taskkill 且把返回值 Pop 丢弃，
@@ -1523,20 +1579,26 @@ Function fn_DoInstall
     Call fn_Dbg
     nsExec::Exec '"$SYSDIR\taskkill.exe" /F /IM 7zG.exe'
     Pop $R0
-    Sleep 800
+    Call fn_Pump
+    StrCpy $R0 800
+    Call fn_SleepPump
     ; 2) 升级模式：先静默卸旧版，再装（干净覆盖安装）
     ReadRegStr $R2 SHCTX "${UNINSTKEY}" "InstallLocation"
     ${If} $R2 != ""
       IfFileExists "$R2\${MAINBINARYNAME}.exe" 0 +2
         ${NSD_SetText} $hProgressStatus "检测到旧版本，正在卸载..."
         ExecWait '"$R2\uninstall.exe" /S _?=$R2' $R1
-        Sleep 500
+        Call fn_Pump
+        StrCpy $R0 500
+        Call fn_SleepPump
     ${EndIf}
     nsExec::Exec '"$SYSDIR\taskkill.exe" /F /T /IM "${MAINBINARYNAME}.exe"'
     Pop $R0
     StrCpy $R7 "stage0 kill_main(2nd) rc=$R0"
     Call fn_Dbg
-    Sleep 300
+    Call fn_Pump
+    StrCpy $R0 300
+    Call fn_SleepPump
     ; 安装前确保 WebView2 运行时存在（干净机器缺它会起不来）。
     Call InstallWebView2
     SetOutPath $INSTDIR
@@ -1594,58 +1656,123 @@ naixi_exe_written:
     ; 资源聚合包（多卷 7z）：按体积均分 N 卷，逐卷后台解压，每卷完成推进进度条(40→68)，
     ; 根治「只有 0%→100% 跳变」（build.rs 打 res_part_*.7z；part_count.txt 记录卷数）。
     ${If} $ResBatch == 0
-      ${NSD_SetText} $hProgressStatus "创建资源目录..."
-      !insertmacro SetInstallProgress 40
-      ; ★ 覆盖安装：先删上一版的程序目录，再解压新资源（保留 resources\data 用户数据）。
-      ;   7z 是覆盖式解压（x -y），不会删除新版本已去掉的旧文件。VM 实测（0.2.6 → 0.2.7）：
-      ;   python-embed 里同时留下两代 site-packages，残留 aiohttp 3.14.1 / cryptography 49.0.0 /
-      ;   certifi 2026.6.17 / annotated_doc 0.0.4 的旧文件与旧 dist-info，共 727 处哈希不一致；
-      ;   残留还可能让 Python import 到已删除的旧模块。故此处显式清理后重装。
-      ;   仅清理纯程序目录；resources\data（数据库/模型/日志）绝不动。
-      RMDir /r "$INSTDIR\resources\python-embed"
-      RMDir /r "$INSTDIR\resources\desktop_core"
-      !insertmacro SetComp 2 1 "核心资源 (desktop_core)"
-      !insertmacro SetComp 3 1 "Python 运行时"
-      !insertmacro SetComp 4 1 "SearXNG 搜索引擎"
-      ${NSD_SetText} $hCurName "核心资源"
-      {{#each resources_dirs}}
-        CreateDirectory "$INSTDIR\\{{this}}"
-      {{/each}}
-      ; ★ 显式建 engines（v1.1.0 新增：本地推理引擎随包下发）。
-      ;   上面的 resources_dirs 模板块只覆盖 tauri.conf.json bundle.resources 的 glob
-      ;   （当前仅 sidecar 与 resources\_bundle），engines 是 7z 卷内的路径、不在其中。
-      ;   7z x -y 本会自动创建，但显式声明可避免解压失败时残留半成品目录。
-      ; ⚠ 本注释刻意不写 Handlebars 双花括号：注释里的模板块语法会被模板引擎当真，
-      ;   导致后面的闭合标签变成"多余标签"而报 invalid handlebars syntax。
-      CreateDirectory "$INSTDIR\resources\engines\llama-cpp"
-      CreateDirectory "$INSTDIR\resources\engines\convert"
-      ${NSD_SetText} $hProgressStatus "写入安装包资源..."
-      ; ★ /nonfatal + 杀 7z 重试（2026-10-08 客机交互式安装抓到 _bundle\7z.dll 被锁后确立）：
-      ;   无 /nonfatal 时任一资源被占用就弹系统「无法打开要写入的文件」框并把安装挂死；
-      ;   有了它只置错误标志，这里捕获后杀掉残留 7z 重试一次，最后给出可读的中文提示而非挂死。
-      StrCpy $R9 0
-naixi_res_write_try:
-      ClearErrors
+      ; ── 一次性初始化（仅第一次进入 stage2/ResBatch0 时跑）──
+      ${If} $ResWriteInit != 1
+        StrCpy $ResWriteInit 1
+        ${NSD_SetText} $hProgressStatus "创建资源目录..."
+        !insertmacro SetInstallProgress 40
+        SetOutPath $INSTDIR
+        ; ★ 覆盖安装：先删上一版的程序目录，再解压新资源（保留 resources\data 用户数据）。
+        ;   7z 是覆盖式解压（x -y），不会删除新版本已去掉的旧文件。VM 实测（0.2.6 → 0.2.7）：
+        ;   python-embed 里同时留下两代 site-packages，残留 aiohttp 3.14.1 / cryptography 49.0.0 /
+        ;   certifi 2026.6.17 / annotated_doc 0.0.4 的旧文件与旧 dist-info，共 727 处哈希不一致；
+        ;   残留还可能让 Python import 到已删除的旧模块。故此处显式清理后重装。
+        ;   仅清理纯程序目录；resources\data（数据库/模型/日志）绝不动。
+        ; ★★ 2026-10-09 改**异步删除**：python-embed 有上万个小文件，同步 RMDir /r 会把
+        ;   UI 线程一次性阻塞几~几十秒（正是用户报的「40% 卡死、拖动无响应」）。
+        ;   改为后台 cmd 删除 + 每 tick 轮询目录是否消失，期间 UI 照常重绘。
+        StrCpy $ResCleanPend 0
+        StrCpy $ResCleanWait 0
+        ${If} ${FileExists} "$INSTDIR\resources\python-embed\*.*"
+          ExecShell "open" "$SYSDIR\cmd.exe" '/c rmdir /s /q "$INSTDIR\resources\python-embed"' SW_HIDE
+          StrCpy $ResCleanPend 1
+        ${EndIf}
+        ${If} ${FileExists} "$INSTDIR\resources\desktop_core\*.*"
+          ExecShell "open" "$SYSDIR\cmd.exe" '/c rmdir /s /q "$INSTDIR\resources\desktop_core"' SW_HIDE
+          StrCpy $ResCleanPend 1
+        ${EndIf}
+        !insertmacro SetComp 2 1 "核心资源 (desktop_core)"
+        !insertmacro SetComp 3 1 "Python 运行时"
+        !insertmacro SetComp 4 1 "SearXNG 搜索引擎"
+        ${NSD_SetText} $hCurName "核心资源"
+        {{#each resources_dirs}}
+          CreateDirectory "$INSTDIR\\{{this}}"
+        {{/each}}
+        ; ★ 显式建 engines（v1.1.0 新增：本地推理引擎随包下发）。
+        ;   上面的 resources_dirs 模板块只覆盖 tauri.conf.json bundle.resources 的 glob
+        ;   （当前仅 sidecar 与 resources\_bundle），engines 是 7z 卷内的路径、不在其中。
+        ;   7z x -y 本会自动创建，但显式声明可避免解压失败时残留半成品目录。
+        ; ⚠ 本注释刻意不写 Handlebars 双花括号：注释里的模板块语法会被模板引擎当真，
+        ;   导致后面的闭合标签变成"多余标签"而报 invalid handlebars syntax。
+        CreateDirectory "$INSTDIR\resources\engines\llama-cpp"
+        CreateDirectory "$INSTDIR\resources\engines\convert"
+        Call fn_Pump
+      ${EndIf}
+
+      ; ── 等异步清场完成（每 tick 查一次；超时约 60s 后放弃，交给 7z 覆盖解压）──
+      ${If} $ResCleanPend == 1
+        IntOp $ResCleanWait $ResCleanWait + 1
+        ${If} $ResCleanWait > 300
+          ; 超时（≈300 tick×200ms≈60s）：放弃清场，直接进入写入（避免死等旧目录删不掉）
+          StrCpy $ResCleanPend 0
+        ${EndIf}
+      ${EndIf}
+      ${If} $ResCleanPend == 1
+        ${If} ${FileExists} "$INSTDIR\resources\python-embed\*.*"
+          ${NSD_SetText} $hProgressStatus "正在清理旧版本文件..."
+          Call fn_Pump
+          StrCpy $R0 200
+          Call fn_SleepPump
+          Return
+        ${EndIf}
+        ${If} ${FileExists} "$INSTDIR\resources\desktop_core\*.*"
+          ${NSD_SetText} $hProgressStatus "正在清理旧版本文件..."
+          Call fn_Pump
+          StrCpy $R0 200
+          Call fn_SleepPump
+          Return
+        ${EndIf}
+        StrCpy $ResCleanPend 0
+      ${EndIf}
+
+      ; ── 逐文件写入资源：每个 tick 只写一个，写完立即返回 ⇒ UI 能重绘/响应 ──
+      ;   修「37 个资源文件（含 ~450MB res_part 卷）在同一 tick 里一次性写完 → 40% 卡死」。
+      ;   ★ /nonfatal：任一文件被占只置错误标志、不弹系统框（2026-10-08 客机 _bundle\7z.dll 锁定后确立）。
+      StrCpy $ResWriteDone 1
+      StrCpy $ResWriteCurFail 0
       {{#each resources}}
-        File /nonfatal /a "/oname={{this.[1]}}" "{{no-escape @key}}"
+        ${If} $ResWriteIdx == {{@index}}
+          StrCpy $ResWriteDone 0
+          ClearErrors
+          File /nonfatal /a "/oname={{this.[1]}}" "{{no-escape @key}}"
+          IfErrors 0 naixi_res_wok_{{@index}}
+          StrCpy $ResWriteCurFail 1
+        naixi_res_wok_{{@index}}:
+        ${EndIf}
       {{/each}}
-      IfErrors 0 naixi_res_write_ok
-      IntOp $R9 $R9 + 1
-      StrCpy $R7 "stage2 res write retry=$R9"
-      Call fn_Dbg
-      StrCmp $R9 1 0 naixi_res_write_fail
-      nsExec::Exec '"$SYSDIR\taskkill.exe" /F /IM 7z.exe'
-      Pop $R0
-      nsExec::Exec '"$SYSDIR\taskkill.exe" /F /IM 7zG.exe'
-      Pop $R0
-      Sleep 1500
-      Goto naixi_res_write_try
-naixi_res_write_fail:
-      StrCpy $R7 "stage2 res write FAILED twice, abort"
-      Call fn_Dbg
-      MessageBox MB_OK|MB_ICONSTOP "写入安装资源失败，安装无法继续。$\r$\n$\r$\n$INSTDIR\resources$\r$\n$\r$\n请先完全退出奶昔、并确认没有其它奶昔安装程序正在运行，然后重新安装。"
-      Abort
-naixi_res_write_ok:
+
+      ${If} $ResWriteDone == 0
+        ${If} $ResWriteCurFail == 0
+          ; 本文件写成功：推进到下一个资源文件
+          StrCpy $ResWriteRetry 0
+          IntOp $ResWriteIdx $ResWriteIdx + 1
+          IntFmt $R7 "%02d" $ResWriteIdx
+          ${NSD_SetText} $hProgressStatus "正在写入安装资源... (第 $R7 个文件)"
+          Call fn_Pump
+          Return
+        ${Else}
+          ; 瞬时占用（残留 7z 锁 _bundle\7z.dll 等）：杀 7z 后重试同一文件，最多 3 次
+          IntOp $ResWriteRetry $ResWriteRetry + 1
+          StrCpy $R7 "stage2 res write FAILED idx=$ResWriteIdx retry=$ResWriteRetry"
+          Call fn_Dbg
+          ${If} $ResWriteRetry >= 3
+            StrCpy $R7 "stage2 res write ABORT idx=$ResWriteIdx"
+            Call fn_Dbg
+            MessageBox MB_OK|MB_ICONSTOP "写入安装资源失败，安装无法继续。$\r$\n$\r$\n$INSTDIR\resources$\r$\n$\r$\n请先完全退出奶昔、并确认没有其它奶昔安装程序正在运行，然后重新安装。"
+            Abort
+          ${EndIf}
+          nsExec::Exec '"$SYSDIR\taskkill.exe" /F /IM 7z.exe'
+          Pop $R0
+          nsExec::Exec '"$SYSDIR\taskkill.exe" /F /IM 7zG.exe'
+          Pop $R0
+          Call fn_Pump
+          StrCpy $R0 1000
+          Call fn_SleepPump
+          Return
+        ${EndIf}
+      ${EndIf}
+
+      ; ── 全部写完：读卷数、启动逐卷后台解压 ──
       ; 读取分卷总数（build.rs 生成，纯整数、无换行）
       StrCpy $PartTotal 1
       ${If} ${FileExists} "$INSTDIR\resources\_bundle\part_count.txt"
@@ -1720,6 +1847,7 @@ naixi_res_write_ok:
         Goto res_broken
       ${EndIf}
       ; 未完成：保持状态，等待下一 tick（不阻塞 UI）
+      Call fn_Pump
       Return
     ${EndIf}
   ${EndIf}
