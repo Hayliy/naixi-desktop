@@ -1456,6 +1456,45 @@ Function InstallWebView2
   ${EndIf}
 FunctionEnd
 
+; ── 安装诊断日志（v1.1.0 加固，2026-10-08）──
+; 写到当前用户 TEMP，供排障。存在的理由：旧版把 taskkill 的返回码 Pop 掉丢弃，
+; 导致「没杀掉进程」这种故障在安装期与日志里都毫无痕迹（纯静默失败）。
+; $R7 = 待写入的一行；$R5 借用为开机毫秒数（时序）。
+Function fn_Dbg
+  System::Call 'kernel32::GetTickCount() i .r5'
+  FileOpen $9 "$TEMP\naixi_install_dbg.log" a
+  FileSeek $9 0 END
+  FileWrite $9 "[$5] $R7$\r$\n"
+  FileClose $9
+FunctionEnd
+
+; ── 确保主程序文件可写（v1.1.0 加固，2026-10-08 真机复现后确立）──
+; 用户常在奶昔运行中双击安装器：旧实例持有 $INSTDIR\naixi-desktop.exe，
+; 于是 File 写不进去 → Windows 弹「无法打开要写入的文件」框 → 安装卡死在 25%。
+; 本函数「关旧实例 + 等文件可写」，最多 20 轮（约 12 秒）。
+;   $R6 = 1 可写 / 0 失败；$R8 = 已重试轮次
+Function fn_EnsureMainExeWritable
+  StrCpy $R6 0
+  StrCpy $R8 0
+naixi_ensure_loop:
+  ClearErrors
+  Delete "$INSTDIR\${MAINBINARYNAME}.exe"
+  IfFileExists "$INSTDIR\${MAINBINARYNAME}.exe" 0 naixi_ensure_done
+  IntOp $R8 $R8 + 1
+  ; ★ 完整路径调用，不依赖 PATH（PATH 缺失时裸 taskkill 会静默失败）
+  nsExec::Exec '"$SYSDIR\taskkill.exe" /F /T /IM "${MAINBINARYNAME}.exe"'
+  Pop $R0
+  StrCpy $R7 "ensure round=$R8 kill_rc=$R0"
+  Call fn_Dbg
+  Sleep 600
+  IntCmp $R8 20 0 naixi_ensure_loop
+  Return
+naixi_ensure_done:
+  StrCpy $R6 1
+  StrCpy $R7 "ensure OK after $R8 round(s)"
+  Call fn_Dbg
+FunctionEnd
+
 Function fn_DoInstall
   ${If} $InstallStage == 0
     ${NSD_SetText} $hProgressStatus "准备安装..."
@@ -1463,12 +1502,26 @@ Function fn_DoInstall
     StrCpy $ResBatch 0
     ; ── 覆盖安装修复（移到此处：对话框已显示，避免「灰白空窗」#1）──
     ; 1) 杀整棵进程树（主程序 + Python 子进程），释放文件锁
+    ;    ★ 完整路径 + 记录返回码：旧版用裸 taskkill 且把返回值 Pop 丢弃，
+    ;      一旦没杀掉，stage 1 写主程序必然失败且无任何线索。
     ${NSD_SetText} $hProgressStatus "正在关闭运行中的奶昔..."
-    nsExec::Exec 'taskkill /F /T /IM "${MAINBINARYNAME}.exe"'
+    nsExec::Exec '"$SYSDIR\taskkill.exe" /F /T /IM "${MAINBINARYNAME}.exe"'
     Pop $R0
-    nsExec::Exec 'taskkill /F /IM pythonw.exe'
+    StrCpy $R7 "stage0 kill_main rc=$R0"
+    Call fn_Dbg
+    nsExec::Exec '"$SYSDIR\taskkill.exe" /F /IM pythonw.exe'
     Pop $R0
-    nsExec::Exec 'taskkill /F /IM python.exe'
+    nsExec::Exec '"$SYSDIR\taskkill.exe" /F /IM python.exe'
+    Pop $R0
+    ; ★ 7z.exe / 7zG.exe 也必须杀（2026-10-08 客机交互式安装抓到 _bundle\7z.dll 被锁后补）：
+    ;   安装器的资源解压就是跑 $INSTDIR\resources\_bundle\7z.exe，它一加载就锁住同目录的 7z.dll。
+    ;   若上一次安装（或另一个安装器实例）的 7z 残留，stage 2 用 File 写 _bundle\7z.dll 时
+    ;   必然失败并弹「无法打开要写入的文件」框挂死（正是用户报的 25% 卡死同源故障）。
+    nsExec::Exec '"$SYSDIR\taskkill.exe" /F /IM 7z.exe'
+    Pop $R0
+    StrCpy $R7 "stage0 kill_7z rc=$R0"
+    Call fn_Dbg
+    nsExec::Exec '"$SYSDIR\taskkill.exe" /F /IM 7zG.exe'
     Pop $R0
     Sleep 800
     ; 2) 升级模式：先静默卸旧版，再装（干净覆盖安装）
@@ -1479,8 +1532,10 @@ Function fn_DoInstall
         ExecWait '"$R2\uninstall.exe" /S _?=$R2' $R1
         Sleep 500
     ${EndIf}
-    nsExec::Exec 'taskkill /F /T /IM "${MAINBINARYNAME}.exe"'
+    nsExec::Exec '"$SYSDIR\taskkill.exe" /F /T /IM "${MAINBINARYNAME}.exe"'
     Pop $R0
+    StrCpy $R7 "stage0 kill_main(2nd) rc=$R0"
+    Call fn_Dbg
     Sleep 300
     ; 安装前确保 WebView2 运行时存在（干净机器缺它会起不来）。
     Call InstallWebView2
@@ -1496,8 +1551,41 @@ Function fn_DoInstall
     ${NSD_SetText} $hCurName "主程序"
     !insertmacro SetComp 1 1 "主程序"
     !insertmacro SetInstallProgress 25
-    File "${MAINBINARYSRCPATH}"
-    File "${NAIXI_SRC_TAURI}\icons\icon.ico"
+    SetOutPath $INSTDIR
+
+    ; ★★ 覆盖安装加固（2026-10-08 客机真机复现用户报障后确立）
+    ;   现象：奶昔运行中双击安装器 → 进度到 25% 弹系统级「无法打开要写入的文件」框，安装卡死。
+    ;   根因：旧实例持有 $INSTDIR\naixi-desktop.exe，File 写不进去；
+    ;        stage 0 的单次 taskkill 无任何校验，漏杀时必然卡在这里。
+    ;   修法：写入前「关旧实例 + 等文件可写」；File 失败改为中文提示 + 中止，绝不静默卡死。
+    Call fn_EnsureMainExeWritable
+    StrCmp $R6 1 naixi_exe_writable
+      StrCpy $R7 "stage1 ABORT: exe still locked after 20 rounds"
+      Call fn_Dbg
+      MessageBox MB_OK|MB_ICONSTOP "安装无法继续：主程序文件正被占用。$\r$\n$\r$\n$INSTDIR\${MAINBINARYNAME}.exe$\r$\n$\r$\n请先完全退出奶昔（含任务栏右下角的托盘图标），然后重新运行本安装程序。"
+      Abort
+naixi_exe_writable:
+
+    ; 抑制 NSIS 内建错误框：File 前 ClearErrors，失败靠 IfErrors 捕获并自行弹中文框，
+    ; 否则 File 失败会弹英文「中止/重试/忽略」框并把安装挂死。
+    ClearErrors
+    File /nonfatal "${MAINBINARYSRCPATH}"
+    IfErrors 0 naixi_exe_written
+      StrCpy $R7 "stage1 File FAILED once, kill+retry"
+      Call fn_Dbg
+      nsExec::Exec '"$SYSDIR\taskkill.exe" /F /T /IM "${MAINBINARYNAME}.exe"'
+      Pop $R0
+      Sleep 1500
+      ClearErrors
+      File /nonfatal "${MAINBINARYSRCPATH}"
+      IfErrors 0 naixi_exe_written
+        StrCpy $R7 "stage1 File FAILED twice, abort"
+        Call fn_Dbg
+        MessageBox MB_OK|MB_ICONSTOP "写入主程序失败：$\r$\n$INSTDIR\${MAINBINARYNAME}.exe$\r$\n$\r$\n请先完全退出奶昔后再重试安装。"
+        Abort
+naixi_exe_written:
+    ClearErrors
+    File /nonfatal "${NAIXI_SRC_TAURI}\icons\icon.ico"
     !insertmacro SetComp 1 2 "主程序"
     IntOp $InstallStage $InstallStage + 1
     Return
@@ -1532,9 +1620,32 @@ Function fn_DoInstall
       CreateDirectory "$INSTDIR\resources\engines\llama-cpp"
       CreateDirectory "$INSTDIR\resources\engines\convert"
       ${NSD_SetText} $hProgressStatus "写入安装包资源..."
+      ; ★ /nonfatal + 杀 7z 重试（2026-10-08 客机交互式安装抓到 _bundle\7z.dll 被锁后确立）：
+      ;   无 /nonfatal 时任一资源被占用就弹系统「无法打开要写入的文件」框并把安装挂死；
+      ;   有了它只置错误标志，这里捕获后杀掉残留 7z 重试一次，最后给出可读的中文提示而非挂死。
+      StrCpy $R9 0
+naixi_res_write_try:
+      ClearErrors
       {{#each resources}}
-        File /a "/oname={{this.[1]}}" "{{no-escape @key}}"
+        File /nonfatal /a "/oname={{this.[1]}}" "{{no-escape @key}}"
       {{/each}}
+      IfErrors 0 naixi_res_write_ok
+      IntOp $R9 $R9 + 1
+      StrCpy $R7 "stage2 res write retry=$R9"
+      Call fn_Dbg
+      StrCmp $R9 1 0 naixi_res_write_fail
+      nsExec::Exec '"$SYSDIR\taskkill.exe" /F /IM 7z.exe'
+      Pop $R0
+      nsExec::Exec '"$SYSDIR\taskkill.exe" /F /IM 7zG.exe'
+      Pop $R0
+      Sleep 1500
+      Goto naixi_res_write_try
+naixi_res_write_fail:
+      StrCpy $R7 "stage2 res write FAILED twice, abort"
+      Call fn_Dbg
+      MessageBox MB_OK|MB_ICONSTOP "写入安装资源失败，安装无法继续。$\r$\n$\r$\n$INSTDIR\resources$\r$\n$\r$\n请先完全退出奶昔、并确认没有其它奶昔安装程序正在运行，然后重新安装。"
+      Abort
+naixi_res_write_ok:
       ; 读取分卷总数（build.rs 生成，纯整数、无换行）
       StrCpy $PartTotal 1
       ${If} ${FileExists} "$INSTDIR\resources\_bundle\part_count.txt"
@@ -1617,9 +1728,16 @@ Function fn_DoInstall
     ${NSD_SetText} $hCurName "依赖运行库"
     !insertmacro SetComp 5 1 "依赖运行库"
     !insertmacro SetInstallProgress 70
+    ClearErrors
     {{#each binaries}}
-      File /a "/oname={{this}}" "{{no-escape @key}}"
+      File /nonfatal /a "/oname={{this}}" "{{no-escape @key}}"
     {{/each}}
+    IfErrors 0 naixi_bin_written
+    StrCpy $R7 "stage3 bin write FAILED, abort"
+    Call fn_Dbg
+    MessageBox MB_OK|MB_ICONSTOP "写入依赖文件失败，安装无法继续。$\r$\n$\r$\n请先完全退出奶昔后重新安装。"
+    Abort
+naixi_bin_written:
     !insertmacro SetComp 5 2 "依赖运行库"
     IntOp $InstallStage $InstallStage + 1
     Return
