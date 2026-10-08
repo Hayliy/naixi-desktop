@@ -30,11 +30,20 @@ ${StrCase}
 ${StrLoc}
 
 ; 窗口子类化插件（来源可靠，已下载至 src-tauri/nsis_plugins/），用于让 banner 可原生拖动
-; 注意：必须用绝对路径。Tauri 打包时会把 installer.nsi 复制到 target/release/nsis/x64/ 再编译，
-; 此时 ${__FILEDIR__} 指向临时目录，相对路径无法找到插件。
-!addplugindir "D:\naixi_desktop\src-tauri\nsis_plugins\WndSubclass\Plugins\x86-unicode"
-!addincludedir "D:\naixi_desktop\src-tauri\nsis_plugins\WndSubclass\Include"
-!include "D:\naixi_desktop\src-tauri\nsis_plugins\WndSubclass\Include\WndSubclass.nsh"
+;
+; 路径必须动态推导，严禁写死盘符（曾写死 "D:\naixi_desktop\..."，而项目实际在
+; D:\数据\naixi_desktop\，换一个目录/盘符打包就直接 abort：makensis 报
+; could not find ".../nsis_plugins/WndSubclass/Include/WndSubclass.nsh"）。
+;
+; ${__FILEDIR__} 是 NSIS 内置常量 = 当前脚本所在目录的**完整路径**。Tauri 打包时会把本
+; installer.nsi 复制到 <project>/src-tauri/target/release/nsis/x64/ 再编译，因此：
+;     x64 -> nsis -> release -> target -> src-tauri   （上溯 4 级）
+; 用它拼出的仍是绝对路径，makensis 按绝对路径解析成功；相对路径则依赖 makensis 的
+; 当前工作目录，不可靠（这正是旧注释说"相对路径无法找到插件"的原因）。
+!define NAIXI_SRC_TAURI "${__FILEDIR__}\..\..\..\.."
+!addplugindir "${NAIXI_SRC_TAURI}\nsis_plugins\WndSubclass\Plugins\x86-unicode"
+!addincludedir "${NAIXI_SRC_TAURI}\nsis_plugins\WndSubclass\Include"
+!include "${NAIXI_SRC_TAURI}\nsis_plugins\WndSubclass\Include\WndSubclass.nsh"
 
 ; 默认简体中文（安装进度页等内置界面）
 LoadLanguageFile "${NSISDIR}\Contrib\Language files\SimpChinese.nlf"
@@ -220,10 +229,10 @@ Var PartTotal
 Name "奶昔 · 桌面智能体"
 BrandingText " "
 OutFile "${OUTFILE}"
-Icon "D:\naixi_desktop\src-tauri\icons\icon.ico"
+Icon "${NAIXI_SRC_TAURI}\icons\icon.ico"
 ; 卸载器图标必须用 BMP(DIB) 格式 ICO：NSIS 在 WriteUninstaller 时替换卸载器桩图标资源，
 ; 对 PNG 压缩内嵌的 ICO 兼容性差会静默失败回退默认图标。uninstall.ico 由 make_uninstall_ico.py 生成。
-UninstallIcon "D:\naixi_desktop\src-tauri\icons\uninstall.ico"
+UninstallIcon "${NAIXI_SRC_TAURI}\icons\uninstall.ico"
 !define PLACEHOLDER_INSTALL_DIR "placeholder\${PRODUCTNAME}"
 InstallDir "${PLACEHOLDER_INSTALL_DIR}"
 
@@ -968,28 +977,28 @@ UninstPage custom un.Done
 Function un.onInit
   InitPluginsDir
   SetOutPath $PLUGINSDIR
-  File "D:\naixi_desktop\src-tauri\installer\banner_uninstall.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\num1_on.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\num1_off.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\num2_on.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\num2_off.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\num3_on.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\num3_off.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\btn_next.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\btn_finish.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\btn_uninstalling.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\btn_prev.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\btn_uninstall.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\btn_min.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\btn_close.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\txt_step_u1_on.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\txt_step_u1_off.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\txt_step_u2_on.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\txt_step_u2_off.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\txt_step_u3_on.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\txt_step_u3_off.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\dot_uninstall.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\warn_uninstall.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\banner_uninstall.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\num1_on.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\num1_off.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\num2_on.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\num2_off.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\num3_on.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\num3_off.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\btn_next.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\btn_finish.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\btn_uninstalling.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\btn_prev.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\btn_uninstall.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\btn_min.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\btn_close.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\txt_step_u1_on.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\txt_step_u1_off.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\txt_step_u2_on.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\txt_step_u2_off.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\txt_step_u3_on.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\txt_step_u3_off.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\dot_uninstall.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\warn_uninstall.bmp"
 
   System::Call 'gdi32::CreateFont(i -19, i 0, i 0, i 0, i 700, i 0, i 0, i 0, i 0x01, i 0, i 0, i 0, i 0, t "Microsoft YaHei") i .r0'
   StrCpy $hFontTitle $0
@@ -1454,7 +1463,7 @@ Function fn_DoInstall
     !insertmacro SetComp 1 1 "主程序"
     !insertmacro SetInstallProgress 25
     File "${MAINBINARYSRCPATH}"
-    File "D:\naixi_desktop\src-tauri\icons\icon.ico"
+    File "${NAIXI_SRC_TAURI}\icons\icon.ico"
     !insertmacro SetComp 1 2 "主程序"
     IntOp $InstallStage $InstallStage + 1
     Return
@@ -1742,25 +1751,25 @@ FunctionEnd
 Function .onInit
   InitPluginsDir
   SetOutPath $PLUGINSDIR
-  File "D:\naixi_desktop\src-tauri\installer\banner.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\num1_on.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\num1_off.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\num2_on.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\num2_off.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\num3_on.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\num3_off.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\num4_on.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\num4_off.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\btn_next.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\btn_install.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\btn_installing.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\btn_finish.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\btn_prev.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\btn_browse.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\btn_min.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\btn_close.bmp"
-  File "D:\naixi_desktop\src-tauri\installer\addr_border.bmp"
-  File "D:\naixi_desktop\src-tauri\icons\icon.ico"
+  File "${NAIXI_SRC_TAURI}\installer\banner.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\num1_on.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\num1_off.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\num2_on.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\num2_off.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\num3_on.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\num3_off.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\num4_on.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\num4_off.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\btn_next.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\btn_install.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\btn_installing.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\btn_finish.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\btn_prev.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\btn_browse.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\btn_min.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\btn_close.bmp"
+  File "${NAIXI_SRC_TAURI}\installer\addr_border.bmp"
+  File "${NAIXI_SRC_TAURI}\icons\icon.ico"
 
   System::Call 'gdi32::CreateFont(i -19, i 0, i 0, i 0, i 700, i 0, i 0, i 0, i 0x01, i 0, i 0, i 0, i 0, t "Microsoft YaHei") i .r0'
   StrCpy $hFontTitle $0
