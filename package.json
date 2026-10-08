@@ -1,7 +1,7 @@
 {
   "name": "naixi-desktop",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -18,6 +18,8 @@
     "verify:gw": "python scripts/verify/gw_route_audit.py && python scripts/verify/gw_data_check.py && node scripts/verify/gw_ssr_check.cjs",
     "verify:gw-interactive": "python scripts/verify/gw_interactive.py",
     "sync:core": "python scripts/sync_core_copy.py --sync",
+    "bundle:engine": "node scripts/bundle_engine.cjs",
+    "bundle:converter": "node scripts/bundle_converter.cjs",
     "check:core": "python scripts/sync_core_copy.py",
     "pretauri": "node scripts/sync-version.mjs",
     "tauri": "tauri"

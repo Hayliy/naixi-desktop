@@ -39,6 +39,48 @@ from ctypes import wintypes, Structure, byref, sizeof
 # 导致「后端 CPU」恒 0、健康分 CPU 项永远满分、CPU 型自愈永不触发。
 from desktop_core import sys_metrics as _sys_metrics
 
+# ── 同步阻塞调用卸载 + 单飞缓存（根治首屏并发抖动，2026-10-08）──
+# 实证：aiohttp 单线程事件循环被一堆 async handler 里的**同步阻塞调用**
+# （SQLite 新建连接/逐表 COUNT、psutil、同步哈希主程序 exe、nvidia-smi 子进程等）卡死 ——
+# 零 IO 的 ping 端点在并发压力下被拖到 6.5s（本应 <1ms）。
+# 修法：把同步重活统一丢进专用线程池，事件循环立刻空出来继续调度其它请求；
+# 并对「同 key 并发冷请求」做单飞（singleflight）——只算一次，其余复用同一 future，
+# 避免 N 个并发请求各自触发一次全量重算（之前只给 config 套 executor 没单飞，反而更慢）。
+from concurrent.futures import ThreadPoolExecutor
+_SYNC_EXECUTOR = ThreadPoolExecutor(max_workers=16, thread_name_prefix="naixi-sync")
+# 单飞缓存：key -> [expire_ts, value | Future]
+_RUN_CACHE: dict = {}
+_RUN_CACHE_TTL = 2.0  # 秒，调用方可按需覆盖
+
+async def run_blocking(key, fn, ttl=None):
+    """把同步阻塞函数 fn 丢到专用线程池执行，不阻塞事件循环。
+    同一 key 在 TTL 内（含计算进行中）只算一次：并发请求复用结果或等待同一 future。"""
+    ttl = _RUN_CACHE_TTL if ttl is None else ttl
+    now = time.monotonic()
+    entry = _RUN_CACHE.get(key)
+    if entry is not None:
+        exp, val = entry
+        if exp > now:
+            if isinstance(val, asyncio.Future):
+                return await val          # 等正在进行的那次算完
+            return val                     # 命中缓存
+    # 标记进行中：事件循环单线程，下方赋值前无 await，天然原子，不会有两个协程同时写
+    loop = asyncio.get_running_loop()
+    fut = loop.create_future()
+    _RUN_CACHE[key] = [now + ttl, fut]
+    try:
+        result = await loop.run_in_executor(_SYNC_EXECUTOR, fn)
+    except Exception as e:
+        _RUN_CACHE.pop(key, None)
+        if not fut.done():
+            fut.set_exception(e)
+        raise
+    _RUN_CACHE[key] = [time.monotonic() + ttl, result]
+    if not fut.done():
+        fut.set_result(result)
+    return result
+
+
 def _win_cpu_times():
     """返回 (idle, kernel, user) 的 64 位 FILETIME 计数值；失败返回 (0,0,0)。
 
@@ -658,58 +700,60 @@ async def api_desktop_status(request):
 
 async def api_stats(request):
     """奶昔桌面端运维数据：后端自身状态 + 服务 + 数据库 + 提供商"""
-    import os as _os, json, time as _time, asyncio
-    try:
-        import psutil
-    except ImportError:
-        psutil = None
+    import json, asyncio
     from desktop_core.storage import meta_get, _get_conn
-    
-    self_pid = _os.getpid()
-    try:
-        self_proc = psutil.Process(self_pid)
-        self_mem = round(self_proc.memory_info().rss / (1024**2), 1)
-        # 后端 CPU：统计两次轮询间的平均占用，避免空闲进程瞬时采样恒为 0
-        ct = self_proc.cpu_times()
-        now = _time.time()
-        prev = getattr(api_stats, "_cpu_prev", None)
-        if prev is None:
-            self_cpu = 0.0
-        else:
-            dw = now - prev["wall"]
-            dp = (ct.user + ct.system) - prev["proc"]
-            self_cpu = round(max(0.0, min((dp / dw) * 100.0, 100.0)), 1) if dw > 0.01 else 0.0
-        api_stats._cpu_prev = {"wall": now, "proc": ct.user + ct.system}
-    except:
-        self_mem = 0; self_cpu = 0
 
-    conn = _get_conn()
-    db_size, db_tables = 0, []
-    try:
-        # ★ 数据库文件路径必须用存储层解析出的真实路径（单一真相源）。
-        # 2026-09-20 实测：此处原为 dirname(__file__) 硬推，"../data/xxx.db"，
-        # 安装态下该路径并不存在（真实库在 DESKTOP_DIR/data 下），
-        # 于是 db_size 恒为 0 → 仪表盘「数据库大小」永远显示 0MB（用户可见的错误数据）。
-        # 顺带遵循项目铁则：读写数据目录禁止用 dirname 硬推。
-        from desktop_core import storage as _st
-        db_path = _st.DB_PATH or ""
-        if not db_path or not _os.path.exists(db_path):
-            for _cand in (
-                _os.path.join(_os.environ.get("DESKTOP_DIR", ""), "data", "naixi_desktop.db"),
-                _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "data", "naixi_desktop.db"),
-            ):
-                if _cand and _os.path.exists(_cand):
-                    db_path = _cand
-                    break
-        if db_path and _os.path.exists(db_path):
-            db_size = _os.path.getsize(db_path)
-        tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
-        for r in tables:
-            cnt = conn.execute(f'SELECT COUNT(*) as c FROM "{r[0]}"').fetchone()["c"]
-            db_tables.append({"name": r[0], "count": cnt})
-        conn.close()
-    except:
-        pass
+    self_pid = os.getpid()
+    # ★ 性能（2026-10-08）：psutil 采样 + 对**每张表** SELECT COUNT(*) 是同步 SQLite/系统调用，
+    # 在事件循环里直接跑会把整个后端冻住（首屏并发时零 IO 的 ping 被拖到 6.5s）。
+    # 丢进专用线程池 + 2s 单飞缓存：并发冷请求只算一次，且不阻塞事件循环。
+    def _sync_stats():
+        try:
+            import psutil
+        except ImportError:
+            psutil = None
+        try:
+            self_proc = psutil.Process(self_pid)
+            self_mem = round(self_proc.memory_info().rss / (1024**2), 1)
+            # 后端 CPU：统计两次轮询间的平均占用，避免空闲进程瞬时采样恒为 0
+            ct = self_proc.cpu_times()
+            now = time.time()
+            prev = getattr(api_stats, "_cpu_prev", None)
+            if prev is None:
+                self_cpu = 0.0
+            else:
+                dw = now - prev["wall"]
+                dp = (ct.user + ct.system) - prev["proc"]
+                self_cpu = round(max(0.0, min((dp / dw) * 100.0, 100.0)), 1) if dw > 0.01 else 0.0
+            api_stats._cpu_prev = {"wall": now, "proc": ct.user + ct.system}
+        except Exception:
+            self_mem = 0; self_cpu = 0
+        db_size, db_tables = 0, []
+        try:
+            # 数据库文件路径必须用存储层解析出的真实路径（单一真相源）
+            from desktop_core import storage as _st
+            db_path = _st.DB_PATH or ""
+            if not db_path or not os.path.exists(db_path):
+                for _cand in (
+                    os.path.join(os.environ.get("DESKTOP_DIR", ""), "data", "naixi_desktop.db"),
+                    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "naixi_desktop.db"),
+                ):
+                    if _cand and os.path.exists(_cand):
+                        db_path = _cand
+                        break
+            if db_path and os.path.exists(db_path):
+                db_size = os.path.getsize(db_path)
+            conn = _get_conn()
+            tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
+            for r in tables:
+                cnt = conn.execute(f'SELECT COUNT(*) as c FROM "{r[0]}"').fetchone()["c"]
+                db_tables.append({"name": r[0], "count": cnt})
+            conn.close()
+        except Exception:
+            pass
+        return self_mem, self_cpu, db_size, db_tables
+
+    self_mem, self_cpu, db_size, db_tables = await run_blocking("stats_db", _sync_stats, ttl=2)
 
     raw = meta_get("desktop_config")
     providers = []
@@ -725,10 +769,12 @@ async def api_stats(request):
     services = {}
     for name, port in ports.items():
         try:
-            _, w = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", port), timeout=1)
+            # SearXNG 通常没跑：未监听端口的 connect 在回环上要等满超时，
+            # 1s 太浪费，压到 0.3s 足够判定（这是异步非阻塞，不会冻事件循环）
+            _, w = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", port), timeout=0.3)
             w.close(); await w.wait_closed()
             services[name] = True
-        except:
+        except Exception:
             services[name] = False
 
     return web.json_response({
@@ -885,6 +931,30 @@ async def api_desktop_config_get(request):
     # 自修复：补齐缺失顶层键 + 打 schema_version 戳，避免老库缺键导致前端按"未配"渲染/KeyError
     config = config_schema.migrate_desktop_config(meta_get("desktop_config", ""))
     mask_config(config)  # 掩码 api_key，永不返回明文
+
+    # ★ 把本机在跑的推理服务**临时**并入返回给前端的 provider 列表：
+    #   Chat 页的模型下拉是从 `config.api_providers` 构建的，不注入就永远只有云端选项，
+    #   本地模型"装了却选不到"。
+    #   只改这次响应的**内存副本**，绝不写回配置库 —— 服务停了条目自然消失，
+    #   不会在设置页里留下一个改不动的僵尸供应商。
+    #
+    # 性能（2026-10-07）：这里的 meta_get + _local_provider_entries 天然带 TTL 缓存
+    #   （见 _META_CACHE / _LOCAL_ENTRIES_CACHE），命中时是 0ms。
+    #   **试过 run_in_executor 丢线程池，反而更慢**（并发 5 请求总墙钟 7.66s → 18.35s）：
+    #   线程池没有减少总工作量，默认线程池又与 aiohttp 其它用途抢占，
+    #   5 个并发各自触发一次冷探测反而互相竞争。**瓶颈是"探测次数"不是"阻塞位置"**，
+    #   解法是缓存命中而非换执行位置 —— 前端首屏并发打过来时几乎全命中缓存。
+    try:
+        local = _local_provider_entries()
+        if local:
+            cfg_prov = config.get("api_providers")
+            if not isinstance(cfg_prov, dict):
+                cfg_prov = {}
+                config["api_providers"] = cfg_prov
+            for pid, pcfg in local.items():
+                cfg_prov[pid] = dict(pcfg)   # api_key 用占位 "local"，非真实密钥
+    except Exception:
+        pass
     return web.json_response(config)
 
 
@@ -1884,6 +1954,154 @@ async def api_desktop_platforms(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
+def _probe_openai_models(base_url: str, timeout: float = 1.5) -> list:
+    """问 OpenAI 兼容服务端点它当前加载了哪些模型（GET /v1/models）。
+
+    为什么需要：服务可能是**外部启动**的（用户自己开的 llama-server / Ollama），
+    本模块的 _SERVER 里没有记录，光看自己拉起的实例会漏。
+    """
+    try:
+        import urllib.request
+        req = urllib.request.Request(base_url.rstrip("/") + "/models",
+                                     headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            d = json.loads(r.read().decode("utf-8", "replace"))
+        return [m.get("id") or m.get("name") for m in (d.get("data") or []) if m]
+    except Exception:
+        return []
+
+
+def _local_supports_tools(base_url: str, timeout: float = 1.5) -> bool:
+    """探测本地服务当前模型**支不支持工具调用**。
+
+    ★ 关键：不能按"是不是本地模型"一刀切。
+      本地部署未必是小模型 —— 5090 上跑 70B、甚至支持 tool calling 的模型完全可能。
+      按"本地=弱"一刀切会**平白砍掉强模型的能力**（用户明确点名这条）。
+
+    判据：llama-server 在 `/v1/models` 的 `models[].capabilities` 里声明能力
+    （实测：Qwen3-0.6B 是 `["completion"]`；支持工具调用的模型会含 `"tools"`）。
+    探测失败时**保守返回 False**（宁可少给工具，也不要因 schema 不兼容直接 400）。
+    """
+    try:
+        import urllib.request
+        req = urllib.request.Request(base_url.rstrip("/") + "/models",
+                                     headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            d = json.loads(r.read().decode("utf-8", "replace"))
+        for m in (d.get("models") or []):
+            caps = m.get("capabilities") or []
+            if any(str(c).lower() in ("tools", "tool_calls", "function_calling")
+                   for c in caps):
+                return True
+        # 老版本 llama.cpp 不声明 capabilities：退化用"是否报 tools 相关"判断不了，
+        # 就保守当不支持（避免 400）
+        return False
+    except Exception:
+        return False
+
+
+# ★ 性能（2026-10-07）：`_local_provider_entries()` 的短 TTL 缓存。
+#   它内部要做同步 socket 端口探测 + urllib 探测本地推理服务，
+#   而 /api/desktop/config 会被前端多个组件反复调用（Chat/设置/首页…），
+#   每次都探测会让这个端点慢到数秒（实测 4.5s，且会阻塞 aiohttp 事件循环）。
+#   本地推理服务的启停是**低频**事件（用户手动启停），TTL 2s 完全够用，
+#   既不误报状态变化，又能把重复调用压成一次探测。
+_LOCAL_ENTRIES_CACHE: dict = {"ts": 0.0, "value": {}}
+_LOCAL_ENTRIES_TTL = 2.0  # 秒
+
+
+def _local_provider_entries_uncached() -> dict:
+    """本机在跑的推理服务 → 伪装成 OpenAI 兼容 provider，让主对话链路能选它。
+
+    **为什么必须做**：主对话 `/api/chat/stream` 只从 `cfg["api_providers"]` 里挑
+    云端供应商，本地模型根本不在候选里 —— 于是「本地模型页能启动、能测试对话，
+    但 Chat 页用不了」，装了等于白装（用户：不能只装不用）。
+
+    做法：llama-server / Ollama 本身就是 OpenAI 兼容的，把它们的地址包成一个
+    provider 条目即可，主链路**一行都不用改**（它本来就发标准
+    `Authorization: Bearer` + `/v1/chat/completions` 流式请求）。
+
+    返回 {pid: pcfg}；没在跑就返回 {}（不占候选位，避免"选了却连不上"）。
+    """
+    out = {}
+    try:
+        from desktop_core import local_model as _lm
+        st = _lm.get_status() or {}
+    except Exception:
+        return out
+
+    # ① llama.cpp（本模块拉起的，或用户自己开的，都算）
+    if st.get("llamacpp_running"):
+        port = st.get("llamacpp_port") or _lm.LLAMACPP_PORT
+        base = f"http://127.0.0.1:{port}/v1"
+        # 优先用自己记录的模型名；没记录（外部启动）就问服务端
+        model = ""
+        if st.get("self_model"):
+            model = os.path.basename(str(st["self_model"]))
+        if not model:
+            names = _probe_openai_models(base)
+            model = names[0] if names else ""
+        if model:
+            out["__local_llamacpp__"] = {
+                "model": model,
+                # ★ 必须给**完整 chat 端点**，不能只给 `.../v1`：
+                #   主链路是 `session.post(api_url, ...)`，直接用原值发请求，
+                #   不像别处会自动补 `/chat/completions`。只给 base 会 404。
+                "api_url": base.rstrip("/") + "/chat/completions",
+                # ★ 令牌要带**真实值**：服务开了 --api-key 后，占位串会被 401 拒，
+                #   奶昔自己反而调不动本地模型（实测）。没开鉴权时给占位串即可。
+                #   注意 api_key 在 get_status() 里放在 endpoint 子字典，顶层没有。
+                "api_key": (st.get("endpoint", {}).get("api_key") or "local"),
+                "type": "chat",
+                "local": True,
+            }
+
+    # ② Ollama（也提供 OpenAI 兼容端点）
+    if st.get("ollama_running"):
+        port = st.get("ollama_port") or 11434
+        base = f"http://127.0.0.1:{port}/v1"
+        names = _probe_openai_models(base)
+        if names:
+            out["__local_ollama__"] = {
+                "model": names[0],
+                "api_url": base.rstrip("/") + "/chat/completions",
+                "api_key": "local",
+                "type": "chat",
+                "local": True,
+            }
+    return out
+
+
+def _invalidate_local_entries_cache():
+    """本地推理服务启停后调用，立刻让下一次 `_local_provider_entries()` 重算，
+    不必等 TTL 自然过期（用户点了「启动」后希望模型立刻出现在 Chat 下拉里）。"""
+    _LOCAL_ENTRIES_CACHE["ts"] = 0.0
+    _LOCAL_ENTRIES_CACHE["value"] = {}
+    # get_status 自己也有 1s 缓存（探测端口很贵），一并失效，否则状态显示滞后最多 1s
+    try:
+        from desktop_core import local_model as _lm
+        _lm.invalidate_status_cache()
+    except Exception:
+        pass
+
+
+def _local_provider_entries() -> dict:
+    """带 TTL 缓存的入口（见上方 `_LOCAL_ENTRIES_CACHE` 处的性能说明）。
+
+    返回**拷贝**：调用方（`api_desktop_config_get`）会把条目塞进响应配置里，
+    直接返回缓存对象可能被调用方就地改写，这里多拷一层最省事也最安全。
+    """
+    import time as _time
+    now = _time.time()
+    if now - _LOCAL_ENTRIES_CACHE["ts"] < _LOCAL_ENTRIES_TTL:
+        cached = _LOCAL_ENTRIES_CACHE["value"]
+        return {k: dict(v) for k, v in cached.items()}
+    val = _local_provider_entries_uncached()
+    _LOCAL_ENTRIES_CACHE["ts"] = now
+    _LOCAL_ENTRIES_CACHE["value"] = {k: dict(v) for k, v in val.items()}
+    return val
+
+
 async def api_chat_stream(request):
     """从已保存的配置调用 LLM 并流式返回"""
     try:
@@ -1899,7 +2117,11 @@ async def api_chat_stream(request):
             return web.json_response({"error": "请先在设置中配置 API Key"}, status=400)
         cfg = json.loads(raw)
         decrypt_config(cfg)  # 解密 api_key
-        providers = cfg.get("api_providers", {})
+        providers = dict(cfg.get("api_providers", {}))
+        # ★ 把本机在跑的推理服务并进候选 —— 否则本地模型在 Chat 页永远选不到
+        #   （只在"本地模型页"的测试框里能用），装了等于白装。
+        # 用 dict(...) 拷贝：绝不把虚拟条目写回用户持久化的配置。
+        providers.update(_local_provider_entries())
 
         # 找供应商：① 精确匹配 model 名；② model 为 auto/default/空 或未匹配到时，
         # 回退到「第一个 key 有效的 chat 供应商」，并把【实际请求模型】改为该供应商配置的模型。
@@ -2085,13 +2307,32 @@ async def api_chat_stream(request):
                 # 首轮只发 20 核心工具 + MCP，避免 token 爆炸；
                 # 后续轮次 LLM 已了解可用能力，发全部工具
                 current_tools = tools.get_fast_definitions() if round_num == 0 else TOOLS
-                payload = {
-                    "model": model,
-                    "messages": messages,
-                    "tools": current_tools,
-                    "tool_choice": "auto",
-                    "stream": False,
-                }
+                # ★ 是否发工具定义 —— 按**模型能力**判断，不是按"本地/云端"。
+                #   本地部署完全可能是 5090 跑支持 tool calling 的大模型，
+                #   按"本地=小模型=不能用工具"一刀切会平白砍掉它的能力（用户点名这条）。
+                #   判据：llama-server 在 /v1/models 的 capabilities 里声明是否含 "tools"。
+                #   探测不到就保守不发 —— 因为实测 llama.cpp(b10883) 收到
+                #   23 个工具/6KB schema 会直接 400，宁可少给也不能让整轮对话失败。
+                _use_tools = True
+                if str(provider_id or "").startswith("__local_"):
+                    _use_tools = _local_supports_tools(str(api_url or "").replace(
+                        "/chat/completions", ""))
+                    if not _use_tools:
+                        log.info("[chat] 本地模型未声明工具能力：本次走纯对话（不发工具定义）")
+                if _use_tools:
+                    payload = {
+                        "model": model,
+                        "messages": messages,
+                        "tools": current_tools,
+                        "tool_choice": "auto",
+                        "stream": False,
+                    }
+                else:
+                    payload = {
+                        "model": model,
+                        "messages": messages,
+                        "stream": False,
+                    }
                 async with aiohttp.ClientSession(headers=headers) as session:
                     async with session.post(api_url, json=payload, timeout=aiohttp.ClientTimeout(total=120)) as resp:
                         if resp.status != 200:
@@ -2510,12 +2751,27 @@ async def api_gateway_access(request):
     tok_raw = os.environ.get("NAIXI_MCP_TOKENS", "").strip()
     tokens = [t.split(":", 1)[0] for t in tok_raw.split(";") if ":" in t]
 
+    # WS 控制面（对等互联 mesh）的实际绑定与 token 状态 ——
+    # 让前端能如实显示「mesh 是否局域网可达 / 是否开了认证」，
+    # 而非一律展示本机地址（绑 127.0.0.1 时局域网地址其实连不上）。
+    try:
+        from desktop_core import gateway_hub as _gh
+        _ws_host = _gh.WS_HOST
+        _ws_tokens = list(_gh.TOKENS.keys())
+    except Exception:
+        _ws_host, _ws_tokens = "127.0.0.1", []
+    _ws_lan = _ws_host not in ("127.0.0.1", "localhost", "::1")
+
     return web.json_response({
         "ok": True,
         "provider": GATEWAY_PROVIDER_ID,
         "http_port": 9845,
         "ws_port": ws_port,
         "ws_path": "/ws/gateway",
+        "ws_host": _ws_host,
+        "ws_lan_reachable": _ws_lan,
+        "ws_token_configured": bool(_ws_tokens),
+        "ws_token_count": len(_ws_tokens),
         "lan_ip": ip,
         "localhost_url": f"http://127.0.0.1:{mcp_port}/mcp",
         "lan_url": f"http://{ip}:{mcp_port}/mcp",
@@ -2551,6 +2807,233 @@ async def api_gateway_access(request):
             ),
         },
     })
+
+
+async def api_gateway_mesh_get(request):
+    """GET /api/gateway/mesh —— 跨机互联开关状态（供 UI 渲染傻瓜开关）。
+
+    token 在此明文返回是**有意的**：本接口只监听 127.0.0.1（仅本机 UI 可达），
+    且用户需要把口令复制给对面设备。这是"傻瓜模式"能成立的关键。
+    """
+    from desktop_core import gateway_hub as _gh
+    st = _gh.get_mesh_state()
+    ip = _lan_ip()
+    ws_port = _GATEWAY_WS_STATE.get("port") or 18400
+    st["lan_ip"] = ip
+    st["local_url"] = f"ws://127.0.0.1:{ws_port}/ws/gateway"
+    st["ws_url"] = f"ws://{ip}:{ws_port}/ws/gateway"
+    st["ws_path"] = _gh.WS_PATH
+    return web.json_response({"ok": True, **st})
+
+
+async def api_gateway_mesh_set(request):
+    """POST /api/gateway/mesh {"enabled": true|false, "regenerate": true|false}
+
+    - enabled：开/关跨机互联（傻瓜开关）。开启时若无口令则自动生成并持久化，
+      用户无需自拟；并接管「开放接入 MCP」进程（0.0.0.0 + 同一口令），这样
+      **任何兼容 MCP 的工具**（Claude Code / Cursor / Cline / 别人的脚本）
+      都能从别的设备连进来——这是通用通道，不限自家对端。
+      本机 bot↔桌面自连不受影响（本机永远免口令）。
+    - regenerate：强制换一个连接口令（旧口令立即作废）。口令是子进程启动时
+      注入的，所以必须重启 MCP 才生效——否则新旧口令不一致，等于全断。
+    - token：高级档让用户**自己指定**口令（弱口令会被拒：>=8 位且含字母+数字）。
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    from desktop_core import gateway_hub as _gh
+
+    # 高级档：自定义口令（优先于 regenerate）
+    if data.get("token"):
+        try:
+            st = _gh.set_custom_token(str(data["token"]))
+        except ValueError as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=400)
+        if st.get("enabled"):
+            # 口令变了 → 必须重启 MCP 让它拿新口令，否则外部全连不上
+            _stop_mcp_server()
+            _start_mcp_server()
+        return web.json_response({"ok": True, "customized": True, **st})
+
+    regenerate = bool(data.get("regenerate"))
+    if regenerate:
+        st = _gh.regenerate_token()
+        if st.get("enabled"):
+            # 口令变了 → 必须重启 MCP 让它拿新口令，否则外部全连不上
+            _stop_mcp_server()
+            _start_mcp_server()
+        log.info("[Gateway] 连接口令已重新生成")
+        return web.json_response({"ok": True, "regenerated": True, **st})
+
+    enabled = bool(data.get("enabled"))
+    st = _gh.set_mesh(enabled)
+    if enabled:
+        _start_mcp_server()
+    else:
+        _stop_mcp_server()
+    log.info("[Gateway] 跨机互联已%s", "开启" if enabled else "关闭")
+    return web.json_response({"ok": True, **st})
+
+
+# ── 高级档：运行时互联参数（可填、且真生效）──────────────────────
+# 为什么需要这个：GATEWAY_WS_HOST / GATEWAY_WS_PORT 在 gateway_hub 里是
+# **模块加载时读一次**的常量，改进程 os.environ 对已运行的实例无效。
+# 所以这里不是"读环境变量"，而是：改 gateway_hub 的运行时值 → 停掉 WS → 重新起，
+# 让用户填的东西立刻反映到真实的监听地址上。
+_ADV_HOSTS = ("127.0.0.1", "0.0.0.0")
+
+
+async def api_gateway_advanced_get(request):
+    """GET /api/gateway/advanced —— 高级档：当前真实生效的互联参数。"""
+    from desktop_core import gateway_hub as _gh
+    st = _GATEWAY_WS_STATE
+    return web.json_response({
+        "ok": True,
+        "ws_host": _gh.WS_HOST,
+        "ws_port_base": _gh.WS_PORT,
+        "ws_port_active": st.get("port") or _gh.WS_PORT,
+        "ws_path": _gh.WS_PATH,
+        "mcp_host": _mcp_bind_host(),
+        "mcp_port": int(os.environ.get("NAIXI_MCP_PORT", "9846")),
+        "mcp_running": bool(_MCP_PROC.get("proc") and _MCP_PROC["proc"].poll() is None),
+    })
+
+
+async def api_gateway_advanced_set(request):
+    """POST /api/gateway/advanced {"ws_host": "...", "ws_port": 18400}
+
+    改完立即重启 WS 控制平面让新地址生效（端口被占时仍按原逻辑向后试探）。
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    from desktop_core import gateway_hub as _gh
+
+    changed = []
+    host = str(data.get("ws_host") or "").strip()
+    if host and host != _gh.WS_HOST:
+        if host not in _ADV_HOSTS:
+            return web.json_response(
+                {"ok": False, "error": f"绑定地址只支持 {' 或 '.join(_ADV_HOSTS)}"}, status=400)
+        _gh.WS_HOST = host
+        changed.append("ws_host")
+
+    port = data.get("ws_port")
+    if port:
+        try:
+            port = int(port)
+        except (TypeError, ValueError):
+            return web.json_response({"ok": False, "error": "端口必须是数字"}, status=400)
+        if not (1024 <= port <= 65535):
+            return web.json_response({"ok": False, "error": "端口需在 1024~65535 之间"}, status=400)
+        if port != _gh.WS_PORT:
+            _gh.WS_PORT = port
+            changed.append("ws_port")
+
+    mcp_port = data.get("mcp_port")
+    if mcp_port:
+        try:
+            mcp_port = int(mcp_port)
+        except (TypeError, ValueError):
+            return web.json_response({"ok": False, "error": "MCP 端口必须是数字"}, status=400)
+        if not (1024 <= mcp_port <= 65535):
+            return web.json_response({"ok": False, "error": "端口需在 1024~65535 之间"}, status=400)
+        if mcp_port != int(os.environ.get("NAIXI_MCP_PORT", "9846")):
+            os.environ["NAIXI_MCP_PORT"] = str(mcp_port)
+            changed.append("mcp_port")
+
+    mcp_host = str(data.get("mcp_host") or "").strip()
+    if mcp_host and mcp_host != _mcp_bind_host():
+        if mcp_host not in _ADV_HOSTS:
+            return web.json_response(
+                {"ok": False, "error": f"绑定地址只支持 {' 或 '.join(_ADV_HOSTS)}"}, status=400)
+        os.environ["NAIXI_MCP_HOST"] = mcp_host
+        changed.append("mcp_host")
+
+    if not changed:
+        return web.json_response({"ok": True, "changed": [], "message": "没有改动"})
+
+    # 改 WS 参数 → 停掉再起（否则端口/地址还是老的）
+    if "ws_host" in changed or "ws_port" in changed:
+        await _stop_gateway_ws()
+        await _start_gateway_ws()
+    # 改 MCP 端口/绑定地址 → 重启子进程（都是 spawn 时注入的）
+    if "mcp_port" in changed or "mcp_host" in changed:
+        _stop_mcp_server()
+        if _gh.MESH_ENABLED:
+            _start_mcp_server()
+
+    log.info("[Gateway] 高级设置已更新: %s", ", ".join(changed))
+    return web.json_response({
+        "ok": True, "changed": changed,
+        "ws_port_active": _GATEWAY_WS_STATE.get("port"),
+    })
+
+
+# ── 开放接入 MCP：进程管理（通用接入通道） ──────────────────────
+_MCP_PROC: dict = {"proc": None}
+
+
+def _mcp_access_token() -> str:
+    """跨设备口令：与 mesh 共用一份（用户只需分享一个口令）。"""
+    from desktop_core import gateway_hub as _gh
+    if not _gh.MESH_TOKEN:
+        _gh.set_mesh(True)
+    return _gh.MESH_TOKEN
+
+
+def _mcp_bind_host() -> str:
+    """能力调用通道(MCP)的绑定地址。高级档可改成 127.0.0.1（强制仅本机）。
+
+    之前这里硬编码 0.0.0.0，等于「一开跨机互联就把能力调用通道暴露到局域网」，
+    硬核用户无法收回。现在读 NAIXI_MCP_HOST，可在高级档里改。
+    默认 0.0.0.0：跨机互联本身就需要外部能连（否则开关开了也没用）。
+    """
+    return os.environ.get("NAIXI_MCP_HOST", "0.0.0.0").strip() or "0.0.0.0"
+
+
+def _start_mcp_server() -> bool:
+    """以可配绑定地址 + 自动口令启动开放接入 MCP（任何兼容 MCP 的工具都可连）。"""
+    import subprocess
+    import sys
+    p = _MCP_PROC.get("proc")
+    if p is not None and p.poll() is None:
+        return True
+    tok = _mcp_access_token()
+    env = dict(os.environ)
+    env["NAIXI_MCP_HOST"] = _mcp_bind_host()
+    env.setdefault("NAIXI_MCP_PORT", "9846")
+    env["NAIXI_MCP_TOKENS"] = f"{tok}:*"
+    env["NAIXI_BACKEND_URL"] = "http://127.0.0.1:9845"
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp_server.py")
+    try:
+        _MCP_PROC["proc"] = subprocess.Popen(
+            [sys.executable, script], env=env,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        log.info("[MCP] 开放接入已启动：%s:%s（任何兼容 MCP 的工具可连）",
+                 env["NAIXI_MCP_HOST"], env["NAIXI_MCP_PORT"])
+        return True
+    except Exception as e:
+        log.warning("[MCP] 开放接入启动失败: %s", e)
+        _MCP_PROC["proc"] = None
+        return False
+
+
+def _stop_mcp_server() -> None:
+    p = _MCP_PROC.get("proc")
+    if p is not None:
+        try:
+            p.terminate()
+            p.wait(timeout=5)
+        except Exception:
+            try:
+                p.kill()
+            except Exception:
+                pass
+    _MCP_PROC["proc"] = None
+    log.info("[MCP] 开放接入已停止")
 
 
 async def api_gateway_capability_delete(request):
@@ -2760,18 +3243,389 @@ async def api_providers(request):
                 })
         except:
             pass
+    # 本机在跑的推理服务也列出来（否则 Chat 页的模型下拉里看不到本地模型）
+    for pid, pcfg in _local_provider_entries().items():
+        label = "本地 · llama.cpp" if "llamacpp" in pid else "本地 · Ollama"
+        providers.append({
+            "id": hash(pid) % 10000,
+            "name": label,
+            "type": pid,
+            "api_url": pcfg.get("api_url", ""),
+            "has_key": True,
+            "models": [pcfg["model"]] if pcfg.get("model") else [],
+            "local": True,
+        })
     return web.json_response({"providers": providers})
-    import os
-    pj_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "platforms.json")
+
+
+# ── 本地模型：发现 / 启停 / 状态 ────────────────────────────
+# 让桌面端具备"自己部署模型"的能力：发现本机已有的模型文件与推理引擎，
+# 需要时拉起本地推理服务（llama.cpp / Ollama），对话层统一按 OpenAI 兼容格式调用。
+async def api_local_models(request):
+    """GET /api/local/models —— 本机可用模型 + 推理引擎探测结果。"""
     try:
-        with open(pj_path, encoding="utf-8") as f:
-            data = json.load(f)
-        return web.json_response(data)
+        from desktop_core import local_model
+        # ★ 性能（2026-10-08）：get_models() 同步扫描文件系统 + 引擎探测，实测 2.4s，
+        # 在事件循环里直接跑会把后端冻住。丢线程池 + 10s 单飞缓存（模型列表低频变化）。
+        models = await run_blocking("local_models", local_model.get_models, ttl=10)
+        return web.json_response(models)
     except Exception as e:
-        return web.json_response({"error": str(e)}, status=500)
+        log.warning("[local_model] 模型扫描失败: %s", e)
+        return web.json_response({"ok": False, "error": str(e)[:120], "models": []})
 
 
-# ── 提示词 / 专家 / Skill API ──
+async def api_local_status(request):
+    """GET /api/local/status —— 本地推理服务运行状态。"""
+    try:
+        from desktop_core import local_model
+        # 性能：get_status() 自带 1s TTL 缓存（探测端口在本机要等满超时，很贵），
+        # 前端高频轮询几乎全命中。这里**不要**再丢 run_in_executor——
+        # 实测并发时线程池互相竞争反而更慢，瓶颈在探测次数而非执行位置。
+        return web.json_response(local_model.get_status())
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)[:120]})
+
+
+async def api_local_start(request):
+    """POST /api/local/start {"model_path": "...", "ctx": 8192, "gpu_layers": 999}
+
+    用本机 llama.cpp 拉起推理服务。参数按本机 4GB 显卡给了稳妥默认值。
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    model_path = str(data.get("model_path") or "").strip()
+    if not model_path:
+        return web.json_response({"ok": False, "error": "缺少 model_path"}, status=400)
+    try:
+        ctx = int(data.get("ctx", 8192))
+        gpu_layers = int(data.get("gpu_layers", 999))
+        threads = int(data.get("threads", 0))
+        batch = int(data.get("batch", 512))
+    except (TypeError, ValueError):
+        return web.json_response({"ok": False, "error": "参数必须是数字"}, status=400)
+    # 防越界：上下文别大到显存扛不住，也别小到没法用
+    ctx = max(512, min(ctx, 65536))
+    gpu_layers = max(0, min(gpu_layers, 999))
+    threads = max(0, min(threads, 128))
+    batch = max(64, min(batch, 8192))
+    # 监听地址：只允许「回环」或「全部地址」两种，且必须用户显式要求才放开。
+    # 不接受的写法一律回落 127.0.0.1 —— 宁可连不上，也不悄悄把模型服务暴露到局域网。
+    host = str(data.get("host") or "").strip()
+    if host not in ("0.0.0.0", "::"):
+        host = ""
+    # 访问令牌：llama-server 原生 --api-key。放开局域网时由 start_server 强制要求，
+    # 这里只做长度/字符的基本约束（太短的 key 等于没有）。
+    api_key = str(data.get("api_key") or "").strip()
+    if api_key and len(api_key) < 4:
+        return web.json_response({"ok": False, "error": "访问令牌太短（至少 4 位）"}, status=400)
+    try:
+        from desktop_core import local_model
+        r = local_model.start_server(model_path, ctx=ctx, gpu_layers=gpu_layers,
+                                     threads=threads, batch=batch,
+                                     host=host, api_key=api_key)
+        # 启停后立刻失效缓存，让 Chat 页模型下拉马上反映新状态（不等 TTL）
+        _invalidate_local_entries_cache()
+    except Exception as e:
+        r = {"ok": False, "error": str(e)[:120]}
+    return web.json_response(r, status=200 if r.get("ok") else 400)
+
+
+async def api_local_chat(request):
+    """POST /api/local/chat {"messages":[...], "max_tokens":1024}
+
+    直接和本地模型对话（给页面上的「测试对话」用）。
+    推理模型默认 max_tokens 给足，避免思考过程被截断导致空回复。
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    messages = data.get("messages") or []
+    if not messages:
+        return web.json_response({"ok": False, "error": "缺少 messages"}, status=400)
+    try:
+        max_tokens = int(data.get("max_tokens", 1024))
+    except (TypeError, ValueError):
+        max_tokens = 1024
+    max_tokens = max(64, min(max_tokens, 8192))
+
+    # 采样参数：用户没传（缺省/空串）就 None → chat() 不传，沿用 server 默认。
+    # 传了就按类型解析并 clamp，解析失败回退 None（绝不因此阻断对话）。
+    def _num(key, lo, hi, cast):
+        v = data.get(key)
+        if v is None or v == "":
+            return None
+        try:
+            return max(lo, min(cast(v), hi))
+        except (TypeError, ValueError):
+            return None
+    temperature = _num("temperature", 0.0, 2.0, float)
+    top_p = _num("top_p", 0.0, 1.0, float)
+    top_k = _num("top_k", 1, 200, int)
+    repeat_penalty = _num("repeat_penalty", 0.5, 2.0, float)
+    min_p = _num("min_p", 0.0, 0.5, float)
+    seed = _num("seed", 0, 2**31 - 1, int)
+
+    try:
+        from desktop_core import local_model
+        r = local_model.chat("local", messages, max_tokens=max_tokens,
+                             temperature=temperature if temperature is not None else 0.7,
+                             top_p=top_p, top_k=top_k, repeat_penalty=repeat_penalty,
+                             min_p=min_p, seed=seed)
+    except Exception as e:
+        r = {"ok": False, "error": str(e)[:120]}
+    return web.json_response(r, status=200 if r.get("ok") else 400)
+
+
+# ── 本地模型库：浏览 / 搜索 / 下载 ──────────────────────────
+# 走 ModelScope 魔搭（国内直连）。实测 HuggingFace API 在本机连不上（需梯子），
+# 所以模型源只有魔搭这一条路。下载目录 D:\数据\本地模型\（数据盘）。
+async def api_hub_catalog(request):
+    """GET /api/local/catalog —— 预置模型清单 + 哪些已下载。"""
+    try:
+        from desktop_core import model_hub
+        return web.json_response(model_hub.get_catalog())
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)[:120], "catalog": []})
+
+
+async def api_hub_dir(request):
+    """GET/POST /api/local/dir —— 查/改模型下载目录。
+
+    为什么要可改：模型动辄几个 GB，每个人磁盘布局不同（有人放 D 盘、有人 C 盘、
+    有人用移动硬盘），写死一个目录等于替用户做决定。
+    """
+    from desktop_core import model_hub as _mh
+    if request.method == "POST":
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+        r = _mh.set_download_dir(str(data.get("path") or ""))
+        if r.get("ok"):
+            free = r.get("free_gb")
+            log.info("[model_hub] 下载目录改为 %s（剩余 %.1fGB）", r["download_dir"], free or 0)
+        return web.json_response(r, status=200 if r.get("ok") else 400)
+    import shutil
+    d = _mh.get_download_dir()
+    free = None
+    try:
+        free = round(shutil.disk_usage(d).free / (1024 ** 3), 1)
+    except Exception:
+        pass
+    return web.json_response({"ok": True, "download_dir": d, "free_gb": free})
+
+
+async def api_local_scan_dirs(request):
+    """GET/POST/DELETE /api/local/scan-dirs —— 管理「模型扫描目录」。
+
+    为什么必须有这个接口（用户明确批评过）：程序**不可能猜到**用户把模型放哪了
+    ——别的盘、别人的D 盘、移动硬盘都有人用。把开发者本机的路径写死进代码，
+    等于让装到别人机器上的程序去扫一个不存在的目录，功能等于没有。
+    所以扫描目录必须是**用户自己配 + 持久化**，这是必需能力不是可选功能。
+
+    GET    → 当前生效的扫描目录（含自动推导的，用户能看懂扫哪儿了）
+    POST   → 加一个目录 { path }
+    DELETE → 移除一个目录 { path }（只删配置，不动文件）
+    """
+    from desktop_core import local_model as _lm
+    if request.method in ("POST", "DELETE"):
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+        p = str(data.get("path") or "")
+        # POST 也能删：传 remove=true 即可（前端不必再实现一个 DELETE 客户端，
+        # 但规范上仍接受真正的 DELETE）
+        want_del = request.method == "DELETE" or bool(data.get("remove"))
+        r = _lm.add_extra_dir(p) if not want_del else _lm.remove_extra_dir(p)
+        r["scan_dirs"] = _lm._user_scan_dirs()
+        # 也要回 user_dirs：前端要靠它区分「我加的」与「自动推导的」
+        r["user_dirs"] = _lm.get_extra_dirs()
+        if r.get("ok"):
+            try:
+                r["models"] = _lm.get_models().get("models", [])
+            except Exception:
+                pass
+        return web.json_response(r, status=200 if r.get("ok") else 400)
+    try:
+        models = _lm.get_models()
+        return web.json_response({
+            "ok": True,
+            "scan_dirs": _lm._user_scan_dirs(),
+            "user_dirs": _lm.get_extra_dirs(),
+            "model_count": len(models.get("models") or []),
+        })
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)[:120]})
+
+
+async def api_local_engine(request):
+    """GET  /api/local/engine —— 推理引擎整体情况（有没有、在哪、干净虚拟机能否跑）
+    POST /api/local/engine {"url": "..."} —— 一键把推理引擎落地到软件自管目录
+
+    为什么需要它（用户明确批评）：本地模型功能曾**写死开发机私有路径**
+    （D:\\软件\\llama.cpp\\...、C:\\Users\\21222\\...），装到别人机器/干净虚拟机上
+    这些路径根本不存在，功能等于失效，还"死绑外部软件"。
+    现在引擎解析走「随包下发 → 系统标准位置 → PATH」的完全可移植链路，
+    这个接口让前端能把"引擎没就绪"这件事**如实告诉用户并给出解决路径**。
+    """
+    from desktop_core import local_model as _lm
+    if request.method == "POST":
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+        action = str(data.get("action") or "").strip()
+        # 引擎更新/切换（随包下发后，用户不该为了升级引擎去重装整个软件）
+        if action == "check_update":
+            return web.json_response(_lm.engine_check_update(bool(data.get("force"))))
+        if action == "update":
+            r = _lm.engine_update(str(data.get("tag") or ""),
+                                   str(data.get("url") or ""))
+            return web.json_response(r, status=200 if r.get("ok") else 400)
+        if action == "activate":
+            r = _lm.engine_activate(str(data.get("tag") or ""))
+            return web.json_response(r, status=200 if r.get("ok") else 400)
+        if action == "versions":
+            return web.json_response(_lm.engine_update_status())
+        r = _lm.ensure_llamacpp(str(data.get("url") or ""))
+        return web.json_response(r, status=200 if r.get("ok") else 400)
+    try:
+        st = _lm.engine_status()
+        # 带上版本信息，前端一次请求就能渲染"当前版本 + 能否更新"
+        try:
+            st["version"] = _lm.engine_local_version(st.get("llamacpp", {}).get("path"))
+        except Exception:
+            st["version"] = {}
+        return web.json_response(st)
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)[:120]})
+
+
+async def api_hub_search(request):
+    """GET /api/local/search?q=xxx&page=1&limit=20&max_size_gb=0&sort=downloads
+
+    搜魔搭全站模型（26 万+）。q 为空 → 返回热门（按体积档位过滤）。
+    max_size_gb 由前端"本机能力"档位传入，不写死成某一台机器的配置。
+
+    limit 上限必须是 **60**（与 model_hub 的 clamp 一致）：前端每页条数有 50 这一档，
+    这里若还卡 40，用户选「50 条/页」会被静默砍成 40 —— 又是一次"数不对"。
+    """
+    q = request.query.get("q", "").strip()
+    try:
+        page = max(1, int(request.query.get("page", 1)))
+        limit = max(1, min(60, int(request.query.get("limit", 20))))
+    except (TypeError, ValueError):
+        page, limit = 1, 20
+    try:
+        max_size = float(request.query.get("max_size_gb", 0) or 0)
+    except (TypeError, ValueError):
+        max_size = 0
+    sort = request.query.get("sort", "downloads")
+    try:
+        from desktop_core import model_hub
+        if q:
+            return web.json_response(model_hub.search_models(
+                q, limit=limit, page=page, max_size_gb=max_size, sort=sort))
+        # ★ page 必须透传：trending_models 内部就是 search_models("GGUF", ...)，
+        # 不传页码的话，**空搜索词时翻页永远停在第 1 页**（每页返回同一批）。
+        return web.json_response(model_hub.trending_models(
+            limit=limit, page=page, max_size_gb=max_size or 0))
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)[:120], "results": []})
+
+
+async def api_hub_files(request):
+    """GET /api/local/files?owner=&repo= —— 列某个魔搭仓库里的 GGUF 文件。"""
+    owner = request.query.get("owner", "").strip()
+    repo = request.query.get("repo", "").strip()
+    if not owner or not repo:
+        return web.json_response({"ok": False, "error": "缺少 owner/repo"}, status=400)
+    try:
+        from desktop_core import model_hub
+        return web.json_response(model_hub.list_repo_files(owner, repo))
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)[:120], "files": []})
+
+
+async def api_hub_download(request):
+    """POST /api/local/download {"owner":..,"repo":..,"file":..} —— 开始下载。
+
+    支持两种：
+      · 单个 .gguf —— 直接下，llama.cpp 立刻能跑
+      · .safetensors —— 走「整包下载」：连同同目录必需的 config.json / tokenizer 文件
+        + **全部分片** 一起下。因为 HF 权重是目录结构，只下一个分片必然转换失败
+        （缺 config 认不出架构、缺分片权重不完整）。
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    owner = str(data.get("owner") or "").strip()
+    repo = str(data.get("repo") or "").strip()
+    file = str(data.get("file") or "").strip()
+    if not (owner and repo and file):
+        return web.json_response({"ok": False, "error": "缺少 owner/repo/file"}, status=400)
+    # ★ 原来硬编码"只支持 .gguf"，把 safetensors 仓库全挡在门外 —— UI 上表现为
+    #   "只能查看不能下载"，等于把刚做好的转换层白做。现在放行。
+    if not file.lower().endswith((".gguf", ".safetensors")):
+        return web.json_response({"ok": False, "error": "只支持 .gguf 或 .safetensors 文件"}, status=400)
+    try:
+        from desktop_core import model_hub
+        if file.lower().endswith(".safetensors"):
+            return web.json_response(model_hub.start_bundle_download(owner, repo, file))
+        return web.json_response(model_hub.start_download(owner, repo, file))
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)[:120]})
+
+
+async def api_hub_progress(request):
+    """GET /api/local/download/progress —— 下载进度（前端轮询这个）。"""
+    try:
+        from desktop_core import model_hub
+        return web.json_response(model_hub.download_progress())
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)[:120]})
+
+
+async def api_hub_cancel(request):
+    """POST /api/local/download/cancel —— 取消下载。"""
+    try:
+        from desktop_core import model_hub
+        return web.json_response(model_hub.cancel_download())
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)[:120]})
+
+
+async def api_hub_delete(request):
+    """POST /api/local/delete {"name": "xxx.gguf"} —— 删除已下载模型。"""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    name = str(data.get("name") or "").strip()
+    if not name or "/" in name or "\\" in name:
+        return web.json_response({"ok": False, "error": "文件名不合法"}, status=400)
+    try:
+        from desktop_core import model_hub
+        return web.json_response(model_hub.delete_model(name))
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)[:120]})
+
+
+async def api_local_stop(request):
+    """POST /api/local/stop —— 停止本模块拉起的推理服务。"""
+    try:
+        from desktop_core import local_model
+        r = local_model.stop_server()
+        _invalidate_local_entries_cache()  # 停了就该立刻从 Chat 下拉消失
+        return web.json_response(r)
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)[:120]})
+
 
 def _load_builtin_resource(filename: str) -> list:
     """加载内置资源库 JSON（专家/Skill/提示词），任何异常都返回空列表并写中文日志。
@@ -3178,7 +4032,9 @@ async def api_knowledge_import_github(request):
 async def api_memory_stats(request):
     """记忆统计：总数、按对话类型分组、最近活动"""
     from desktop_core.storage import _get_conn, decrypt_text
-    try:
+    # ★ 性能（2026-10-08）：首次调用 decrypt_text 派生密钥等同步重活实测 3.9s，
+    # 在事件循环里直接跑会冻住后端。丢线程池 + 2s 单飞缓存（仪表盘轮询，低频变化）。
+    def _sync_memory_stats():
         conn = _get_conn()
         # 总消息数
         total = conn.execute("SELECT COUNT(*) as c FROM conv_messages").fetchone()["c"]
@@ -3213,13 +4069,16 @@ async def api_memory_stats(request):
                 "time": r["time"],
             })
         conn.close()
-        return web.json_response({
+        return {
             "total": total,
             "conversations": conv_count,
             "recent_7d": recent,
             "categories": categories,
             "recent": recent_items,
-        })
+        }
+    try:
+        data = await run_blocking("memory_stats", _sync_memory_stats, ttl=2)
+        return web.json_response(data)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
 
@@ -3889,7 +4748,7 @@ def _security_scan_core():
     def _ps(cmd, timeout=25):
         try:
             r = subprocess.run(["powershell", "-NoP", "-C", cmd],
-                               capture_output=True, text=True, timeout=timeout,
+                               capture_output=True, text=True, encoding="gbk", errors="ignore", timeout=timeout,
                                **_win_hide_kwargs())
             return r.stdout or "", (r.stderr or "").strip()
         except Exception as e:
@@ -3970,7 +4829,7 @@ def _ps_run(cmd, timeout=25):
     """隐藏窗口运行 powershell，返回 (stdout, stderr)。供安全检测/处置复用。"""
     try:
         r = subprocess.run(["powershell", "-NoP", "-C", cmd],
-                           capture_output=True, text=True, timeout=timeout,
+                           capture_output=True, text=True, encoding="gbk", errors="ignore", timeout=timeout,
                            **_win_hide_kwargs())
         return (r.stdout or ""), (r.stderr or "").strip()
     except Exception as e:
@@ -4005,7 +4864,7 @@ def _security_remediate_core():
         for p in _SILVERFOX_IOC_PROC:
             if p in low:
                 r = subprocess.run(["taskkill", "/F", "/IM", p],
-                                   capture_output=True, text=True, **_win_hide_kwargs())
+                                   capture_output=True, text=True, encoding="gbk", errors="ignore", **_win_hide_kwargs())
                 _act("process", p, "done" if r.returncode == 0 else "failed",
                      (r.stdout + r.stderr).strip())
     except Exception as e:
@@ -4034,7 +4893,7 @@ def _security_remediate_core():
             if re.match(r'^[A-Fa-f]:\\?$', path):
                 r = subprocess.run(["powershell", "-NoP", "-C",
                                     "Remove-MpPreference -ExclusionPath '%s'" % path],
-                                   capture_output=True, text=True, **_win_hide_kwargs())
+                                   capture_output=True, text=True, encoding="gbk", errors="ignore", **_win_hide_kwargs())
                 _act("defender_exclusion", path, "done" if r.returncode == 0 else "failed",
                      (r.stdout + r.stderr).strip())
             else:
@@ -4199,12 +5058,18 @@ async def api_self_hash(request):
                           % (chain_len, MAIN_EXE_NAME))
         return web.json_response(result)
     try:
-        h = hashlib.sha256()
-        with open(exe_path, "rb") as f:
-            for chunk in iter(lambda: f.read(1 << 20), b""):
-                h.update(chunk)
+        # ★ 性能（2026-10-08）：主程序 exe 可能上百 MB，同步 sha256 整文件会**阻塞事件循环**
+        # 数秒，且不缓存 —— 前端首屏一打就把整个后端冻住（实测 6.4s）。
+        # 一个会话内 exe 不会变，哈希算一次缓存 1 小时即可；并发请求走单飞只算一次。
+        def _hash_exe():
+            h = hashlib.sha256()
+            with open(exe_path, "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
+            return h.hexdigest()
+        sha = await run_blocking("self_hash", _hash_exe, ttl=3600)
         result["exe_path"] = exe_path
-        result["sha256"] = h.hexdigest()
+        result["sha256"] = sha
     except Exception as e:
         result["ok"] = False
         result["note"] = "哈希计算失败: %s" % e
@@ -4465,6 +5330,10 @@ def setup_routes(app):
     app.router.add_post("/api/gateway/capability/delete", api_gateway_capability_delete)
     app.router.add_post("/api/gateway/capability/toggle", api_gateway_capability_toggle)
     app.router.add_get("/api/gateway/access", api_gateway_access)
+    app.router.add_get("/api/gateway/mesh", api_gateway_mesh_get)
+    app.router.add_post("/api/gateway/mesh", api_gateway_mesh_set)
+    app.router.add_get("/api/gateway/advanced", api_gateway_advanced_get)
+    app.router.add_post("/api/gateway/advanced", api_gateway_advanced_set)
     app.router.add_post("/api/gateway/notify", api_gateway_notify)
     app.router.add_post("/api/gateway/pull", api_gateway_pull)
     app.router.add_get("/api/gateway/status", api_gateway_status)
@@ -4474,6 +5343,25 @@ def setup_routes(app):
     app.router.add_post("/api/chat/stream", api_chat_stream)
     app.router.add_post("/api/agent/stream", api_chat_stream)
     app.router.add_get("/api/providers", api_providers)
+
+    # ── 本地模型（桌面端自己部署模型的能力）──────────────────────────
+    # 发现本机模型 → 启动推理服务 → 对话层按 OpenAI 兼容格式调用。
+    app.router.add_get("/api/local/models", api_local_models)
+    app.router.add_get("/api/local/status", api_local_status)
+    app.router.add_post("/api/local/start", api_local_start)
+    app.router.add_post("/api/local/stop", api_local_stop)
+    app.router.add_post("/api/local/chat", api_local_chat)
+    # 模型库：浏览/搜索/下载（ModelScope 魔搭源，国内直连）
+    app.router.add_get("/api/local/catalog", api_hub_catalog)
+    app.router.add_get("/api/local/search", api_hub_search)
+    app.router.add_get("/api/local/files", api_hub_files)
+    app.router.add_post("/api/local/download", api_hub_download)
+    app.router.add_get("/api/local/download/progress", api_hub_progress)
+    app.router.add_post("/api/local/download/cancel", api_hub_cancel)
+    app.router.add_post("/api/local/delete", api_hub_delete)
+    app.router.add_route("*", "/api/local/dir", api_hub_dir)
+    app.router.add_route("*", "/api/local/scan-dirs", api_local_scan_dirs)
+    app.router.add_route("*", "/api/local/engine", api_local_engine)
 
     # 银狐应急哨兵扫描（用户态痕迹检测 + 一键引导专业处置）
     app.router.add_get("/api/security_scan", api_security_scan)
@@ -5427,6 +6315,9 @@ async def _start_gateway_ws():
         _GATEWAY_WS_STATE["started"] = False
         log.warning("[Gateway] 模块不可用，跳过 WS 启动: %s", e)
         return
+    # 绑定 WS_HOST（默认 0.0.0.0，跨机开关/口令在**认证层**拦截，开关即时生效无需重启）。
+    # 本机连接永远免 token，远程由 mesh 开关+token 把关（见 gateway_hub.handle）。
+    _ws_host = gateway_hub.WS_HOST
 
     base_port = gateway_hub.WS_PORT
     last_err = None
@@ -5438,11 +6329,12 @@ async def _start_gateway_ws():
             gateway_hub.register_routes(app)
             runner = _aw.AppRunner(app)
             await runner.setup()
-            await _aw.TCPSite(runner, "127.0.0.1", port).start()
+            await _aw.TCPSite(runner, _ws_host, port).start()
             _GATEWAY_WS_STATE.update({"port": port, "runner": runner, "hub": gateway_hub.HUB})
             if offset:
                 log.warning("[Gateway] %d 被占用，改用 %d", base_port, port)
-            log.info("[Gateway] 控制平面已监听: ws://127.0.0.1:%d%s", port, gateway_hub.WS_PATH)
+            log.info("[Gateway] 控制平面已监听: ws://%s:%d%s%s", _ws_host, port, gateway_hub.WS_PATH,
+                     "（token 已启用）" if gateway_hub.TOKENS else "")
             return
         except OSError as e:
             last_err = e
@@ -5457,6 +6349,26 @@ async def _start_gateway_ws():
             break
     _GATEWAY_WS_STATE["started"] = False
     log.warning("[Gateway] 控制平面启动失败（不影响主服务）: %s", last_err)
+
+
+async def _stop_gateway_ws():
+    """停止 Gateway WS 控制平面（供高级档改绑定地址/端口后重启用）。
+
+    幂等：没起过就直接返回。必须 await runner.cleanup() 真正释放端口，
+    否则紧接着的重新 start 会撞 "address already in use"。
+    """
+    global _GATEWAY_WS_STATE
+    runner = _GATEWAY_WS_STATE.get("runner")
+    _GATEWAY_WS_STATE["started"] = False
+    if runner is None:
+        return
+    try:
+        await runner.cleanup()
+        log.info("[Gateway] 控制平面已停止")
+    except Exception as e:
+        log.warning("[Gateway] 控制平面停止异常: %s", e)
+    finally:
+        _GATEWAY_WS_STATE.update({"port": None, "runner": None})
 
 
 async def api_live_connector_bind(request):

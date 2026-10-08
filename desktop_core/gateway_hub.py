@@ -46,6 +46,179 @@ PEER_TIMEOUT = 45.0# 超过此时间没收到任何帧则判定掉线
 # topic → 是否允许订阅（白名单，防订阅到不该收的东西）
 ALLOWED_TOPICS = ("capability", "task", "event", "log")
 
+# ── 跨机互联（mesh）配置 ─────────────────────────────────────────
+# 设计目标：**普通人点一下开关就能跨机联**，硬核用户仍可用环境变量全覆盖。
+#   · WS 默认监听 0.0.0.0，但是否「允许远程」由 mesh 开关 + token 在**认证层**拦截
+#     （本机连接永远免 token —— 保证本机 bot↔桌面 自连不受开关影响）。
+#   · token 由系统自动生成并持久化，用户**无需理解** NAIXI_GATEWAY_TOKENS 是什么。
+# 环境变量（GATEWAY_WS_HOST / NAIXI_GATEWAY_TOKENS）仍优先，供硬核/无 GUI 场景覆盖。
+import json as _json
+
+WS_HOST = os.environ.get("GATEWAY_WS_HOST", "0.0.0.0")
+
+
+def _writable_dir() -> str:
+    """mesh 配置目录：优先项目 data/（与库同源），不可写则退回用户目录（安装态只读时）。"""
+    import tempfile
+    cands = [
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data"),
+        os.path.join(os.environ.get("APPDATA") or tempfile.gettempdir(), "奶昔", "data"),
+    ]
+    for d in cands:
+        try:
+            os.makedirs(d, exist_ok=True)
+            if os.access(d, os.W_OK):
+                return d
+        except Exception:
+            continue
+    return tempfile.gettempdir()
+
+
+MESH_FILE = os.path.join(_writable_dir(), "gateway_mesh.json")
+
+# 运行时状态（由 _reload_runtime 更新）
+MESH_ENABLED = False
+MESH_TOKEN = ""
+TOKENS: dict[str, set[str]] = {}
+
+
+def _load_mesh_file() -> dict:
+    try:
+        with open(MESH_FILE, "r", encoding="utf-8") as f:
+            return _json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_mesh_file(d: dict) -> bool:
+    try:
+        with open(MESH_FILE, "w", encoding="utf-8") as f:
+            _json.dump(d, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        log.warning("[Gateway] mesh 配置保存失败: %s", e)
+        return False
+
+
+def _parse_tokens(raw: str) -> dict:
+    out: dict[str, set[str]] = {}
+    for item in (raw or "").split(";"):
+        item = item.strip()
+        if not item or ":" not in item:
+            continue
+        tok, scopes = item.split(":", 1)
+        tok = tok.strip()
+        if tok:
+            out[tok] = {s.strip() for s in scopes.split(",") if s.strip()} or {"*"}
+    return out
+
+
+def _reload_runtime() -> None:
+    """重算 TOKENS / MESH_ENABLED / MESH_TOKEN。env 优先于 mesh 文件。"""
+    global TOKENS, MESH_ENABLED, MESH_TOKEN
+    env_raw = os.environ.get("NAIXI_GATEWAY_TOKENS", "").strip()
+    if env_raw:
+        # 硬核模式：直接用 env 的 token 串，并视为已开启远程
+        TOKENS = _parse_tokens(env_raw)
+        MESH_ENABLED = True
+        MESH_TOKEN = next(iter(TOKENS), "")
+    else:
+        cfg = _load_mesh_file()
+        MESH_ENABLED = bool(cfg.get("enabled"))
+        MESH_TOKEN = str(cfg.get("token") or "").strip()
+        TOKENS = _parse_tokens(f"{MESH_TOKEN}:*") if (MESH_ENABLED and MESH_TOKEN) else {}
+
+
+def get_mesh_state() -> dict:
+    """给 API/UI 用：当前开关 + 展示用 token（token 仅本机 owner 可见，见 API 层）。"""
+    return {"enabled": MESH_ENABLED, "token": MESH_TOKEN, "host": WS_HOST}
+
+
+def set_mesh(enabled: bool) -> dict:
+    """开/关跨机互联。开启时若无 token 则自动生成一个（用户无需自拟）。"""
+    global MESH_ENABLED, MESH_TOKEN
+    cfg = _load_mesh_file()
+    if enabled:
+        MESH_TOKEN = MESH_TOKEN or _gen_token()
+        cfg = {"enabled": True, "token": MESH_TOKEN}
+    else:
+        MESH_TOKEN = ""
+        cfg = {"enabled": False, "token": ""}
+    _save_mesh_file(cfg)
+    _reload_runtime()
+    return get_mesh_state()
+
+
+def _gen_token() -> str:
+    import secrets
+    import string
+    # 去掉了 0/O/1/l 等易混字符，方便手打/口述
+    alphabet = string.ascii_letters.replace("O", "").replace("o", "").replace("l", "") + "23456789"
+    return "".join(secrets.choice(alphabet) for _ in range(10))
+
+
+def regenerate_token() -> dict:
+    """强制换一个连接口令（旧口令立即失效）。
+
+    用途：口令已经泄露 / 已分享给不再信任的设备 / 单纯想换一个新的。
+    未开启跨机互联时不做任何事（避免关着也在后台转 token）。
+    """
+    global MESH_TOKEN
+    if not MESH_ENABLED:
+        return get_mesh_state()
+    MESH_TOKEN = _gen_token()
+    _save_mesh_file({"enabled": True, "token": MESH_TOKEN})
+    _reload_runtime()
+    log.info("[Gateway] 连接口令已重新生成")
+    return get_mesh_state()
+
+
+def set_custom_token(tok: str) -> dict:
+    """高级档：用户**自己指定**连接口令（而不是用随机生成的）。
+
+    校验规则（拒绝弱口令是硬核档的责任）：
+      · 长度 >= 8（低于 8 暴力猜解成本太低）
+      · 至少包含字母与数字各一个（纯字母/纯数字都易被字典命中）
+    不通过时抛 ValueError，由 API 层转 400 提示用户。
+    """
+    global MESH_TOKEN
+    tok = (tok or "").strip()
+    if len(tok) < 8:
+        raise ValueError("口令至少 8 位")
+    has_alpha = any(c.isalpha() for c in tok)
+    has_digit = any(c.isdigit() for c in tok)
+    if not (has_alpha and has_digit):
+        raise ValueError("口令需同时包含字母和数字")
+    MESH_TOKEN = tok
+    _save_mesh_file({"enabled": MESH_ENABLED, "token": MESH_TOKEN})
+    _reload_runtime()
+    log.info("[Gateway] 连接口令已由用户自定义")
+    return get_mesh_state()
+
+
+_reload_runtime()
+
+
+def _client_token(request) -> str:
+    """取对端 token：优先 URL ?token=xxx（WS 客户端常用），其次 Authorization: Bearer。"""
+    t = request.query.get("token") or request.query.get("access_token") or ""
+    if t:
+        return t.strip()
+    auth = request.headers.get("Authorization", "") or ""
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return ""
+
+
+def _is_local(request) -> bool:
+    """是否来自本机回环（本机 bot↔桌面自连走这里，永远免 token）。"""
+    return (request.remote or "") in ("127.0.0.1", "::1", "localhost", "")
+
+
+def _token_valid(request) -> bool:
+    """token 是否有效（必须命中已配置 token）。"""
+    return bool(TOKENS) and _client_token(request) in TOKENS
+
 
 def _origin_allowed(origin: str) -> bool:
     """来源校验。规则与桌面端 9845 后端一致（见 api.py is_trusted_origin）：
@@ -132,10 +305,25 @@ class GatewayHub:
 
     # ── 请求处理 ──
     async def handle(self, request: web.Request) -> web.WebSocketResponse:
-        origin = request.headers.get("Origin", "")
-        if not _origin_allowed(origin):
-            log.warning("[Gateway] 拒绝来源: %s", origin)
-            raise web.HTTPForbidden(text="origin not allowed")
+        # ── 认证 ──
+        # 本机（bot↔桌面自连）：**永远免 token** —— 保证开/关「跨机互联」开关
+        #   都不影响本机互联；无 token 时仍做 Origin 校验，防浏览器 DNS 重绑定
+        #   （本机恶意网页打本机 WS 端口）。
+        # 远程：必须「跨机开关已开 + token 正确」，否则一律拒绝（fail-closed）。
+        is_local = _is_local(request)
+        if _token_valid(request):
+            pass                                    # 带正确 token：直接放行
+        elif is_local:
+            origin = request.headers.get("Origin", "")
+            if not _origin_allowed(origin):
+                log.warning("[Gateway] 拒绝来源(本机): %s", origin)
+                raise web.HTTPForbidden(text="origin not allowed")
+        else:
+            if not MESH_ENABLED:
+                log.warning("[Gateway] 拒绝远程：跨机互联未开启 (peer=%s)", request.remote)
+                raise web.HTTPForbidden(text="mesh not enabled")
+            log.warning("[Gateway] 拒绝远程：token 缺失/无效 (peer=%s)", request.remote)
+            raise web.HTTPUnauthorized(text="invalid or missing token")
 
         ws = web.WebSocketResponse(heartbeat=25.0)
         await ws.prepare(request)

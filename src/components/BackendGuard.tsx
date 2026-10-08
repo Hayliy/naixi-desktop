@@ -28,55 +28,94 @@ export default function BackendGuard({ children }: { children: ReactNode }) {
   const timerRef = useRef<number | null>(null);
 
   // 探测后端是否就绪：Tauri 模式走 invoke（不记红），浏览器模式走 fetch（开发态无所谓）
+  //
+  // 超时必须给足（实测冷启动首个 /api/desktop/config 要 4~12s：要加载技能/模型/插件）。
+  // 原先只给 4000ms，后端还在冷启动时前端就判定掉线 → 弹「后端未运行」黄横幅，
+  // 而后端其实几秒后就绪了 —— 用户看到的就是「明明后端在跑，却说没连上」。
+  // 启动期由外层 800ms 轮询驱动，多等几秒无副作用；就绪后的 5s 健康检查用另一条短超时的路径。
   const checkBackend = async (): Promise<boolean> => {
     try {
       if (isTauri) {
         return (await invoke<boolean>("backend_ready")) === true;
       }
-      await apiGet("/api/desktop/config", 4000);
+      await apiGet("/api/desktop/config", isTauri ? 4000 : 20000);
       return true;
     } catch {
       return false;
     }
   };
 
-  // 启动期快速探测（每 800ms）：后端就绪 → 直接切 running 渲染主应用；
-  // 超时 95s 仍连不上（后端可能彻底挂了）→ 强制进入主应用（forced），避免永远 loading。
+  // 启动期探测：后端就绪 → 切 running 并**彻底停止探测**；超时 60s 仍连不上 → 强制进主应用。
+  //
+  // 三个必须做对的地方（都踩过，2026-10-07）：
+  //  1) 单次探测超时给到 20s（后端冷启动首个请求要 4~12s），否则永远探测失败。
+  //  2) 就绪后必须 clearTimeout(保底定时器) —— 该 effect 依赖是 []，cleanup 只在卸载时跑，
+  //     不主动清的话保底到点仍会把已 running 的状态强改成 forced/down，黄横幅闪一下再跳回来。
+  //  3) ★ 用递归 setTimeout 而非 setInterval，且**就绪后必须停掉探测**。
+  //     原实现是 setInterval(800ms) + await checkBackend()，有两个致命问题：
+  //       a) setInterval 不等上一次 Promise 完成就发下一次，而后端这个端点要 3~7s，
+  //          请求会无限叠加（实测 CDP 抓到同一端点 55+ 个并发、全部 ERR_ABORTED，
+  //          连 /api/self_test_request 都被拖到 49.9s）→ 后端被打死；
+  //       b) 就绪后 interval 从不 clear（cleanup 只在卸载），于是启动成功后仍每 800ms
+  //          打一次 config，config 永远拉不回来 → config.api_providers 为空
+  //          → Chat 页 models.length===0 → 模型下拉只剩「自动路由」，本地模型选不到。
   useEffect(() => {
     let cancelled = false;
-    const boot = window.setInterval(async () => {
+    let probeTimer: number | undefined;
+    let to: number | undefined;
+
+    const stopAll = () => {
+      if (probeTimer !== undefined) window.clearTimeout(probeTimer);
+      if (to !== undefined) window.clearTimeout(to);
+    };
+
+    // 串行探测：上一次跑完（成功或失败）才排下一次，绝不并发叠加
+    const probe = async () => {
       if (cancelled) return;
       const ok = await checkBackend();
       if (cancelled) return;
       if (ok) {
+        stopAll();                       // ★ 就绪即停：不再发任何探测请求
         setStatus("up");
         setErrorMsg("");
         setPhase("running");
+        return;
       }
-    }, 800);
-    const to = window.setTimeout(() => {
+      probeTimer = window.setTimeout(probe, 800);
+    };
+
+    probeTimer = window.setTimeout(probe, 0);
+    to = window.setTimeout(() => {
       if (cancelled) return;
-      // 18s 保底（2026-10-04 从 95s 下调）。正常启动1~3 秒，
-      // 原先 95 秒里页面只有 loading，用户分不清「没起来」还是「页面坏了」。
-      // 超时后立即渲染主应用 + 掉线横幅，让状态可见、可操作。
+      // 60s 保底（2026-10-04 从 95s 下调，2026-10-07 上调到 60s）：
+      // 实测后端冷启动首个 /api/desktop/config 要 4~12s（加载技能/模型），
+      // 原来的 18s 在慢机器上会先于就绪触发，把正常启动误判成掉线。
+      // 期间页面只显示 loading 并明确写了「约需 10~30 秒，请稍候」，不会让用户分不清状态。
+      stopAll();
       setPhase("forced");
       setStatus("down");
-    }, 18000);
+    }, 60000);
+
     return () => {
       cancelled = true;
-      window.clearInterval(boot);
-      window.clearTimeout(to);
+      stopAll();
     };
   }, []);
 
   // 就绪后（running / forced）：每 5s 健康检查，维持横幅与状态按钮
+  // 同样必须串行：setInterval + await 在慢后端下会叠加请求（见上方注释的实测事故）。
   useEffect(() => {
     if (phase === "booting") return;
-    timerRef.current = window.setInterval(async () => {
+    let stopped = false;
+    const tick = async () => {
+      if (stopped) return;
       const ok = await checkBackend();
+      if (stopped) return;
       setStatus(ok ? "up" : "down");
       if (ok) setErrorMsg("");
-    }, 5000);
+      if (!stopped) timerRef.current = window.setTimeout(tick, 5000);
+    };
+    timerRef.current = window.setTimeout(tick, 5000);
     let unlisten: UnlistenFn | undefined;
     if (isTauri) {
       listen<string>("backend-error", (e) => {
@@ -86,7 +125,8 @@ export default function BackendGuard({ children }: { children: ReactNode }) {
       }).then((fn) => (unlisten = fn));
     }
     return () => {
-      if (timerRef.current) window.clearInterval(timerRef.current);
+      stopped = true;
+      if (timerRef.current) window.clearTimeout(timerRef.current);
       unlisten?.();
     };
   }, [phase]);
@@ -134,7 +174,7 @@ export default function BackendGuard({ children }: { children: ReactNode }) {
         <RefreshCw size={36} className="animate-spin text-indigo-500" />
         <div className="text-sm">正在连接奶昔后端服务…</div>
         <div className="text-xs text-gray-400 dark:text-gray-500">
-          首次启动需加载模型与技能，约需 30 秒，请稍候
+          首次启动需加载模型与技能，约需 10~30 秒，请稍候
         </div>
       </div>
     );

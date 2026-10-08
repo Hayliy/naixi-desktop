@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import {
   Network, RefreshCw, Trash2, Shield, ShieldAlert, Loader2, Zap, Cpu, Radio,
   Plus, Check, X, Copy, KeyRound, ChevronDown, ChevronRight, AlertTriangle,
+  Eye, EyeOff, Dices,
 } from "lucide-react";
 import { apiGet, apiPost } from "@/lib/api";
 import { useToast } from "@/components/Toast";
@@ -50,6 +51,10 @@ interface AccessInfo {
   http_port: number;
   ws_port: number;
   ws_path: string;
+  ws_host: string;
+  ws_lan_reachable: boolean;
+  ws_token_configured: boolean;
+  ws_token_count: number;
   lan_ip: string;
   localhost_url: string;
   lan_url: string;
@@ -131,6 +136,23 @@ function CopyBlock({ label, value, hint }: { label: string; value: string; hint?
         {value}
       </pre>
     </div>
+  );
+}
+
+/* ── 行内小复制按钮 ── */
+function CopyBtn({ text, label }: { text: string; label: string }) {
+  const { notify } = useToast();
+  const [done, setDone] = useState(false);
+  return (
+    <button onClick={async () => {
+      const ok = await copyText(text);
+      if (ok) { setDone(true); notify(`已复制${label}`, "success"); setTimeout(() => setDone(false), 1500); }
+      else notify("复制失败，请手动选中复制", "error");
+    }} disabled={!text}
+      className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+        done ? "text-green-600 bg-green-50" : "text-sakura-400 hover:bg-sakura-50 hover:text-sakura-600"}`}>
+      {done ? <Check size={10} /> : <Copy size={10} />} {done ? "已复制" : "复制"}
+    </button>
   );
 }
 
@@ -317,143 +339,333 @@ function CapEditor({ cap, onClose, onSaved }: {
 }
 
 
+/* ── 一个大开关（傻瓜模式用） ── */
+function BigSwitch({ on, onChange, disabled }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+  return (
+    <button role="switch" aria-checked={on} disabled={disabled} onClick={() => onChange(!on)}
+      className={`shrink-0 w-[46px] h-[26px] rounded-full p-0.5 transition-colors ${
+        on ? "bg-green-500" : "bg-sakura-200"} ${disabled ? "opacity-60" : ""}`}>
+      <span className={`block w-[22px] h-[22px] rounded-full bg-white shadow transition-transform ${
+        on ? "translate-x-[20px]" : "translate-x-0"}`} />
+    </button>
+  );
+}
+
 /* ── 开放接入面板 ──
-   结构对齐 ConnectionPanel（项目既有的隐藏式右侧栏）：
-   `w-[320px] shrink-0 border-l bg-white` + 头部带 X 关闭。
-   由 GatewayPage 右侧图标条切换显隐（sideTab）。
-   放进这个面板的都是**用户能直接操作**的东西：注册能力、填参数、复制接入配置。 */
-function AccessPanel({ access, onClose, onChanged }: {
+   双档：默认「傻瓜模式」—— 一个开关 + 自动口令 + 复制配置，让完全不懂的人也能跨机联；
+        「硬核 DIY」保留原有 MCP 状态 / 配置片段 / 自定义能力 / 环境变量说明。 */
+type Drawer = "quick" | "lan" | "custom" | "adv";
+
+const DRAWERS: { key: Drawer; label: string }[] = [
+  { key: "quick", label: "快速接入" },
+  { key: "lan", label: "跨设备接入" },
+  { key: "custom", label: "自定义能力" },
+  { key: "adv", label: "高级 / DIY" },
+];
+
+/* ── 开放接入面板（四抽屉）──────────────────────────────
+   一次只展开一个抽屉，不把内容堆在一条长滚动里。
+   定位：面向「任何兼容 MCP 的工具」，不局限于自家对端。 */
+function AccessPanel({ access, mesh, onToggleMesh, onRegenerateToken, onSetCustomToken, onSetAdvanced, onClose, onChanged }: {
   access: AccessInfo | null;
+  mesh: any;
+  onToggleMesh: (enabled: boolean) => void;
+  onRegenerateToken: () => Promise<void>;
+  onSetCustomToken: (token: string) => Promise<void>;
+  onSetAdvanced: (wsHost: string, wsPort: string, mcpHost: string, mcpPort: string) => Promise<void>;
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const { notify } = useToast();
+  const [d, setD] = useState<Drawer>("quick");
+  // 口令默认打码：避免被旁观者/截图/录屏直接看到。复制仍拿明文。
+  const [showToken, setShowToken] = useState(false);
+  const [regenBusy, setRegenBusy] = useState(false);
+  // 高级档：用户自己指定口令
+  const [customTok, setCustomTok] = useState("");
+  const [savingTok, setSavingTok] = useState(false);
+  // 高级档：互联参数（两条通道各自的绑定地址 + 端口）
+  const [advWsHost, setAdvWsHost] = useState("0.0.0.0");
+  const [advWsPort, setAdvWsPort] = useState("");
+  const [advMcpHost, setAdvMcpHost] = useState("0.0.0.0");
+  const [advMcpPort, setAdvMcpPort] = useState("");
+  const [savingAdv, setSavingAdv] = useState(false);
+  // 打开「高级」抽屉时才拉取真实生效值（别在页面加载时多打一次接口）
+  useEffect(() => {
+    if (d !== "adv") return;
+    let alive = true;
+    (async () => {
+      try {
+        const a = await apiGet<any>("/api/gateway/advanced");
+        if (!alive) return;
+        setAdvWsHost(a?.ws_host === "127.0.0.1" ? "127.0.0.1" : "0.0.0.0");
+        setAdvWsPort(String(a?.ws_port_base ?? ""));
+        setAdvMcpHost(a?.mcp_host === "127.0.0.1" ? "127.0.0.1" : "0.0.0.0");
+        setAdvMcpPort(String(a?.mcp_port ?? ""));
+      } catch { /* 忽略 */ }
+    })();
+    return () => { alive = false; };
+  }, [d]);
+  const applyAdvanced = async () => {
+    setSavingAdv(true);
+    try { await onSetAdvanced(advWsHost, advWsPort.trim(), advMcpHost, advMcpPort.trim()); }
+    finally { setSavingAdv(false); }
+  };
+  const toggleTokenReveal = () => setShowToken((v) => !v);
+  const regenToken = async () => {
+    setRegenBusy(true);
+    try { await onRegenerateToken(); }
+    finally { setRegenBusy(false); }
+  };
+  const applyCustomToken = async () => {
+    const t = customTok.trim();
+    // 前端先做一遍校验（后端也会校验，这里只是为了即时反馈）
+    if (t.length < 8) { notify("口令至少 8 位", "error"); return; }
+    if (!/[a-zA-Z]/.test(t) || !/[0-9]/.test(t)) {
+      notify("口令需同时包含字母和数字", "error"); return;
+    }
+    setSavingTok(true);
+    try { await onSetCustomToken(t); setCustomTok(""); }
+    finally { setSavingTok(false); }
+  };
   const mcp = access?.mcp;
-  // 右栏本体：对齐 OpsPage 右栏样式（bg-white + 全边框圆角卡片）。
-  // 响应式宽度 lg:w-[320px] lg:flex-shrink-0 —— 平时不挂这个组件，点按钮才挂上，
-  // 所以隐藏态不会留空列。
+  const on = !!mesh?.enabled;
+  const lanIp = mesh?.lan_ip || access?.lan_ip || "";
+  const mcpUrl = `http://${lanIp}:9846/mcp`;   // 通用 MCP 接入地址
+  const cfg = access?.configs || {};
+  const quickItems = [
+    { label: "Claude Code", hint: "命令行一条接入", text: cfg.claude_code },
+    { label: "Cursor", hint: "粘进配置文件", text: cfg.cursor },
+    { label: "其他工具", hint: "通用接入方式", text: cfg.generic_http },
+  ].filter((i) => !!i.text);
+
   return (
     <div className="lg:w-[320px] lg:flex-shrink-0 bg-white border border-sakura-100 rounded-xl flex flex-col min-h-0 overflow-hidden">
-      {/* 头部 */}
-      <div className="bg-white flex items-center justify-between px-3 py-2 border-b border-sakura-100 shrink-0">
-        <span className="text-xs font-semibold text-sakura-500">开放接入
-          <span className="text-sakura-300 font-normal ml-1">MCP</span>
-        </span>
-        <button onClick={onClose} className="p-0.5 hover:bg-sakura-50 rounded text-sakura-300">
-          <X size={13} />
-        </button>
+      {/* 头部 + 抽屉导航 */}
+      <div className="bg-white px-3 py-2 border-b border-sakura-100 shrink-0">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-semibold text-sakura-500">开放接入</span>
+          <button onClick={onClose} className="p-0.5 hover:bg-sakura-50 rounded text-sakura-300"><X size={13} /></button>
+        </div>
+        <div className="mt-2 grid grid-cols-4 gap-1">
+          {DRAWERS.map((it) => (
+            <button key={it.key} onClick={() => setD(it.key)}
+              className={`text-[10px] px-1 py-1 rounded leading-tight ${
+                d === it.key ? "bg-sakura-500 text-white font-medium" : "text-sakura-500 hover:bg-sakura-50"}`}>
+              {it.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
-      {/* MCP 状态 */}
-      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-        <div className="flex items-center gap-2 px-3 py-2 border-b border-sakura-100">
-          <KeyRound size={12} className="text-sakura-400" />
-          <span className="text-[12px] font-semibold text-sakura-600">开放接入 · MCP</span>
-          <span className={`ml-auto text-[10px] px-1.5 py-px rounded border ${
-            mcp?.running
-              ? "text-green-600 bg-green-50 border-green-100"
-              : "text-sakura-400 bg-sakura-50 border-sakura-100"}`}>
-            {mcp?.running ? `运行中 · ${mcp.tools} 工具` : "未启动"}
-          </span>
-        </div>
-        <div className="p-3 space-y-2">
-          <p className="text-[11px] text-sakura-500 leading-relaxed">
-            任何支持 MCP 的客户端（Claude Code / Cursor / Cline / 自己写的脚本）
-            填下面的地址就能调用本机能力，不需要装任何东西。
-          </p>
-          {!mcp?.running && (
-            <div className="rounded-lg bg-yellow-50 border border-yellow-100 px-2 py-1.5">
-              <p className="text-[10px] text-yellow-700 leading-relaxed">
-                MCP 服务未运行。启动命令：
-                <code className="block mt-1 font-mono text-[10px] text-yellow-800">
-                  python desktop_core/mcp_server.py
-                </code>
-              </p>
+        {d === "quick" && (
+          <>
+            <p className="text-[11px] text-sakura-500 leading-relaxed">
+              把这里的能力接进你已经在用的 AI 工具。选一个、复制、粘贴，就完成了——不用装任何东西。
+            </p>
+            {quickItems.map((i) => (
+              <div key={i.label} className="border border-sakura-100 rounded-lg">
+                <div className="flex items-center gap-2 px-2.5 py-1.5">
+                  <span className="text-[12px] font-medium text-sakura-600">{i.label}</span>
+                  <span className="text-[10px] text-sakura-400 truncate">{i.hint}</span>
+                  <div className="ml-auto"><CopyBtn text={i.text} label={i.label} /></div>
+                </div>
+                <pre className="px-2.5 pb-2 text-[10px] font-mono text-sakura-500 whitespace-pre-wrap break-all leading-relaxed">{i.text}</pre>
+              </div>
+            ))}
+            {quickItems.length === 0 && (
+              <p className="text-[11px] text-sakura-400">开放接入服务未就绪，请先到「跨设备接入」开启。</p>
+            )}
+          </>
+        )}
+
+        {d === "lan" && (
+          <div className="border border-sakura-100 rounded-lg overflow-hidden">
+            <div className="flex items-center gap-2 px-3 py-2.5">
+              <Network size={13} className="text-sakura-400" />
+              <span className="text-[12px] font-semibold text-sakura-600">允许其他设备连接</span>
+              <div className="ml-auto"><BigSwitch on={on} onChange={onToggleMesh} /></div>
             </div>
-          )}
-          {mcp?.needs_token_for_lan && (
-            <div className="rounded-lg bg-yellow-50 border border-yellow-100 px-2 py-1.5">
-              <p className="text-[10px] text-yellow-700 leading-relaxed">
-                未配置访问 token —— 当前仅本机免鉴权。
-                要让局域网/云端的设备连入，必须先设置环境变量
-                <code className="font-mono"> NAIXI_MCP_TOKENS</code>
-                （格式 <code className="font-mono">token1:*</code>），
-                否则服务会拒绝绑定非本机地址。
-              </p>
-            </div>
-          )}
-          <div className="grid grid-cols-2 gap-1.5 text-[10px]">
-            <div className="rounded-lg bg-sakura-50 px-2 py-1.5">
-              <p className="text-sakura-400">本机地址</p>
-              <p className="font-mono text-sakura-600 truncate">{access?.localhost_url ?? "-"}</p>
-            </div>
-            <div className="rounded-lg bg-sakura-50 px-2 py-1.5">
-              <p className="text-sakura-400">局域网地址</p>
-              <p className="font-mono text-sakura-600 truncate">{access?.lan_url ?? "-"}</p>
-            </div>
-            <div className="rounded-lg bg-sakura-50 px-2 py-1.5">
-              <p className="text-sakura-400">局域网 IP</p>
-              <p className="font-mono text-sakura-600 truncate">{access?.lan_ip ?? "-"}</p>
-            </div>
-            <div className="rounded-lg bg-sakura-50 px-2 py-1.5">
-              <p className="text-sakura-400">访问凭据</p>
-              <p className="font-mono text-sakura-600 truncate">
-                {mcp?.token_configured ? `已配 ${mcp.token_count} 个` : "免鉴权"}
-              </p>
+            <div className="p-3 space-y-2.5">
+              {!on ? (
+                <p className="text-[11px] text-sakura-500 leading-relaxed">
+                  打开开关，其他电脑、虚拟机或手机上的 AI 工具就能用上这里的能力。会自动生成一个连接口令。
+                </p>
+              ) : (
+                <>
+                  <p className="text-[11px] text-sakura-500 leading-relaxed">
+                    已开启。任何兼容 MCP 的工具，用下面这个地址 + 口令就能连上。
+                  </p>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] text-sakura-400">接入地址</span>
+                      <CopyBtn text={mcpUrl} label="地址" />
+                    </div>
+                    <p className="font-mono text-[11px] text-sakura-700 bg-sakura-50 rounded px-2 py-1.5 break-all">{mcpUrl}</p>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] text-sakura-400">连接口令</span>
+                      <div className="flex items-center gap-1">
+                        <button onClick={toggleTokenReveal} disabled={regenBusy}
+                          title={showToken ? "隐藏口令" : "显示口令"}
+                          className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded text-sakura-400 hover:bg-sakura-50 hover:text-sakura-600 transition-colors">
+                          {showToken ? <EyeOff size={10} /> : <Eye size={10} />}
+                          {showToken ? "隐藏" : "显示"}
+                        </button>
+                        <button onClick={regenToken} disabled={regenBusy}
+                          title="换一个全新的连接口令（旧口令立即失效）"
+                          className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded text-sakura-400 hover:bg-sakura-50 hover:text-sakura-600 transition-colors disabled:opacity-40">
+                          {regenBusy ? <Loader2 size={10} className="animate-spin" /> : <Dices size={10} />}
+                          {regenBusy ? "换口中" : "换一个"}
+                        </button>
+                        <CopyBtn text={mesh?.token || ""} label="口令" />
+                      </div>
+                    </div>
+                    <p className="font-mono text-[13px] tracking-wider text-sakura-700 bg-sakura-50 rounded px-2 py-1.5">
+                      {showToken ? (mesh?.token || "-") : "••••••••••"}
+                    </p>
+                    <p className="text-[10px] text-sakura-400 leading-relaxed mt-1">
+                      口令自动随机生成。已连接的设备需要重新填入新口令。
+                    </p>
+                  </div>
+                  <ol className="text-[11px] text-sakura-500 leading-relaxed list-decimal pl-4 space-y-0.5">
+                    <li>在另一台设备上打开你要用的 AI 工具</li>
+                    <li>把上面的「地址 + 口令」填进去</li>
+                    <li>完成，它就能调用这里的能力了</li>
+                  </ol>
+                </>
+              )}
             </div>
           </div>
-        </div>
-      </div>
+        )}
 
-      {/* 配置片段 —— 核心：给用户能直接拿走的东西 */}
-      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-        <div className="flex items-center gap-2 px-3 py-2 border-b border-sakura-100">
-          <Copy size={12} className="text-sakura-400" />
-          <span className="text-[12px] font-semibold text-sakura-600">一键接入配置</span>
-        </div>
-        <div className="p-2.5 space-y-2">
-          {access?.configs?.claude_code && (
-            <CopyBlock label="Claude Code" value={access.configs.claude_code}
-              hint="终端执行" />
-          )}
-          {access?.configs?.cursor && (
-            <CopyBlock label="Cursor" value={access.configs.cursor}
-              hint="粘进 mcp.json" />
-          )}
-          {access?.configs?.generic_http && (
-            <CopyBlock label="通用 HTTP" value={access.configs.generic_http}
-              hint="任意语言客户端" />
-          )}
-          {access?.configs?.ws_internal && (
-            <CopyBlock label="内部 WS" value={access.configs.ws_internal}
-              hint="同机脚本用" />
-          )}
-        </div>
-      </div>
+        {d === "custom" && (
+          <>
+            <p className="text-[11px] text-sakura-500 leading-relaxed">
+              把你自己的接口也发布出来，让 AI 工具能直接调用。
+            </p>
+            <AddCapabilityForm onDone={onChanged} />
+          </>
+        )}
 
-      {/* 自定义能力 */}
-      <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-        <div className="flex items-center gap-2 px-3 py-2 border-b border-sakura-100">
-          <Plus size={12} className="text-sakura-400" />
-          <span className="text-[12px] font-semibold text-sakura-600">扩展能力</span>
-        </div>
-        <div className="p-2.5">
-          <AddCapabilityForm onDone={onChanged} />
-        </div>
-      </div>
-
-      {/* 说明 */}
-      <div className="bg-sakura-50 border border-sakura-100 rounded-xl px-3 py-2.5">
-        <p className="text-[11px] text-sakura-500 leading-relaxed">
-          <Cpu size={10} className="inline mr-1" />
-          能力调用走 HTTP <span className="font-mono">:{access?.http_port ?? 9845}</span>，
-          订阅通知走 WS <span className="font-mono">:{access?.ws_port ?? 18400}</span>，
-          两条通道分离以避免双向往返死锁。
-          <span className="text-yellow-600"> 可写能力不提供直接测试</span>——
-          调用方只能发起提议，用户确认后才真正执行。
-          左侧圆点可停用能力，对端即刻不再看到它。
-        </p>
-      </div>
+        {d === "adv" && (
+          <>
+            <div className="border border-sakura-100 rounded-lg">
+              <div className="flex items-center gap-2 px-3 py-2 border-b border-sakura-100">
+                <KeyRound size={12} className="text-sakura-400" />
+                <span className="text-[12px] font-semibold text-sakura-600">接入服务状态</span>
+                <span className={`ml-auto text-[10px] px-1.5 py-px rounded border ${
+                  mcp?.running ? "text-green-600 bg-green-50 border-green-100" : "text-sakura-400 bg-sakura-50 border-sakura-100"}`}>
+                  {mcp?.running ? `运行中 · ${mcp.tools} 工具` : "未启动"}
+                </span>
+              </div>
+              <div className="p-3 space-y-1.5 text-[10px]">
+                <div className="flex justify-between"><span className="text-sakura-400">本机地址</span>
+                  <span className="font-mono text-sakura-600 truncate">{access?.localhost_url ?? "-"}</span></div>
+                <div className="flex justify-between"><span className="text-sakura-400">局域网 IP</span>
+                  <span className="font-mono text-sakura-600 truncate">{lanIp || "-"}</span></div>
+                <div className="flex justify-between"><span className="text-sakura-400">订阅通道</span>
+                  <span className="font-mono text-sakura-600 truncate">ws :{access?.ws_port ?? 18400}</span></div>
+              </div>
+            </div>
+            <div className="border border-sakura-100 rounded-lg overflow-hidden">
+              <div className="flex items-center gap-2 px-3 py-2 border-b border-sakura-100">
+                <KeyRound size={12} className="text-sakura-400" />
+                <span className="text-[12px] font-semibold text-sakura-600">自定义连接口令</span>
+              </div>
+              <div className="p-3 space-y-2">
+                <p className="text-[11px] text-sakura-500 leading-relaxed">
+                  想用自己的口令（比如和其它设备统一）就填在这里，会立刻生效。留空则继续用自动生成的随机口令。
+                </p>
+                <input
+                  value={customTok}
+                  onChange={(e) => setCustomTok(e.target.value)}
+                  placeholder="至少 8 位，需含字母和数字"
+                  className="w-full px-2 py-1.5 text-[12px] font-mono text-sakura-700
+                             bg-sakura-50 border border-sakura-100 rounded
+                             focus:outline-none focus:border-sakura-300" />
+                <div className="flex items-center gap-1.5">
+                  <button onClick={applyCustomToken} disabled={savingTok || !customTok.trim()}
+                    className="flex items-center gap-1 text-[11px] px-2 py-1 rounded
+                               bg-sakura-500 text-white hover:bg-sakura-600 transition-colors disabled:opacity-40">
+                    {savingTok ? <Loader2 size={10} className="animate-spin" /> : <Check size={10} />}
+                    {savingTok ? "应用中" : "应用口令"}
+                  </button>
+                  {customTok && (
+                    <button onClick={() => setCustomTok(mesh?.token || "")}
+                      className="text-[11px] px-2 py-1 rounded text-sakura-400
+                                 hover:bg-sakura-50 hover:text-sakura-600 transition-colors">
+                      填回当前
+                    </button>
+                  )}
+                </div>
+                <p className="text-[10px] text-sakura-400">修改后，已连接的设备需要用新口令重新连入。</p>
+              </div>
+            </div>
+            <div className="border border-sakura-100 rounded-lg overflow-hidden">
+              <div className="flex items-center gap-2 px-3 py-2 border-b border-sakura-100">
+                <Network size={12} className="text-sakura-400" />
+                <span className="text-[12px] font-semibold text-sakura-600">互联参数</span>
+                <span className="ml-auto text-[10px] text-sakura-400">改完立即重启通道</span>
+              </div>
+              <div className="p-3 space-y-2.5">
+                {/* 订阅通道（WS）—— 地址 + 端口 */}
+                <div className="border border-sakura-100 rounded-lg overflow-hidden">
+                  <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-sakura-50/60 border-b border-sakura-50">
+                    <Radio size={11} className="text-sakura-400" />
+                    <span className="text-[11px] font-medium text-sakura-600">订阅通道（WS）</span>
+                    <span className="ml-auto text-[10px] text-sakura-400">对端发现与通知</span>
+                  </div>
+                  <div className="p-2.5 space-y-2">
+                    <select value={advWsHost} onChange={(e) => setAdvWsHost(e.target.value)}
+                      className="w-full px-2 py-1.5 text-[12px] text-sakura-700 bg-sakura-50
+                                 border border-sakura-100 rounded focus:outline-none focus:border-sakura-300">
+                      <option value="0.0.0.0">0.0.0.0 · 允许其他设备连入</option>
+                      <option value="127.0.0.1">127.0.0.1 · 仅本机（最安全）</option>
+                    </select>
+                    <input value={advWsPort} onChange={(e) => setAdvWsPort(e.target.value)}
+                      inputMode="numeric" placeholder="端口 18400"
+                      className="w-full px-2 py-1.5 text-[12px] font-mono text-sakura-700
+                                 bg-sakura-50 border border-sakura-100 rounded
+                                 focus:outline-none focus:border-sakura-300" />
+                  </div>
+                </div>
+                {/* 能力调用通道（HTTP/MCP）—— 地址 + 端口 */}
+                <div className="border border-sakura-100 rounded-lg overflow-hidden">
+                  <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-sakura-50/60 border-b border-sakura-50">
+                    <Cpu size={11} className="text-sakura-400" />
+                    <span className="text-[11px] font-medium text-sakura-600">能力调用通道（HTTP）</span>
+                    <span className="ml-auto text-[10px] text-sakura-400">外部工具调用能力</span>
+                  </div>
+                  <div className="p-2.5 space-y-2">
+                    <select value={advMcpHost} onChange={(e) => setAdvMcpHost(e.target.value)}
+                      className="w-full px-2 py-1.5 text-[12px] text-sakura-700 bg-sakura-50
+                                 border border-sakura-100 rounded focus:outline-none focus:border-sakura-300">
+                      <option value="0.0.0.0">0.0.0.0 · 允许其他设备连入</option>
+                      <option value="127.0.0.1">127.0.0.1 · 仅本机（最安全）</option>
+                    </select>
+                    <input value={advMcpPort} onChange={(e) => setAdvMcpPort(e.target.value)}
+                      inputMode="numeric" placeholder="端口 9846"
+                      className="w-full px-2 py-1.5 text-[12px] font-mono text-sakura-700
+                                 bg-sakura-50 border border-sakura-100 rounded
+                                 focus:outline-none focus:border-sakura-300" />
+                  </div>
+                </div>
+                <button onClick={applyAdvanced} disabled={savingAdv}
+                  className="w-full flex items-center justify-center gap-1 text-[11px] py-1.5 rounded
+                             bg-sakura-500 text-white hover:bg-sakura-600 transition-colors disabled:opacity-40">
+                  {savingAdv ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
+                  {savingAdv ? "应用中…" : "应用并重启通道"}
+                </button>
+                <p className="text-[10px] text-sakura-400 leading-relaxed">
+                  能力调用走 HTTP 通道，订阅通知走 WS 通道，两条分离以避免双向回环。
+                </p>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -473,6 +685,59 @@ export default function GatewayPage() {
   // 隐藏式右侧栏的显隐（点顶部「开放接入」按钮切换）。
   // 隐藏时不挂载右栏组件，故不占任何宽度（无空列）。
   const [sideTab, setSideTab] = useState<string | null>(null);
+  // 跨机互联（mesh）状态：傻瓜开关用。含自动生成的口令与局域网地址。
+  const [mesh, setMesh] = useState<any>(null);
+  const loadMesh = useCallback(async () => {
+    try { setMesh(await apiGet<any>("/api/gateway/mesh")); } catch { /* 忽略 */ }
+  }, []);
+  useEffect(() => { loadMesh(); }, [loadMesh]);
+  const toggleMesh = async (enabled: boolean) => {
+    try {
+      const r = await apiPost<any>("/api/gateway/mesh", { enabled });
+      if (r?.ok) {
+        setMesh(r);
+        notify(enabled ? "已开启：其他设备现在可以连进来了" : "已关闭跨机互联", "success");
+      } else notify(`操作失败：${r?.error || "未知"}`, "error");
+    } catch (e) { notify(`操作失败：${String(e).slice(0, 60)}`, "error"); }
+  };
+  // 换新口令：旧口令立即作废（已连的设备需要重填），MCP 子进程会带新口令重启。
+  const regenerateToken = async () => {
+    try {
+      const r = await apiPost<any>("/api/gateway/mesh", { regenerate: true });
+      if (r?.ok) {
+        setMesh(r);
+        notify("已生成新的连接口令，旧口令已失效", "success");
+      } else notify(`生成失败：${r?.error || "未知"}`, "error");
+    } catch (e) { notify(`生成失败：${String(e).slice(0, 60)}`, "error"); }
+  };
+
+  // 高级档：用户自己指定口令（弱口令后端会拒）
+  const setCustomToken = async (token: string) => {
+    try {
+      const r = await apiPost<any>("/api/gateway/mesh", { token });
+      if (r?.ok) {
+        setMesh(r);
+        notify("已应用自定义口令，已连接的设备需要用新口令重连", "success");
+      } else notify(`应用失败：${r?.error || "未知"}`, "error");
+    } catch (e) { notify(`应用失败：${String(e).slice(0, 60)}`, "error"); }
+  };
+
+  // 高级档：改互联参数（改完后端会重启对应通道，所以要等一会儿再刷新）
+  const setAdvanced = async (
+    wsHost: string, wsPort: string, mcpHost: string, mcpPort: string,
+  ) => {
+    try {
+      const body: any = { ws_host: wsHost, mcp_host: mcpHost };
+      if (wsPort) body.ws_port = Number(wsPort);
+      if (mcpPort) body.mcp_port = Number(mcpPort);
+      const r = await apiPost<any>("/api/gateway/advanced", body);
+      if (r?.ok) {
+        notify(r.changed?.length ? "已应用，通道已重启" : "没有改动", "success");
+        await loadMesh();
+        await load(true);
+      } else notify(`应用失败：${r?.error || "未知"}`, "error");
+    } catch (e) { notify(`应用失败：${String(e).slice(0, 60)}`, "error"); }
+  };
 
   const load = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true);
@@ -599,6 +864,86 @@ export default function GatewayPage() {
   const disabledCount = caps.filter(c => !c.enabled).length;
 
   const mcp = access?.mcp;
+
+  /* 单条能力行。启用/停用改用标准开关（Switch）：
+     替代原先 6px 圆点 —— 点击目标太小、看不出可点、红绿色盲难辨状态。
+     开关同时承担「状态指示」与「点击停用/启用」。 */
+  const capRow = (c: Cap) => {
+    const ts = TRUST_STYLE[c.trust] || TRUST_STYLE.read;
+    const editing = editingId === c.id;
+    const busy = busyId === c.id;
+    return (
+      <div key={c.id}
+        className={`border-b border-sakura-50 px-3 py-2
+                    ${c.enabled ? "hover:bg-sakura-50/50" : "bg-sakura-50/30"}`}>
+        <div className="flex items-center gap-2">
+          <button role="switch" aria-checked={c.enabled}
+            aria-label={`${c.enabled ? "停用" : "启用"}能力 ${c.title || c.id}`}
+            onClick={() => handleToggle(c)} disabled={busy}
+            title={c.enabled ? "点击停用（对端将不再看到这条）" : "点击启用"}
+            className={`shrink-0 w-[30px] h-[17px] rounded-full p-0.5 transition-colors
+                        ${c.enabled ? "bg-green-500" : "bg-sakura-200"}
+                        ${busy ? "opacity-60 cursor-wait" : ""}`}>
+            <span className={`block w-[13px] h-[13px] rounded-full bg-white transition-transform
+                             ${c.enabled ? "translate-x-[13px]" : "translate-x-0"}`} />
+          </button>
+          <ts.Icon size={12} className="shrink-0 text-sakura-300" />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5">
+              <p title={c.title || c.id}
+                className={`text-[12px] font-medium truncate
+                            ${c.enabled ? "text-sakura-600" : "text-sakura-400 line-through"}`}>
+                {c.title || c.id}
+              </p>
+              <span className={`text-[10px] px-1.5 py-px rounded border shrink-0 ${ts.cls}`}>
+                {ts.label}
+              </span>
+              {c.requires_confirm && (
+                <span className="text-[10px] px-1.5 py-px rounded border border-yellow-100 bg-yellow-50 text-yellow-600 shrink-0">
+                  需确认
+                </span>
+              )}
+              {c.kind === "channel" && (
+                <span className="text-[10px] px-1.5 py-px rounded border border-sakura-100 bg-sakura-50 text-sakura-500 shrink-0">
+                  通道
+                </span>
+              )}
+              {!c.enabled && (
+                <span className="text-[10px] px-1.5 py-px rounded border border-sakura-200 bg-white text-sakura-400 shrink-0">
+                  已停用
+                </span>
+              )}
+            </div>
+            <p title={c.id} className="text-[11px] text-sakura-400 truncate font-mono">{c.id}</p>
+            <p title={c.description} className="text-[11px] text-sakura-400 truncate">{c.description}</p>
+          </div>
+          <button onClick={() => handleTest(c)} disabled={busy || !c.enabled}
+            className="p-1 rounded hover:bg-teal-50 text-sakura-300 hover:text-teal-500 transition-colors shrink-0 disabled:opacity-40"
+            title={c.trust === "read"
+              ? `测试调用（${methodOf(c)}）`
+              : "该能力需确认，不提供直接测试"}>
+            {busy ? <Loader2 size={11} className="animate-spin" /> : <Zap size={11} />}
+          </button>
+          <button onClick={() => setEditingId(editing ? "" : c.id)}
+            className="p-1 rounded hover:bg-sakura-100 text-sakura-300 hover:text-sakura-600 transition-colors shrink-0"
+            title="编辑名称 / 描述 / 权限">
+            {editing ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+          </button>
+          <button onClick={() => handleUnregister(c.id)} disabled={busy}
+            className="p-1 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500 transition-colors shrink-0 disabled:opacity-40"
+            title="彻底删除这条能力">
+            <Trash2 size={11} />
+          </button>
+        </div>
+        {editing && (
+          <div className="mt-2">
+            <CapEditor cap={c} onClose={() => setEditingId("")}
+              onSaved={() => load(true)} />
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="h-full flex flex-col gap-3">
@@ -751,72 +1096,19 @@ export default function GatewayPage() {
                 </p>
               </div>
             ) : (
-              visibleCaps.map((c) => {
-                const ts = TRUST_STYLE[c.trust] || TRUST_STYLE.read;
-                const editing = editingId === c.id;
+              (["read", "write", "dangerous"] as Trust[]).map((t) => {
+                const group = visibleCaps.filter((c) => c.trust === t);
+                if (group.length === 0) return null;
+                const gt = TRUST_STYLE[t];
+                const GIcon = gt.Icon;
                 return (
-                  <div key={c.id}
-                    className={`border-b border-sakura-50 last:border-0 px-3 py-2
-                                ${c.enabled ? "hover:bg-sakura-50/50" : "bg-sakura-50/30"}`}>
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => handleToggle(c)} disabled={busyId === c.id}
-                        title={c.enabled ? "点击停用（对端将不再看到这条）" : "点击启用"}
-                        className={`shrink-0 w-1.5 h-1.5 rounded-full transition-colors
-                                    ${c.enabled ? "bg-green-500 hover:bg-yellow-400"
-                                                : "bg-sakura-200 hover:bg-green-400"}`} />
-                      <ts.Icon size={12} className="shrink-0 text-sakura-300" />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <p className={`text-[12px] font-medium truncate
-                                        ${c.enabled ? "text-sakura-600" : "text-sakura-300 line-through"}`}>
-                            {c.title || c.id}
-                          </p>
-                          <span className={`text-[10px] px-1.5 py-px rounded border shrink-0 ${ts.cls}`}>
-                            {ts.label}
-                          </span>
-                          {c.requires_confirm && (
-                            <span className="text-[10px] px-1.5 py-px rounded border border-yellow-100 bg-yellow-50 text-yellow-600 shrink-0">
-                              需确认
-                            </span>
-                          )}
-                          {c.kind === "channel" && (
-                            <span className="text-[10px] px-1.5 py-px rounded border border-sakura-100 bg-sakura-50 text-sakura-500 shrink-0">
-                              通道
-                            </span>
-                          )}
-                          {!c.enabled && (
-                            <span className="text-[10px] px-1.5 py-px rounded border border-sakura-200 bg-white text-sakura-400 shrink-0">
-                              已停用
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[11px] text-sakura-400 truncate font-mono">{c.id}</p>
-                        <p className="text-[11px] text-sakura-300 truncate">{c.description}</p>
-                      </div>
-                      <button onClick={() => handleTest(c)} disabled={busyId === c.id || !c.enabled}
-                        className="p-1 rounded hover:bg-teal-50 text-sakura-300 hover:text-teal-500 transition-colors shrink-0 disabled:opacity-40"
-                        title={c.trust === "read"
-                          ? `测试调用（${methodOf(c)}）`
-                          : "该能力需确认，不提供直接测试"}>
-                        {busyId === c.id ? <Loader2 size={11} className="animate-spin" /> : <Zap size={11} />}
-                      </button>
-                      <button onClick={() => setEditingId(editing ? "" : c.id)}
-                        className="p-1 rounded hover:bg-sakura-100 text-sakura-300 hover:text-sakura-600 transition-colors shrink-0"
-                        title="编辑名称 / 描述 / 权限">
-                        {editing ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                      </button>
-                      <button onClick={() => handleUnregister(c.id)} disabled={busyId === c.id}
-                        className="p-1 rounded hover:bg-red-50 text-sakura-300 hover:text-red-500 transition-colors shrink-0 disabled:opacity-40"
-                        title="彻底删除这条能力">
-                        <Trash2 size={11} />
-                      </button>
+                  <div key={t}>
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-sakura-50/60 border-b border-sakura-50">
+                      <GIcon size={11} className="shrink-0 text-sakura-400" />
+                      <span className="text-[11px] font-medium text-sakura-600">{gt.label}能力</span>
+                      <span className="text-[10px] text-sakura-300">{group.length}</span>
                     </div>
-                    {editing && (
-                      <div className="mt-2">
-                        <CapEditor cap={c} onClose={() => setEditingId("")}
-                          onSaved={() => load(true)} />
-                      </div>
-                    )}
+                    {group.map(capRow)}
                   </div>
                 );
               })
@@ -826,8 +1118,10 @@ export default function GatewayPage() {
         {/* 右：开放接入侧栏（点顶部按钮展开，对齐 OpsPage 右栏规范）。
             AccessPanel 根节点自带 lg:w-[320px] lg:flex-shrink-0，故此处直接作为 flex 右子元素。 */}
       {sideTab === "access" && (
-        <AccessPanel access={access} onClose={() => setSideTab(null)}
-          onChanged={() => load(true)} />
+        <AccessPanel access={access} mesh={mesh} onToggleMesh={toggleMesh}
+          onRegenerateToken={regenerateToken} onSetCustomToken={setCustomToken}
+          onSetAdvanced={setAdvanced}
+          onClose={() => setSideTab(null)} onChanged={() => load(true)} />
       )}
       </div>
     </div>

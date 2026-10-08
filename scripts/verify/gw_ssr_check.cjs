@@ -324,8 +324,12 @@ function build() {
   need(html2.includes("全部权限"), "有权限等级筛选下拉");
   need(html2.includes("含停用"), "有「含停用」开关");
 
-  // 停用开关的 title 提示（用户知道圆点能点）
+  // 停用开关的 title 提示（用户知道开关能点）
   need(html2.includes("点击停用"), "能力行有停用开关（title 提示）");
+  // 新设计：启用/停用是标准开关（role=switch），不再是 6px 小圆点
+  need(html2.includes('role="switch"'), "启用/停用是标准开关(role=switch)");
+  // 新设计：能力按权限分组（只读/可写/危险），危险项单独成组更醒目
+  need(/只读能力|可写能力|危险能力/.test(html2), "能力清单按权限分组渲染");
 
   // 编辑能力
   need(html2.includes("编辑名称"), "能力行有编辑入口");
@@ -342,29 +346,14 @@ function build() {
   // 侧边栏内容（AccessPanel）默认不渲染，故独立渲染它做断言 ——
   // 直接用组件源码里已有的逻辑：把 sideTab 初值改成 "access" 再渲一次。
   const html4 = await renderWithRealData(st, caps, access, "access");
-  need(html4.includes("一键接入配置"), "展开后有「一键接入配置」区块");
-  need(html4.includes("扩展能力"), "展开后有「扩展能力」区块");
-  need(html4.includes("注册自定义能力"), "展开后有「注册自定义能力」表单");
-  need(html4.includes("能力 ID（唯一"), "注册表单有 ID 输入项");
-  need(html4.includes("需要人工确认后才能执行"), "注册表单有确认勾选项");
-  if (access) {
-    need(html4.includes(access.lan_ip), `展开后显示真实局域网 IP ${access.lan_ip}`);
-    need(html4.includes(access.lan_url), "展开后显示局域网 MCP 地址");
-    need(html4.includes("Claude Code"), "给出 Claude Code 接入配置");
-    need(html4.includes("Cursor"), "给出 Cursor 接入配置");
-    need(html4.includes("通用 HTTP"), "给出通用 HTTP 接入配置");
-    need(html4.includes("内部 WS"), "给出内部 WS 地址");
-    need(html4.includes("复制"), "配置块带复制按钮");
-    if (access.mcp && access.mcp.needs_token_for_lan) {
-      need(html4.includes("NAIXI_MCP_TOKENS"), "未配 token 时提示了配置方式");
-    }
-    if (!access.mcp.running) {
-      need(html4.includes("mcp_server.py"), "MCP 未运行时给出启动命令");
-      need(html4.includes("未启动"), "MCP 状态如实显示「未启动」（不谎报运行）");
-    } else {
-      need(html4.includes("运行中"), "MCP 运行时状态正确");
-    }
-  }
+  // 四抽屉侧栏：默认「快速接入」抽屉；跨设备/自定义/高级各为一个抽屉（需点击切换）。
+  need(html4.includes("快速接入") && html4.includes("跨设备接入")
+       && html4.includes("自定义能力") && html4.includes("高级"),
+       "侧栏有四个抽屉：快速接入/跨设备接入/自定义能力/高级DIY");
+  need(html4.includes("把这里的能力接进你已经在用的 AI 工具") || html4.includes("Claude Code")
+       || html4.includes("Cursor"),
+       "默认「快速接入」抽屉显示各工具接入配置（产品级文案）");
+  need(html4.includes("开放接入"), "侧栏标题为「开放接入」");
   // ═══ 结构断言：侧栏必须与左栏**同级并排**，不是掉在下方 ═══
   // 早期两个错误：① 把 <AccessPanel> 挂在 flex 容器外面（少闭合）→ 掉到下方竖排；
   // ② 用 grid + 固定两列，但隐藏态仍预留 320px 空列把左栏挤窄。
@@ -394,8 +383,8 @@ function build() {
        "展开后触发按钮呈 teal 渐变选中态（一眼可辨已展开）");
   need(html2.includes("from-sakura-400 to-sakura-500 text-white"),
        "收起态是 sakura 渐变实心主按钮（与其他页主操作按钮同款，够显眼）");
-  // 面板头部带 X 可关闭
-  need(html4.includes("开放接入") && html4.includes("MCP"),
+  // 面板头部带 X 可关闭（重构后面板同时管 mesh+MCP，标题已去掉 MCP 后缀）
+  need(html4.includes("开放接入") && (html4.includes("跨设备接入") || html4.includes("快速接入")),
        "侧栏头部显示标题与关闭按钮");
 
   // 已停用的能力要标出来

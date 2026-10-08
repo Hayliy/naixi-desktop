@@ -76,7 +76,14 @@ async function fetchWithRetry<T>(path: string, init: RequestInit, timeoutMs: num
       if (res.ok) return (await res.json()) as T;
       // 4xx 业务错误：不重试，直接抛出（避免掩盖真实业务错误）
       if (res.status >= 400 && res.status < 500) {
-        throw new Error(`API ${res.status}: ${res.statusText}`);
+        // 透出后端返回的中文 error/hint，而不是只显示模糊的 "Bad Request"
+        let detail = "";
+        try {
+          const body = await res.json();
+          detail = (body?.error || body?.message || "").toString();
+          if (body?.hint) detail += (detail ? " —— " : "") + body.hint;
+        } catch { /* body 非 JSON 或已读空，回退到 statusText */ }
+        throw new Error(detail ? `API ${res.status}: ${detail}` : `API ${res.status}: ${res.statusText}`);
       }
       // 5xx / 429：落到 catch 走重试
       lastErr = new Error(`API ${res.status}: ${res.statusText}`);

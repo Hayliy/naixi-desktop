@@ -8,6 +8,47 @@
 
 > 版本号唯一来源：`src-tauri/tauri.conf.json` 的 `version` 字段。改后跑 `npm run sync:version`，同步到 Cargo.toml / package.json / desktop_core/version.json / src/lib/version.ts / README 徽章与下载名。
 
+## [1.1.0] - 2026-10-08
+
+首个功能次版本。核心是**本地模型子系统从零建成**（可搜索魔搭社区 GGUF、下载、启动本地推理、
+接入对话自动路由），并根治了后端并发抖动。全部为向后兼容的新增功能，无数据迁移需求。
+
+### 新增（P0 · 本地模型子系统，13 个新端点）
+- **模型库**：对接魔搭（ModelScope）社区，可搜索 GGUF 模型、按量化档位与体积过滤、分页浏览、
+  下载（含整目录多档位打包下载）、查看下载进度、取消、删除。
+  端点：`/api/local/catalog` `/search` `/files` `/download` `/download/progress` `/download/cancel` `/delete`。
+- **本地推理**：管理已下载模型的启动 / 停止 / 状态查询 / 对话。
+  端点：`/api/local/models` `/status` `/start` `/stop` `/chat`。
+- **引擎随安装包下发**：不再依赖用户自行安装 llama.cpp 或 Ollama。新增 `scripts/bundle_engine.cjs`
+  把推理引擎（81MB，含 Vulkan 后端）与 HF→GGUF 转换器（4.7MB）打进安装包，干净虚拟机装完即用。
+  引擎查找遵循「随包资源 → 数据目录 → 系统标准位置 → PATH」四级解析，**不写死任何盘符或用户名**。
+
+### 修复（P0 · 后端并发抖动根治）
+- **aiohttp 事件循环被同步阻塞**：多个处理器在 async 函数里做同步重活，实测把零 IO 的
+  `/api/desktop/status` 从 23ms 拖到 **2654～5749ms**（并发下）。新增专用线程池 + **singleflight**
+  合并（`run_blocking(key, fn, ttl)`：同 key 并发请求共用一个 future + TTL 缓存），并把下列
+  慢端点全部迁出事件循环：`/api/self_hash`（整包哈希）、`/api/stats`（逐表 COUNT + psutil）、
+  `/api/local/models`（磁盘扫描）、`/api/memory_stats`（首次建库）。
+  修复后同口径实测：**PING 23～142ms**，`/api/stats` 3～20ms、`/api/self_hash` 约 1ms、
+  `/api/local/models` 0～1ms、`/api/memory_stats` 1～7ms。
+- **后端在 GBK 控制台机器上崩溃**：5 处 `subprocess.run(text=True)` 按 UTF-8 解码 Windows 命令输出，
+  遇 GBK 字节即抛 `UnicodeDecodeError`。已显式指定 `encoding="gbk", errors="ignore"`。
+- **本地模型停止响应慢**：`stop_server()` 同步等待进程退出最长阻塞 8 秒，改为 3 秒后强制 kill，
+  确保 11436 端口及时释放。
+
+### 修复（P1 · 本地模型界面）
+- 启动 / 停止按钮此前完全无法操作：任一模型在运行时，全局 `running` 状态会把**所有**模型的启动
+  按钮一起禁用。已改为仅按当前行的忙碌态禁用。
+- 启动后对话页「自动路由」下拉框不显示本地模型：配置只在组件挂载时拉取一次，启动后不刷新。
+  现在启停成功后主动刷新配置。
+- 「已下载」列表的按钮改为**单一切换按钮**：未运行时显示绿色「启动」，运行中显示红色「停止」，
+  按一下启动、再按一下停止。
+
+### 新增（P1 · 网关对等互联）
+- 端点：`/api/gateway/mesh` `/api/gateway/advanced`，配套 `gateway_hub.py` 增强（196 行改动）。
+- 补齐高度链、页内「后端未连接」提示、恢复浏览器模式重启按钮；侧栏对齐 OpsPage 规范。
+- WebSocket token 鉴权加固（`mcp_server.py`）。
+
 ## [未发布]
 
 > 以下均为**仓库侧工具**改动，不影响安装包内容，故不升版本号、不重发安装包。

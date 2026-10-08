@@ -682,7 +682,34 @@ def avatar_remove_expired():
     finally:
         conn.close()
 
+# ★ 性能（2026-10-07）：meta 读缓存。
+#   meta_get 每次都 _get_conn() 新建一条 SQLite 连接再 SELECT，实测 0.17~0.32s
+#   （本机磁盘/沙箱下建连接很贵）。而 `desktop_config` 被 /api/desktop/config、
+#   /api/chat/stream 等热路径反复读，每次几百毫秒不可接受。
+#   只缓存 desktop_config 这一个 key（改动必须立刻可见的那份），
+#   TTL 1.5s：前端首屏那波并发请求间隔通常 <1s，能整波命中；
+#   又远小于「保存设置后要看到变化」的可感知间隔（且 meta_set 会立刻失效）。
+#   其它 key 仍走原逻辑，行为不变。
+_META_CACHE: dict = {"key": None, "val": "", "ts": 0.0}
+_META_CACHE_TTL = 1.5  # 秒
+
+
 def meta_get(key: str, default: str = "") -> str:
+    if key == "desktop_config":
+        import time as _t
+        now = _t.time()
+        if _META_CACHE["key"] == key and (now - _META_CACHE["ts"]) < _META_CACHE_TTL:
+            return _META_CACHE["val"]
+        conn = _get_conn()
+        try:
+            row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+            val = row["value"] if row else default
+        finally:
+            conn.close()
+        _META_CACHE["key"] = key
+        _META_CACHE["val"] = val
+        _META_CACHE["ts"] = now
+        return val
     conn = _get_conn()
     try:
         row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
@@ -697,6 +724,10 @@ def meta_set(key: str, value: str):
         conn.commit()
     finally:
         conn.close()
+    # 写完立刻失效缓存：设置页保存后必须马上能读到新值，不能等 TTL
+    if key == "desktop_config":
+        _META_CACHE["ts"] = 0.0
+        _META_CACHE["key"] = None
 
 # ── 长期记忆层（agent_memory）：替代全局 _scene_history，持久化 + 按观众维度 ──
 # 设计：episodic=原始对话/弹幕事件流（可回溯）；profile=从该观众对话中抽取的稳定事实（带重要度/衰减）。

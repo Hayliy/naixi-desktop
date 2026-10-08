@@ -461,14 +461,10 @@ def main() -> int:
     from mcp.server import MCPServer  # noqa: F401  （确保依赖已装）
 
     srv = build_server()
-    app = srv.streamable_http_app(
-        streamable_http_path="/mcp",
-        json_response=False,       # 用 SSE 流（部分客户端需要）
-        stateless_http=True,       # 无状态，能挂到任意反代/多副本后面
-        host=HOST,
-    )
 
     # 辅助端点：健康检查 + OpenAI 格式工具导出（降低接入门槛）
+    # 注意：必须**先注册 custom_route，再构建 app**——streamable_http_app() 会把
+    # 当前路由表快照进 app，先建 app 的话这些辅助路由不会被挂上（曾表现为 /health 404）。
     @srv.custom_route("/health", methods=["GET"])
     async def _health(request):
         from starlette.responses import JSONResponse
@@ -516,10 +512,42 @@ def main() -> int:
             })
         return JSONResponse({"object": "list", "data": out})
 
+    # ── 现在路由都注册完了，再构建 app ────────────────────────────
+    app = srv.streamable_http_app(
+        streamable_http_path="/mcp",
+        json_response=False,       # 用 SSE 流（部分客户端需要）
+        stateless_http=True,       # 无状态，能挂到任意反代/多副本后面
+        host=HOST,
+    )
+
+    # ── 统一鉴权中间件（关键）────────────────────────────────────────
+    # 之前 authenticate() 只被 /v1/tools 用到，MCP 主端点 /mcp 完全没有校验：
+    # 绑到 0.0.0.0 后，局域网里任何人知道地址就能调全部能力（系统信息/资源/诊断…），
+    # 口令形同虚设。这里在 ASGI 入口拦住所有请求（/health 除外，它只报状态不含数据）。
+    if not LOCAL_NO_AUTH:
+        from starlette.middleware.base import BaseHTTPMiddleware
+        from starlette.responses import JSONResponse
+
+        class _AuthGuard(BaseHTTPMiddleware):
+            async def dispatch(self, request, call_next):
+                if request.url.path == "/health":
+                    return await call_next(request)
+                try:
+                    authenticate(request.headers)
+                except AuthError as e:
+                    return JSONResponse({"error": str(e)}, status_code=401)
+                return await call_next(request)
+
+        app.add_middleware(_AuthGuard)
+
     log.info("MCP server 启动: http://%s:%d/mcp", HOST, PORT)
     log.info("后端: %s | 工具: %d | 鉴权: %s", BACKEND, len(TOOL_SPECS),
              "none(local)" if LOCAL_NO_AUTH else "bearer")
-    srv.run(transport="streamable-http", host=HOST, port=PORT)
+    # 注意：不能用 srv.run(transport="streamable-http") —— 它会**自己重新构建一份 app**，
+    # 上面挂在 app 上的鉴权中间件会被绕过（实测无 token 也能 initialize 成功）。
+    # 所以这里直接用 uvicorn 跑我们加了中间件的那个 app。
+    import uvicorn
+    uvicorn.run(app, host=HOST, port=PORT, log_level="info")
     return 0
 
 

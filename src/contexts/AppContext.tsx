@@ -34,8 +34,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [config, setConfig] = useState<AppConfig>(defaultConfig);
   const [loaded, setLoaded] = useState(false);
 
+  // ★ 超时必须给足：/api/desktop/config 实测要 3~7s（会并入本地 provider，
+  //   里面同步探测 llama.cpp/Ollama），而 apiGet 默认只有 10s，余量太小很容易踩线 abort。
+  //   一旦 abort → config 拉不到 → api_providers 为空 → Chat 页模型下拉只剩「自动路由」，
+  //   本地模型永远选不到（用户报的「没有本地自连」）。给 30s 留足余量。
+  const CONFIG_TIMEOUT = 30000;
+
   const refreshConfig = () => {
-    apiGet<AppConfig>("/api/desktop/config")
+    apiGet<AppConfig>("/api/desktop/config", CONFIG_TIMEOUT)
       .then((d) => {
         if (d?.api_providers) setConfig(d);
         setLoaded(true);
@@ -49,7 +55,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (attempt > 5) return;
           const delay = Math.min(1000 * 2 ** (attempt - 1), 15000);
           setTimeout(() => {
-            apiGet<AppConfig>("/api/desktop/config")
+            apiGet<AppConfig>("/api/desktop/config", CONFIG_TIMEOUT)
               .then((d2) => {
                 if (d2?.api_providers) setConfig(d2);
               })
