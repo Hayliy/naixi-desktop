@@ -7,7 +7,7 @@
 ![Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20React%2019%20%C2%B7%20Python%203.13-1F4E79)
 ![License](https://img.shields.io/badge/License-Apache%202.0-green)
 ![Release](https://img.shields.io/badge/Release-v1.1.1-blue)
-![Commits](https://img.shields.io/badge/Commits-575-orange)
+![Commits](https://img.shields.io/badge/Commits-625-orange)
 ![LOC](https://img.shields.io/badge/LOC-51k-blueviolet)
 
 > A **local-first** desktop AI agent built on Tauri 2. It lives in the system tray and folds chat, desktop pet,
@@ -16,7 +16,7 @@
 > **your data never leaves the machine**.
 
 **Scale**: ~**52k** lines of first-party code (Python 36,490 / frontend 14,743 / Rust 477) · **55** Python modules ·
-**38** frontend components · **182** REST endpoints · **28** SQLite tables · **575** commits · Apache-2.0
+**38** frontend components · **210** REST endpoints · **28** SQLite tables · **625** commits · Apache-2.0
 
 | Layer | Tech |
 | --- | --- |
@@ -48,6 +48,10 @@ A few of the core views (full feature breakdown in [Features](#features)):
   <tr>
     <td width="50%"><img src="docs/screenshots/07-automation.png" alt="Automation"><br><sub><b>Automation</b> — scheduled, webhook and workflow triggers with zero manual effort.</sub></td>
     <td width="50%"><img src="docs/screenshots/08-ops-health.png" alt="Ops & Self-Check"><br><sub><b>Ops & self-check</b> — health score, availability, trend chart, automated remediation.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/09-local-models.png" alt="Local Models"><br><sub><b>Local models</b> — ModelScope GGUF search / download / bundled llama.cpp inference.</sub></td>
+    <td width="50%"><img src="docs/screenshots/10-gateway-mesh.png" alt="Device Mesh"><br><sub><b>Device mesh</b> — open access + outbound dialing; LAN devices share capabilities.</sub></td>
   </tr>
 </table>
 
@@ -96,6 +100,10 @@ A few of the core views (full feature breakdown in [Features](#features)):
 6. **User-mode security sentinel.** Emergency defense against the Silver Fox trojan (IOC sentinel scan, one-click
    remediation, installer SHA-256 self-check, periodic patrols) with **explicitly documented capability boundaries** —
    it does not claim to handle kernel-level rootkits.
+7. **Self-contained local inference + device mesh.** llama.cpp (Vulkan) and an HF→GGUF converter ship inside the
+   installer; engine discovery uses four fallback levels with zero hardcoded paths, so chat works fully offline.
+   Open access + outbound dialing form a two-way mesh that lets LAN devices call each other's capabilities, with
+   automatic self-healing for misconfigured peers on startup.
 
 ---
 
@@ -103,6 +111,23 @@ A few of the core views (full feature breakdown in [Features](#features)):
 
 **Chat & models** — streaming and agent chat with mid-flight cancellation; multi-model routing by task type; local
 conversation history with per-session search; multimodal generation (image / video / voice / code).
+
+**Local models (on-device inference)** — a model catalog backed by ModelScope: search GGUF models, filter by
+quantization and size, browse with pagination; directory-level multi-file downloads with progress, cancel and delete
+(13 endpoints under `/api/local/*`). The llama.cpp engine (81 MB, Vulkan build) and an HF→GGUF converter ship inside
+the installer — no Ollama or llama.cpp preinstall needed; engine discovery follows "bundled → data dir → system
+locations → PATH" with zero hardcoded paths. One-click start/stop (port 11436) and the chat page's auto-routing can
+select a local model, so chat works offline. Verified end-to-end: a clean VM downloads Qwen3-0.6B GGUF (378 MB) from
+the in-app catalog, starts it and answers real prompts.
+
+**Device mesh (cross-device interconnection)** — **Open access** (inbound): one switch plus an auto-generated token
+lets other devices on the LAN connect with the mesh address and call your capabilities; advanced mode exposes custom
+tokens and separate ports for the WS subscription channel and the HTTP capability channel. **Outbound dialing**: enter
+a peer's mesh address + token to connect out; outbound peers persist locally, auto-reconnect on startup, and the peer
+list refreshes every 3 seconds with inbound/outbound shown together. Two copyable addresses: the mesh address
+(`ws://ip:18400/ws/gateway`, for another Naixi) and the MCP tool address (`http://ip:9846/mcp`, for Cursor etc.), plus
+ready-to-paste snippets for Claude Code / Cursor. Error messages are fully localized, and misconfigured addresses
+self-heal on startup.
 
 **Desktop pet (PetWindow)** — Qt pet with Live2D and VRM avatars; a motion/Idle engine (head tilt, hair sway, body
 float); webcam face capture via offline MediaPipe FaceLandmarker driving VRM expressions, head pose and Live2D
@@ -166,6 +191,8 @@ graph TB
     Python --> Search[(SearXNG<br/>local search)]
     Python --> DB[(SQLite<br/>chat / knowledge / memory / config)]
     Python --> LLM[Model provider APIs<br/>text / vision / video / speech]
+    Python --> Local[Bundled llama.cpp<br/>:11436 local inference]
+    Python -.->|open access :18400 / MCP :9846| Mesh[LAN devices<br/>two-way mesh]
     Python --> MCP[MCP servers]
     Python -->|WebSocket :9877| Face[Webcam face-capture bridge<br/>MediaPipe]
     Tauri -->|child process| Pet[Qt desktop pet<br/>Live2D / VRM]
@@ -190,8 +217,8 @@ graph TB
 | Runtime | WebView2 — installed automatically by the setup; offline machines get a manual-install prompt |
 | Disk | about **1.3 GB** after installation (self-contained Python runtime plus bundled local search); 2 GB recommended |
 | Memory | 4 GB or more recommended |
-| Network | **Required**: model inference uses your own API keys (cloud). Chat history, knowledge base, desktop pet and local search all run on-device |
-| Optional hardware | Microphone (voice input / live mic), webcam (face capture, off by default), NVIDIA GPU (GPU metrics on the dashboard) |
+| Network | Required only for cloud model inference (your own API keys). Local model inference, chat history, knowledge base, desktop pet and local search all run on-device — with a local model installed, chat works fully offline |
+| Optional hardware | Microphone (voice input / live mic), webcam (face capture, off by default), NVIDIA GPU (dashboard metrics / local inference acceleration) |
 
 > The backend binds to `127.0.0.1:9845` only and exposes no external port. No telemetry, no usage upload. Per-host
 > data flows are documented in [docs/PRIVACY.md](docs/PRIVACY.md) (Chinese).
@@ -263,6 +290,10 @@ These large or copyrighted assets are **not** distributed with the repo:
 
 - **Model providers** — API keys are stored locally with Fernet encryption; the key is derived from a machine
   identifier and never written in plaintext. Providers and model policies are configured in the in-app settings.
+- **Local models** — downloaded models live in `naixi_models/` (scan directories configurable in the UI); the
+  inference engine ships with the app, and start parameters (context size / GPU layers) are adjustable.
+- **Device mesh** — turning on "Allow other devices to connect" auto-generates a token; outbound peers, bind
+  addresses and both channel ports are editable under Advanced / DIY, taking effect immediately.
 - **Local search** — SearXNG starts with the app and degrades to public engines when offline.
 - **MCP** — add server addresses in settings; configured servers auto-connect on startup.
 - **Knowledge base / workflows / automation** — configured entirely from the UI; data lives in local `data/`.
