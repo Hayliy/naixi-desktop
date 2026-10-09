@@ -2881,7 +2881,6 @@ async def api_gateway_mesh_set(request):
 # 这半边是**我主动连出去**（本端作 client，拨对端 18400 的 /ws/gateway）。
 # 用户不该需要懂协议：从对方 UI 复制来的可能是 http://ip:18400/mcp，
 # 也可能只填 ip:18400，这里统一归一化成 ws://host:port/ws/gateway。
-_REMOTE_DEFAULT_PORT = 18400
 
 
 def _normalize_remote_url(raw: str):
@@ -2905,12 +2904,19 @@ def _normalize_remote_url(raw: str):
     if not host:
         return "", f"地址缺少主机名：{raw}"
     ws_scheme = "wss" if scheme in ("wss", "https") else "ws"
-    # 对方给的多半是 MCP 地址（/mcp），但端口同为网关端口 —— 路径一律改写成
-    # 控制平面路径，否则会拨到 MCP 上（协议不对，必然失败）。
+    # ★ MCP 与 WS 网关在本产品是【两个不同端口】（MCP 默认 9846，WS 网关默认 18400）。
+    # 对方「开放接入」页面展示的接入地址是 MCP 地址（…:9846/mcp），拿来跨设备互联时
+    # 必须把端口改写成网关端口，否则永远拨不通。（旧版这里错误假设"端口同为网关端口"）
     path = (u.path or "").rstrip("/")
+    try:
+        mcp_port = int(os.environ.get("NAIXI_MCP_PORT", "9846"))
+    except Exception:
+        mcp_port = 9846
+    if port == mcp_port or path.endswith("/mcp"):
+        port = _gh.WS_PORT
     if not path.endswith(_gh.WS_PATH):
         path = _gh.WS_PATH
-    return f"{ws_scheme}://{host}:{port or _REMOTE_DEFAULT_PORT}{path}", ""
+    return f"{ws_scheme}://{host}:{port or _gh.WS_PORT}{path}", ""
 
 
 async def api_gateway_remotes_get(request):

@@ -99,12 +99,49 @@ def _save_store() -> None:
         log.warning("[GatewayClient] 保存远端列表失败: %s", e)
 
 
+def _heal_url(url: str) -> str:
+    """纠偏历史存量地址：MCP 端口 ≠ WS 网关端口。
+
+    本产品里 MCP（NAIXI_MCP_PORT，默认 9846）与 WS 网关（GATEWAY_WS_PORT，默认 18400）
+    是两个不同端口。旧版把对方页面展示的 MCP 地址（…:9846/mcp）当互联地址存下、
+    端口没改写成网关端口 ⇒ 主动接入永远拨不通。这里按「端口 = MCP 端口」特征纠偏，幂等。
+    """
+    try:
+        from urllib.parse import urlparse
+        u = urlparse(url or "")
+        if (u.scheme or "").lower() not in ("ws", "wss") or not u.hostname:
+            return url
+        try:
+            from desktop_core import gateway_hub as _gh
+            gw_port, ws_path = int(_gh.WS_PORT), _gh.WS_PATH
+        except Exception:
+            gw_port = int(os.environ.get("GATEWAY_WS_PORT", "18400"))
+            ws_path = "/ws/gateway"
+        try:
+            mcp_port = int(os.environ.get("NAIXI_MCP_PORT", "9846"))
+        except Exception:
+            mcp_port = 9846
+        port = u.port
+        if port is None or port == mcp_port:
+            port = gw_port
+        path = (u.path or "").rstrip("/") or ws_path
+        if not path.endswith(ws_path):
+            path = ws_path
+        host = u.hostname
+        netloc = f"[{host}]" if ":" in host else host
+        fixed = (f"{(u.scheme or 'ws').lower()}://{netloc}:{port}{path}"
+                 + (f"?{u.query}" if u.query else ""))
+        return fixed if fixed != url else url
+    except Exception:
+        return url
+
+
 class RemotePeer:
     """单个出站对端连接（异步管理）。"""
 
     def __init__(self, label: str, url: str, token: str, auto_connect: bool = True):
         self.label = label
-        self.url = url
+        self.url = _heal_url(url)
         self.token = token
         self.auto_connect = auto_connect
         self.ws = None
@@ -255,6 +292,7 @@ def add_remote(label: str, url: str, token: str, auto_connect: bool = True) -> d
     token = (token or "").strip()
     if not label:
         return {"ok": False, "error": "名称不能为空"}
+    url = _heal_url(url)
     if not url.lower().startswith(("ws://", "wss://")):
         return {"ok": False, "error": "对端地址必须以 ws:// 或 wss:// 开头"}
     if _REMOTES.get(label) is not None:
@@ -279,17 +317,25 @@ def remove_remote(label: str) -> dict:
 
 def init_remotes() -> None:
     """后端启动时调用：载入持久化配置并自动拨号 auto_connect 的项。"""
+    dirty = False
     for item in _load_store():
         label = item.get("label")
         if not label:
             continue
+        raw_url = item.get("url", "")
+        url = _heal_url(raw_url)
+        if url != raw_url:
+            log.info("[GatewayClient] 纠偏对端 %s 地址: %s -> %s", label, raw_url, url)
+            dirty = True
         rp = RemotePeer(
             label=label,
-            url=item.get("url", ""),
+            url=url,
             token=item.get("token", ""),
             auto_connect=bool(item.get("auto_connect", True)),
         )
         _REMOTES[label] = rp
         if rp.auto_connect and rp.url:
             rp.start()
+    if dirty:
+        _save_store()
     log.info("[GatewayClient] 已载入 %d 个出站对端", len(_REMOTES))

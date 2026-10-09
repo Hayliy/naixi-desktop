@@ -453,7 +453,10 @@ function AccessPanel({ access, mesh, onToggleMesh, onRegenerateToken, onSetCusto
   const mcp = access?.mcp;
   const on = !!mesh?.enabled;
   const lanIp = mesh?.lan_ip || access?.lan_ip || "";
-  const mcpUrl = `http://${lanIp}:9846/mcp`;   // 通用 MCP 接入地址
+  // ★ 跨设备互联走 WS 网关，与 MCP 是两个不同端口 —— 主动接入填互联地址（ws_lan）才对。
+  //   旧版页面只展示 MCP 地址（9846），用户照抄去主动接入永远连不上。
+  const mcpUrl = access?.lan_url || `http://${lanIp}:${access?.mcp?.port ?? 9846}/mcp`;
+  const meshUrl = access?.ws_lan || `ws://${lanIp}:${access?.ws_port ?? 18400}/ws/gateway`;
   const cfg = access?.configs || {};
   const quickItems = [
     { label: "Claude Code", hint: "命令行一条接入", text: cfg.claude_code },
@@ -517,12 +520,20 @@ function AccessPanel({ access, mesh, onToggleMesh, onRegenerateToken, onSetCusto
               ) : (
                 <>
                   <p className="text-[11px] text-sakura-500 leading-relaxed">
-                    已开启。任何兼容 MCP 的工具，用下面这个地址 + 口令就能连上。
+                    已开启。另一台奶昔在「主动接入其他设备」里填<b>跨设备互联地址</b> + 口令；
+                    Cursor 等 MCP 工具用 MCP 地址。
                   </p>
                   <div>
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-[10px] text-sakura-400">接入地址</span>
-                      <CopyBtn text={mcpUrl} label="地址" />
+                      <span className="text-[10px] text-sakura-400">跨设备互联地址</span>
+                      <CopyBtn text={meshUrl} label="互联地址" />
+                    </div>
+                    <p className="font-mono text-[11px] text-sakura-700 bg-sakura-50 rounded px-2 py-1.5 break-all">{meshUrl}</p>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] text-sakura-400">MCP 工具地址</span>
+                      <CopyBtn text={mcpUrl} label="MCP 地址" />
                     </div>
                     <p className="font-mono text-[11px] text-sakura-700 bg-sakura-50 rounded px-2 py-1.5 break-all">{mcpUrl}</p>
                   </div>
@@ -847,8 +858,9 @@ export default function GatewayPage() {
     } catch (e) { notify(`应用失败：${String(e).slice(0, 60)}`, "error"); }
   };
 
-  const load = useCallback(async (silent = false) => {
-    if (silent) setRefreshing(true);
+  // spin=true 才点亮刷新按钮的转动；后台 3s 轮询传默认 false，否则按钮永远在转。
+  const load = useCallback(async (spin = false) => {
+    if (spin) setRefreshing(true);
     const safe = async (p: Promise<any>) => {
       try { return await p; } catch (e: any) {
         if (e?.name === "AbortError" || e?.message?.includes("aborted")) return null;
@@ -878,9 +890,9 @@ export default function GatewayPage() {
   // 互联对端自动刷新：固定每 3 秒刷一次，不再依赖 peer_count 判断。
   // 否则「只主动连出、无人连入」时 peer_count 恒为 0 → 退化成 15s 才刷一次，
   // 出站对端连上后状态（连接中→已连）迟迟不更新，观感就是「连上却不显示」。
-  // load(true) 同时覆盖入站 peers + 出站 remotes；loadMesh 同步开放接入开关/口令。
+  // load() 为后台静默刷新（不点亮刷新按钮）；loadMesh 同步开放接入开关/口令。
   useEffect(() => {
-    const t = setInterval(() => { load(true); loadMesh(); }, 3000);
+    const t = setInterval(() => { load(); loadMesh(); }, 3000);
     return () => clearInterval(t);
   }, [load, loadMesh]);
 
