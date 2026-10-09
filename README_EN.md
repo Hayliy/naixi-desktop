@@ -220,8 +220,11 @@ graph TB
 | Network | Required only for cloud model inference (your own API keys). Local model inference, chat history, knowledge base, desktop pet and local search all run on-device — with a local model installed, chat works fully offline |
 | Optional hardware | Microphone (voice input / live mic), webcam (face capture, off by default), NVIDIA GPU (dashboard metrics / local inference acceleration) |
 
-> The backend binds to `127.0.0.1:9845` only and exposes no external port. No telemetry, no usage upload. Per-host
-> data flows are documented in [docs/PRIVACY.md](docs/PRIVACY.md) (Chinese).
+> The backend API binds to `127.0.0.1:9845` only. The **one exception** is the opt-in mesh: enabling
+> "Device mesh → Open access" exposes the WS gateway (18400) and optionally the MCP channel (9846) to
+> your LAN, both token-protected and off with one switch; the business port 9845 always stays
+> loopback-only. Data flows: [docs/PRIVACY.md](docs/PRIVACY.md) (Chinese); mesh security boundary:
+> [GATEWAY_跨机互联.md](GATEWAY_跨机互联.md) (Chinese).
 
 ---
 

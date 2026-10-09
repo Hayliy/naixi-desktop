@@ -12,7 +12,8 @@ MCP（Model Context Protocol）是当前唯一「什么客户端都能连」的�
 Claude Code / Cursor / Cline / Claude Desktop / Gemini CLI 全部原生支持，
 官方 SDK 覆盖 TypeScript / Python / C# / Go / Rust / Ruby / Java / Swift / PHP / Kotlin。
 
-**端点**：`http://127.0.0.1:9846/mcp`（默认本机；对外需自行配隧道，见第三节）
+**端点**：`http://127.0.0.1:9846/mcp`（默认本机。局域网开放可在「互联 → 开放接入 / 互联参数」里
+直接切换 0.0.0.0 并配口令；跨公网仍建议隧道，见第三节）
 
 **Python 接入**（官方 SDK）：
 
@@ -135,6 +136,10 @@ NAIXI_MCP_TOKENS="tok_read:read,memory.read;tok_all:*"
 NAIXI_MCP_HOST="0.0.0.0"        # 非本机绑定时必填
 NAIXI_MCP_PORT="9846"
 ```
+
+> 1.1.0 起也可以不动环境变量：在「互联 → 开放接入」里开关 + 自动生成口令（写入同一份配置），
+> 「互联参数」高级档可改监听地址与端口。跨机互联（WS 网关 18400 / 主动接入）见
+> [GATEWAY_跨机互联.md](../GATEWAY_跨机互联.md)。
 
 客户端加头：
 

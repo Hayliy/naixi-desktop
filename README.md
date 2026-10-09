@@ -225,6 +225,8 @@ naixi-desktop/
 │   ├── workflow_engine.py / ops_engine.py / orchestrator.py
 │   ├── memory*.py / storage.py / reflection.py   # 记忆与存储
 │   ├── mcp_client.py / tools.py      # 工具与 MCP
+│   ├── gateway_hub.py / gateway_client.py   # 跨设备互联（WS 控制平面 + 出站拨号）
+│   ├── local_model.py / mcp_server.py       # 本地推理引擎管理 / 开放接入 MCP 服务
 │   ├── live_engine.py / avatar_backends.py  # 直播与渲染后端
 │   ├── game_agent*.py / *grounding.py / mc_*.cjs  # 游戏 Agent
 │   └── vrm_html/           # 面捕前端资源（index.html / MediaPipe vendor）
@@ -251,7 +253,10 @@ naixi-desktop/
 | 网络 | 云端模型推理需要（走你自己的 API Key）；本地模型推理、对话存储、知识库、桌宠、本地搜索均在本机完成——装好本地模型后可完全离线对话 |
 | 可选硬件 | 麦克风（语音输入 / 直播上麦）、摄像头（面捕，默认关闭）、NVIDIA 显卡（仪表盘 GPU 指标 / 本地推理加速） |
 
-> 后端只监听 `127.0.0.1:9845`，不对外暴露端口；不采集遥测、不上传使用数据。逐条数据流向见 [docs/PRIVACY.md](docs/PRIVACY.md)。
+> 后端 API 只监听 `127.0.0.1:9845`，不采集遥测、不上传使用数据。**唯一例外**是你主动开启
+> 「互联 → 开放接入」：此时 WS 网关（18400）与可选的 MCP 通道（9846）会按你的选择对局域网
+> 开放，均有口令保护且可随时关闭，业务端口 9845 始终只绑本机。逐条数据流向见
+> [docs/PRIVACY.md](docs/PRIVACY.md)，开放接入的安全边界见 [GATEWAY_跨机互联.md](GATEWAY_跨机互联.md)。
 
 ---
 
