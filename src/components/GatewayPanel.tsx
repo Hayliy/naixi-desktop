@@ -875,11 +875,14 @@ export default function GatewayPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  // 互联对端自动刷新：固定每 3 秒刷一次，不再依赖 peer_count 判断。
+  // 否则「只主动连出、无人连入」时 peer_count 恒为 0 → 退化成 15s 才刷一次，
+  // 出站对端连上后状态（连接中→已连）迟迟不更新，观感就是「连上却不显示」。
+  // load(true) 同时覆盖入站 peers + 出站 remotes；loadMesh 同步开放接入开关/口令。
   useEffect(() => {
-    const online = (status?.peer_count ?? 0) > 0;
-    const t = setInterval(() => load(true), online ? 5000 : 15000);
+    const t = setInterval(() => { load(true); loadMesh(); }, 3000);
     return () => clearInterval(t);
-  }, [load, status?.peer_count]);
+  }, [load, loadMesh]);
 
   const handleUnregister = async (id: string) => {
     setBusyId(id);
