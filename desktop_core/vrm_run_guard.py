@@ -91,7 +91,16 @@ def main():
         time.sleep(1)
 
     log("启动子进程 ...")
-    proc = subprocess.Popen(cmd, cwd=ROOT)
+    # 隐藏子进程窗口：EMBEDDED 不存在时会退回 sys.executable（可能是控制台版
+    # python.exe）—— 不隐藏就会在启动桌宠时闪出一个黑窗。
+    _kw = {}
+    if os.name == "nt":
+        _kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+        _si = subprocess.STARTUPINFO()
+        _si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        _si.wShowWindow = subprocess.SW_HIDE
+        _kw["startupinfo"] = _si
+    proc = subprocess.Popen(cmd, cwd=ROOT, **_kw)
     write_lock(proc.pid)
     log("子进程 pid=%s，开始监控（上限 %ds / %dMB / %d%%CPU）" % (proc.pid, args.max_seconds, args.max_rss_mb, args.max_cpu_pct))
 

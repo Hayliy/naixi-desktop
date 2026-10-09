@@ -794,7 +794,7 @@ export default function GatewayPage() {
   };
   const removeRemote = async (label: string) => {
     try {
-      const r = await apiPost<any>("/api/gateway/remotes", { label }, { method: "DELETE" } as any);
+      const r = await apiPost<any>("/api/gateway/remotes/delete", { label });
       if (r?.ok) { setRemotes(r.remotes || []); notify(`已断开并删除 ${label}`, "success"); }
       else notify(`删除失败：${r?.error || "未知"}`, "error");
     } catch (e) { notify(`删除异常：${String(e).slice(0, 60)}`, "error"); }

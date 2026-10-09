@@ -611,7 +611,10 @@ def engine_local_version(exe: str = "") -> dict:
         return {"ok": False, "build": 0, "version_text": "", "path": ""}
     try:
         r = subprocess.run([exe, "--version"], capture_output=True,
-                           timeout=30, text=True, errors="replace")
+                           timeout=30, text=True, errors="replace",
+                           # llama-server 是控制台程序：GUI 父进程直接跑它会闪一个黑窗
+                           # （进程退出即消失，用户观感就是"弹了个终端又没了"）。
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         txt = ((r.stdout or "") + (r.stderr or "")).strip()
         return {"ok": True, "build": _build_from_version_text(txt),
                 "version_text": txt.splitlines()[0] if txt else "", "path": exe}
@@ -820,7 +823,8 @@ def detect_gpu_device(exe: str = "") -> str:
     try:
         import re
         r = subprocess.run([exe, "--list-devices"], capture_output=True,
-                           timeout=25, text=True, errors="replace")
+                           timeout=25, text=True, errors="replace",
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         # 输出形如：
         #   Vulkan0: Intel(R) HD Graphics 630 (...)
         #   Vulkan1: NVIDIA GeForce GTX 1050 Ti (...)

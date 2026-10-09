@@ -2876,6 +2876,99 @@ async def api_gateway_mesh_set(request):
     return web.json_response({"ok": True, **st})
 
 
+# ── 主动接入其他设备（出站拨号）─────────────────────────────────
+# 与「开放接入」互补：那半边是**让别人连进来**（本端作 server，等别人拨号），
+# 这半边是**我主动连出去**（本端作 client，拨对端 18400 的 /ws/gateway）。
+# 用户不该需要懂协议：从对方 UI 复制来的可能是 http://ip:18400/mcp，
+# 也可能只填 ip:18400，这里统一归一化成 ws://host:port/ws/gateway。
+_REMOTE_DEFAULT_PORT = 18400
+
+
+def _normalize_remote_url(raw: str):
+    """把用户填的对端地址归一成 (ws_url, err)。err 非空 = 解析失败。"""
+    from urllib.parse import urlparse
+    from desktop_core import gateway_hub as _gh
+    s = (raw or "").strip()
+    if not s:
+        return "", "对端地址不能为空"
+    if "://" not in s:
+        s = "ws://" + s
+    try:
+        u = urlparse(s)
+        host = (u.hostname or "").strip()
+        port = u.port
+    except Exception:
+        return "", f"地址无法解析：{raw}"
+    scheme = (u.scheme or "").lower()
+    if scheme not in ("ws", "wss", "http", "https"):
+        return "", "只支持 ws:// wss:// http:// https:// 或直接填 IP:端口"
+    if not host:
+        return "", f"地址缺少主机名：{raw}"
+    ws_scheme = "wss" if scheme in ("wss", "https") else "ws"
+    # 对方给的多半是 MCP 地址（/mcp），但端口同为网关端口 —— 路径一律改写成
+    # 控制平面路径，否则会拨到 MCP 上（协议不对，必然失败）。
+    path = (u.path or "").rstrip("/")
+    if not path.endswith(_gh.WS_PATH):
+        path = _gh.WS_PATH
+    return f"{ws_scheme}://{host}:{port or _REMOTE_DEFAULT_PORT}{path}", ""
+
+
+async def api_gateway_remotes_get(request):
+    """GET /api/gateway/remotes —— 出站对端列表（配置 + 实时连接状态）。"""
+    try:
+        from desktop_core import gateway_client as _gc
+    except Exception as e:
+        return web.json_response(
+            {"ok": False, "error": f"gateway_client 不可用：{e}", "remotes": []}, status=500)
+    return web.json_response({"ok": True, "remotes": _gc.list_remotes()})
+
+
+async def api_gateway_remotes_post(request):
+    """POST /api/gateway/remotes {label,url,token} —— 登记一个出站对端并立即拨号。
+
+    一律返回 200 + ok 字段：前端据此显示「连接失败：<中文原因>」，
+    而不是抛 HTTP 异常变成含糊的「连接异常」。
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    try:
+        from desktop_core import gateway_client as _gc
+    except Exception as e:
+        return web.json_response({"ok": False, "error": f"gateway_client 不可用：{e}"}, status=500)
+    label = str(data.get("label") or "").strip()
+    if not label:
+        return web.json_response({"ok": False, "error": "名称不能为空"})
+    url, err = _normalize_remote_url(str(data.get("url") or ""))
+    if err:
+        return web.json_response({"ok": False, "error": err})
+    r = _gc.add_remote(label, url, str(data.get("token") or ""),
+                       auto_connect=bool(data.get("auto_connect", True)))
+    log.info("[Gateway] 出站对端已登记：%s → %s", label, url)
+    return web.json_response(r)
+
+
+async def api_gateway_remotes_delete(request):
+    """POST /api/gateway/remotes/delete {label} —— 断开并删除一个出站对端。
+
+    用 POST 而非 DELETE：前端 apiPost 的第三参是超时(数字)，项目既有
+    写操作也统一走 POST（capability/delete、capability/toggle 同理）。
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    try:
+        from desktop_core import gateway_client as _gc
+    except Exception as e:
+        return web.json_response({"ok": False, "error": f"gateway_client 不可用：{e}"}, status=500)
+    label = str(data.get("label") or "").strip()
+    if not label:
+        return web.json_response({"ok": False, "error": "缺少 label"})
+    return web.json_response(_gc.remove_remote(label))
+
+
 # ── 高级档：运行时互联参数（可填、且真生效）──────────────────────
 # 为什么需要这个：GATEWAY_WS_HOST / GATEWAY_WS_PORT 在 gateway_hub 里是
 # **模块加载时读一次**的常量，改进程 os.environ 对已运行的实例无效。
@@ -3009,9 +3102,12 @@ def _start_mcp_server() -> bool:
     env["NAIXI_BACKEND_URL"] = "http://127.0.0.1:9845"
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp_server.py")
     try:
+        # **_win_hide_kwargs()：sys.executable 可能是控制台版 python.exe，
+        # 不隐藏就会给用户弹一个黑窗口（脚本退出后它才消失）。
         _MCP_PROC["proc"] = subprocess.Popen(
             [sys.executable, script], env=env,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            **_win_hide_kwargs())
         log.info("[MCP] 开放接入已启动：%s:%s（任何兼容 MCP 的工具可连）",
                  env["NAIXI_MCP_HOST"], env["NAIXI_MCP_PORT"])
         return True
@@ -5337,6 +5433,10 @@ def setup_routes(app):
     app.router.add_post("/api/gateway/notify", api_gateway_notify)
     app.router.add_post("/api/gateway/pull", api_gateway_pull)
     app.router.add_get("/api/gateway/status", api_gateway_status)
+    # 出站对端（主动接入其他设备）：列表 / 登记并拨号 / 断开删除
+    app.router.add_get("/api/gateway/remotes", api_gateway_remotes_get)
+    app.router.add_post("/api/gateway/remotes", api_gateway_remotes_post)
+    app.router.add_post("/api/gateway/remotes/delete", api_gateway_remotes_delete)
     app.router.add_post("/api/gateway/memory/add", api_gateway_memory_add)
     app.router.add_post("/api/gateway/memory/query", api_gateway_memory_query)
     app.router.add_get("/api/database/stats", api_database_stats)
@@ -6287,6 +6387,13 @@ async def _launch_startup_tasks(app):
     # Gateway 控制平面（WS，默认 18400，对等互联 Mesh）。
     # 独立端口、独立 app，失败不影响主服务。端口可用 GATEWAY_WS_PORT 覆盖。
     asyncio.create_task(_start_gateway_ws())
+    # 出站对端（「主动接入其他设备」）：载入持久化配置并自动重拨。
+    # 失败只记日志 —— 互联是增强能力，不能拖垮主服务启动。
+    try:
+        from desktop_core import gateway_client as _gc
+        _gc.init_remotes()
+    except Exception as e:
+        log.warning("[Gateway] 载入出站对端失败: %s", e)
 
 
 async def _start_gateway_ws():

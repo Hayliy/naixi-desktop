@@ -25,11 +25,53 @@ _REMOTES: dict[str, "RemotePeer"] = {}
 PROVIDER = "desktop-9845"  # 与 gateway_hub.HUB.provider 对齐；对端是独立实例，不会冲突
 
 
+def _humanize_error(e: Exception) -> str:
+    """把底层异常翻译成用户能看懂的中文。
+
+    铁则：不把 `WSServerHandshakeError: 401, message='Invalid response status'`
+    这种英文异常直接摆到界面上 —— 用户看不懂，也不知道该改哪里。
+    """
+    name = type(e).__name__
+    txt = str(e)
+    code = ""
+    try:
+        import aiohttp
+        if isinstance(e, aiohttp.WSServerHandshakeError):
+            code = str(getattr(e, "status", "") or "")
+    except Exception:
+        pass
+    if not code:
+        import re as _re
+        m = _re.search(r"\b(401|403|404|500|502|503)\b", txt)
+        code = m.group(1) if m else ""
+    if code == "401":
+        return "口令不对（对方拒绝了连接，请核对「开放接入」里的连接口令）"
+    if code == "403":
+        return "对方没有开启「允许其他设备连接」"
+    if code == "404":
+        return "地址不对：该端口上没有互联服务（确认对方端口，通常是 18400）"
+    if name in ("ClientConnectorError", "ClientConnectorDNSError"):
+        return "连不上对方：地址或端口不通（检查 IP、端口，以及对方防火墙）"
+    if name in ("ServerTimeoutError", "ConnectionTimeoutError", "TimeoutError", "asyncio.TimeoutError"):
+        return "连接超时：对方没有响应"
+    if name in ("ClientConnectorCertificateError", "ClientConnectorSSLError"):
+        return "对方的证书不受信任（wss 需要有效证书）"
+    if code:
+        return f"对方拒绝连接（HTTP {code}）"
+    return f"连接失败：{txt[:80]}"
+
+
 def _remotes_path() -> str:
     global _REMOTES_FILE
     if _REMOTES_FILE is None:
-        here = os.path.dirname(os.path.abspath(__file__))
-        _REMOTES_FILE = os.path.join(here, "..", "data", "gateway_remotes.json")
+        # 与其它模块同源：走 config.DATA_DIR（<core>/../data），保证落盘位置一致，
+        # 不额外造一个没人管的目录。取不到就退回相对 desktop_core 的 data。
+        try:
+            from desktop_core import config as _cfg
+            base = _cfg.DATA_DIR
+        except Exception:
+            base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
+        _REMOTES_FILE = os.path.abspath(os.path.join(base, "gateway_remotes.json"))
     return _REMOTES_FILE
 
 
@@ -98,10 +140,17 @@ class RemotePeer:
         self._req_id += 1
         return f"c{self._req_id}"
 
+    def _fail_pending(self, reason: str) -> None:
+        """断线时让所有在飞的调用立刻失败，而不是让调用方一直等到超时。"""
+        for rid, fut in list(self._pending.items()):
+            if not fut.done():
+                fut.set_result({"ok": False, "error": reason})
+        self._pending.clear()
+
     async def invoke(self, capability: str, params: dict | None = None, timeout: float = 20.0):
         """调用对端某条能力，等待 result。返回对端回包的 data/error。"""
         rid = self._next_id()
-        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[rid] = fut
         await self._send({"type": "invoke", "capability": capability, "id": rid,
                           "params": params or {}})
@@ -161,10 +210,13 @@ class RemotePeer:
                                 await self._handle(data)
                             elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                                 break
+                # 正常退出循环（对端关闭）也要让在飞调用立刻失败
+                self._fail_pending("连接已断开")
             except Exception as e:
                 self.state = "disconnected"
-                self.error = f"{type(e).__name__}: {e}"
+                self.error = _humanize_error(e)
                 self.ws = None
+                self._fail_pending(self.error)
                 log.warning("[GatewayClient] %s 连接失败/中断: %s", self.label, e)
             # 断线退避重连（2s 起，封顶 30s）
             await asyncio.sleep(backoff)
