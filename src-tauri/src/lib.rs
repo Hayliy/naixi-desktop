@@ -361,8 +361,12 @@ fn spawn_backend(app: &tauri::AppHandle) -> Result<(), String> {
         return Err(format!("后端脚本不存在: {}", script.display()));
     }
     let python_path = resolve_python(app);
-    // 预检：解释器是否可用
-    match std::process::Command::new(&python_path).arg("--version").status() {
+    // 预检：解释器是否可用（同样 CREATE_NO_WINDOW，避免预检闪一下黑窗）
+    match std::process::Command::new(&python_path)
+        .arg("--version")
+        .creation_flags(0x08000000)
+        .status()
+    {
         Ok(_) => {}
         Err(_) => {
             return Err(
@@ -400,19 +404,24 @@ fn spawn_backend(app: &tauri::AppHandle) -> Result<(), String> {
                 .to_string());
         }
     }
-    let shell = app.shell();
-    match shell
-        .command(python_path)
-        .arg(script.to_string_lossy().to_string())
-        .spawn()
-    {
-        Ok((_rx, child)) => {
+    // 用 std::process::Command 直接拉起（而非 app.shell().command()），以便显式传
+    // CREATE_NO_WINDOW：即使运行时因 pythonw.exe 缺失而回退到 python.exe（控制台子系统），
+    // 也绝不给用户弹黑色终端窗口。Tauri shell 的 command() 不暴露 creation flags，故这里绕开它。
+    // std::process::Command 的 Child 在 drop 时不会杀掉子进程（仅脱离），后端仍常驻；
+    // 退出清理由 kill_backend 按记录的 PID 用 taskkill 完成（与旧逻辑一致）。
+    let mut cmd = std::process::Command::new(&python_path);
+    cmd.arg(script.to_string_lossy().to_string());
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    match cmd.spawn() {
+        Ok(child) => {
             // 记录 Python 子进程 PID，供退出时杀进程树用（解决残留进程 #3）
             if let Some(state) = app.try_state::<BackendPid>() {
                 if let Ok(mut g) = state.0.lock() {
-                    *g = Some(child.pid());
+                    *g = Some(child.id());
                 }
             }
+            let _ = child; // 故意不 wait：后端需常驻；drop 即脱离，由 kill_backend 收尾
             Ok(())
         }
         Err(e) => Err(format!("后端进程启动失败: {}", e)),

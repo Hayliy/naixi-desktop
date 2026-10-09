@@ -366,7 +366,7 @@ const DRAWERS: { key: Drawer; label: string }[] = [
 /* ── 开放接入面板（四抽屉）──────────────────────────────
    一次只展开一个抽屉，不把内容堆在一条长滚动里。
    定位：面向「任何兼容 MCP 的工具」，不局限于自家对端。 */
-function AccessPanel({ access, mesh, onToggleMesh, onRegenerateToken, onSetCustomToken, onSetAdvanced, onClose, onChanged }: {
+function AccessPanel({ access, mesh, onToggleMesh, onRegenerateToken, onSetCustomToken, onSetAdvanced, onClose, onChanged, remotes, onAddRemote, onRemoveRemote }: {
   access: AccessInfo | null;
   mesh: any;
   onToggleMesh: (enabled: boolean) => void;
@@ -375,6 +375,9 @@ function AccessPanel({ access, mesh, onToggleMesh, onRegenerateToken, onSetCusto
   onSetAdvanced: (wsHost: string, wsPort: string, mcpHost: string, mcpPort: string) => Promise<void>;
   onClose: () => void;
   onChanged: () => void;
+  remotes: any[];
+  onAddRemote: (label: string, url: string, token: string) => Promise<void>;
+  onRemoveRemote: (label: string) => Promise<void>;
 }) {
   const { notify } = useToast();
   const [d, setD] = useState<Drawer>("quick");
@@ -428,6 +431,25 @@ function AccessPanel({ access, mesh, onToggleMesh, onRegenerateToken, onSetCusto
     try { await onSetCustomToken(t); setCustomTok(""); }
     finally { setSavingTok(false); }
   };
+  // 主动接入其他设备：表单状态 + 连接/删除
+  const [rLabel, setRLabel] = useState("");
+  const [rUrl, setRUrl] = useState("");
+  const [rToken, setRToken] = useState("");
+  const [rBusy, setRBusy] = useState(false);
+  const connectRemote = async () => {
+    if (!rLabel.trim() || !rUrl.trim()) {
+      notify("请填写名称与对端地址", "error");
+      return;
+    }
+    setRBusy(true);
+    try {
+      await onAddRemote(rLabel.trim(), rUrl.trim(), rToken.trim());
+      setRUrl("");
+      setRToken("");
+    } finally {
+      setRBusy(false);
+    }
+  };
   const mcp = access?.mcp;
   const on = !!mesh?.enabled;
   const lanIp = mesh?.lan_ip || access?.lan_ip || "";
@@ -480,7 +502,7 @@ function AccessPanel({ access, mesh, onToggleMesh, onRegenerateToken, onSetCusto
           </>
         )}
 
-        {d === "lan" && (
+        {d === "lan" && (<>
           <div className="border border-sakura-100 rounded-lg overflow-hidden">
             <div className="flex items-center gap-2 px-3 py-2.5">
               <Network size={13} className="text-sakura-400" />
@@ -539,7 +561,73 @@ function AccessPanel({ access, mesh, onToggleMesh, onRegenerateToken, onSetCusto
               )}
             </div>
           </div>
-        )}
+
+          {/* ── 主动接入其他设备（出站拨号）── */}
+          <div className="mt-3 border border-sakura-100 rounded-lg overflow-hidden">
+            <div className="flex items-center gap-2 px-3 py-2.5">
+              <Radio size={13} className="text-sakura-400" />
+              <span className="text-[12px] font-semibold text-sakura-600">主动接入其他设备</span>
+            </div>
+            <div className="p-3 space-y-2.5">
+              <p className="text-[11px] text-sakura-500 leading-relaxed">
+                反过来：填入另一台奶昔设备的网关地址与口令，主动连过去。连上后可调用对方共享的能力。
+              </p>
+              <input
+                value={rLabel}
+                onChange={(e) => setRLabel(e.target.value)}
+                placeholder="名称（便于识别，如 客厅电脑）"
+                className="w-full px-2 py-1.5 text-[12px] font-mono text-sakura-700
+                           bg-sakura-50 border border-sakura-100 rounded
+                           focus:outline-none focus:border-sakura-300" />
+              <input
+                value={rUrl}
+                onChange={(e) => setRUrl(e.target.value)}
+                placeholder="对端地址：192.168.1.5:18400 或 ws://..."
+                className="w-full px-2 py-1.5 text-[12px] font-mono text-sakura-700
+                           bg-sakura-50 border border-sakura-100 rounded
+                           focus:outline-none focus:border-sakura-300" />
+              <input
+                value={rToken}
+                onChange={(e) => setRToken(e.target.value)}
+                placeholder="连接口令（对方「开放接入」里显示的）"
+                className="w-full px-2 py-1.5 text-[12px] font-mono text-sakura-700
+                           bg-sakura-50 border border-sakura-100 rounded
+                           focus:outline-none focus:border-sakura-300" />
+              <button onClick={connectRemote} disabled={rBusy || !rLabel.trim() || !rUrl.trim()}
+                className="w-full flex items-center justify-center gap-1 text-[11px] py-1.5 rounded
+                           bg-sakura-500 text-white hover:bg-sakura-600 transition-colors disabled:opacity-40">
+                {rBusy ? "连接中…" : "连接"}
+              </button>
+              {remotes.length > 0 && (
+                <div className="space-y-2 pt-1">
+                  {remotes.map((rm) => (
+                    <div key={rm.label} className="border border-sakura-100 rounded-lg p-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[12px] font-medium text-sakura-600 truncate">{rm.label}</span>
+                        <span className={`ml-auto text-[10px] px-1.5 py-px rounded border ${
+                          rm.state === "connected"
+                            ? "text-green-600 bg-green-50 border-green-100"
+                            : rm.state === "connecting"
+                            ? "text-yellow-600 bg-yellow-50 border-yellow-100"
+                            : "text-red-600 bg-red-50 border-red-100"}`}>
+                          {rm.state === "connected" ? "已连接" : rm.state === "connecting" ? "连接中" : "未连接"}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-sakura-400 font-mono truncate mt-0.5">{rm.url}</p>
+                      <p className="text-[10px] text-sakura-400 mt-0.5">对方能力 {rm.capabilities?.length ?? 0} 条</p>
+                      {rm.error ? <p className="text-[10px] text-red-500 mt-0.5 break-all">{rm.error}</p> : null}
+                      <button onClick={() => onRemoveRemote(rm.label)}
+                        className="mt-1.5 text-[10px] px-2 py-0.5 rounded text-sakura-400
+                                   hover:bg-sakura-50 hover:text-sakura-600 transition-colors">
+                        断开并删除
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </>)}
 
         {d === "custom" && (
           <>
@@ -691,6 +779,26 @@ export default function GatewayPage() {
     try { setMesh(await apiGet<any>("/api/gateway/mesh")); } catch { /* 忽略 */ }
   }, []);
   useEffect(() => { loadMesh(); }, [loadMesh]);
+  // 出站对端（主动接入其他设备）列表
+  const [remotes, setRemotes] = useState<any[]>([]);
+  const loadRemotes = useCallback(async () => {
+    try { const d = await apiGet<any>("/api/gateway/remotes"); setRemotes(d?.remotes || []); } catch { /* 忽略 */ }
+  }, []);
+  useEffect(() => { loadRemotes(); }, [loadRemotes]);
+  const addRemote = async (label: string, url: string, token: string) => {
+    try {
+      const r = await apiPost<any>("/api/gateway/remotes", { label, url, token });
+      if (r?.ok) { setRemotes(r.remotes || []); notify(`已发起对 ${label} 的连接`, "success"); await loadMesh(); }
+      else notify(`连接失败：${r?.error || "未知"}`, "error");
+    } catch (e) { notify(`连接异常：${String(e).slice(0, 60)}`, "error"); }
+  };
+  const removeRemote = async (label: string) => {
+    try {
+      const r = await apiPost<any>("/api/gateway/remotes", { label }, { method: "DELETE" } as any);
+      if (r?.ok) { setRemotes(r.remotes || []); notify(`已断开并删除 ${label}`, "success"); }
+      else notify(`删除失败：${r?.error || "未知"}`, "error");
+    } catch (e) { notify(`删除异常：${String(e).slice(0, 60)}`, "error"); }
+  };
   const toggleMesh = async (enabled: boolean) => {
     try {
       const r = await apiPost<any>("/api/gateway/mesh", { enabled });
@@ -760,6 +868,7 @@ export default function GatewayPage() {
     } catch (e) {
       console.error("Gateway 加载失败", e);
     }
+    loadRemotes();
     setLoading(false);
     setRefreshing(false);
   }, []);
@@ -856,6 +965,11 @@ export default function GatewayPage() {
   const wsOn = !!status?.ws_started;
   const peerCount = status?.peer_count ?? 0;
   const peers: Peer[] = status?.peers || [];
+  // 出站对端（我主动接入的其它设备）。remotes 是「配置 + 实时状态」混排，
+  // 即使未连上也列出，便于用户排查；state: connected | connecting | disconnected。
+  const outboundRemotes: any[] = remotes || [];
+  const connectedOutbound = outboundRemotes.filter((r) => r.state === "connected").length;
+  const activePeerTotal = peerCount + connectedOutbound;
   const visibleCaps = caps.filter(c =>
     (showDisabled || c.enabled) && (trustFilter === "all" || c.trust === trustFilter));
   const readCount = caps.filter(c => c.trust === "read" && c.enabled).length;
@@ -1001,11 +1115,12 @@ export default function GatewayPage() {
             </div>
             <div className="bg-white border border-sakura-100 rounded-xl p-3">
               <p className="text-[10px] text-sakura-400">已连接对端</p>
-              <p className={`text-xs font-bold ${peerCount > 0 ? "text-green-600" : "text-sakura-400"}`}>
-                {peerCount} 个
+              <p className={`text-xs font-bold ${activePeerTotal > 0 ? "text-green-600" : "text-sakura-400"}`}>
+                {activePeerTotal} 个
               </p>
               <p className="text-[10px] text-sakura-300 mt-0.5">
-                {peerCount > 0 ? "互联已建立" : "独立运行中"}
+                {activePeerTotal > 0 ? "互联已建立" : "独立运行中"}
+                {connectedOutbound > 0 ? ` · 主动 ${connectedOutbound}` : ""}
               </p>
             </div>
             <div className="bg-white border border-sakura-100 rounded-xl p-3">
@@ -1027,36 +1142,81 @@ export default function GatewayPage() {
             </div>
           </div>
 
-          {/* 对端列表 */}
+          {/* 对端列表（入站 + 出站主动接入） */}
           <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
             <div className="flex items-center gap-2 px-3 py-2 border-b border-sakura-100">
               <Radio size={12} className="text-sakura-400" />
               <span className="text-[12px] font-semibold text-sakura-600">
-                已连接对端<span className="text-sakura-300 font-normal ml-1">({peers.length})</span>
+                互联对端<span className="text-sakura-300 font-normal ml-1">
+                  ({peers.length + outboundRemotes.length})
+                </span>
               </span>
+              {outboundRemotes.length > 0 && (
+                <span className="text-[10px] px-1.5 py-px rounded border border-teal-100 bg-teal-50 text-teal-600 shrink-0">
+                  含 {outboundRemotes.length} 个主动接入
+                </span>
+              )}
             </div>
-            {peers.length === 0 ? (
+            {peers.length === 0 && outboundRemotes.length === 0 ? (
               <div className="px-3 py-5 text-center">
                 <p className="text-[12px] text-sakura-400">暂无对端接入</p>
                 <p className="text-[11px] text-sakura-300 mt-1">
-                  桌面端仍可独立运行 —— 点上方「开放接入」把地址给别人即可
+                  桌面端仍可独立运行 —— 点上方「开放接入」把地址给别人，或在右侧「主动接入其他设备」填地址
                 </p>
               </div>
             ) : (
-              peers.map((p, i) => (
-                <div key={p.provider + i}
-                  className="flex items-center gap-2 px-3 py-2 border-b border-sakura-50 last:border-0 hover:bg-sakura-50/50">
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[12px] font-medium text-sakura-600 truncate">{p.provider}</p>
-                    <p className="text-[11px] text-sakura-400 truncate font-mono">
-                      {p.remote || "本机"}
-                      {p.subs?.length ? ` · 订阅 ${p.subs.join("/")}` : ""}
-                    </p>
+              <>
+                {/* 入站：别人连进来（都在线才会出现在 peers 里） */}
+                {peers.map((p, i) => (
+                  <div key={"in-" + p.provider + i}
+                    className="flex items-center gap-2 px-3 py-2 border-b border-sakura-50 last:border-0 hover:bg-sakura-50/50">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[12px] font-medium text-sakura-600 truncate">{p.provider}</p>
+                      <p className="text-[11px] text-sakura-400 truncate font-mono">
+                        {p.remote || "本机"}
+                        {p.subs?.length ? ` · 订阅 ${p.subs.join("/")}` : ""}
+                      </p>
+                    </div>
+                    <span className="text-[11px] text-sakura-300 shrink-0">{fmtIdle(p.idle_s)}</span>
                   </div>
-                  <span className="text-[11px] text-sakura-300 shrink-0">{fmtIdle(p.idle_s)}</span>
-                </div>
-              ))
+                ))}
+                {/* 出站：我主动连出去（含连接中 / 失败，便于排查） */}
+                {outboundRemotes.map((r, i) => {
+                  const dot = r.state === "connected" ? "bg-green-500"
+                            : r.state === "connecting" ? "bg-yellow-400"
+                            : "bg-sakura-200";
+                  const stateText = r.state === "connected" ? "已连"
+                                  : r.state === "connecting" ? "连接中"
+                                  : "未连";
+                  return (
+                    <div key={"out-" + r.label + i}
+                      className="flex items-center gap-2 px-3 py-2 border-b border-sakura-50 last:border-0 hover:bg-sakura-50/50">
+                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dot}`} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-[12px] font-medium text-sakura-600 truncate">{r.label}</p>
+                          <span className="text-[10px] px-1.5 py-px rounded border border-teal-100 bg-teal-50 text-teal-600 shrink-0">
+                            我主动接入
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-sakura-400 truncate font-mono">
+                          {r.url}
+                          {r.peer_count ? ` · 对端 ${r.peer_count} 个` : ""}
+                        </p>
+                        {r.error && r.state !== "connected" && (
+                          <p className="text-[11px] text-red-400 truncate" title={r.error}>
+                            失败：{r.error}
+                          </p>
+                        )}
+                      </div>
+                      <span className={`text-[11px] shrink-0 ${r.state === "connected" ? "text-green-600" : r.state === "connecting" ? "text-yellow-600" : "text-sakura-300"}`}>
+                        {stateText}
+                      </span>
+                    </div>
+                  );
+                })}
+              </>
             )}
           </div>
 
@@ -1121,6 +1281,7 @@ export default function GatewayPage() {
         <AccessPanel access={access} mesh={mesh} onToggleMesh={toggleMesh}
           onRegenerateToken={regenerateToken} onSetCustomToken={setCustomToken}
           onSetAdvanced={setAdvanced}
+          remotes={remotes} onAddRemote={addRemote} onRemoveRemote={removeRemote}
           onClose={() => setSideTab(null)} onChanged={() => load(true)} />
       )}
       </div>
