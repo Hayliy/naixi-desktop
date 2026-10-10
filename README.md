@@ -452,6 +452,22 @@ sha256sum -c --ignore-missing SHA256SUMS.txt
 
 随安装包一起下发的「清单」是不可信的——攻击者换掉程序时会连清单一起换，自动比对等于自我安慰。所以本程序**只暴露哈希**，由你与 GitHub Releases 上的清单人工核对。
 
+### 清单的 CI 来源签名（Sigstore，可选验证）
+
+`SHA256SUMS.txt` 除随 Release 分发外，还由仓库官方工作流经 **Sigstore keyless 签名**（GitHub Actions
+OIDC 身份 → Fulcio 短期证书 → Rekor 透明日志），签名文件 `SHA256SUMS.txt.sigstore.json` 一并挂在
+Release。它回答哈希清单自身回答不了的问题：**「这份清单确实出自 Hayliy/naixi-desktop 的官方工作流，
+而非被掉包替换」**——攻击者即便伪造了内容相同的清单，也伪造不出绑定本仓库工作流身份的签名。
+
+验证（需安装 [cosign](https://docs.sigstore.dev/cosign/installation/)，三个文件放同一目录）：
+
+```bash
+cosign verify-blob   --bundle SHA256SUMS.txt.sigstore.json   --certificate-identity-regexp "^https://github.com/Hayliy/naixi-desktop/\.github/workflows/release-sign\.yml@.*$"   --certificate-oidc-issuer https://token.actions.githubusercontent.com   SHA256SUMS.txt
+```
+
+与 Authenticode 的分工：Authenticode 管「安装包的 Windows 发布者与文件完整性」，Sigstore 管「清单的发布
+来源证明」，二者互补，均不替代你手动比对哈希。
+
 ### 关于代码签名（如实说明）
 
 **当前 1.2.0 安装包使用自签名证书**（尚未购置受信任 CA 的 OV/EV 证书）。自签名的根不被 Windows 信任，因此 SmartScreen 仍会提示「未知发布者」——这是预期行为、不是被篡改，**正因如此，上面两步哈希校验更要照做**。签名带来的额外保证是：包体带 Authenticode 签名，可核验签名主体、指纹与「包是否被改动过」（改动后签名立即失效）。

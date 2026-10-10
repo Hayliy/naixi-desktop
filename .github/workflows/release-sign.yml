@@ -1,0 +1,71 @@
+# 发布清单 Sigstore 签名（keyless）
+#
+# 背景：SHA256SUMS.txt 随 Release 分发，但「攻击者连清单一起换」无法被哈希本身发现。
+# 本工作流用 cosign keyless signing（GitHub Actions OIDC 身份 → Fulcio 短期证书 →
+# Rekor 透明日志）对清单签名，生成 SHA256SUMS.txt.sigstore.json 挂回 Release。
+# 任何人可验证：这份清单确实由 Hayliy/naixi-desktop 仓库的官方工作流认证过，
+# 攻击者即使盗取文件也无法伪造该签名（签名绑仓库工作流身份，非文件本身）。
+#
+# 与 Authenticode 的分工（见 README「安全与完整性」）：
+#   - Authenticode（自签名 / 未来 SignPath Foundation）→ Windows 发布者与文件完整性
+#   - Sigstore（本工作流）                              → 清单的发布来源证明
+#
+# 用法：Actions → release-sign → Run workflow → 输入 tag（如 v1.2.0）
+# 前提：该 tag 的 Release 已包含 SHA256SUMS.txt。
+name: release-sign
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag（如 v1.2.0）'
+        required: true
+        type: string
+
+permissions:
+  id-token: write   # keyless 签名必需（OIDC → Fulcio）
+  contents: write   # 回传 .sigstore.json 到 Release
+
+jobs:
+  sign-checksums:
+    name: cosign keyless 签名 SHA256SUMS.txt
+    runs-on: ubuntu-latest
+    steps:
+      - name: 安装 cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: 下载该 Release 的 SHA256SUMS.txt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${{ inputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'SHA256SUMS.txt' \
+            --dir . --clobber
+          test -f SHA256SUMS.txt || { echo "::error::Release 上没有 SHA256SUMS.txt"; exit 1; }
+
+      - name: Keyless 签名（OIDC → Fulcio → Rekor）
+        run: |
+          cosign sign-blob --yes \
+            --bundle SHA256SUMS.txt.sigstore.json \
+            SHA256SUMS.txt
+          echo "---- bundle 摘要 ----"
+          head -c 400 SHA256SUMS.txt.sigstore.json; echo
+
+      - name: 验证签名（发布前自检）
+        run: |
+          cosign verify-blob \
+            --bundle SHA256SUMS.txt.sigstore.json \
+            --certificate-identity-regexp \
+              "^https://github.com/${GITHUB_REPOSITORY}/\.github/workflows/release-sign\.yml@.*$" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            SHA256SUMS.txt
+
+      - name: 挂回 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ inputs.tag }}" \
+            SHA256SUMS.txt.sigstore.json \
+            --repo "$GITHUB_REPOSITORY" --clobber
+          echo "已上传 SHA256SUMS.txt.sigstore.json 到 Release ${{ inputs.tag }}"

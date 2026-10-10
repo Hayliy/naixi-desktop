@@ -421,6 +421,22 @@ release and run a full scan.
 The app deliberately **exposes** the hash instead of auto-comparing it: a manifest shipped alongside a tampered
 installer cannot be trusted, so the comparison has to be against GitHub Releases, by you.
 
+**CI provenance for the checksums (Sigstore, optional).** `SHA256SUMS.txt` is additionally signed by the
+repository's official workflow via **Sigstore keyless signing** (GitHub Actions OIDC identity → Fulcio short-lived
+certificate → Rekor transparency log); the bundle `SHA256SUMS.txt.sigstore.json` ships in the same release. This
+answers the question a checksum list cannot answer by itself: **that the manifest really came from the
+Hayliy/naixi-desktop official workflow, not from a swapped copy** — an attacker can forge a look-alike manifest but
+cannot forge a signature bound to this repository's workflow identity.
+
+To verify (install [cosign](https://docs.sigstore.dev/cosign/installation/); keep all three files in one directory):
+
+```bash
+cosign verify-blob   --bundle SHA256SUMS.txt.sigstore.json   --certificate-identity-regexp "^https://github.com/Hayliy/naixi-desktop/\.github/workflows/release-sign\.yml@.*$"   --certificate-oidc-issuer https://token.actions.githubusercontent.com   SHA256SUMS.txt
+```
+
+Division of labor: Authenticode covers the Windows publisher and installer integrity; Sigstore covers the manifest's
+provenance. Both complement — and neither replaces — the manual hash comparison above.
+
 **Code signing.** The 1.2.0 installer uses a **self-signed certificate** (no trusted-CA OV/EV certificate yet), so
 SmartScreen still warns about an unknown publisher. This is expected. Verification:
 
