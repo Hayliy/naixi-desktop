@@ -1026,8 +1026,8 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
           <input ref={fileInputRef} type="file" accept=".json,.yaml,.yml" className="hidden" onChange={handleImportDSL} />
         </div>
 
-        {/* 画布 */}
-        <div className="flex-1" ref={reactFlowWrapper}>
+        {/* 画布：min-w-0 防 flex 内容撑破容器（否则节点多时把右栏挤出窗口外） */}
+        <div className="flex-1 min-w-0" ref={reactFlowWrapper}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -1085,9 +1085,9 @@ export default function WorkflowEditor({ workflowId: initialId }: { workflowId?:
         )}
       </div>
 
-      {/* 右侧统一面板 */}
+      {/* 右侧统一面板：窄窗口降为 288px，去掉 min-w 撑破风险 */}
       {rightTab && (
-        <div className="flex w-80 min-w-[20rem] bg-white border-l border-gray-200 shrink-0">
+        <div className="flex w-72 xl:w-80 bg-white border-l border-gray-200 shrink-0">
           {/* 内容区 */}
           <div className="flex-1 flex flex-col min-w-0">
             {/* 头部标题栏 */}
