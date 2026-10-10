@@ -7,12 +7,12 @@
 ![Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20React%2019%20%C2%B7%20Python%203.13-1F4E79)
 ![License](https://img.shields.io/badge/License-Apache%202.0-green)
 ![Release](https://img.shields.io/badge/Release-v1.2.0-blue)
-![Commits](https://img.shields.io/badge/Commits-575-orange)
-![LOC](https://img.shields.io/badge/LOC-51k-blueviolet)
+![Commits](https://img.shields.io/badge/Commits-633-orange)
+![LOC](https://img.shields.io/badge/LOC-79k-blueviolet)
 
 > 一款**本地优先**的桌面 AI 智能体。基于 Tauri 2 构建，常驻系统托盘，把「对话、桌宠、直播互动、工作流、自动化、本地搜索、知识库、记忆」整合进一个随开随用的桌面应用。所有 AI 推理所需的模型调用、本地搜索、语音处理都在本机或你自己的账号下完成，**数据留在本地**。
 
-**项目规模**：第一方代码约 **5.2 万行**（Python 36,490 / 前端 14,743 / Rust 477）· **55** 个 Python 模块 · **38** 个前端组件 · **210** 个 REST 端点 · **28** 张 SQLite 表 · **625** 次提交 · Apache-2.0
+**项目规模**：第一方代码约 **7.9 万行**（Python 43,083 / 前端 35,331 / Rust 571，含注释与空行）· **56** 个 Python 模块 · **37** 个前端组件 · **222** 个 REST 端点 · **29** 张 SQLite 表 · **633** 次提交 · Apache-2.0
 
 - 宿主：Tauri 2（Rust）+ 系统托盘常驻
 - 前端：React 19 + Vite + Tailwind CSS
@@ -31,7 +31,7 @@
   </tr>
   <tr>
     <td width="50%"><img src="docs/screenshots/03-workflow-editor.png" alt="可视化工作流编辑器"><br><sub><b>可视化工作流</b> — DAG 节点拖拽，25 种节点 · 含 LLM / 条件 / 人工输入</sub></td>
-    <td width="50%"><img src="docs/screenshots/04-platform-connections.png" alt="12 个平台连接器"><br><sub><b>12 个平台连接器</b> — QQ / 飞书 / 企业微信 / 钉钉 / Discord / Slack / Telegram / WhatsApp / 邮件 / GitHub / GitLab / 自定义 HTTP</sub></td>
+    <td width="50%"><img src="docs/screenshots/04-platform-connections.png" alt="13 个平台连接器"><br><sub><b>13 个平台连接器</b> — QQ / 微信 / 飞书 / 企业微信 / 钉钉 / Discord / Slack / Telegram / WhatsApp / 邮件 / GitHub / GitLab / 自定义 HTTP</sub></td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/screenshots/05-chat.png" alt="智能对话"><br><sub><b>智能对话</b> — 流式 / Agent / 快捷问答 / 工具调用可观测</sub></td>
@@ -83,6 +83,7 @@
 5. **游戏操控 Agent（Cradle 范式）**：截图输入 + 键鼠输出，不读游戏内存、不连服务器，只操控用户自己的当前窗口；含执行后反思纠偏（帧差判断卡墙并强制脱困）。
 6. **用户态安全前哨**：银狐木马应急防护（IOC 哨兵扫描 / 一键急救 / 安装包 SHA-256 自检 / 周期巡检），并**明确公示能力边界**——不处理内核级 rootkit，不做安全误导。
 7. **自包含本地推理 + 跨设备互联**：llama.cpp（Vulkan）与转换器随安装包下发，引擎四级解析零硬编码路径，无外网也能对话；开放接入 + 主动接入构成双向 Mesh，局域网内多台设备互调能力，错配配置启动自动纠偏。
+8. **消息平台连接器（13 平台）**：每个平台取官方最稳的接入方式（长连 SDK / 长轮询 / 官方回调 / IMAP），统一归一为 `UnifiedMessage` 进桌面 Agent；连接器独立进程 + 单实例保障（启动前自动清理残留进程）+ 凭据掩码，随安装包下发、装完即用。
 
 ---
 
@@ -106,7 +107,13 @@
 - **双地址一键复制**：「跨设备互联地址」（`ws://ip:18400/ws/gateway`，给另一台奶昔）与「MCP 工具地址」（`http://ip:9846/mcp`，给 Cursor 等 MCP 客户端）分开呈现，另附 Claude Code / Cursor 可直接粘贴的配置片段。
 - 错误提示全中文化（口令不对 / 对方未开开放接入 / 地址不对等），旧版本填错的地址会在启动时自动纠偏。
 
-### 4. 桌宠（PetWindow）
+### 4. 消息平台连接器（13 平台）
+- **13 个平台真实收发**（非仅保存配置）：QQ（NapCat/LLOneBot，OneBot v11 正向 WebSocket）、微信（腾讯官方 iLink 协议，扫码登录）、飞书（官方 SDK 长连）、钉钉（Stream 长连）、企业微信（本地回调 + 内网穿透）、Discord（Gateway 长连）、Slack（Socket Mode）、Telegram（Bot API 长轮询）、WhatsApp（Meta Cloud API）、GitHub / GitLab（REST 轮询 + 评论/备注回写）、电子邮件（IMAP 收信 + SMTP 回信）、自定义 HTTP（本地监听，`reply_url` 回传 Agent 回复）。
+- **免公网优先**：除企业微信 / WhatsApp 因平台只支持回调接收需内网穿透外，其余 11 个平台均为连接器主动连出，桌面端不对外暴露端口。
+- **群聊礼仪**：群聊默认「仅被 @ 时回复」（QQ / Telegram / Slack 可按平台开关），不会在群里见消息就答。
+- **对话页区分发送者**：群聊消息显示「谁说的」，与自己发的消息分列两侧；连接器独立进程运行，凭据掩码回显、本地加密存储。
+
+### 5. 桌宠（PetWindow）
 - Qt 桌宠本体，支持 Live2D 与 VRM 两种形象；右键菜单可切换动作、表情、开发者模式、摄像头面捕等。
 - **动作 / Idle 引擎**：内置多组鲜活动作与默认 idle 循环（歪头、头发飘动、身体浮动等），可在菜单勾选启用。
 - **摄像头面捕**：基于 MediaPipe FaceLandmarker 离线检测，驱动 VRM 表情与头部姿态、Live2D 口型；默认关闭，仅从右键菜单开启。
@@ -114,54 +121,54 @@
   - `self`（自研 Live2D 渲染，默认）+ `vts`（VTube Studio 多实例连接池）+ `vmc`（VMC 协议 OSC/UDP，可驱动 VSeeFace / Warudo / VMagicMirror 等）。
 - **多角色舞台（StageWindow）**：Pixi 加载 N 个 Live2D 精灵，消息按 `agent_id` 路由到对应角色，支持独立模型下拉、独立表情/动作/口型。
 
-### 5. 直播互动引擎（Live2D / VRM）
+### 6. 直播互动引擎（Live2D / VRM）
 - 弹幕接入、语音播报、麦克风上麦（真人语音闭环：ASR → 自动上麦）、场景切换、直播测试。
 - VTube Studio 多实例同框（每角色独立端口），VTS 全局热键管理（`/api/hotkeys`）。
 - QQ 多智能体接入状态（`/api/napcat/status`）、连接凭证一键获取（`/api/live/connect_credentials`）。
 - 直播记忆层：角色能记住观众画像与事件流（`/api/live/memory`），用于更有连续性的互动。
 
-### 6. 语音
+### 7. 语音
 - **语音输入**：麦克风采集 + VAD（WebRTC/能量门控）+ ASR（云端与本地双通道），可在设置中切换。
 - **语音输出（TTS）**：统一路由（CosyVoice 主 + Edge-TTS 兜底 + 故障转移），客户端本体播放；可一键配置 VoiceMeeter 虚拟音频路由。
 - 音频设备枚举、直播 TTS 测试。
 
-### 7. 知识库
+### 8. 知识库
 - 本地知识条目增删改查与语义搜索（`/api/knowledge/*`）。
 - 支持从 GitHub 仓库、网页 URL 批量导入，自动摘要与切片入库。
 
-### 8. 记忆系统
+### 9. 记忆系统
 - 对话内容分层检索（`/api/memory/*`）：短期上下文 + 长期记忆画像（观众/用户画像、近期事件流）。
 - 反思模块（`reflection.py`）周期性提炼长期记忆，供对话与直播复用。
 
-### 9. 资源库（专家 / 技能 / 提示词）
+### 10. 资源库（专家 / 技能 / 提示词）
 - 内置专家、技能、提示词数据（随包分发，开箱即用）。
 - 提示词管理（`/api/prompts`）：本地保存/删除，或从 GitHub 拉取社区提示词、专家、技能（`/api/github/*`）。
 - 自定义资源（`/api/custom/*`）：用户自建提示词/专家/技能。
 
-### 10. 工作流
+### 11. 工作流
 - 可视化工作流编辑器（`WorkflowEditor`），丰富节点类型（`/api/workflow/node-types`）。
 - 保存 / 运行 / 导出 / 导入 / 发布；支持 Webhook 触发（`/api/webhook/{endpoint}`）、版本管理、人工输入节点。
 - 发布为对外服务：API Key 管理（`/api/workflows/{id}/keys`）、用量统计、GitHub 模板市场（在线/本地模板）。
 
-### 11. 自动化
+### 12. 自动化
 - 定时与事件触发的自动化任务（`/api/automations/*`）：保存、开关、运行、删除、Webhook 触发。
 - 可编排多步操作（调用工具、对话、工作流等），无需手动干预。
 
-### 12. 运维与自检
+### 13. 运维与自检
 - 运维面板（`/api/ops/*`）：实例自检（inspect）、自修复（self-heal）、事件（incidents）、维护模式、变更日志、健康检查历史与趋势。
 - 启动看门狗自动拉起离线服务（SearXNG 等）。
 - 任务管理（`/api/tasks`）、运行日志（`/api/logs`）、前端运行时错误自动上报（`/api/client-error`）。
 
-### 13. 工具与 MCP
+### 14. 工具与 MCP
 - 工具权限确认机制（`/api/tools`、`/api/tool/permit`）：Agent 调用敏感工具前需用户授权。
 - MCP 服务器管理（`/api/mcp/*`）：添加、连接、断开、测试；启动自动连接已配置服务器。
 
-### 14. 游戏 Agent（看屏操控）
+### 15. 游戏 Agent（看屏操控）
 - 思路：截图输入 + 键鼠输出，**不读取游戏内部内存**，像真人一样操控用户自己的游戏窗口（单机 / 当前窗口）。
 - 支持场景：Minecraft（只读 MOD 注入 + 视觉 grounding）、Mindustry（看屏决策）、扫雷（视觉 grounding 实验）。
 - 组件：`game_agent.py`、`game_agent_mindustry.py`、`ui_grounding.py`（UI 定位）、`semantic_grounding.py`（语义理解）、`mc_bridge.cjs` / `mc_observer.cjs`（Minecraft 桥接）、`mc_readonly_mod`（只读 MOD）。
 
-### 15. 安全中心（银狐应急防护）
+### 16. 安全中心（银狐应急防护）
 
 针对银狐（Silver Fox / 游蛇 / Void Arachne）类木马的本机用户态前哨，入口：设置 → 安全。
 
@@ -189,6 +196,7 @@ graph TB
     Python --> Local[llama.cpp 本地推理<br/>:11436 随包下发]
     Python -.->|开放接入 :18400 / MCP :9846| Mesh[局域网其他设备<br/>双向互联]
     Python --> MCP[MCP 服务器]
+    Python -->|独立子进程| Conn[消息平台连接器<br/>13 平台收发]
     Python -->|WebSocket :9877| Face[摄像头面捕桥<br/>MediaPipe]
     Tauri -->|启动子进程| Pet[Qt 桌宠<br/>Live2D / VRM]
     Pet <-->|WebSocket| Python
@@ -199,6 +207,7 @@ graph TB
 - **主应用（Tauri）**：负责窗口、托盘、安装、拉起后端与桌宠子进程。
 - **后端（Python）**：所有 AI 能力、搜索、知识库、工作流、运维的统一服务端。
 - **桌宠（Qt）**：可选的 Live2D / VRM 形象进程，经 WebSocket 与后端通信。
+- **连接器（Python）**：消息平台适配器子进程，承载 13 个平台的收发、状态上报与凭据管理，由后端按配置拉起。
 - **面捕桥**：摄像头视频流 → MediaPipe 检测 → 姿态/表情数据，独立端口。
 
 ---
@@ -227,6 +236,7 @@ naixi-desktop/
 │   ├── mcp_client.py / tools.py      # 工具与 MCP
 │   ├── gateway_hub.py / gateway_client.py   # 跨设备互联（WS 控制平面 + 出站拨号）
 │   ├── local_model.py / mcp_server.py       # 本地推理引擎管理 / 开放接入 MCP 服务
+│   ├── connector_manager.py                 # 消息平台连接器进程管理（13 平台随包下发）
 │   ├── live_engine.py / avatar_backends.py  # 直播与渲染后端
 │   ├── game_agent*.py / *grounding.py / mc_*.cjs  # 游戏 Agent
 │   └── vrm_html/           # 面捕前端资源（index.html / MediaPipe vendor）
@@ -341,6 +351,7 @@ npm run tauri dev        # 前端 :1420 HMR；后端 sidecar 绑 127.0.0.1:9845 
 - **跨设备互联**：互联页开启「允许其他设备连接」即自动生成口令；主动接入对端、监听地址与双通道端口均可在「高级 / DIY」档修改，改完立即重启对应通道。
 - **本地搜索**：SearXNG 随应用启动自动拉起，离线时降级到公共引擎。
 - **MCP**：在设置中添加 MCP 服务器地址，启动自动连接。
+- **消息平台连接器**：各平台凭据在「连接」页填写（密钥掩码回显、本地加密存储）；「群聊仅 @ 时回复」按平台可开关；微信登录态等运行时数据存于 `%APPDATA%\naixi\connector-data`。
 - **知识库 / 工作流 / 自动化**：均在应用内 UI 完成配置，数据存于本地 `data/`。
 
 ---
@@ -354,6 +365,7 @@ npm run tauri dev        # 前端 :1420 HMR；后端 sidecar 绑 127.0.0.1:9845 
 - **VRM 模型与 Godot 导出产物不入库**：VRM 单文件超 GitHub 100MB 上限且涉游戏 IP；Godot 导出产物 `NaixiVRM.exe` 需自行用 Godot 4.7 导出（工程源码在库内）。缺失不影响对话、自动化、知识库、Live2D 桌宠、three-vrm 桌宠、直播等核心能力，仅「VMC 驱动 Godot 渲染」这条后端不可用。
 - **离线 TTS 兜底音质偏弱**：TTS 三层故障转移（CosyVoice → Edge-TTS → 本地 kokoro-onnx）中，本地 kokoro-onnx 的音质与音色明显弱于云端，仅作离线兜底。
 - **游戏 Agent 为实验性**：Minecraft / Mindustry / 扫雷均为「截图输入 + 键鼠输出」的视觉操控实验，依赖 OCR 与视觉 grounding，复杂或动态场景易卡墙，非生产可用。
+- **企业微信 / WhatsApp 需内网穿透**：这两家平台官方只支持「回调」接收消息（无长连/长轮询），本地桌面需配合 cloudflared / cpolar 等穿透使用（连接页有分平台指引）；其余 11 个平台均免公网直连。
 - **大体积资源构建时下载**：`python-embed` 运行时与 `searxng/` 便携版不入库，首次 `tauri build` 需联网（SearXNG 约 108 MB）。
 - **静默卸载不结束残留进程**：GUI 卸载会先结束桌宠与后端进程；命令行 `uninstall.exe /S` 不会。若卸载时程序仍在运行，`python-embed` 与主程序可能因文件占用而残留（**用户数据不受影响，仍按[升级与卸载](#升级与卸载)的规则保留**）。批量部署请先退出应用。
 - **后端无热重载**：改 `desktop_core/` 后需重启应用才能加载新代码（aiohttp 未开 reload）。
@@ -387,6 +399,9 @@ A：不会。游戏 Agent 采用「截图输入 + 键鼠输出」范式，只操
 
 **Q：数据存在哪？**
 A：全部存于本地 `data/` 目录（SQLite + 文件），不上传云端。
+
+**Q：连接器会把我 QQ / 微信账号搞封吗？**
+A：微信走腾讯官方开放的 iLink Bot 协议（扫码授权、非逆向），QQ 走 NapCat / LLOneBot 第三方框架——后者理论上有平台风控风险（详见[风险与合规声明](#风险与合规声明)），建议小号。其余平台均走官方 Bot API。
 
 ---
 
@@ -470,7 +485,7 @@ sha256sum -c --ignore-missing SHA256SUMS.txt
 
 奶昔是本地运行的桌面应用，但部分能力**依赖第三方平台与非官方接口**，使用前请知情：
 
-- **多平台消息接入（12 个连接器）**：其中 **QQ 通过非官方协议实现**（NapCat / LLOneBot 等第三方框架）接入，这类接法存在被平台方限制、风控甚至封禁账号的风险——请自行评估并遵守对应平台的服务条款。飞书 / 企业微信 / 钉钉 / Discord / Slack / Telegram / WhatsApp 走各自官方 Bot API 或 Webhook，GitHub / GitLab / 邮件 / 自定义 HTTP 用于事件触发工作流。本项目与所列任何平台官方均**无合作关系**。
+- **多平台消息接入（13 个连接器）**：其中 **QQ 通过非官方协议实现**（NapCat / LLOneBot 等第三方框架）接入，这类接法存在被平台方限制、风控甚至封禁账号的风险——请自行评估并遵守对应平台的服务条款。微信走腾讯官方开放的 iLink Bot 协议（扫码授权，非逆向）；飞书 / 企业微信 / 钉钉 / Discord / Slack / Telegram / WhatsApp 走各自官方 Bot API 或 Webhook，GitHub / GitLab / 邮件 / 自定义 HTTP 用于事件触发工作流。本项目与所列任何平台官方均**无合作关系**。
 - **游戏 Agent（看屏操控）**：「截图输入 + 键鼠输出」仅操控你自己的当前窗口、不读游戏内存，但**键鼠注入在联网/竞技类游戏中可能被反作弊系统判定为外挂**。请只用于单机游戏或明确允许自动化的场景，**请勿用于任何联网对战游戏**，由此导致的封号等后果自负。
 - **安全中心（银狐应急防护）**：哨兵扫描与一键急救会**结束进程、删除计划任务、修改 Defender 排除项**——这些动作可能被其他安全软件误报，或与已装杀软产生冲突。能力边界（仅用户态、不碰内核 rootkit、不反制 C2）在功能页有明确公示。
 - **直播 / 弹幕功能**：依赖各直播平台的第三方接口，平台侧接口变更可能导致相关功能临时失效，我们会跟随修复但不承诺实时性。

@@ -7,16 +7,16 @@
 ![Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20React%2019%20%C2%B7%20Python%203.13-1F4E79)
 ![License](https://img.shields.io/badge/License-Apache%202.0-green)
 ![Release](https://img.shields.io/badge/Release-v1.2.0-blue)
-![Commits](https://img.shields.io/badge/Commits-625-orange)
-![LOC](https://img.shields.io/badge/LOC-51k-blueviolet)
+![Commits](https://img.shields.io/badge/Commits-633-orange)
+![LOC](https://img.shields.io/badge/LOC-79k-blueviolet)
 
 > A **local-first** desktop AI agent built on Tauri 2. It lives in the system tray and folds chat, desktop pet,
 > live-stream interaction, workflows, automation, local search, knowledge base and memory into one always-available
 > app. Every model call, search request and speech process runs on-device or under your own account —
 > **your data never leaves the machine**.
 
-**Scale**: ~**52k** lines of first-party code (Python 36,490 / frontend 14,743 / Rust 477) · **55** Python modules ·
-**38** frontend components · **210** REST endpoints · **28** SQLite tables · **625** commits · Apache-2.0
+**Scale**: ~**79k** lines of first-party code (Python 43,083 / frontend 35,331 / Rust 571, including comments and blanks) ·
+**56** Python modules · **37** frontend components · **222** REST endpoints · **29** SQLite tables · **633** commits · Apache-2.0
 
 | Layer | Tech |
 | --- | --- |
@@ -39,7 +39,7 @@ A few of the core views (full feature breakdown in [Features](#features)):
   </tr>
   <tr>
     <td width="50%"><img src="docs/screenshots/03-workflow-editor.png" alt="Visual Workflow Editor"><br><sub><b>Visual workflow editor</b> — drag-and-drop DAG with 25 node types (LLM, conditional, human input…).</sub></td>
-    <td width="50%"><img src="docs/screenshots/04-platform-connections.png" alt="12 platform connectors"><br><sub><b>12 platform connectors</b> — QQ, Feishu, WeCom, DingTalk, Discord, Slack, Telegram, WhatsApp, email, GitHub, GitLab, custom HTTP.</sub></td>
+    <td width="50%"><img src="docs/screenshots/04-platform-connections.png" alt="13 platform connectors"><br><sub><b>13 platform connectors</b> — QQ, WeChat, Feishu, WeCom, DingTalk, Discord, Slack, Telegram, WhatsApp, email, GitHub, GitLab, custom HTTP.</sub></td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/screenshots/05-chat.png" alt="Chat"><br><sub><b>Chat</b> — streaming, agent mode, shortcut answers and observable tool calls.</sub></td>
@@ -104,6 +104,10 @@ A few of the core views (full feature breakdown in [Features](#features)):
    installer; engine discovery uses four fallback levels with zero hardcoded paths, so chat works fully offline.
    Open access + outbound dialing form a two-way mesh that lets LAN devices call each other's capabilities, with
    automatic self-healing for misconfigured peers on startup.
+8. **Platform connectors (13 platforms).** Each platform uses its officially recommended integration (streaming SDK /
+   long polling / official callback / IMAP), normalized into a `UnifiedMessage` for the desktop agent. The connector
+   runs as an independent process with single-instance enforcement (stale processes reaped on startup) and masked
+   credentials, and ships inside the installer — ready on first run.
 
 ---
 
@@ -128,6 +132,15 @@ list refreshes every 3 seconds with inbound/outbound shown together. Two copyabl
 (`ws://ip:18400/ws/gateway`, for another Naixi) and the MCP tool address (`http://ip:9846/mcp`, for Cursor etc.), plus
 ready-to-paste snippets for Claude Code / Cursor. Error messages are fully localized, and misconfigured addresses
 self-heal on startup.
+
+**Platform connectors (13 platforms)** — real send/receive (not config-only) for QQ (NapCat/LLOneBot over an
+OneBot v11 WebSocket), WeChat (Tencent's official iLink Bot protocol, QR login), Feishu (official SDK stream),
+DingTalk (Stream), WeCom (local callback + tunnel), Discord (Gateway), Slack (Socket Mode), Telegram (Bot API long
+polling), WhatsApp (Meta Cloud API), GitHub / GitLab (REST polling with comment replies), email (IMAP fetch + SMTP
+reply) and custom HTTP (local listener with `reply_url` callbacks). Outbound-first: except WeCom / WhatsApp — whose
+vendors only offer callback ingestion — every platform connects out, so the desktop exposes no inbound port. Group
+chats default to "reply only when mentioned" (per-platform switch for QQ / Telegram / Slack), and the chat page
+shows who said what, separated from your own messages.
 
 **Desktop pet (PetWindow)** — Qt pet with Live2D and VRM avatars; a motion/Idle engine (head tilt, hair sway, body
 float); webcam face capture via offline MediaPipe FaceLandmarker driving VRM expressions, head pose and Live2D
@@ -194,6 +207,7 @@ graph TB
     Python --> Local[Bundled llama.cpp<br/>:11436 local inference]
     Python -.->|open access :18400 / MCP :9846| Mesh[LAN devices<br/>two-way mesh]
     Python --> MCP[MCP servers]
+    Python -->|child process| Conn[Platform connector<br/>13 platforms]
     Python -->|WebSocket :9877| Face[Webcam face-capture bridge<br/>MediaPipe]
     Tauri -->|child process| Pet[Qt desktop pet<br/>Live2D / VRM]
     Pet <-->|WebSocket| Python
@@ -205,6 +219,8 @@ graph TB
 - **Main app (Tauri)** — windows, tray, installation, launches the backend and pet subprocesses.
 - **Backend (Python)** — the single server for all AI capabilities, search, knowledge base, workflows and ops.
 - **Desktop pet (Qt)** — optional Live2D / VRM avatar process, talks to the backend over WebSocket.
+- **Connector (Python)** — the platform-adapter subprocess: send/receive for 13 platforms, status reporting and
+  credential handling, launched by the backend per config.
 - **Face-capture bridge** — camera stream → MediaPipe → pose/expression data, on its own port.
 
 ---
@@ -299,6 +315,8 @@ These large or copyrighted assets are **not** distributed with the repo:
   addresses and both channel ports are editable under Advanced / DIY, taking effect immediately.
 - **Local search** — SearXNG starts with the app and degrades to public engines when offline.
 - **MCP** — add server addresses in settings; configured servers auto-connect on startup.
+- **Platform connectors** — per-platform credentials in the "Connect" page (masked echo, encrypted at rest); a
+  per-platform "group chats: mention-only" switch; WeChat login state lives in `%APPDATA%\naixi\connector-data`.
 - **Knowledge base / workflows / automation** — configured entirely from the UI; data lives in local `data/`.
 
 ---
@@ -318,6 +336,9 @@ The honest boundary of 1.2.0:
   voices and exists only as an offline fallback.
 - **The game agent is experimental.** Desktop-pet-style screenshot-in/input-out control depends on OCR and visual
   grounding; complex or fast-moving scenes get stuck. Not production-ready.
+- **WeCom / WhatsApp need a tunnel.** These two vendors only support callback-based message ingestion (no streaming
+  or polling API), so a local desktop needs a tunnel such as cloudflared / cpolar (per-platform guides on the Connect
+  page). The other 11 platforms all work without a public address.
 - **Large assets are downloaded at build time** (self-contained Python runtime and SearXNG, ~108 MB).
 - **No backend hot reload.** After editing `desktop_core/`, restart the app.
 - **Silent uninstall does not terminate leftover processes.** The GUI uninstaller ends the pet and backend first;
@@ -356,6 +377,12 @@ internals and no server is contacted.
 
 **Where is my data?**
 All of it in the local `data/` directory (SQLite plus files). Nothing is uploaded.
+
+**Will connectors get my QQ / WeChat account banned?**
+WeChat uses Tencent's official iLink Bot protocol (QR authorization, no reverse engineering). QQ goes through the
+NapCat / LLOneBot third-party framework, which carries some platform risk-control risk (see
+[Risks & Compliance](#risks--compliance)) — a secondary account is recommended. All other platforms use official
+bot APIs.
 
 **How do I check whether the install is healthy?**
 Open the **System** menu in the top bar and click "Run diagnostics" (`GET /api/diagnostics`). It reports backend
@@ -419,10 +446,11 @@ Related docs: [Release security policy](docs/RELEASE_SECURITY.md) ·
 
 Some capabilities depend on third-party platforms and unofficial interfaces:
 
-- **Multi-platform messaging (12 connectors).** QQ is integrated through an **unofficial protocol** (NapCat /
-  LLOneBot), which risks platform restrictions, risk-control actions or account bans. Feishu, WeCom, DingTalk,
-  Discord, Slack, Telegram and WhatsApp use their official bot APIs or webhooks; GitHub, GitLab, email and custom HTTP
-  trigger workflows. This project has **no partnership** with any of these platforms.
+- **Multi-platform messaging (13 connectors).** QQ is integrated through an **unofficial protocol** (NapCat /
+  LLOneBot), which risks platform restrictions, risk-control actions or account bans. WeChat uses Tencent's official
+  iLink Bot protocol (QR-authorized, no reverse engineering); Feishu, WeCom, DingTalk, Discord, Slack, Telegram and
+  WhatsApp use their official bot APIs or webhooks; GitHub, GitLab, email and custom HTTP trigger workflows. This
+  project has **no partnership** with any of these platforms.
 - **Game agent.** Injecting keyboard and mouse input may be flagged as cheating by anti-cheat in online or competitive
   games. Use it only for single-player games or scenarios that explicitly allow automation. **Never in online
   competitive titles.**
