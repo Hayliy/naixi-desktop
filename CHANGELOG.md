@@ -8,6 +8,44 @@
 
 > 版本号唯一来源：`src-tauri/tauri.conf.json` 的 `version` 字段。改后跑 `npm run sync:version`，同步到 Cargo.toml / package.json / desktop_core/version.json / src/lib/version.ts / README 徽章与下载名。
 
+## [1.2.0] - 2026-10-10
+
+新功能版本，核心是**消息平台连接器全量落地**：连接页从「只读展示」变为可交互面板，
+QQ/飞书/钉钉/企业微信/微信/Discord/Slack/Telegram/WhatsApp/GitHub/GitLab/邮箱/自定义 HTTP
+共 13 个平台全部真实收发（非仅保存配置）；连接器随包下发，安装即用。
+
+### 新增
+- **9 个新平台适配器**：QQ(NapCat, OneBot v11 正向 WS)、Telegram(Bot API 长轮询)、
+  Discord(Gateway 长连)、Slack(Socket Mode)、GitHub/GitLab(REST 轮询 + 评论/备注回写)、
+  电子邮件(IMAP 轮询 + SMTP 回信)、WhatsApp(Cloud API 本地 webhook + 穿透)、
+  自定义 HTTP(本地监听，`reply_url` 回传 Agent 回复)。免公网方案优先，各平台取官方
+  SDK/协议中最稳的接入方式。
+- **连接页可交互**：全平台配置表单（密钥掩码回显）、启用开关、启动/停止、实时连接状态
+  （3 秒轮询）、微信扫码轮询。编辑态与轮询分离，勾选不再被 3 秒轮询弹回。
+- **连接器随包下发**：`bundle_connector.cjs` 把 naixi_connector 包与依赖打进
+  `resources/connector`（凭据文件绝不入包，构建前自检防泄漏）；打包态由
+  python-embed + `-c` sys.path 注入运行（13/13 适配器实测可加载）。
+- **连接器单实例保障**：启动前自动清理残留连接器进程（后端退出无法级联杀子进程，
+  曾致 4 组孤儿进程并存——旧代码回复 + 重复回复）。
+
+### 修复
+- **群聊误回复**：QQ 群里任何人说话机器人都会接。napcat/telegram/slack 统一
+  `group_require_at` 过滤（默认仅被 @ 时回复，可配置关闭）；QQ 用事件 `self_id`
+  匹配 CQ 码，Telegram 用 getMe 用户名，Slack 用 auth.test 的 bot id。
+- **消息时间显示 NaN/NaN**：后端读历史时用 SQLite `datetime()` 把 unix 秒转成字符串，
+  前端按数字渲染 ⇒ 全部变 NaN。改为时间戳直出 + 前端双层防御（无效显示 `--`）。
+- **连接器消息不区分发送者**：群聊里大家的消息在对话页全显示成"自己发的"。
+  全链路打通 sender：数据库 `conv_messages` 加列（自动迁移旧库）→ 连接器传
+  `user_name` → 前端带 sender 的消息走左侧气泡并显示发送者名。
+- **工作流页面压缩显示**：画布容器缺 `min-w-0`（flex 内容撑破容器把右栏挤出窗口）；
+  右侧面板窄窗口降为 288px。主窗口默认 1280×800（16:10）、最小 1024×680。
+- **开发态误载陈旧打包副本**：sidecar `_find_core_root()` 开发态优先项目根的
+  `desktop_core`（跳过 resources 内副本），根治"改了代码重启仍 404/旧行为"。
+
+### 其他
+- 连接页 404 提示改为明确指引（后端旧进程需重启）。
+- 微信等连接器运行时数据（登录态/二维码）写入 `APPDATA`（安装目录可能只读）。
+
 ## [1.1.1] - 2026-10-09
 
 缺陷修复修订版，核心是**跨设备互联「主动接入」从不可用到真机全通**：后端端点补全、
