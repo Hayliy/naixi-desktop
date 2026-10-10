@@ -1949,9 +1949,123 @@ async def api_desktop_platforms(request):
     try:
         with open(pj_path, encoding="utf-8") as f:
             data = json.load(f)
-        return web.json_response(data)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
+    # 注入连接器实时状态（由 naixi_connector 经 /api/connector/status 上报），
+    # SetupGuide 据此把"只保存配置"提示换成真实已连/未连状态灯。
+    try:
+        cs = json.loads(meta_get("connector_status") or "{}")
+    except Exception:
+        cs = {}
+    for p in data.get("platforms", []):
+        st = cs.get(p.get("id")) or {}
+        p["connected"] = bool(st.get("connected", False))
+        p["connector_detail"] = st.get("detail", "")
+    data["_connector_status"] = cs
+    return web.json_response(data)
+
+
+async def api_connector_status(request):
+    """连接器上报各平台连接状态，写入 meta（connector_status）供 SetupGuide/前端读取。"""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json"}, status=400)
+    status_list = body.get("status") or []
+    try:
+        merged = json.loads(meta_get("connector_status") or "{}")
+    except Exception:
+        merged = {}
+    now = time.time()
+    for s in status_list:
+        pid = s.get("platform")
+        if not pid:
+            continue
+        merged[pid] = {
+            "connected": bool(s.get("connected", False)),
+            "detail": s.get("detail", ""),
+            "ts": now,
+        }
+    meta_set("connector_status", json.dumps(merged, ensure_ascii=False))
+    return web.json_response({"ok": True, "status": merged})
+
+
+# ── 连接器管理（拉起 / 停止 / 配置 / 二维码）──
+async def api_connector_config_get(request):
+    """返回连接器配置（密钥掩码）+ 进程状态，供连接页渲染。"""
+    from desktop_core import connector_manager as cm
+
+    return web.json_response({
+        "config": cm.get_masked_config(),
+        "running": cm.is_running(),
+        "pid": cm._pid,
+        "dir": cm.CONNECTOR_DIR,
+        "python": cm.CONNECTOR_PYTHON,
+        "any_enabled": cm.any_enabled(cm.get_config()),
+        "qr_available": cm.qr_path() is not None,
+    })
+
+
+async def api_connector_config_set(request):
+    """保存连接器配置。
+
+    掩码哨兵（••••••••）与空串视为「沿用已存值」，避免前端回传掩码把真实密钥覆盖掉。
+    """
+    from desktop_core import connector_manager as cm
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json"}, status=400)
+    existing = cm.get_config()
+    inc_adapters = (body.get("adapters") or {})
+    for name, acfg in existing.get("adapters", {}).items():
+        inc = inc_adapters.get(name)
+        if not isinstance(inc, dict):
+            continue
+        for k in list(acfg.keys()):
+            if k in inc:
+                v = inc[k]
+                if isinstance(v, str) and (v == "••••••••" or v == ""):
+                    continue  # 沿用已存密钥 / 不改动
+                acfg[k] = v
+    if isinstance(body.get("desktop"), dict) and body["desktop"].get("base_url"):
+        existing["desktop"]["base_url"] = str(body["desktop"]["base_url"]).strip()
+    cm.save_config(existing)
+    return web.json_response({"ok": True, "config": cm.get_masked_config()})
+
+
+async def api_connector_start(request):
+    from desktop_core import connector_manager as cm
+
+    force = False
+    try:
+        body = await request.json()
+        force = bool((body or {}).get("force", False))
+    except Exception:
+        pass
+    try:
+        r = await cm.start_connector(force=force)
+        return web.json_response({"ok": True, **r})
+    except cm.ConnError as e:
+        return web.json_response({"error": str(e), "hint": "请确认 NAIXI_CONNECTOR_DIR / NAIXI_CONNECTOR_PYTHON 指向已安装依赖的连接器"}, status=400)
+
+
+async def api_connector_stop(request):
+    from desktop_core import connector_manager as cm
+
+    r = await cm.stop_connector()
+    return web.json_response(r)
+
+
+async def api_connector_qr(request):
+    """返回微信登录二维码 PNG（若已生成）。"""
+    from desktop_core import connector_manager as cm
+
+    p = cm.qr_path()
+    if not p:
+        return web.json_response({"error": "二维码尚未生成，请先启用微信并连接"}, status=404)
+    return web.FileResponse(p, headers={"Content-Type": "image/png"})
 
 
 def _probe_openai_models(base_url: str, timeout: float = 1.5) -> list:
@@ -2150,9 +2264,10 @@ async def api_chat_stream(request):
         if not api_key or not api_url:
             return web.json_response({"error": "未找到匹配的 API 配置"}, status=400)
 
-        # 保存用户消息到对话历史
+        # 保存用户消息到对话历史（sender：连接器消息的发送者展示名，前端区分"谁说的"）
+        sender = str(body.get("sender") or "").strip()
         if conv_key:
-            try: conv_save_message(conv_key, "user", text, msg_time=now_ts)
+            try: conv_save_message(conv_key, "user", text, msg_time=now_ts, sender=sender)
             except: pass
 
         # 构造 OpenAI 兼容的流式请求
@@ -5427,6 +5542,12 @@ def setup_routes(app):
     app.router.add_post("/api/desktop/models", api_desktop_list_models)
     app.router.add_get("/api/stats", api_stats)
     app.router.add_get("/api/desktop/platforms", api_desktop_platforms)
+    app.router.add_post("/api/connector/status", api_connector_status)
+    app.router.add_get("/api/connector/config", api_connector_config_get)
+    app.router.add_post("/api/connector/config", api_connector_config_set)
+    app.router.add_post("/api/connector/start", api_connector_start)
+    app.router.add_post("/api/connector/stop", api_connector_stop)
+    app.router.add_get("/api/connector/qr", api_connector_qr)
     # ── Gateway 能力注册表（Mesh 对等互联） ──
     app.router.add_route("*", "/api/gateway/capabilities", api_gateway_capabilities)
     app.router.add_post("/api/gateway/capability/delete", api_gateway_capability_delete)
@@ -6400,6 +6521,28 @@ async def _launch_startup_tasks(app):
         _gc.init_remotes()
     except Exception as e:
         log.warning("[Gateway] 载入出站对端失败: %s", e)
+    # 连接器：若已存有启用的适配器，按配置自动拉起（失败只记日志，不拖垮主服务）。
+    asyncio.create_task(_on_startup_connector())
+
+
+async def _on_startup_connector():
+    """按已存配置自动拉起连接器（连接页「连接」过的平台，下次启动自动恢复在线）。"""
+    try:
+        from desktop_core import connector_manager as cm
+
+        cfg = cm.get_config()
+        if not cm.any_enabled(cfg):
+            return
+        await asyncio.sleep(3)  # 等 9845 自身就绪，避免连接器上报状态撞端口未绑定
+        try:
+            r = await cm.start_connector()
+            log.info("[Connector] 已按已存配置自动拉起: %s", r)
+        except cm.ConnError as e:
+            log.warning("[Connector] 自动拉起失败: %s", e)
+        except Exception as e:
+            log.warning("[Connector] 自动拉起异常: %s", e)
+    except Exception as e:
+        log.warning("[Connector] 自动拉起检查失败: %s", e)
 
 
 async def _start_gateway_ws():

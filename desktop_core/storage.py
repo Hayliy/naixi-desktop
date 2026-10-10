@@ -457,7 +457,8 @@ def init_tables():
                 role TEXT NOT NULL,
                 content TEXT DEFAULT '',
                 content_blocks TEXT DEFAULT '[]',
-                time REAL NOT NULL
+                time REAL NOT NULL,
+                sender TEXT DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS idx_msg_conv ON conv_messages(conv_key, id);
             CREATE TABLE IF NOT EXISTS avatars (
@@ -592,6 +593,13 @@ def init_tables():
             cols = [r[1] for r in conn.execute("PRAGMA table_info(agent_memory)").fetchall()]
             if "day_tag" not in cols:
                 conn.execute("ALTER TABLE agent_memory ADD COLUMN day_tag TEXT DEFAULT ''")
+        except Exception:
+            pass
+        # 兼容旧库：补 conv_messages.sender 列（连接器消息区分发送者，如群聊里谁说的）
+        try:
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(conv_messages)").fetchall()]
+            if "sender" not in cols:
+                conn.execute("ALTER TABLE conv_messages ADD COLUMN sender TEXT DEFAULT ''")
         except Exception:
             pass
         # 版本化迁移：老库补打 schema 版本戳；未来改表从这里走（见 SCHEMA_VERSION 注释）
@@ -1139,17 +1147,17 @@ def truncate_history_tokens(history: list, max_tokens: int = 1500) -> list:
 
 # ── 对话历史 ──
 
-def conv_save_message(conv_key: str, role: str, content: str, content_blocks: list = None, msg_time: float = None):
-    """保存一条消息到对话"""
+def conv_save_message(conv_key: str, role: str, content: str, content_blocks: list = None, msg_time: float = None, sender: str = ""):
+    """保存一条消息到对话（sender：发送者展示名，连接器消息区分"谁说的"）"""
     import time as _time
     if msg_time is None:
         msg_time = _time.time()
     conn = _get_conn()
     try:
         conn.execute(
-            "INSERT INTO conv_messages (conv_key, role, content, content_blocks, time) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO conv_messages (conv_key, role, content, content_blocks, time, sender) VALUES (?, ?, ?, ?, ?, ?)",
             (conv_key, role, encrypt_text(content),
-             encrypt_text(json.dumps(content_blocks or [], ensure_ascii=False)), msg_time)
+             encrypt_text(json.dumps(content_blocks or [], ensure_ascii=False)), msg_time, sender or "")
         )
         # 更新摘要
         prev = conn.execute("SELECT msg_count FROM convs WHERE key=?", (conv_key,)).fetchone()
@@ -1162,7 +1170,7 @@ def conv_save_message(conv_key: str, role: str, content: str, content_blocks: li
     finally:
         conn.close()
 
-def conv_save_message_sync(conv_key: str, role: str, content: str, content_blocks: list = None, msg_time: float = None):
+def conv_save_message_sync(conv_key: str, role: str, content: str, content_blocks: list = None, msg_time: float = None, sender: str = ""):
     """同步版（用于 chat_stream 线程）"""
     import time as _time
     if msg_time is None:
@@ -1170,9 +1178,9 @@ def conv_save_message_sync(conv_key: str, role: str, content: str, content_block
     conn = _get_conn()
     try:
         conn.execute(
-            "INSERT INTO conv_messages (conv_key, role, content, content_blocks, time) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO conv_messages (conv_key, role, content, content_blocks, time, sender) VALUES (?, ?, ?, ?, ?, ?)",
             (conv_key, role, encrypt_text(content),
-             encrypt_text(json.dumps(content_blocks or [], ensure_ascii=False)), msg_time)
+             encrypt_text(json.dumps(content_blocks or [], ensure_ascii=False)), msg_time, sender or "")
         )
         prev = conn.execute("SELECT msg_count FROM convs WHERE key=?", (conv_key,)).fetchone()
         count = (prev["msg_count"] if prev else 0) + 1
@@ -1202,11 +1210,16 @@ def conv_list():
         conn.close()
 
 def conv_get_messages(conv_key: str):
-    """获取某个对话的所有消息"""
+    """获取某个对话的所有消息。
+
+    ★ time 直接返回 unix 秒（前端 fmtTime 按 `new Date(ts*1000)` 渲染）。此前这里用
+    datetime(time,'unixepoch','localtime') 转成字符串返回，前端字符串*1000 = NaN ⇒
+    气泡下时间全部显示 "NaN/NaN"（2026-10-10 用户截图实证）。
+    """
     conn = _get_conn()
     try:
         rows = conn.execute(
-            "SELECT id, role, content, content_blocks, datetime(time, 'unixepoch', 'localtime') as time FROM conv_messages WHERE conv_key=? ORDER BY id ASC",
+            "SELECT id, role, content, content_blocks, time, sender FROM conv_messages WHERE conv_key=? ORDER BY id ASC",
             (conv_key,)
         ).fetchall()
         msgs = []
@@ -1222,6 +1235,7 @@ def conv_get_messages(conv_key: str):
                 "content": decrypt_text(r["content"]),
                 "content_blocks": blocks if blocks else None,
                 "time": r["time"] or 0,
+                "sender": r["sender"] or "" if "sender" in r.keys() else "",
             })
         return msgs
     finally:

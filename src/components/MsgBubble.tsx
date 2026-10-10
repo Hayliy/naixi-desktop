@@ -93,7 +93,9 @@ export default function MsgBubble({ msg, onEdit, onRegenerate, onDelete, onStar,
     else playByApi(text);
   };
 
-  const isUser = msg.role === "user";
+  // 连接器消息（带 sender）是"别人发的"，走左侧 + 显示发送者名；
+  // 本机自己发的 user 消息无 sender，保持右侧。
+  const isUser = msg.role === "user" && !msg.sender;
   const hasContentBlocks = (msg.content_blocks || []).length > 0;
   const displayContent = msg.content || "";
   // 没内容也没卡片 → 等待加载中，渲染最小骨架
@@ -111,9 +113,9 @@ export default function MsgBubble({ msg, onEdit, onRegenerate, onDelete, onStar,
         )}
       </div>
       <div className={`max-w-[75%] min-w-0 ${isUser ? "items-end" : "items-start"} flex flex-col relative`}>
-        {/* 专家团队模式：显示名称 */}
-        {expertName && !isUser && (
-          <span className="text-[10px] text-sakura-400 mb-0.5 ml-1">{expertName}</span>
+        {/* 专家团队模式 / 连接器发送者：气泡上方显示名称 */}
+        {(expertName || msg.sender) && !isUser && (
+          <span className="text-[10px] text-sakura-400 mb-0.5 ml-1">{expertName || msg.sender}</span>
         )}
         {/* 快捷删除按钮：悬浮在气泡右上角，hover 时显示 */}
         {onDelete && (

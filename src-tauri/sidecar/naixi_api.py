@@ -40,11 +40,23 @@ def _init_logging():
 # 桌面端核心模块路径：向上查找包含 desktop_core 包的目录（兼容开发态与打包态）
 def _find_core_root():
     here = os.path.dirname(os.path.abspath(__file__))
+    # 阶段1：开发态优先 —— 向上找「项目根下的 desktop_core」，但跳过 resources/ 内的
+    # 打包副本。否则开发态会误命中 src-tauri/resources/desktop_core（旧副本，无最新路由）。
     d = here
     while True:
-        if os.path.isdir(os.path.join(d, "desktop_core")):
-            return d
-        # 打包态：desktop_core 在 resources/ 下（Tauri 资源目录分层结构）
+        cand = os.path.join(d, "desktop_core")
+        if os.path.isdir(cand):
+            rel = os.path.relpath(cand, here).replace(os.sep, "/")
+            # rel 形如 "../../resources/desktop_core" 说明落在 resources/ 内，是打包副本，跳过
+            if "/resources/" not in rel:
+                return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    # 阶段2：打包态回退 —— resources/desktop_core（安装后根目录没有 desktop_core，只有 resources）
+    d = here
+    while True:
         if os.path.isdir(os.path.join(d, "resources", "desktop_core")):
             return os.path.join(d, "resources")
         parent = os.path.dirname(d)

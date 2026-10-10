@@ -2,11 +2,14 @@
 import type { ContentBlock } from "@/components/ContentRenderer";
 
 export interface ConvItem { key: string; last_role: string; last_msg: string; last_time: number; }
-export interface MsgItem { id: number; role: string; content: string; content_blocks?: ContentBlock[] | null; time: number; }
+export interface MsgItem { id: number; role: string; content: string; content_blocks?: ContentBlock[] | null; time: number; sender?: string; }
 export interface ProviderModel { key: string; label: string; provider_id: number; }
 
 export function fmtTime(ts: number) {
+  // 防御：time 缺失/无效时绝不输出 "NaN/NaN"
+  if (!ts || !Number.isFinite(ts)) return "--";
   const d = new Date(ts * 1000);
+  if (isNaN(d.getTime())) return "--";
   const now = new Date();
   const diff = (now.getTime() - d.getTime()) / 1000;
   if (diff < 60) return "刚刚";
@@ -35,6 +38,8 @@ export function convName(key: string, msgs?: MsgItem[], customName?: string, las
   if (parts[0] === "group") return `群聊 ${id.slice(-4)}`;
   if (parts[0] === "user") return `私聊 ${id.slice(-4)}`;
   if (parts[0] === "auto") return `自动: ${id.replace(/_/g, " ").slice(0, 15)}`;
+  // 连接器会话：connector:<平台>:<会话id>
+  if (parts[0] === "connector") return `连接器: ${parts[1]} ${id.slice(-4)}`;
   return "新对话";
 }
 

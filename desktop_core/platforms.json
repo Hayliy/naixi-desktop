@@ -2,16 +2,17 @@
   "platforms": [
     {
       "id": "napcat",
+      "managed": true,
       "name": "QQ",
-      "platform": "Napcat / LLOneBot",
+      "platform": "Napcat / LLOneBot (OneBot v11)",
       "icon": "MessageCircle",
-      "description": "通过 Napcat 或 LLOneBot 将 QQ 消息转发到桌面端工作流",
+      "description": "QQ 机器人：连接器主动连本机 NapCat/LLOneBot 的正向 WebSocket（免公网），连上即已连接",
       "steps": [
-        "安装并启动 Napcat（https://napcat.napnei.shop）或 LLOneBot",
-        "打开 Napcat 后台 → 网络配置 → HTTP 事件回调",
-        "添加回调地址为下方 webhook URL",
-        "选择需要监听的事件类型（群消息/私聊等）",
-        "保存后 QQ 消息会自动触发桌面端工作流"
+        "确保 NapCat（https://napcat.napnei.shop）或 LLOneBot 已启动",
+        "NapCat 后台 → 网络配置 → 开「正向 WebSocket 服务」（默认端口 3001）",
+        "若配置了 Access Token，把 Token 一并填进下方配置（未配置留空）",
+        "填 WS 地址（默认 ws://127.0.0.1:3001）→ 启用并启动连接器",
+        "★ 注意：正向 WS 允许多客户端，若 naixi_py 机器人也连着同一端口会重复回复，二者取其一"
       ],
       "links": [
         { "label": "Napcat 官方文档", "url": "https://napcat.napnei.shop/docs" },
@@ -20,17 +21,20 @@
     },
     {
       "id": "feishu",
+      "managed": true,
       "name": "飞书",
       "platform": "Feishu / Lark",
       "icon": "MessageCircle",
-      "description": "创建飞书机器人应用，将消息回调到桌面端工作流",
+      "description": "飞书机器人应用，通过长连接收发消息（免公网 IP）",
       "steps": [
         "打开飞书开放平台（https://open.feishu.cn）→ 创建企业自建应用",
-        "开启「机器人」能力 → 事件订阅 → 添加请求网址 URL",
-        "填入下方 webhook URL",
-        "订阅消息事件（接收消息 im.message.receive_v1）",
-        "发布应用 → 版本管理与审核",
-        "审核通过后添加到飞书通讯录即可使用"
+        "左侧「凭证与基础信息」→ 复制 App ID 和 App Secret",
+        "「应用功能」→「机器人」→ 启用机器人能力",
+        "「权限管理」→ 申请 im:message、im:message:send_as_bot",
+        "「事件与回调」→ 订阅方式选「使用长连接接收事件」（★关键，无需公网 IP）",
+        "「事件配置」→ 添加事件 im.message.receive_v1（接收消息）",
+        "「版本管理与发布」→ 创建版本 → 可见范围包含自己 → 发布",
+        "把 App ID / App Secret 填进连接器配置并启动连接器即可"
       ],
       "links": [
         { "label": "飞书开放平台文档", "url": "https://open.feishu.cn/document" }
@@ -38,35 +42,58 @@
     },
     {
       "id": "wecom",
+      "managed": true,
       "name": "企业微信",
       "platform": "WeCom",
       "icon": "MessageCircle",
-      "description": "企业微信机器人应用的 webhook 回调",
+      "description": "企业微信自建应用（注意：企微只支持回调，需公网地址/穿透）",
       "steps": [
-        "打开企业微信管理后台 → 应用管理 → 创建应用",
-        "配置应用的可信 IP（服务器公网 IP）",
-        "开启接收消息 → 设置 URL 为下方 webhook 地址",
-        "设置 Token 和 EncodingAESKey（保存到桌面端配置）",
-        "配置企业可信域名（需 ICP 备案域名）",
-        "保存后成员发送消息到该应用即可触发工作流"
+        "打开企业微信管理后台（https://work.weixin.qq.com）→ 应用管理 → 创建自建应用",
+        "★ 前提：企微不像钉钉/飞书有长连接，必须有一个公网 HTTPS 回调地址",
+        "本地做法：跑一条内网穿透，例如 cloudflared tunnel --url http://localhost:19877（或 cpolar / frp）",
+        "「接收消息」→ 设置 URL 为 https://<你的公网地址>/wecom/callback",
+        "设置 Token 和 EncodingAESKey（自己生成，稍后填回连接器配置）",
+        "把 CorpID、Secret、AgentId、Token、EncodingAESKey 填进连接器配置并启动连接器",
+        "在企微里给这个应用发消息，即可收到桌面 Agent 回复"
       ],
       "links": [
-        { "label": "企业微信开发文档", "url": "https://developer.work.weixin.qq.com/document" }
+        { "label": "企业微信开发文档", "url": "https://developer.work.weixin.qq.com/document" },
+        { "label": "Cloudflare Tunnel 下载", "url": "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/" }
+      ]
+    },
+    {
+      "id": "wechat",
+      "managed": true,
+      "name": "微信",
+      "platform": "WeChat (iLink)",
+      "icon": "MessageCircle",
+      "description": "微信个人号机器人（腾讯官方 iLink 协议，合法且免公网 IP）",
+      "steps": [
+        "★ 走腾讯 2026 年官方开放的 iLink Bot API，不是逆向/破解，不封号",
+        "在连接器配置里把 wechat.enabled 设为 true 并启动连接器",
+        "首次启动会生成二维码（D:\\数据\\naixi_connector\\wechat_qr.png）→ 用微信扫码确认",
+        "扫码成功后 token 自动保存，之后重启无需再扫",
+        "在微信里给这个机器人发消息，即可收到桌面 Agent 回复",
+        "注意：不能主动推送，必须由用户先发消息才能回复（协议限制）"
+      ],
+      "links": [
+        { "label": "iLink 协议文档", "url": "https://github.com/nightsailer/wechat-clawbot/blob/master/docs/ilink-protocol.md" }
       ]
     },
     {
       "id": "dingtalk",
+      "managed": true,
       "name": "钉钉",
       "platform": "DingTalk",
       "icon": "MessageCircle",
-      "description": "钉钉机器人出站消息回调",
+      "description": "钉钉企业内部机器人，通过 Stream 长连接收发（免公网 IP）",
       "steps": [
-        "打开钉钉开放平台（https://open.dingtalk.com）→ 创建应用",
-        "添加机器人能力 → 选择「出站」类型",
-        "配置消息接收地址为下方 webhook URL",
-        "设置加签密钥（保存到桌面端配置）",
-        "发布应用 → 选择可见范围",
-        "安装后群聊 @机器人即可触发工作流"
+        "打开钉钉开放平台（https://open-dev.dingtalk.com）→ 创建「企业内部应用」",
+        "应用设置 → 添加「机器人」能力并启用",
+        "★ 消息接收模式选「Stream 模式」（长连接，无需公网地址/证书）",
+        "「凭证与基础信息」→ 复制 Client ID（AppKey）和 Client Secret（AppSecret）",
+        "把 client_id / client_secret 填进连接器配置并启动连接器",
+        "在钉钉里私聊机器人，或在群里 @机器人，即可收到桌面 Agent 回复"
       ],
       "links": [
         { "label": "钉钉开放平台文档", "url": "https://open.dingtalk.com/document" }
@@ -74,17 +101,17 @@
     },
     {
       "id": "discord",
+      "managed": true,
       "name": "Discord",
       "platform": "Discord",
       "icon": "MessageCircle",
-      "description": "Discord Slash Command 和消息响应",
+      "description": "Discord 机器人（Gateway 长连接，免公网 IP；私信或 @ 时回复）",
       "steps": [
         "打开 Discord Developer Portal（https://discord.com/developers/applications）",
-        "创建 Application → Bot → 获取 Token",
-        "开启 Message Content Intent",
-        "生成邀请链接 → 将 Bot 添加到服务器",
-        "配置 Bot 的消息接收地址为下方 webhook URL",
-        "在频道中发送消息即可触发工作流"
+        "创建 Application → 左侧 Bot → 复制 Token，并开启 Message Content Intent",
+        "OAuth2 → URL Generator 勾选 bot + 所需权限，生成邀请链接把 Bot 加入服务器",
+        "把 Token 填进连接器配置并启用连接器即可（Gateway 长连，无需公网地址）",
+        "私聊机器人，或在服务器里 @机器人，即可收到桌面 Agent 回复"
       ],
       "links": [
         { "label": "Discord Developer Portal", "url": "https://discord.com/developers/docs" }
@@ -92,16 +119,17 @@
     },
     {
       "id": "slack",
+      "managed": true,
       "name": "Slack",
       "platform": "Slack",
       "icon": "MessageCircle",
-      "description": "Slack App Event 订阅",
+      "description": "Slack 机器人（Socket Mode 长连接，免公网 IP）",
       "steps": [
-        "打开 Slack API（https://api.slack.com/apps）→ 创建 App",
-        "开启 Event Subscriptions → 设置 Request URL 为下方 webhook 地址",
-        "订阅消息事件（message.channels, message.im 等）",
-        "安装 App 到工作区",
-        "在频道中 @App 或发送消息即可触发工作流"
+        "打开 Slack API（https://api.slack.com/apps）→ 创建 App → 添加 Bot 用户",
+        "安装到工作区，复制 Bot User OAuth Token（xoxb- 开头）",
+        "左侧「Basic Information」→ App-Level Tokens → 生成 xapp- Token（勾选 connections:write）",
+        "把两个 Token 填进连接器配置并启用（Socket Mode 长连，无需公网地址）",
+        "在频道里给机器人发消息，即可收到桌面 Agent 回复"
       ],
       "links": [
         { "label": "Slack API 文档", "url": "https://api.slack.com/docs" }
@@ -109,15 +137,15 @@
     },
     {
       "id": "telegram",
+      "managed": true,
       "name": "Telegram",
       "platform": "Telegram Bot",
       "icon": "MessageCircle",
-      "description": "Telegram Bot webhook 回调",
+      "description": "Telegram 机器人（Bot API 长轮询，免公网 IP）",
       "steps": [
-        "在 Telegram 中搜索 @BotFather → 创建新 Bot → 获取 Token",
-        "设置 webhook：访问 https://api.telegram.org/bot<TOKEN>/setWebhook?url=<你的 webhook URL>",
-        "Bot 会自动将收到的消息转发到 webhook 地址",
-        "将用户添加到 Bot 即可开始使用"
+        "在 Telegram 中搜索 @BotFather → /newbot → 按提示创建并获取 Bot Token",
+        "把 Token 填进连接器配置并启用连接器（长轮询拉消息，无需公网地址）",
+        "在 Telegram 里给这个机器人发消息，即可收到桌面 Agent 回复"
       ],
       "links": [
         { "label": "Telegram Bot API", "url": "https://core.telegram.org/bots/api" }
@@ -125,17 +153,18 @@
     },
     {
       "id": "whatsapp",
+      "managed": true,
       "name": "WhatsApp",
-      "platform": "WhatsApp Business API",
+      "platform": "WhatsApp Cloud API",
       "icon": "MessageCircle",
-      "description": "WhatsApp Cloud API webhook 回调",
+      "description": "WhatsApp 商业号（Meta Cloud API，本地 webhook + 内网穿透，合规不封号）",
       "steps": [
-        "访问 Meta Developer Platform（https://developers.facebook.com）",
-        "创建 App → 添加 WhatsApp 产品",
-        "配置 Webhook 回调 URL 为下方 webhook 地址",
-        "填写验证 Token（保存到桌面端配置）",
-        "订阅消息事件（messages）",
-        "将 Business 账号关联的 WhatsApp 号发送消息即可触发"
+        "在 Meta 开发者后台（https://developers.facebook.com）创建 App → 添加 WhatsApp 产品",
+        "左侧 WhatsApp → 获取 Phone Number ID 和临时 Access Token（建议换成永久 token）",
+        "在连接器配置填 verify_token / phone_number_id / access_token 并启用",
+        "跑内网穿透暴露本机端口：cloudflared tunnel --url http://localhost:19878",
+        "把 https://<你的公网地址>/whatsapp/webhook 填进 Meta 的 Webhook URL（Verify Token 与配置一致）",
+        "用 WhatsApp 给该商业号发消息，即可收到桌面 Agent 回复"
       ],
       "links": [
         { "label": "Meta WhatsApp 文档", "url": "https://developers.facebook.com/docs/whatsapp" }
@@ -143,68 +172,67 @@
     },
     {
       "id": "email",
+      "managed": true,
       "name": "电子邮件",
-      "platform": "Email Webhook",
+      "platform": "Email (IMAP + SMTP)",
       "icon": "Mail",
-      "description": "通过邮件触发工作流（需邮件转发服务）",
+      "description": "电子邮箱（IMAP 轮询收信 + SMTP 回信，纯标准库，免公网 IP）",
       "steps": [
-        "注册 Mailgun / SendGrid / CloudMailin 等服务",
-        "创建邮件接收路由 → 目标设为下方 webhook URL",
-        "设置接收邮箱地址",
-        "向该邮箱发送邮件即可触发工作流执行",
-        "邮件内容（标题/正文/附件）会作为工作流输入"
+        "准备一个支持 IMAP 的邮箱（如 QQ/163/Gmail，需开启 IMAP 并生成授权码/专用密码）",
+        "在连接器配置填 host / port / user / password（port 默认 993，use_ssl 默认开）",
+        "SMTP 一般复用同主机/凭据，如有不同可单独填 smtp_host / smtp_user / smtp_password",
+        "启用后连接器每 30s 轮询未读邮件，新邮件触发桌面 Agent，回复经 SMTP 回信给发件人"
       ],
       "links": [
-        { "label": "Mailgun 文档", "url": "https://documentation.mailgun.com" },
-        { "label": "CloudMailin 文档", "url": "https://cloudmailin.com/docs" }
+        { "label": "QQ 邮箱 IMAP/SMTP 设置", "url": "https://service.mail.qq.com/detail/124" }
       ]
     },
     {
       "id": "github",
+      "managed": true,
       "name": "GitHub",
-      "platform": "GitHub Webhook",
-      "description": "通过 GitHub 仓库事件触发工作流",
+      "platform": "GitHub Events",
       "icon": "GitBranch",
+      "description": "GitHub 仓库事件（REST 轮询，免公网；Issue/PR/Push 触发，可评论回复）",
       "steps": [
-        "打开 GitHub 仓库 → Settings → Webhooks → Add webhook",
-        "Payload URL 设置为下方 webhook 地址",
-        "Content type 选择 application/json",
-        "选择触发事件（push / issues / pull_request 等）",
-        "保存后仓库事件会自动触发工作流"
+        "在 GitHub 生成一个 Personal Access Token（勾选 repo 权限）",
+        "在连接器配置填 token / owner / repo（如 owner=Hayliy repo=naixi-desktop）",
+        "可选 poll_seconds 调整轮询间隔（默认 60s）",
+        "启用后连接器轮询仓库事件，新 Issue/PR/Push 触发桌面 Agent；对 Issue/PR 的回复以评论回写"
       ],
       "links": [
-        { "label": "GitHub Webhook 文档", "url": "https://docs.github.com/webhooks" }
+        { "label": "GitHub REST Events API", "url": "https://docs.github.com/rest/activity/events" }
       ]
     },
     {
       "id": "gitlab",
+      "managed": true,
       "name": "GitLab",
-      "platform": "GitLab Webhook",
-      "description": "通过 GitLab 仓库事件触发工作流",
+      "platform": "GitLab Events",
       "icon": "GitBranch",
+      "description": "GitLab 仓库事件（REST 轮询，免公网；Issue/MR/Push 触发，可备注回复）",
       "steps": [
-        "打开 GitLab 仓库 → Settings → Webhooks",
-        "URL 设置为下方 webhook 地址",
-        "选择触发事件（Push / Merge Request 等）",
-        "可加 Secret Token 验证（保存到桌面端配置）",
-        "保存后仓库事件会自动触发工作流"
+        "在 GitLab 生成一个 Personal/Project Access Token（勾选 api 权限）",
+        "在连接器配置填 token / project_id（数字或 group/project）；自托管改 base_url",
+        "可选 poll_seconds 调整轮询间隔（默认 60s）",
+        "启用后连接器轮询项目事件，新 Issue/MR/Push 触发桌面 Agent；对 Issue/MR 的回复以备注回写"
       ],
       "links": [
-        { "label": "GitLab Webhook 文档", "url": "https://docs.gitlab.com/ee/user/project/integrations/webhooks.html" }
+        { "label": "GitLab Events API", "url": "https://docs.gitlab.com/ee/api/events.html" }
       ]
     },
     {
       "id": "generic",
+      "managed": true,
       "name": "自定义 HTTP",
       "platform": "Generic Webhook",
       "icon": "Globe",
-      "description": "任意系统或脚本通过 HTTP 请求触发工作流",
+      "description": "任意系统/脚本通过本地 HTTP 触发桌面 Agent（localhost 即可，免公网）",
       "steps": [
-        "编写任意语言脚本（Python / Bash / JS 等）",
-        "发送 POST 请求到下方 webhook URL",
-        "请求体 JSON 格式：{\"input\": { ... }}",
-        "工作流开始执行并返回结果",
-        "支持任意能发送 HTTP 请求的系统对接"
+        "在连接器配置勾选启用（默认监听 127.0.0.1:19879/webhook，可改 host/port/path）",
+        "任意脚本 POST {\"input\":\"内容\",\"user\":\"可选发送者\",\"reply_url\":\"可选回传地址\"} 到该地址",
+        "Agent 回复若提供了 reply_url，会 POST {\"result\":\"...\"} 回传；否则仅触发不回传",
+        "适合本地自动化、Home Assistant、自建脚本等场景"
       ],
       "links": []
     }

@@ -13,6 +13,7 @@ import WorkflowEditor from "@/components/WorkflowEditor";
 import { ReactFlowProvider } from "@xyflow/react";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import SetupGuide from "@/components/SetupGuide";
+import ConnectorSettings from "@/components/ConnectorSettings";
 import SettingsPage from "@/components/SettingsPage";
 import GatewayPage from "@/components/GatewayPanel";
 import LocalModelPage from "@/components/LocalModelPanel";
@@ -1427,196 +1428,34 @@ function MemPage() {
 }
 
 function NapcatPage({ napcat }: { napcat: NapcatData | null }) {
-  const [conns, setConns] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [configMode, setConfigMode] = useState<string | null>(null);
-  const [fExtra, setFExtra] = useState("{}");
-  const [fEnabled, setFEnabled] = useState(true);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<string | null>(null);
-  const { notify } = useToast();
-
-  const loadConns = useCallback(async () => {
-    setLoading(true);
-    try {
-      const cfg = await apiGet<any>("/api/desktop/config");
-      const saved = cfg.platform_configs || {};
-      const defaults = [
-        { id:"napcat", name:"QQ (NapCat)", desc:"NapCat/LLOneBot WebSocket 桥接", tp:"msg", fields:[{k:"ws_url",l:"WebSocket 地址",p:"ws://127.0.0.1:3001"},{k:"http_url",l:"HTTP 地址",p:"http://127.0.0.1:3000"},{k:"token",l:"Token(可选)",p:""}] },
-        { id:"qq_official", name:"QQ 官方机器人", desc:"QQ 官方 Bot API + 沙箱环境", tp:"msg", fields:[{k:"app_id",l:"App ID",p:"从开放平台获取"},{k:"token",l:"Bot Token",p:""},{k:"secret",l:"Secret",p:""}] },
-        { id:"qq_guild", name:"QQ 频道", desc:"QQ 频道机器人 WebSocket", tp:"msg", fields:[{k:"app_id",l:"App ID",p:""},{k:"token",l:"Bot Token",p:""}] },
-        { id:"wechat_personal", name:"个人微信", desc:"通过第三方库桥接(需扫码)", tp:"msg", fields:[{k:"mode",l:"连接方式",p:"pc / docker"},{k:"host",l:"服务地址",p:"http://127.0.0.1:8080"},{k:"token",l:"Token(可选)",p:""}] },
-        { id:"wechat_mp", name:"微信公众号", desc:"公众号开发模式消息回调", tp:"msg", fields:[{k:"app_id",l:"AppID",p:"从公众号后台获取"},{k:"app_secret",l:"AppSecret",p:""},{k:"token",l:"Token",p:"手动设置的 Token"}] },
-        { id:"wecom", name:"企业微信", desc:"企业内部应用消息回调", tp:"msg", fields:[{k:"corp_id",l:"企业 ID",p:"wwxxxx"},{k:"agent_id",l:"Agent ID",p:""},{k:"secret",l:"Secret",p:""},{k:"token",l:"Token",p:""}] },
-        { id:"feishu", name:"飞书", desc:"自建应用事件回调+机器人", tp:"msg", fields:[{k:"app_id",l:"App ID",p:"cli_xxxxx"},{k:"app_secret",l:"App Secret",p:""}] },
-        { id:"dingtalk", name:"钉钉", desc:"机器人出站消息+Stream 模式", tp:"msg", fields:[{k:"client_id",l:"Client ID",p:"从开放平台获取"},{k:"client_secret",l:"Client Secret",p:""}] },
-        { id:"telegram", name:"Telegram", desc:"Bot API 轮询或 Webhook", tp:"msg", fields:[{k:"token",l:"Bot Token",p:"123456:ABC-DEF123"},{k:"proxy",l:"代理地址(可选)",p:""}] },
-        { id:"discord", name:"Discord", desc:"Bot Token + Gateway Intents", tp:"msg", fields:[{k:"token",l:"Bot Token",p:"MTIzNDU2Nzg5"},{k:"guild_id",l:"服务器 ID(可选)",p:""}] },
-        { id:"slack", name:"Slack", desc:"App + Bot Token + Event Sub", tp:"msg", fields:[{k:"token",l:"Bot Token",p:"xoxb-xxx"},{k:"signing_secret",l:"Signing Secret",p:""}] },
-        { id:"line", name:"LINE", desc:"LINE Messaging API 回调", tp:"msg", fields:[{k:"channel_secret",l:"Channel Secret",p:"从 LINE Dev Console 获取"},{k:"access_token",l:"Channel Access Token",p:""}] },
-        { id:"kook", name:"KOOK(开黑啦)", desc:"KOOK Bot WebSocket", tp:"msg", fields:[{k:"token",l:"Bot Token",p:"从开发者中心获取"}] },
-        { id:"whatsapp", name:"WhatsApp", desc:"Cloud API / Baileys Webhook", tp:"msg", fields:[{k:"phone_id",l:"Phone Number ID",p:"Meta Business 后台"},{k:"token",l:"Access Token",p:""}] },
-        { id:"weibo", name:"微博", desc:"微博开放平台消息回调", tp:"msg", fields:[{k:"app_key",l:"App Key",p:"从开放平台获取"},{k:"app_secret",l:"App Secret",p:""}] },
-        { id:"bilibili", name:"哔哩哔哩", desc:"B站开放平台 WS 直播/私信", tp:"msg", fields:[{k:"access_key",l:"Access Key",p:"从开放平台获取"},{k:"room_id",l:"直播间 ID(可选)",p:""}] },
-        { id:"email", name:"电子邮件", desc:"POP3/IMAP 监听+SMTP 发送", tp:"webhook", fields:[{k:"imap_host",l:"IMAP 服务器",p:"imap.qq.com"},{k:"imap_port",l:"IMAP 端口",p:"993"},{k:"email",l:"邮箱地址",p:"xxx@qq.com"},{k:"password",l:"密码/授权码",p:""}] },
-        { id:"sms", name:"短信", desc:"通过 Twilio / 云片 收发", tp:"webhook", fields:[{k:"provider",l:"服务商",p:"twilio / 云片"},{k:"account_sid",l:"Account SID",p:""},{k:"auth_token",l:"Auth Token",p:""},{k:"phone",l:"绑定手机号",p:""}] },
-        { id:"webhook", name:"自定义 HTTP", desc:"通用 Webhook 接收器", tp:"webhook", fields:[{k:"endpoint",l:"自定义端点",p:"/webhook/my-bot"},{k:"secret",l:"验签 Secret",p:""}] },
-      ];
-      const merged = defaults.map(d => {
-        const s = saved[d.id] || {};
-        return { ...d, enabled: s.enabled !== false, fields: d.fields.map(f => ({ ...f, v: s[f.k] || "" })) };
-      });
-      setConns(merged);
-    } catch {}
-    setLoading(false);
-  }, []);
-
-  useEffect(() => { loadConns(); }, [loadConns]);
-
-  const openConfig = (conn: any) => {
-    setConfigMode(conn.id);
-    setFEnabled(conn.enabled);
-    setTestResult(null);
-    const vals: Record<string, string> = {};
-    conn.fields.forEach((f: any) => { vals[f.k] = f.v; });
-    setFExtra(JSON.stringify(vals));
-  };
-
-  const saveConfig = async () => {
-    if (!configMode) return;
-    try {
-      const cfg = await apiGet<any>("/api/desktop/config");
-      const platform_configs = cfg.platform_configs || {};
-      let vals = {};
-      try { vals = JSON.parse(fExtra); } catch {}
-      platform_configs[configMode] = { ...vals, enabled: fEnabled };
-      await apiPost("/api/desktop/config", { platform_configs });
-      notify("已保存", "success");
-      setConfigMode(null);
-      loadConns();
-    } catch { notify("保存失败", "error"); }
-  };
-
-  const testPlatform = async () => {
-    if (!configMode) return;
-    setTesting(true);
-    setTestResult(null);
-    const conn = conns.find(c => c.id === configMode);
-    const urlKeys = new Set(["ws_url", "http_url", "host", "webhook", "endpoint", "imap_host", "imap_port", "proxy"]);
-    const hasUrl = conn?.fields?.some((f: any) => urlKeys.has(f.k) || f.p?.startsWith("http") || f.p?.startsWith("ws"));
-    if (!hasUrl) {
-      setTestResult("该平台无 URL 测试端点，保存后接入使用即可");
-      setTesting(false);
-      return;
-    }
-    let vals: Record<string, string> = {};
-    try { vals = JSON.parse(fExtra); } catch {}
-    const testUrl = Object.values(vals).find(v => v && (v.startsWith("http") || v.startsWith("ws")));
-    if (!testUrl) {
-      setTestResult("请先填写地址再测试");
-      setTesting(false);
-      return;
-    }
-    try {
-      const res = await apiPost<{ ok: boolean; error?: string; status?: number }>("/api/platform/test", { url: testUrl, config: vals });
-      if (res.ok) setTestResult(`连通 (HTTP ${res.status})`);
-      else setTestResult(res.error || "连接失败");
-    } catch { setTestResult("测试失败"); }
-    setTesting(false);
-  };
-
-  if (configMode) {
-    const conn = conns.find(c => c.id === configMode);
-    if (!conn) return null;
-    let vals: Record<string, string> = {};
-    try { vals = JSON.parse(fExtra); } catch {}
-    return (
-      <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          <button onClick={() => setConfigMode(null)} className="p-1 rounded hover:bg-sakura-50 text-sakura-400"><ChevronLeft size={14} /></button>
-          <p className="text-sm font-semibold text-sakura-600">{conn.name}</p>
-        </div>
-        <div className="bg-white border border-sakura-100 rounded-xl p-3 space-y-2.5">
-          <p className="text-[11px] font-medium text-sakura-600">连接配置</p>
-          {conn.fields.map((f: any, i: number) => (
-            <div key={i}>
-              <p className="text-[10px] text-sakura-500 mb-0.5">{f.l}</p>
-              <input value={vals[f.k] || ""} onChange={e => { vals[f.k] = e.target.value; setFExtra(JSON.stringify(vals)); }}
-                className="w-full px-2.5 py-1.5 border border-sakura-100 rounded-lg text-[11px] outline-none focus:border-sakura-300 bg-sakura-50 text-sakura-600 font-mono"
-                placeholder={f.p} />
-            </div>
-          ))}
-          <div className="flex items-center gap-2 pt-1">
-            <button onClick={() => setFEnabled(!fEnabled)}
-              className={`px-2.5 py-1 rounded text-[10px] font-medium transition-colors ${fEnabled ? "bg-sakura-100 text-sakura-600" : "bg-sakura-50 text-sakura-400"}`}>
-              {fEnabled ? "已启用" : "已禁用"}
-            </button>
-            <div className="flex-1" />
-            <button onClick={() => setConfigMode(null)} className="px-3 py-1.5 rounded text-[10px] text-sakura-400 hover:bg-sakura-50 border border-sakura-100">取消</button>
-            <button onClick={saveConfig} className="px-3 py-1.5 rounded text-[10px] font-medium bg-gradient-to-br from-sakura-400 to-sakura-500 text-white">保存</button>
-            <button onClick={testPlatform} disabled={testing}
-              className="px-3 py-1.5 rounded text-[10px] font-medium bg-teal-50 text-teal-600 hover:bg-teal-100 disabled:opacity-50 transition-colors">
-              {testing ? <Loader2 size={9} className="animate-spin inline" /> : "测试"}
-            </button>
-          </div>
-          {testResult && (
-            <p className={`text-[10px] ${testResult.includes("连通") ? "text-green-600" : "text-red-500"}`}>{testResult}</p>
-          )}
-        </div>
-        <p className="text-[10px] text-sakura-400 font-mono bg-sakura-50 px-2.5 py-1.5 rounded-lg">
-          Webhook: /api/webhook/{configMode}
-        </p>
-      </div>
-    );
-  }
-
+  // QQ / NapCat 由应用直接探测本机 3000/3001 端口（真实的「本机桥接」）；
+  // 其余平台统一交给连接器（naixi_connector）托管：填凭据、启停、看实时状态都在下面这块。
+  const qqConnected = napcat?.connected ?? false;
   return (
     <div className="space-y-3">
       <p className="text-sm font-semibold text-sakura-600">连接</p>
-      {/* 如实说明：目前只有 QQ(NapCat) 有真实桥接（探测 3000/3001 端口）；
-          其余平台仅把配置保存到本地库，尚未实现收发实现 —— 不写清楚的话，
-          用户会以为"配置完就能用"，属于最容易踩的信任坑。 */}
-      <div className="text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 leading-relaxed">
-        提示：当前仅 <b>QQ / NapCat</b> 具备真实消息桥接（应用会探测本机 3000/3001 端口）。
-        其余平台目前<strong>只保存配置、尚未实现收发</strong>，配好也不会收到消息。
-      </div>
-      {loading ? (
-        <div className="text-center py-8"><div className="w-5 h-5 border-2 border-sakura-200 border-t-sakura-500 rounded-full animate-spin mx-auto" /></div>
-      ) : (
-        <div className="bg-white border border-sakura-100 rounded-xl overflow-hidden">
-          <div className="px-3 py-2 border-b border-sakura-100 bg-sakura-50/30 flex items-center justify-between">
-            <span className="text-[11px] font-medium text-sakura-500">平台连接</span>
-            <span className="text-[10px] text-sakura-300">{conns.filter(c => c.enabled).length}/{conns.length} 已启用</span>
-          </div>
-          <div className="divide-y divide-sakura-50">
-            {conns.map(conn => {
-              const isQQ = conn.id === "napcat";
-              const connected = isQQ ? (napcat?.connected ?? false) : conn.enabled;
-              return (
-                <div key={conn.id} className="flex items-center gap-2.5 px-3 py-2 hover:bg-sakura-50/30 transition-colors">
-                  <MessageCircle size={13} className="text-sakura-400 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[12px] font-medium text-sakura-600">{conn.name}</span>
-                      <span className={`text-[10px] px-1 py-0.5 rounded ${connected ? "bg-sakura-100 text-sakura-600" : "bg-sakura-50 text-sakura-400"}`}>
-                        {connected ? (isQQ ? "运行中" : "已启用") : "未启用"}
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-sakura-400 truncate">{conn.desc}</p>
-                  </div>
-                  <button onClick={() => openConfig(conn)}
-                    className="px-2.5 py-1 rounded text-[10px] font-medium bg-white border border-sakura-100 text-sakura-400 hover:text-sakura-600 hover:border-sakura-300 transition-colors shrink-0">
-                    配置
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+
+      {/* 本机 QQ / NapCat：应用直接探测本机端口，无需配置 */}
+      <div className="bg-white border border-sakura-100 rounded-xl px-3 py-2.5">
+        <div className="flex items-center gap-2">
+          <MessageCircle size={13} className="text-sakura-400 shrink-0" />
+          <span className="text-[12px] font-medium text-sakura-600">QQ (NapCat)</span>
+          <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded ${qqConnected ? "bg-green-100 text-green-600" : "bg-sakura-50 text-sakura-400"}`}>
+            {qqConnected ? "运行中" : "未连接"}
+          </span>
         </div>
-      )}
+        <p className="text-[10px] text-sakura-400 mt-1">
+          本机检测 · 自动探测 3000(HTTP) / 3001(WebSocket) 端口
+          {napcat?.groups ? ` · ${napcat.groups} 个群` : ""}
+        </p>
+      </div>
+
+      {/* 其余平台：由连接器统一托管，可填凭据 / 启停 / 看实时状态 */}
+      <ConnectorSettings />
     </div>
   );
 }
+
 function OpsPage({ errors }: { errors: { msg: string; stack: string; time: number }[] }) {
   const [health, setHealth] = useState<any>(null);
   const [incidents, setIncidents] = useState<any[]>([]);

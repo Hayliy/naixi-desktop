@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { copyText as copyClipboardText } from "@/lib/clipboard";
 import { apiGet, apiPost } from "@/lib/api";
 import { useAppConfig } from "@/contexts/AppContext";
+import ConnectorSettings from "@/components/ConnectorSettings";
 
 /* ─── 预设的 API 提供商 ─── */
 const API_PROVIDERS = [
@@ -224,48 +225,7 @@ export default function SetupGuide({ onClose, standalone }: { onClose: () => voi
         )}
 
         {settingsTab === "platforms" && (
-          <div className="space-y-4">
-            <p className="text-sm font-medium text-sakura-600">连接到消息平台</p>
-            <p className="text-xs text-sakura-400">将工作流发布为 API，在目标平台上配置 webhook 回调</p>
-            <div className="bg-sakura-50 border border-sakura-200 rounded-xl px-4 py-3">
-              <p className="text-[12px] text-sakura-500 mb-1">你的 webhook 地址</p>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 px-3 py-2 bg-white border border-sakura-200 rounded-lg text-xs font-mono text-sakura-700 truncate">{webhookUrl}</code>
-                <button onClick={() => { void copyClipboardText(webhookUrl); }}
-                  className="px-3 py-2 bg-sakura-100 text-sakura-600 rounded-lg text-xs hover:bg-sakura-200 shrink-0">复制</button>
-              </div>
-            </div>
-            <div className="space-y-2 max-h-[60vh] overflow-y-auto">
-              {platforms.map((p: any) => (
-                <details key={p.id} className="border border-gray-200 rounded-xl overflow-hidden">
-                  <summary className="px-4 py-3 text-xs font-medium text-gray-700 cursor-pointer hover:bg-gray-50 flex items-center gap-2">
-                    <span className="text-sakura-500">▸</span>
-                    <span>{p.name}</span>
-                    <span className="text-gray-400 ml-1">({p.platform})</span>
-                  </summary>
-                  <div className="px-4 py-3 border-t border-gray-100 bg-gray-50/50">
-                    <p className="text-xs text-gray-500 mb-3">{p.description}</p>
-                    <ol className="space-y-2">
-                      {p.steps.map((s: string, i: number) => (
-                        <li key={i} className="text-xs text-gray-600 flex gap-2">
-                          <span className="text-sakura-400 font-medium shrink-0">{i + 1}.</span>
-                          <span>{s}</span>
-                        </li>
-                      ))}
-                    </ol>
-                    {p.links && p.links.length > 0 && (
-                      <div className="mt-3 flex gap-2">
-                        {p.links.map((link: any, i: number) => (
-                          <a key={i} href={link.url} target="_blank" rel="noopener noreferrer"
-                            className="text-xs text-sakura-500 underline hover:text-sakura-600">{link.label} →</a>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </details>
-              ))}
-            </div>
-          </div>
+          <ConnectorSettings />
         )}
 
         {settingsTab === "prompts" && (
@@ -512,39 +472,7 @@ function SetupSteps({
           </div>
         </div>
 
-        <p className="text-xs font-medium text-sakura-500 mt-4 mb-2">支持的平台</p>
-        <div className="space-y-2 max-h-[320px] overflow-y-auto">
-          {platforms.map((p: any) => (
-            <details key={p.id} className="border border-gray-200 rounded-xl overflow-hidden">
-              <summary className="px-4 py-3 text-xs font-medium text-gray-700 cursor-pointer hover:bg-gray-50 flex items-center gap-2">
-                <span className="text-sakura-500">▸</span>
-                <span>{p.name}</span>
-                <span className="text-gray-400 ml-1">({p.platform})</span>
-              </summary>
-              <div className="px-4 py-3 border-t border-gray-100 bg-gray-50/50">
-                <p className="text-xs text-gray-500 mb-3">{p.description}</p>
-                <ol className="space-y-2">
-                  {p.steps.map((s: string, i: number) => (
-                    <li key={i} className="text-xs text-gray-600 flex gap-2">
-                      <span className="text-sakura-400 font-medium shrink-0">{i + 1}.</span>
-                      <span>{s}</span>
-                    </li>
-                  ))}
-                </ol>
-                {p.links && p.links.length > 0 && (
-                  <div className="mt-3 flex gap-2">
-                    {p.links.map((link: any, i: number) => (
-                      <a key={i} href={link.url} target="_blank" rel="noopener noreferrer"
-                        className="text-xs text-sakura-500 underline hover:text-sakura-600">
-                        {link.label} →
-                      </a>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </details>
-          ))}
-        </div>
+        <ConnectorSettings />
 
         <div className="flex justify-between pt-2 border-t border-sakura-100">
           <button onClick={() => setStep(0)} className="px-4 py-2 text-xs text-gray-500 hover:text-gray-700">上一步</button>
