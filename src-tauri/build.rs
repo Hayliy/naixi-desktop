@@ -191,10 +191,12 @@ fn pack_resources_7z() {
     // 待打包的子目录（与 tauri.conf.json 原 bundle.resources 对应，避免漏打运行时必需资源）
     //
     // ★ engines 是 v1.1.0 的核心新增（本地推理引擎随包下发，让干净虚拟机装完即用）。
-    //   2026-10-08 客机实测发现它曾被漏掉：安装后 resources\engines 不存在、
+    //   2026-08 客机实测发现它曾被漏掉：安装后 resources\engines 不存在、
     //   递归找不到 llama-server.exe ⇒ 「本地模型」在别人机器上必然不可用。
     //   新增子目录时务必同步这里，否则是「静默缺失」，构建期与运行期都不会报错。
-    let dirs = ["desktop_core", "data", "python-embed", "searxng", "engines"];
+    // ★ connector 是 v1.2.0 的核心新增（消息平台连接器随包：naixi_connector 包 +
+    //   venv site-packages，运行时由 connector_manager 挂 PYTHONPATH 用 python-embed 跑）。
+    let dirs = ["desktop_core", "data", "python-embed", "searxng", "engines", "connector"];
     if !dirs.iter().any(|d| resources.join(d).is_dir()) {
         eprintln!("warn: resources 下无可打包目录，跳过 7z 打包");
         let _ = fs::write(bundle.join("part_count.txt"), "0");

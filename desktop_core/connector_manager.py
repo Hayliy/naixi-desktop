@@ -20,12 +20,43 @@ import os
 
 log = logging.getLogger("connector.manager")
 
-# ── 路径（环境变量可覆盖；开发环境默认指向独立连接器工程）──
-CONNECTOR_DIR = os.environ.get("NAIXI_CONNECTOR_DIR", r"D:\数据\naixi_connector")
-CONNECTOR_PYTHON = os.environ.get(
-    "NAIXI_CONNECTOR_PYTHON",
-    os.path.join(CONNECTOR_DIR, ".venv", "Scripts", "python.exe"),
+# ── 路径解析（环境变量 > 开发态 venv > 打包态随包）──
+_DEV_CONNECTOR_DIR = r"D:\数据\naixi_connector"
+
+
+def _packaged_dir() -> str:
+    """打包态：本文件位于 <安装>\\resources\\desktop_core\\，连接器在同级 resources\\connector\\。"""
+    res = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    pkg = os.path.join(res, "connector")
+    py = os.path.join(res, "python-embed", "python.exe")
+    if os.path.isdir(pkg) and os.path.exists(py):
+        return pkg
+    return ""
+
+
+def _dev_dir() -> str:
+    """开发态：独立连接器工程 + 其 venv。"""
+    if os.path.exists(os.path.join(_DEV_CONNECTOR_DIR, ".venv", "Scripts", "python.exe")):
+        return _DEV_CONNECTOR_DIR
+    return ""
+
+
+def _default_python_for(d: str) -> str:
+    venv_py = os.path.join(d, ".venv", "Scripts", "python.exe")
+    if os.path.exists(venv_py):
+        return venv_py
+    # 打包态：用随包 python-embed 跑（连接器依赖在 resources/connector/site-packages）
+    res = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(res, "python-embed", "python.exe")
+
+
+CONNECTOR_DIR = (
+    os.environ.get("NAIXI_CONNECTOR_DIR")
+    or _dev_dir()
+    or _packaged_dir()
+    or _DEV_CONNECTOR_DIR
 )
+CONNECTOR_PYTHON = os.environ.get("NAIXI_CONNECTOR_PYTHON") or _default_python_for(CONNECTOR_DIR)
 
 CONFIG_META_KEY = "connector_config"
 
@@ -330,10 +361,40 @@ async def start_connector(force: bool = False) -> dict:
     env["PYTHONUTF8"] = "1"
     venv_scripts = os.path.dirname(python)
     env["PATH"] = venv_scripts + os.pathsep + env.get("PATH", "")
+    # 打包态（python-embed 跑连接器）：python313._pth 会让解释器忽略 PYTHONPATH，
+    # 且 python-embed 的 site-packages 混着桌面后端依赖（不能覆盖版本）——
+    # 所以用 -c 包装脚本在进程内注入 sys.path（同 sidecar 的 sys.path.insert 做法）。
+    py_path_parts = [CONNECTOR_DIR]
+    site_packages = os.path.join(CONNECTOR_DIR, "site-packages")
+    if os.path.isdir(site_packages):
+        py_path_parts.append(site_packages)
+    if env.get("PYTHONPATH"):
+        py_path_parts.append(env["PYTHONPATH"])
+    env["PYTHONPATH"] = os.pathsep.join(py_path_parts)
+    # 微信登录态/二维码等运行时数据写可写目录（安装目录可能只读，且升级会清空）
+    data_dir = os.environ.get("NAIXI_CONNECTOR_DATA_DIR") or os.path.join(
+        os.environ.get("APPDATA") or os.path.expanduser("~"), "naixi", "connector-data")
+    try:
+        os.makedirs(data_dir, exist_ok=True)
+    except Exception:
+        pass
+    env["NAIXI_CONNECTOR_DATA_DIR"] = data_dir
+
+    needs_path_inject = os.path.isdir(site_packages)
+    if needs_path_inject:
+        # 打包态：-c 注入 sys.path 再进连接器入口
+        bootstrap = (
+            "import sys; sys.path[:0] = " + repr(py_path_parts) + "; "
+            "from naixi_connector.main import main; sys.exit(main())"
+        )
+        cmd = [python, "-c", bootstrap]
+    else:
+        # 开发态：venv 内已装 naixi_connector，cwd 兜底
+        cmd = [python, "-m", "naixi_connector.main"]
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            python, "-m", "naixi_connector.main",
+            *cmd,
             cwd=CONNECTOR_DIR, env=env,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,

@@ -19,6 +19,7 @@
     "verify:gw-interactive": "python scripts/verify/gw_interactive.py",
     "sync:core": "python scripts/sync_core_copy.py --sync",
     "bundle:engine": "node scripts/bundle_engine.cjs",
+    "bundle:connector": "node scripts/bundle_connector.cjs",
     "bundle:converter": "node scripts/bundle_converter.cjs",
     "check:core": "python scripts/sync_core_copy.py",
     "pretauri": "node scripts/sync-version.mjs",
