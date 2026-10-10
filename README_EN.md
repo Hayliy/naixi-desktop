@@ -92,7 +92,7 @@ A few of the core views (full feature breakdown in [Features](#features)):
    `WM_NCHITTEST`; solved the DWM composition-layer bug that rendered dialogs invisible (18 real-device iterations,
    visibility rate 0.8172 passed on the first attempt).
 4. **LLM application engineering.** Models routed by task type (text / vision / video / code / speech) under
-   per-model concurrency limits; layered memory with 3-level context compression, 46 tool calls and an MCP client;
+   per-model concurrency limits; layered memory with 3-level context compression, 44 built-in tools (plus plugin and MCP tools) and an MCP client;
    three-tier TTS failover (CosyVoice → Edge-TTS → offline kokoro-onnx).
 5. **Game-playing agent (Cradle paradigm).** Screenshot in, keyboard and mouse out — no memory reading, no server
    connection; it only drives the user's own window. Includes post-action self-reflection that detects stuck states
@@ -118,7 +118,7 @@ conversation history with per-session search; multimodal generation (image / vid
 
 **Local models (on-device inference)** — a model catalog backed by ModelScope: search GGUF models, filter by
 quantization and size, browse with pagination; directory-level multi-file downloads with progress, cancel and delete
-(13 endpoints under `/api/local/*`). The llama.cpp engine (81 MB, Vulkan build) and an HF→GGUF converter ship inside
+(15 endpoints under `/api/local/*`). The llama.cpp engine (81 MB, Vulkan build) and an HF→GGUF converter ship inside
 the installer — no Ollama or llama.cpp preinstall needed; engine discovery follows "bundled → data dir → system
 locations → PATH" with zero hardcoded paths. One-click start/stop (port 11436) and the chat page's auto-routing can
 select a local model, so chat works offline. Verified end-to-end: a clean VM downloads Qwen3-0.6B GGUF (378 MB) from
@@ -231,7 +231,7 @@ graph TB
 | --- | --- |
 | OS | Windows 10 1809 or later / Windows 11 (x64) |
 | Runtime | WebView2 — installed automatically by the setup; offline machines get a manual-install prompt |
-| Disk | about **1.3 GB** after installation (self-contained Python runtime plus bundled local search); 2 GB recommended |
+| Disk | about **1.35 GB** after installation (self-contained Python runtime, bundled local search and the 13-platform connector); 2 GB recommended |
 | Memory | 4 GB or more recommended |
 | Network | Required only for cloud model inference (your own API keys). Local model inference, chat history, knowledge base, desktop pet and local search all run on-device — with a local model installed, chat works fully offline |
 | Optional hardware | Microphone (voice input / live mic), webcam (face capture, off by default), NVIDIA GPU (dashboard metrics / local inference acceleration) |
